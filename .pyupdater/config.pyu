@@ -1,0 +1,21 @@
+{
+  "config_dir": "D:\\app_dev\\matrx_local\\.pyupdater",
+  "filename": "D:\\app_dev\\matrx_local\\.pyupdater\\config.pyu",
+  "count": 0,
+  "app_config": {
+    "APP_NAME": "AI Matrx",
+    "CLIENT_CONFIG_PATH": [
+      "matrx_local/system",
+      "client_config.py"
+    ],
+    "COMPANY_NAME": "AI Matrx",
+    "PLUGIN_CONFIGS": {},
+    "UPDATE_PATCHES": true,
+    "MAX_DOWNLOAD_RETRIES": 3,
+    "HTTP_TIMEOUT": 30,
+    "UPDATE_URLS": [
+      "aimatrx.com/local_updates"
+    ],
+    "DATA_DIR": "D:\\app_dev\\matrx_local"
+  }
+}
