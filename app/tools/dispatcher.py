@@ -6,8 +6,11 @@ import logging
 from typing import Any, Callable, Coroutine
 
 from app.tools.session import ToolSession
+from app.tools.tools.clipboard import tool_clipboard_read, tool_clipboard_write
 from app.tools.tools.execution import tool_bash, tool_bash_output, tool_task_stop
 from app.tools.tools.file_ops import tool_edit, tool_glob, tool_grep, tool_read, tool_write
+from app.tools.tools.network import tool_fetch_url, tool_fetch_with_browser
+from app.tools.tools.notify import tool_notify
 from app.tools.tools.system import (
     tool_list_directory,
     tool_open_path,
@@ -15,6 +18,7 @@ from app.tools.tools.system import (
     tool_screenshot,
     tool_system_info,
 )
+from app.tools.tools.transfer import tool_download_file, tool_upload_file
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
@@ -38,6 +42,17 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "ListDirectory": tool_list_directory,
     "OpenUrl": tool_open_url,
     "OpenPath": tool_open_path,
+    # Clipboard
+    "ClipboardRead": tool_clipboard_read,
+    "ClipboardWrite": tool_clipboard_write,
+    # Notifications
+    "Notify": tool_notify,
+    # Network / Scraping
+    "FetchUrl": tool_fetch_url,
+    "FetchWithBrowser": tool_fetch_with_browser,
+    # File transfer
+    "DownloadFile": tool_download_file,
+    "UploadFile": tool_upload_file,
 }
 
 TOOL_NAMES: list[str] = sorted(TOOL_HANDLERS.keys())

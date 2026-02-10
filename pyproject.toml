@@ -1,26 +1,45 @@
 [project]
 name = "matrx-local"
-version = "0.1.0"
+version = "0.2.0"
 description = "Companion desktop application for AI Matrx — extends web platform with local capabilities via FastAPI"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    # Core server
     "fastapi",
     "uvicorn",
-    "pillow",
-    "asyncpg",
-    "pyaudio",
+    "pydantic",
     "python-dotenv",
     "httptools",
     "pyyaml",
     "watchfiles",
     "websockets",
+    # HTTP client (scraping proxy, file transfer)
+    "httpx",
+    # Clipboard
+    "pyperclip",
+    # Notifications
+    "plyer",
+    # System tray
+    "pystray",
+    "pillow",
+    # Logging
+    "concurrent-log-handler>=0.9.28",
+    # Packaging & updates
     "pyinstaller",
     "tufup",
-    "pystray",
-    "concurrent-log-handler>=0.9.28",
+    # Database (legacy — will be made optional)
+    "asyncpg",
+]
+
+[project.optional-dependencies]
+audio = [
+    "pyaudio",
     "sounddevice>=0.5.5",
     "numpy>=2.4.2",
+]
+browser = [
+    "playwright",
 ]
 
 [dependency-groups]

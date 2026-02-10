@@ -11,10 +11,16 @@
 | Area | Tools / Endpoints | Status |
 |------|------------------|--------|
 | **File Operations** | `Read`, `Write`, `Edit`, `Glob`, `Grep` | Done |
-| **Shell Execution** | `Bash` (fg + bg), `BashOutput`, `TaskStop` | Done |
+| **Shell Execution** | `Bash` (fg + bg), `BashOutput`, `TaskStop` — full Windows (PowerShell) + macOS/Linux (zsh/bash) | Done |
 | **System** | `SystemInfo`, `Screenshot`, `ListDirectory`, `OpenUrl`, `OpenPath` | Done |
+| **Clipboard** | `ClipboardRead`, `ClipboardWrite` — cross-platform via pyperclip | Done |
+| **Notifications** | `Notify` — native OS notifications via plyer (macOS, Windows, Linux) | Done |
+| **Scraping Proxy** | `FetchUrl` (httpx, residential IP), `FetchWithBrowser` (Playwright headless) | Done |
+| **File Transfer** | `DownloadFile`, `UploadFile` — chunked streaming via httpx | Done |
 | **Transport** | WebSocket (`/ws`) with per-connection sessions, concurrent dispatch, cancellation | Done |
 | **Transport** | REST (`/tools/invoke`, `/tools/list`) — stateless, one-shot | Done |
+| **Packaging** | PyInstaller `.spec` for macOS `.app` / Windows `.exe` / Linux binary | Done |
+| **Auto-Update** | tufup integration in startup — checks remote server, applies updates, restarts | Done |
 | **Legacy Routes** | `/trigger`, `/system/info`, `/files`, `/screenshot`, `/db-data`, `/logs`, `/generate-directory-structure/*` | Done (pre-tool-system) |
 | **Services (stubs)** | `audio/recorder`, `screenshots/capture` | Partial |
 | **Services (empty)** | `ai/`, `audio/player`, `files/explorer`, `files/uploader`, `transcription/transcribe`, `tts/player` | Placeholder only |

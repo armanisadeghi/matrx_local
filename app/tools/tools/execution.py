@@ -1,12 +1,15 @@
-"""Execution tools — Bash (foreground + background), BashOutput, TaskStop."""
+"""Execution tools — Shell (foreground + background), BashOutput, TaskStop.
+
+Fully cross-platform: uses bash/zsh on macOS/Linux, PowerShell on Windows.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import platform
 import re
-import shlex
 
 from app.tools.session import BackgroundShell, ToolSession
 from app.tools.types import ToolResult, ToolResultType
@@ -17,6 +20,61 @@ MAX_OUTPUT_LENGTH = 30_000
 DEFAULT_TIMEOUT_MS = 120_000
 MAX_TIMEOUT_MS = 600_000
 CWD_SENTINEL = "___MATRX_CWD_SENTINEL_9f8a7b___"
+
+IS_WINDOWS = platform.system() == "Windows"
+
+
+def _get_shell() -> str:
+    if IS_WINDOWS:
+        return "powershell.exe"
+    if os.path.exists("/bin/zsh"):
+        return "/bin/zsh"
+    return "/bin/bash"
+
+
+def _quote(value: str) -> str:
+    if IS_WINDOWS:
+        escaped = value.replace("'", "''")
+        return f"'{escaped}'"
+    import shlex
+    return shlex.quote(value)
+
+
+def _wrap_foreground(command: str, cwd: str) -> str:
+    if IS_WINDOWS:
+        return (
+            f"Set-Location -LiteralPath {_quote(cwd)}; "
+            f"$ErrorActionPreference='Continue'; "
+            f"{command}; "
+            f"$__ec = $LASTEXITCODE; "
+            f"Write-Output '{CWD_SENTINEL}'; "
+            f"(Get-Location).Path; "
+            f"exit $__ec"
+        )
+    return (
+        f"cd {_quote(cwd)} && "
+        f"{{ {command} ; }}; "
+        f"__exit_code=$?; "
+        f'echo "{CWD_SENTINEL}"; '
+        f"pwd; "
+        f"exit $__exit_code"
+    )
+
+
+def _wrap_background(command: str, cwd: str) -> str:
+    if IS_WINDOWS:
+        return f"Set-Location -LiteralPath {_quote(cwd)}; {command}"
+    return f"cd {_quote(cwd)} && {{ {command} ; }}"
+
+
+def _shell_env() -> dict[str, str]:
+    env = dict(os.environ)
+    if IS_WINDOWS:
+        env.setdefault("USERPROFILE", os.path.expanduser("~"))
+    else:
+        env.setdefault("HOME", os.path.expanduser("~"))
+        env.setdefault("USER", os.getenv("USER", "user"))
+    return env
 
 
 async def tool_bash(
@@ -39,16 +97,8 @@ async def tool_bash(
 
 
 async def _bash_foreground(session: ToolSession, command: str, timeout_s: float) -> ToolResult:
-    wrapped = (
-        f"cd {shlex.quote(session.cwd)} && "
-        f"{{ {command} ; }}; "
-        f"__exit_code=$?; "
-        f'echo "{CWD_SENTINEL}"; '
-        f"pwd; "
-        f"exit $__exit_code"
-    )
-
-    shell_path = "/bin/zsh" if os.path.exists("/bin/zsh") else "/bin/bash"
+    wrapped = _wrap_foreground(command, session.cwd)
+    shell_path = _get_shell()
 
     proc = await asyncio.create_subprocess_shell(
         wrapped,
@@ -84,14 +134,13 @@ async def _bash_foreground(session: ToolSession, command: str, timeout_s: float)
     if exit_code != 0:
         output += f"\n\n[Exit code: {exit_code}]"
 
-    return ToolResult(output=output)
+    return ToolResult(output=output, metadata={"cwd": session.cwd})
 
 
 async def _bash_background(session: ToolSession, command: str) -> ToolResult:
     shell_id = session.next_shell_id()
-    shell_path = "/bin/zsh" if os.path.exists("/bin/zsh") else "/bin/bash"
-
-    wrapped = f"cd {shlex.quote(session.cwd)} && {{ {command} ; }}"
+    shell_path = _get_shell()
+    wrapped = _wrap_background(command, session.cwd)
 
     proc = await asyncio.create_subprocess_shell(
         wrapped,
@@ -206,10 +255,3 @@ def _truncate(output: str) -> str:
     if len(output) > MAX_OUTPUT_LENGTH:
         return output[:MAX_OUTPUT_LENGTH] + "\n\n... [output truncated at 30000 characters]"
     return output
-
-
-def _shell_env() -> dict[str, str]:
-    env = dict(os.environ)
-    env.setdefault("HOME", str(os.path.expanduser("~")))
-    env.setdefault("USER", os.getenv("USER", "user"))
-    return env
