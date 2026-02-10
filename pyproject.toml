@@ -18,6 +18,9 @@ dependencies = [
     "pyinstaller",
     "tufup",
     "pystray",
+    "concurrent-log-handler>=0.9.28",
+    "sounddevice>=0.5.5",
+    "numpy>=2.4.2",
 ]
 
 [dependency-groups]

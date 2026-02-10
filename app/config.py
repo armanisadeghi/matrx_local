@@ -8,7 +8,10 @@ load_dotenv(dotenv_path=BASE_DIR / ".env")
 APP_NAME = "MatrxLocal"
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1")
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:3001,https://aimatrx.com,https://www.aimatrx.com",
+).split(",")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://arman:ab1234@localhost/matrx_local")
 
