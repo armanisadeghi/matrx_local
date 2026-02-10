@@ -1,0 +1,30 @@
+[project]
+name = "matrx-local"
+version = "0.1.0"
+description = "Companion desktop application for AI Matrx — extends web platform with local capabilities via FastAPI"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pillow",
+    "asyncpg",
+    "pyaudio",
+    "python-dotenv",
+    "httptools",
+    "pyyaml",
+    "watchfiles",
+    "websockets",
+    "pyinstaller",
+    "tufup",
+    "pystray",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+python-preference = "only-managed"

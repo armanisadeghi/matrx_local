@@ -23,6 +23,12 @@ Matrx Local serves as an extension of the AI Matrx web application, providing ad
 
 ---
 
+## Prerequisites
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
+
+That's it — uv handles Python installation, virtual environments, and dependency resolution automatically.
+
 ## Usage
 
 This repository is intended for internal use by our team. To use Matrx Local:
@@ -37,20 +43,42 @@ This repository is intended for internal use by our team. To use Matrx Local:
    cd matrx_local
    ```
 
-3. Install dependencies:
+3. Install dependencies (uv creates the virtual environment and installs everything):
    ```bash
-   pip install -r requirements.txt
+   uv sync
    ```
 
 4. Run the application:
    ```bash
-   python run.py
+   uv run python run.py
    ```
 
 5. Access the API locally at:
    ```
    http://127.0.0.1:8000
    ```
+
+### Common Commands
+
+```bash
+# Add a new dependency
+uv add <package>
+
+# Add a dev-only dependency
+uv add --dev <package>
+
+# Remove a dependency
+uv remove <package>
+
+# Update a specific package to latest
+uv lock --upgrade-package <package>
+
+# Update all packages to latest compatible versions
+uv lock --upgrade
+
+# Run any command in the project environment
+uv run <command>
+```
 
 ---
 
