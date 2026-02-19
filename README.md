@@ -112,6 +112,58 @@ uv run python run.py             # Start the server
 
 ---
 
+## Desktop App (Tauri)
+
+The full desktop app wraps the Python engine in a React/Tauri shell — system tray, native window, bundled sidecar, auto-update.
+
+### Prerequisites (desktop only)
+
+- **Rust toolchain** — install once via [rustup.rs](https://rustup.rs/):
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  source "$HOME/.cargo/env"
+  ```
+- **pnpm** — `npm install -g pnpm`
+
+### 1 — Build the Python sidecar (required before any Tauri run)
+
+```bash
+cd /path/to/matrx_local
+uv sync                        # installs all deps including pyinstaller
+bash scripts/build-sidecar.sh  # builds ~60 MB single-file binary
+```
+
+Output: `desktop/src-tauri/sidecar/aimatrx-engine-aarch64-apple-darwin` (name is platform-specific).
+Rebuild this any time you change Python code.
+
+### 2 — Dev mode (hot reload)
+
+```bash
+cd desktop
+pnpm install        # first time only
+pnpm tauri dev      # starts Vite + Rust together
+```
+
+### 3 — Production build
+
+```bash
+cd desktop
+pnpm tauri build
+```
+
+Outputs a `.dmg` (macOS), `.msi` (Windows), or `.AppImage`/`.deb` (Linux) in `desktop/src-tauri/target/release/bundle/`.
+
+### Desktop environment variables
+
+Copy `desktop/.env.example` to `desktop/.env`:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VITE_SUPABASE_URL` | Yes | Supabase project URL |
+| `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Yes | Supabase publishable key (safe to embed) |
+
+---
+
 ## Architecture
 
 See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the full system architecture, project structure, tool reference, auth flow, and packaging guide.

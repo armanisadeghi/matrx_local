@@ -150,7 +150,7 @@ matrx_local/
 | **Remote Scraper** | REST API at scraper.app.matrxserver.com | httpx |
 | **Scraping** | httpx, curl-cffi, Playwright, BeautifulSoup, PyMuPDF | See pyproject.toml |
 | **Search** | Brave Search API | Optional |
-| **Package Manager (JS)** | npm | 10.x |
+| **Package Manager (JS)** | pnpm | 10.x |
 | **Package Manager (Python)** | uv | Latest |
 
 ---
@@ -530,7 +530,8 @@ The scraper engine uses `asyncpg` (PostgreSQL only). Without `DATABASE_URL`, the
 
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
 - [Node.js](https://nodejs.org/) 20+ (for desktop frontend)
-- [Rust](https://rustup.rs/) (only needed for Tauri production builds)
+- [pnpm](https://pnpm.io/) 10+ (`npm install -g pnpm`)
+- [Rust + rustup](https://rustup.rs/) (required for all Tauri builds, dev and prod)
 
 ### Running (Development)
 
@@ -544,36 +545,58 @@ API_KEY=local-dev uv run python run.py
 
 # Terminal 2: React frontend (Vite dev server)
 cd desktop
-npm install
-npm run dev
+pnpm install
+pnpm dev
 # Open http://localhost:1420
 ```
 
-### Running (Tauri, requires Rust)
+### Running (Tauri — full desktop app)
 
 ```bash
+# First-time Rust setup (one-time only)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Build the Python sidecar (required before first Tauri run)
+./scripts/build-sidecar.sh
+
+# Run Tauri dev (starts Vite + Rust hot reload)
 cd desktop
-npm run tauri:dev
+pnpm tauri dev
 ```
 
 ---
 
 ## Building for Distribution
 
-### 1. Build the Python sidecar
+### 1. Install Rust (one-time)
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"   # or restart your terminal
+rustc --version              # should print rustc 1.93+
+```
+
+### 2. Build the Python sidecar
 
 ```bash
 cd /path/to/matrx_local
-./scripts/build-sidecar.sh
+uv sync                     # ensure all deps including pyinstaller are installed
+bash scripts/build-sidecar.sh
 ```
 
-This creates a PyInstaller binary and copies it to `desktop/src-tauri/sidecar/` with the correct platform naming.
+This uses PyInstaller (from the `.venv`) to build a single-file binary and copies it to
+`desktop/src-tauri/sidecar/aimatrx-engine-<platform-triple>`. The binary (~60 MB) bundles
+the full Python engine including FastAPI, uvicorn, and all scraping libraries.
 
-### 2. Build the desktop app
+Rebuild the sidecar any time you change Python code.
+
+### 3. Build the desktop app
 
 ```bash
 cd desktop
-npm run tauri:build
+pnpm install
+pnpm tauri build
 ```
 
 Outputs: `.dmg` (macOS), `.msi` (Windows), `.AppImage`/`.deb` (Linux).
