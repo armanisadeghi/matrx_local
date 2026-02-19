@@ -128,7 +128,30 @@ def on_quit(icon: Icon, item: MenuItem) -> None:
     os._exit(0)
 
 
+def _has_system_tray() -> bool:
+    """Check if a system tray is available (not available in WSL/headless)."""
+    if sys.platform == "win32" or sys.platform == "darwin":
+        return True
+    display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    if not display:
+        return False
+    if "microsoft" in Path("/proc/version").read_text().lower() if Path("/proc/version").exists() else "":
+        return False
+    return True
+
+
 def setup_tray(port: int) -> None:
+    if not _has_system_tray():
+        logger.info("No system tray available (WSL/headless) — running without tray icon")
+        try:
+            import signal
+            signal.pause()
+        except (AttributeError, KeyboardInterrupt):
+            import time
+            while True:
+                time.sleep(3600)
+        return
+
     menu = Menu(
         MenuItem(f"Matrx Local (:{port})", lambda *_: None, enabled=False),
         Menu.SEPARATOR,
