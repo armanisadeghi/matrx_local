@@ -355,6 +355,90 @@ class EngineAPI {
     return resp.json();
   }
 
+  // ---- SSE streaming (remote scraper) ----
+
+  /**
+   * Open an SSE stream to a remote-scraper proxy endpoint.
+   * Calls `onEvent` for each parsed SSE event, `onDone` when stream ends.
+   * Returns an AbortController the caller can use to cancel the stream.
+   */
+  async streamSSE(
+    path: string,
+    payload: Record<string, unknown>,
+    onEvent: (event: string, data: unknown) => void,
+    onDone?: () => void,
+    onError?: (err: Error) => void,
+  ): Promise<AbortController> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const controller = new AbortController();
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+
+    const run = async () => {
+      try {
+        const resp = await fetch(`${this.baseUrl}${path}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        if (!resp.ok) throw new Error(`SSE stream failed: ${resp.status}`);
+        const reader = resp.body?.getReader();
+        if (!reader) throw new Error("No response body");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let currentEvent = "message";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              currentEvent = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              const raw = line.slice(5).trim();
+              try {
+                const parsed = JSON.parse(raw);
+                onEvent(currentEvent, parsed);
+              } catch {
+                onEvent(currentEvent, raw);
+              }
+              currentEvent = "message";
+            }
+            // Ignore empty lines and comments
+          }
+        }
+        onDone?.();
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return;
+        onError?.(err instanceof Error ? err : new Error(String(err)));
+      }
+    };
+
+    run();
+    return controller;
+  }
+
+  /** Stream scrape results via SSE. */
+  scrapeRemotelyStream(
+    urls: string[],
+    options: Record<string, unknown> | undefined,
+    onEvent: (event: string, data: unknown) => void,
+    onDone?: () => void,
+    onError?: (err: Error) => void,
+  ): Promise<AbortController> {
+    return this.streamSSE(
+      "/remote-scraper/scrape/stream",
+      { urls, options: options ?? {} },
+      onEvent, onDone, onError,
+    );
+  }
+
   /** Subscribe to engine events. */
   on(event: string, callback: (data: unknown) => void): () => void {
     if (!this.eventListeners.has(event)) {

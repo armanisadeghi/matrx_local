@@ -8,6 +8,8 @@
     "shell:allow-execute",
     "notification:default",
     "store:default",
-    "autostart:default"
+    "autostart:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

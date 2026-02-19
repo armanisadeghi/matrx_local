@@ -12,6 +12,7 @@ No direct database access — the server handles all persistence.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -119,6 +120,26 @@ class RemoteScraperClient:
             )
             resp.raise_for_status()
             return resp.json()
+
+    async def stream_sse(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        auth_token: str | None = None,
+        timeout: float = 300.0,
+    ) -> AsyncIterator[bytes]:
+        """Open an SSE stream from the scraper server and yield raw lines."""
+        headers = self._headers(auth_token)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
+            async with client.stream(
+                "POST",
+                f"{self._server_url}{path}",
+                headers=headers,
+                json=payload,
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    yield (line + "\n").encode("utf-8")
 
     async def get_domain_configs(self, auth_token: str | None = None) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:

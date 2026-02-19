@@ -47,6 +47,33 @@ export async function setCloseToTray(enabled: boolean): Promise<void> {
   await inv("set_close_to_tray", { enabled });
 }
 
+export interface UpdateStatus {
+  status: "up_to_date" | "available" | "downloading" | "installed";
+  version?: string;
+  body?: string;
+  content_length?: number;
+  downloaded?: number;
+}
+
+/** Check for updates via the Tauri updater plugin. */
+export async function checkForUpdates(install = false): Promise<UpdateStatus> {
+  const inv = await loadTauriInvoke();
+  if (!inv) return { status: "up_to_date" };
+  const result = await inv("check_for_updates", { install }) as UpdateStatus;
+  return result;
+}
+
+/** Restart the app (used after installing an update). */
+export async function restartApp(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  } catch {
+    // process plugin not available
+  }
+}
+
 /** Wait for the engine health endpoint to respond. */
 export async function waitForEngine(
   baseUrl: string,

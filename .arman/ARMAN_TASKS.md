@@ -14,7 +14,10 @@
 
 ## Current
 
-No manual tasks pending.
+- [ ] Set up GitHub Actions for signed Tauri builds. The signing private key is at `~/.tauri/matrx-local.key`. Set these as GitHub Actions secrets:
+  - `TAURI_SIGNING_PRIVATE_KEY` -- contents of `~/.tauri/matrx-local.key`
+  - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` -- empty string (no password)
+- [ ] Create first GitHub Release to test auto-updater flow
 
 ## Notes
 

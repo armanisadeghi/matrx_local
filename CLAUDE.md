@@ -77,10 +77,13 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Launch on Startup** -- `tauri-plugin-autostart` wired to Settings toggle
 - **Minimize to Tray** -- Configurable via `set_close_to_tray` Rust command, synced from Settings
 - **Engine settings API** -- `PUT /settings` endpoint, synced on change and on startup
+- **SSE streaming** -- Proxy routes + `stream_sse()` on engine, `streamSSE()` in frontend API, real-time results in Scraping page with live progress bar and stop button
+- **Auto-updater** -- `tauri-plugin-updater` + `tauri-plugin-process` wired in Rust. Signing keypair generated (`~/.tauri/matrx-local.key`). Settings UI has check/install/restart buttons. Config points to GitHub Releases.
+- **Cargo build passes** -- All Rust code compiles clean (`cargo check` + `cargo clippy`)
 
 ### Still Needs Work
-- **SSE streaming** -- Remote scraper SSE endpoints not integrated in desktop UI
 - **Rate limiting** -- No per-user rate limiting on scraper server
+- **GitHub Actions** -- Need CI/CD workflow for signed release builds (`tauri-action` + signing key env var)
 
 ---
 
@@ -125,6 +128,7 @@ npm run tauri:dev
 | Engine hook | `desktop/src/hooks/use-engine.ts` |
 | Theme hook | `desktop/src/hooks/use-theme.ts` |
 | Settings persistence | `desktop/src/lib/settings.ts` |
+| Sidecar / update utils | `desktop/src/lib/sidecar.ts` |
 | CSS theme vars | `desktop/src/index.css` |
 | Tailwind config | `desktop/tailwind.config.ts` |
 | Tauri config | `desktop/src-tauri/tauri.conf.json` |

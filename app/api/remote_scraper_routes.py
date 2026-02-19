@@ -9,6 +9,7 @@ forwarded to the scraper server. Otherwise, falls back to SCRAPER_API_KEY.
 """
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.services.scraper.remote_client import get_remote_scraper
 from app.common.system_logger import get_logger
@@ -109,3 +110,60 @@ async def remote_research(req: ResearchRequest, request: Request):
     except Exception as e:
         logger.error(f"Remote research failed: {e}")
         raise HTTPException(502, f"Remote scraper error: {e}")
+
+
+# ---- SSE streaming proxy endpoints ----
+
+def _ensure_configured():
+    client = get_remote_scraper()
+    if not client.is_configured:
+        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
+    return client
+
+
+@router.post("/scrape/stream")
+async def remote_scrape_stream(req: ScrapeRequest, request: Request):
+    client = _ensure_configured()
+    return StreamingResponse(
+        client.stream_sse(
+            "/api/v1/scrape/stream",
+            {"urls": req.urls, "options": req.options or {}},
+            auth_token=_get_user_token(request),
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/search-and-scrape/stream")
+async def remote_search_and_scrape_stream(req: SearchAndScrapeRequest, request: Request):
+    client = _ensure_configured()
+    return StreamingResponse(
+        client.stream_sse(
+            "/api/v1/search-and-scrape/stream",
+            {
+                "keywords": req.keywords,
+                "total_results_per_keyword": req.total_results_per_keyword,
+                "options": req.options or {},
+            },
+            auth_token=_get_user_token(request),
+            timeout=300.0,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/research/stream")
+async def remote_research_stream(req: ResearchRequest, request: Request):
+    client = _ensure_configured()
+    return StreamingResponse(
+        client.stream_sse(
+            "/api/v1/research/stream",
+            {"query": req.query, "effort": req.effort, "country": req.country},
+            auth_token=_get_user_token(request),
+            timeout=300.0,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

@@ -7,6 +7,9 @@ import {
   RefreshCw,
   Power,
   FolderOpen,
+  Download,
+  Loader2,
+  CheckCircle2,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,7 +34,7 @@ import type { useAuth } from "@/hooks/use-auth";
 import type { Theme } from "@/hooks/use-theme";
 
 declare const __APP_VERSION__: string;
-import { isTauri } from "@/lib/sidecar";
+import { isTauri, checkForUpdates, restartApp, type UpdateStatus } from "@/lib/sidecar";
 import {
   loadSettings,
   saveSetting,
@@ -61,10 +64,24 @@ export function Settings({
 }: SettingsProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     loadSettings().then(setSettings);
   }, []);
+
+  const handleCheckUpdate = async (install = false) => {
+    setChecking(true);
+    try {
+      const status = await checkForUpdates(install);
+      setUpdateStatus(status);
+    } catch {
+      setUpdateStatus({ status: "up_to_date" });
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const updateSetting = <K extends keyof AppSettings>(
     key: K,
@@ -369,6 +386,65 @@ export function Settings({
                 </Badge>
               </div>
               <Separator />
+
+              {/* Update check */}
+              {isTauri() && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Updates</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {updateStatus?.status === "available"
+                          ? `v${updateStatus.version} available`
+                          : updateStatus?.status === "installed"
+                            ? "Update installed — restart to apply"
+                            : updateStatus?.status === "up_to_date"
+                              ? "You're on the latest version"
+                              : "Check for new releases"}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      {updateStatus?.status === "installed" ? (
+                        <Button size="sm" onClick={restartApp}>
+                          <RefreshCw className="h-4 w-4" />
+                          Restart
+                        </Button>
+                      ) : updateStatus?.status === "available" ? (
+                        <Button
+                          size="sm"
+                          onClick={() => handleCheckUpdate(true)}
+                          disabled={checking}
+                        >
+                          {checking ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Download className="h-4 w-4" />
+                          )}
+                          Install Update
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCheckUpdate(false)}
+                          disabled={checking}
+                        >
+                          {checking ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : updateStatus?.status === "up_to_date" ? (
+                            <CheckCircle2 className="h-4 w-4" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
+                          Check for Updates
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <Separator />
+                </>
+              )}
+
               <div className="flex gap-2">
                 <Button
                   variant="outline"

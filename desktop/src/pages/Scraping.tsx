@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   Globe,
   Play,
@@ -8,6 +8,7 @@ import {
   Clock,
   ExternalLink,
   Trash2,
+  StopCircle,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { engine, type ScrapeResultData, type RemoteScrapeResponse } from "@/lib/api";
+import { engine, type ScrapeResultData } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
 import { formatDuration, truncateUrl } from "@/lib/utils";
 
@@ -48,6 +49,7 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
   const [selectedResult, setSelectedResult] = useState<ScrapeResultData | null>(
     null
   );
+  const abortRef = useRef<AbortController | null>(null);
 
   const parseUrls = useCallback((text: string): string[] => {
     return text
@@ -61,6 +63,21 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
           return u.startsWith("http://") || u.startsWith("https://");
         }
       });
+  }, []);
+
+  const updateJob = useCallback((jobId: string, patch: Partial<ScrapeJob>) => {
+    setJobs((prev) => prev.map((j) => j.id === jobId ? { ...j, ...patch } : j));
+  }, []);
+
+  const appendResult = useCallback((jobId: string, result: ScrapeResultData) => {
+    setJobs((prev) => prev.map((j) =>
+      j.id === jobId ? { ...j, results: [...j.results, result] } : j
+    ));
+  }, []);
+
+  const stopScrape = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
   }, []);
 
   const startScrape = useCallback(async () => {
@@ -82,25 +99,55 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
     setUrlInput("");
 
     try {
-      let results: ScrapeResultData[];
-
       if (method === "remote") {
-        const resp: RemoteScrapeResponse = await engine.scrapeRemotely(
+        // Use SSE streaming for real-time results
+        const controller = await engine.scrapeRemotelyStream(
           urls,
           { use_cache: useCache },
+          (event, data) => {
+            const d = data as Record<string, unknown>;
+            if (event === "page_result") {
+              const result: ScrapeResultData = {
+                url: String(d.url ?? ""),
+                success: d.status === "success",
+                status_code: (d.status_code as number) ?? 0,
+                content: String(d.text_data ?? d.content ?? ""),
+                title: String(d.title ?? ""),
+                content_type: String(d.content_type ?? ""),
+                response_url: String(d.url ?? ""),
+                error: d.error ? String(d.error) : null,
+                elapsed_ms: (d.elapsed_ms as number) ?? 0,
+              };
+              appendResult(job.id, result);
+            }
+          },
+          () => {
+            updateJob(job.id, { status: "completed", completedAt: new Date() });
+            abortRef.current = null;
+          },
+          (err) => {
+            updateJob(job.id, { status: "failed", completedAt: new Date() });
+            appendResult(job.id, {
+              url: urls[0] ?? "",
+              success: false,
+              status_code: 0,
+              content: "",
+              title: "",
+              content_type: "",
+              response_url: urls[0] ?? "",
+              error: err.message,
+              elapsed_ms: 0,
+            });
+            abortRef.current = null;
+          },
         );
-        results = resp.results.map((r) => ({
-          url: r.url,
-          success: r.status === "success",
-          status_code: r.status_code ?? 0,
-          content: r.text_data ?? "",
-          title: "",
-          content_type: r.content_type ?? "",
-          response_url: r.url,
-          error: r.error,
-          elapsed_ms: resp.execution_time_ms ?? 0,
-        }));
-      } else if (method === "local-browser") {
+        abortRef.current = controller;
+        return;
+      }
+
+      let results: ScrapeResultData[];
+
+      if (method === "local-browser") {
         const toolResult = await engine.invokeTool("FetchWithBrowser", {
           url: urls[0],
           extract_text: true,
@@ -150,43 +197,25 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
         }
       }
 
-      setJobs((prev) =>
-        prev.map((j) =>
-          j.id === job.id
-            ? {
-                ...j,
-                status: "completed",
-                results,
-                completedAt: new Date(),
-              }
-            : j
-        )
-      );
+      updateJob(job.id, { status: "completed", results, completedAt: new Date() });
     } catch (err) {
-      setJobs((prev) =>
-        prev.map((j) =>
-          j.id === job.id
-            ? {
-                ...j,
-                status: "failed",
-                completedAt: new Date(),
-                results: urls.map((url) => ({
-                  url,
-                  success: false,
-                  status_code: 0,
-                  content: "",
-                  title: "",
-                  content_type: "",
-                  response_url: url,
-                  error: err instanceof Error ? err.message : String(err),
-                  elapsed_ms: 0,
-                })),
-              }
-            : j
-        )
-      );
+      updateJob(job.id, {
+        status: "failed",
+        completedAt: new Date(),
+        results: urls.map((url) => ({
+          url,
+          success: false,
+          status_code: 0,
+          content: "",
+          title: "",
+          content_type: "",
+          response_url: url,
+          error: err instanceof Error ? err.message : String(err),
+          elapsed_ms: 0,
+        })),
+      });
     }
-  }, [urlInput, useCache, method, parseUrls]);
+  }, [urlInput, useCache, method, parseUrls, updateJob, appendResult]);
 
   const activeJob = jobs.find((j) => j.id === selectedJob);
   const urlCount = parseUrls(urlInput).length;
@@ -252,27 +281,25 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
               </div>
             </div>
 
-            <Button
-              className="w-full"
-              onClick={startScrape}
-              disabled={
-                urlCount === 0 ||
-                engineStatus !== "connected" ||
-                jobs.some((j) => j.status === "running")
-              }
-            >
-              {jobs.some((j) => j.status === "running") ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Scraping...
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4" />
-                  Scrape {urlCount > 0 ? `${urlCount} URL${urlCount > 1 ? "s" : ""}` : ""}
-                </>
-              )}
-            </Button>
+            {jobs.some((j) => j.status === "running") ? (
+              <Button
+                className="w-full"
+                variant="destructive"
+                onClick={stopScrape}
+              >
+                <StopCircle className="h-4 w-4" />
+                Stop Scraping
+              </Button>
+            ) : (
+              <Button
+                className="w-full"
+                onClick={startScrape}
+                disabled={urlCount === 0 || engineStatus !== "connected"}
+              >
+                <Play className="h-4 w-4" />
+                Scrape {urlCount > 0 ? `${urlCount} URL${urlCount > 1 ? "s" : ""}` : ""}
+              </Button>
+            )}
           </div>
 
           <Separator />
@@ -432,9 +459,26 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
                       </button>
                     ))}
                     {activeJob.status === "running" && (
-                      <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span className="text-sm">Scraping in progress...</span>
+                      <div className="space-y-3 py-4">
+                        {activeJob.results.length > 0 && activeJob.urls.length > 0 && (
+                          <div className="px-1">
+                            <Progress
+                              value={(activeJob.results.length / activeJob.urls.length) * 100}
+                              className="h-1.5"
+                            />
+                            <span className="mt-1 text-[10px] text-muted-foreground">
+                              {activeJob.results.length}/{activeJob.urls.length} completed
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span className="text-sm">
+                            {activeJob.results.length > 0
+                              ? `Scraping... (${activeJob.results.length}/${activeJob.urls.length})`
+                              : "Scraping in progress..."}
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>

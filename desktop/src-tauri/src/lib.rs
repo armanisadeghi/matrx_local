@@ -1,13 +1,14 @@
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_shell::ShellExt;
+use tauri_plugin_updater::UpdaterExt;
 
 /// Holds the sidecar child process handle for lifecycle management.
 struct SidecarState {
@@ -110,6 +111,92 @@ async fn get_close_to_tray(state: tauri::State<'_, CloseToTray>) -> Result<bool,
     Ok(state.0.load(Ordering::Relaxed))
 }
 
+#[derive(Clone, Serialize)]
+struct UpdateProgress {
+    status: String,
+    version: Option<String>,
+    body: Option<String>,
+    content_length: Option<u64>,
+    downloaded: u64,
+}
+
+/// Check for app updates and optionally install them.
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle, install: bool) -> Result<UpdateProgress, String> {
+    let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
+
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("Update check failed: {}", e))?;
+
+    match update {
+        Some(update) => {
+            let version = update.version.clone();
+            let body = update.body.clone();
+
+            if install {
+                let app_handle = app.clone();
+                let ver = version.clone();
+
+                // Download and install
+                update
+                    .download_and_install(
+                        |chunk_length, content_length| {
+                            let _ = app_handle.emit(
+                                "update-progress",
+                                UpdateProgress {
+                                    status: "downloading".to_string(),
+                                    version: Some(ver.clone()),
+                                    body: None,
+                                    content_length,
+                                    downloaded: chunk_length as u64,
+                                },
+                            );
+                        },
+                        || {
+                            let _ = app_handle.emit(
+                                "update-progress",
+                                UpdateProgress {
+                                    status: "installed".to_string(),
+                                    version: Some(ver.clone()),
+                                    body: None,
+                                    content_length: None,
+                                    downloaded: 0,
+                                },
+                            );
+                        },
+                    )
+                    .await
+                    .map_err(|e| format!("Update install failed: {}", e))?;
+
+                Ok(UpdateProgress {
+                    status: "installed".to_string(),
+                    version: Some(version),
+                    body,
+                    content_length: None,
+                    downloaded: 0,
+                })
+            } else {
+                Ok(UpdateProgress {
+                    status: "available".to_string(),
+                    version: Some(version),
+                    body,
+                    content_length: None,
+                    downloaded: 0,
+                })
+            }
+        }
+        None => Ok(UpdateProgress {
+            status: "up_to_date".to_string(),
+            version: None,
+            body: None,
+            content_length: None,
+            downloaded: 0,
+        }),
+    }
+}
+
 /// Set up the system tray icon and menu.
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItemBuilder::with_id("show", "Show AI Matrx").build(app)?;
@@ -173,6 +260,8 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(SidecarState {
             child: Mutex::new(None),
         })
@@ -183,6 +272,7 @@ pub fn run() {
             sidecar_status,
             set_close_to_tray,
             get_close_to_tray,
+            check_for_updates,
         ])
         .setup(|app| {
             // Set up system tray

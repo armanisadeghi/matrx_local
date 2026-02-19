@@ -48,7 +48,7 @@
 - [x] **JWT auth on server** -- Scraper server validates Supabase JWTs via JWKS.
 - [x] **Frontend integration** -- Scraping page has Engine/Browser/Remote toggle. Remote calls `/remote-scraper/scrape`.
 - [x] **`api.ts` methods** -- Added `scrapeRemotely()`, `remoteScraperStatus()`, `RemoteScrapeResponse` type.
-- [ ] **SSE streaming** -- Need to integrate SSE streaming endpoints in the desktop UI.
+- [x] **SSE streaming** -- Proxy routes + `stream_sse()` on engine, `streamSSE()` in frontend API, real-time results in Scraping page.
 - [ ] **Rate limiting** -- No per-user rate limiting on scraper server yet.
 
 ---
@@ -93,14 +93,15 @@
 
 ## Future Work
 
-- [ ] Auto-updater endpoint configuration
+- [x] Auto-updater -- `tauri-plugin-updater` + `tauri-plugin-process` wired. Signing keypair generated. Settings UI shows check/install/restart buttons.
 - [ ] First-run setup wizard
 - [ ] Job queue for cloud-assigned scrape jobs
 - [ ] Device registration with cloud
 - [ ] Result sync to cloud storage
-- [ ] SSE streaming support in desktop UI for scrape progress
+- [x] SSE streaming support in desktop UI for scrape progress
 - [ ] Rate limiting on scraper server
 - [ ] No Alembic migration runner (only matters with local DATABASE_URL)
+- [ ] GitHub Actions workflow for signed release builds (uses `tauri-action` + signing key)
 
 ---
 
