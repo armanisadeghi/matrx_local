@@ -9,7 +9,13 @@ from app.tools.session import ToolSession
 from app.tools.tools.clipboard import tool_clipboard_read, tool_clipboard_write
 from app.tools.tools.execution import tool_bash, tool_bash_output, tool_task_stop
 from app.tools.tools.file_ops import tool_edit, tool_glob, tool_grep, tool_read, tool_write
-from app.tools.tools.network import tool_fetch_url, tool_fetch_with_browser
+from app.tools.tools.network import (
+    tool_fetch_url,
+    tool_fetch_with_browser,
+    tool_research,
+    tool_scrape,
+    tool_search,
+)
 from app.tools.tools.notify import tool_notify
 from app.tools.tools.system import (
     tool_list_directory,
@@ -47,9 +53,13 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "ClipboardWrite": tool_clipboard_write,
     # Notifications
     "Notify": tool_notify,
-    # Network / Scraping
+    # Network / Scraping (simple)
     "FetchUrl": tool_fetch_url,
     "FetchWithBrowser": tool_fetch_with_browser,
+    # Scraper engine (advanced)
+    "Scrape": tool_scrape,
+    "Search": tool_search,
+    "Research": tool_research,
     # File transfer
     "DownloadFile": tool_download_file,
     "UploadFile": tool_upload_file,

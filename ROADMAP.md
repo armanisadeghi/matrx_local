@@ -6,7 +6,7 @@
 
 ---
 
-## What's Already Built (v0.2)
+## What's Already Built (v0.3)
 
 | Area | Tools / Endpoints | Status |
 |------|------------------|--------|
@@ -15,61 +15,51 @@
 | **System** | `SystemInfo`, `Screenshot`, `ListDirectory`, `OpenUrl`, `OpenPath` | Done |
 | **Clipboard** | `ClipboardRead`, `ClipboardWrite` — cross-platform via pyperclip | Done |
 | **Notifications** | `Notify` — native OS notifications via plyer (macOS, Windows, Linux) | Done |
-| **Scraping Proxy** | `FetchUrl` (httpx, residential IP), `FetchWithBrowser` (Playwright headless) | Done |
+| **Scraping (Simple)** | `FetchUrl` (httpx, residential IP), `FetchWithBrowser` (Playwright headless) | Done |
+| **Scraping (Advanced)** | `Scrape` (multi-strategy, Cloudflare-aware, caching), `Search` (Brave API), `Research` (search + scrape + compile) | Done (v0.3) |
 | **File Transfer** | `DownloadFile`, `UploadFile` — chunked streaming via httpx | Done |
 | **Transport** | WebSocket (`/ws`) with per-connection sessions, concurrent dispatch, cancellation | Done |
 | **Transport** | REST (`/tools/invoke`, `/tools/list`) — stateless, one-shot | Done |
 | **Packaging** | PyInstaller `.spec` for macOS `.app` / Windows `.exe` / Linux binary | Done |
 | **Auto-Update** | tufup integration in startup — checks remote server, applies updates, restarts | Done |
+| **Scraper Engine** | Full `scraper-service` integrated via git subtree — orchestrator, fetcher (httpx/curl-cffi/Playwright), parser, cache, domain config, Brave Search | Done (v0.3) |
 | **Legacy Routes** | `/trigger`, `/system/info`, `/files`, `/screenshot`, `/db-data`, `/logs`, `/generate-directory-structure/*` | Done (pre-tool-system) |
 | **Services (stubs)** | `audio/recorder`, `screenshots/capture` | Partial |
 | **Services (empty)** | `ai/`, `audio/player`, `files/explorer`, `files/uploader`, `transcription/transcribe`, `tts/player` | Placeholder only |
+
+**23 tools total across 7 categories.**
 
 ---
 
 ## Priority 1 — High Impact, Moderate Effort
 
-### 1. Web Scraping Proxy
+### 1. Scraping Enhancements (builds on v0.3 scraper engine)
 
-**Why this is the #1 priority:** Users' residential IPs get dramatically better results than data-center proxies. Anti-bot systems (Cloudflare Turnstile, DataDome, PerimeterX, Akamai) treat residential traffic as legitimate. Running scraping through the user's machine means:
+The core scraper engine is integrated. These additions would extend it:
 
-- No CAPTCHAs or JS challenges in most cases
-- Access to geo-restricted content based on the user's real location
-- No proxy costs — the user's own connection is the proxy
-- Logged-in scraping — the user's own browser cookies and sessions are available
-
-**Capabilities to build:**
-
-- **`FetchUrl`** — Simple HTTP fetch from the local machine (GET, POST, etc.) with full request/response passthrough (headers, cookies, status codes, body). The web app sends the request spec, `matrx_local` executes it using the user's IP, returns the result.
-- **`FetchWithBrowser`** — Full headless browser fetch via Playwright for JS-rendered pages. Waits for content, handles SPA navigation, returns rendered DOM.
 - **`ScrapeStructured`** — Given a URL and extraction rules (CSS selectors, XPath, or a natural language description for the AI to interpret), return structured JSON data. Supports pagination.
 - **`BrowserSession`** — Persistent browser context for multi-step scraping workflows. Login once, then scrape protected pages across multiple tool calls in the same session.
 - **`CookieExport`** — Export cookies from the user's installed browsers (Chrome, Firefox, Safari) for use in fetch requests. Lets AI agents make authenticated requests as the user.
 - **`ProxyRelay`** — Expose a local SOCKS5/HTTP proxy endpoint that the cloud server can tunnel requests through. The user's machine becomes a relay node for the platform's scraping infrastructure.
 
-### 2. Clipboard Integration
+### 2. Clipboard Enhancements
 
-- **`ClipboardRead`** — Get current clipboard contents (text, image, file references)
-- **`ClipboardWrite`** — Write text or image to clipboard
+`ClipboardRead` and `ClipboardWrite` are done. Still needed:
+
 - **`ClipboardWatch`** — Stream clipboard changes in real time (user copies something, AI sees it immediately)
 
-Why: Users constantly copy-paste between apps. Having the AI react to clipboard content in real time is a killer UX pattern (e.g., user copies a URL and the AI immediately starts analyzing it).
+### 3. Notification Enhancements
 
-### 3. Notification / Alert System
+`Notify` is done. Still needed:
 
-- **`Notify`** — Send native OS notifications (macOS Notification Center, Windows Toast, Linux libnotify) with title, body, icon, actions
 - **`NotifyWithAction`** — Notification with clickable action buttons that send a response back to the AI
 - **`AlertDialog`** — Show a native dialog (confirm/cancel, input prompt) and return the user's choice
 
-Why: AI agents need a way to get the user's attention and ask for confirmation before taking destructive actions. This is also essential for background tasks that complete while the user is in another app.
+### 4. File Transfer Enhancements
 
-### 4. File Transfer (Cloud <-> Local)
+`DownloadFile` and `UploadFile` are done. Still needed:
 
-- **`UploadFile`** — Upload a local file to Supabase Storage or a presigned URL. Supports large files with chunked upload and progress reporting.
-- **`DownloadFile`** — Download a file from a URL to a local path. Progress reporting via WebSocket.
 - **`SyncDirectory`** — Two-way sync between a local directory and a Supabase Storage bucket. Configurable ignore patterns.
-
-Why: Users need to move files between their machine and the cloud. AI agents need to save generated content locally or upload local files for processing.
 
 ---
 
@@ -85,8 +75,6 @@ Build on the existing `recorder.py` stub:
 - **`AudioDeviceList`** — List available audio input/output devices.
 - **`AudioTranscribe`** — Local speech-to-text using Whisper (runs on user's hardware, no API cost, no data leaves the machine).
 
-Why: Voice interaction is the fastest-growing AI modality. Running transcription locally is free, private, and low-latency.
-
 ### 6. Process & Application Management
 
 - **`ProcessList`** — List running processes with CPU/memory usage
@@ -96,16 +84,12 @@ Why: Voice interaction is the fastest-growing AI modality. Running transcription
 - **`AppList`** — List installed applications
 - **`WindowList`** — List open windows with titles and positions
 
-Why: AI agents managing a user's workflow need to interact with running applications. "Open my text editor", "kill the hung process", "what's using all my CPU" are common requests.
-
 ### 7. Local AI Model Execution
 
 - **`ModelLoad`** — Load a local GGUF/ONNX model into memory using llama.cpp or similar
 - **`ModelInfer`** — Run inference on a loaded model (text generation, embeddings)
 - **`ModelList`** — List available local models and their status
 - **`ModelUnload`** — Free GPU/RAM by unloading a model
-
-Why: Some users have powerful local GPUs. Running certain inference tasks locally (summarization, classification, embedding generation) is faster, cheaper, and more private than round-tripping to a cloud API.
 
 ### 8. Screen & Input Automation
 
@@ -116,71 +100,35 @@ Why: Some users have powerful local GPUs. Running certain inference tasks locall
 - **`KeyboardType`** — Type text with proper key events
 - **`KeyboardShortcut`** — Press key combinations (Cmd+C, Ctrl+Alt+Del, etc.)
 
-Why: Full desktop automation. An AI agent that can see the screen and control the mouse/keyboard can automate any application, even ones without APIs.
-
 ---
 
 ## Priority 3 — Valuable, Build When Needed
 
 ### 9. Git Operations
 
-- **`GitStatus`** — Get repo status, branch, changed files
-- **`GitDiff`** — Get diff of working tree or between commits
-- **`GitCommit`** — Stage files and commit with message
-- **`GitLog`** — Get commit history
-- **`GitBranch`** — Create, switch, list branches
-- **`GitClone`** — Clone a repository to a local path
-
-Why: Developer-focused users will want AI agents that can manage their repos. While `Bash` can already do this, purpose-built tools give the AI structured data instead of parsing CLI output.
+- **`GitStatus`**, **`GitDiff`**, **`GitCommit`**, **`GitLog`**, **`GitBranch`**, **`GitClone`**
 
 ### 10. Database Access (Local)
 
-- **`DbQuery`** — Run SQL against a local PostgreSQL, MySQL, or SQLite database
-- **`DbSchema`** — Inspect tables, columns, types, constraints
-- **`DbExport`** — Export query results to CSV/JSON
-- **`DbImport`** — Import CSV/JSON into a table
-
-Why: Many users run local databases for development. AI agents that can inspect and query local DBs are incredibly useful for debugging, data analysis, and migrations.
+- **`DbQuery`**, **`DbSchema`**, **`DbExport`**, **`DbImport`**
 
 ### 11. Network Utilities
 
-- **`PortScan`** — Check which ports are open on the local machine or a target host
-- **`DnsLookup`** — DNS resolution, reverse lookup, record types
-- **`HttpTest`** — Send arbitrary HTTP requests and get detailed response info (timing, headers, TLS)
-- **`NetworkInfo`** — Local IP, public IP, active connections, interfaces
-- **`SpeedTest`** — Measure download/upload speed
-
-Why: Debugging network issues is one of the most common developer tasks. These tools also feed into the scraping proxy — knowing the user's network state helps optimize scraping strategies.
+- **`PortScan`**, **`DnsLookup`**, **`HttpTest`**, **`NetworkInfo`**, **`SpeedTest`**
 
 ### 12. Docker / Container Management
 
-- **`DockerPs`** — List running containers
-- **`DockerLogs`** — Get container logs
-- **`DockerExec`** — Run a command inside a container
-- **`DockerCompose`** — Start/stop/restart compose projects
-- **`DockerBuild`** — Build an image from a Dockerfile
-
-Why: Developers working with containers need quick access from the AI to inspect and manage their local Docker environment.
+- **`DockerPs`**, **`DockerLogs`**, **`DockerExec`**, **`DockerCompose`**, **`DockerBuild`**
 
 ### 13. Environment & Config Management
 
-- **`EnvRead`** — Read environment variables (with optional filtering for safety)
-- **`EnvSet`** — Set environment variables for the session
-- **`DotenvRead`** — Read a .env file
-- **`DotenvWrite`** — Write/update a .env file
-- **`SshKeyList`** — List SSH keys
-- **`SshTest`** — Test SSH connectivity to a host
-
-Why: AI agents setting up dev environments, configuring services, or debugging connection issues need access to environment configuration.
+- **`EnvRead`**, **`EnvSet`**, **`DotenvRead`**, **`DotenvWrite`**, **`SshKeyList`**, **`SshTest`**
 
 ### 14. PDF / Document Processing
 
-- **`PdfExtract`** — Extract text, tables, images from PDFs (local, no API cost)
-- **`PdfGenerate`** — Generate PDFs from HTML/Markdown
-- **`OcrImage`** — OCR text from images using Tesseract or similar
-- **`DocConvert`** — Convert between document formats (docx, pdf, html, md)
+- **`PdfExtract`**, **`PdfGenerate`**, **`OcrImage`**, **`DocConvert`**
 
-Why: Document processing is a Python strength. Running it locally is free and private. This is one of the clearest cases for the Python microservice pattern described in the engineering constitution.
+Note: PDF text extraction and image OCR are already available through the scraper engine's content extractors (PyMuPDF, Tesseract). These tools would provide direct access outside of the scraping workflow.
 
 ---
 
@@ -213,7 +161,11 @@ Every new capability follows the same pattern:
 - **Tool** = a single, stateless operation that an AI agent or the UI can invoke (lives in `app/tools/tools/`)
 - **Service** = a longer-lived capability with its own state management (lives in `app/services/`). Tools may wrap service calls.
 
-Example: `AudioStream` is a service (maintains a live audio connection). `AudioRecord` is a tool that uses the audio service for a one-shot recording.
+Example: The scraper engine is a service (`app/services/scraper/engine.py`) that manages the orchestrator lifecycle. The `Scrape`, `Search`, and `Research` tools are thin wrappers that delegate to it.
+
+### Scraper Engine Integration
+
+The `scraper-service/` directory is a **git subtree** from the `ai-dream` monorepo. It is never edited in this repo — updates flow one-way via `./scripts/update-scraper.sh`. The `ScraperEngine` class in `app/services/scraper/engine.py` handles the `sys.modules` isolation needed to avoid import conflicts between the two `app/` packages.
 
 ### WebSocket Session State
 

@@ -1,3 +1,6 @@
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -5,15 +8,34 @@ from app.api.routes import router as api_router
 from app.api.tool_routes import router as tool_router
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
+from app.services.scraper.engine import get_scraper_engine
 from app.websocket_manager import WebSocketManager
 
 logger = get_logger()
 websocket_manager = WebSocketManager()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    engine = get_scraper_engine()
+    try:
+        await engine.start()
+    except Exception:
+        logger.error("Scraper engine failed to start — scraping tools will be unavailable", exc_info=True)
+
+    yield
+
+    try:
+        await engine.stop()
+    except Exception:
+        logger.error("Scraper engine failed to stop cleanly", exc_info=True)
+
+
 app = FastAPI(
     title="Matrx Local",
     description="Local companion service for AI Matrx — browser-to-filesystem bridge",
     version="0.2.0",
+    lifespan=lifespan,
 )
 
 app.include_router(api_router)
