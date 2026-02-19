@@ -105,11 +105,13 @@ matrx_local/
 │   │   ├── hooks/
 │   │   │   ├── use-engine.ts       # Engine auto-discovery, health, WS
 │   │   │   ├── use-auth.ts         # Supabase auth state + OAuth methods
+│   │   │   ├── use-theme.ts        # Dark/light/system theme management
 │   │   │   └── use-tool.ts         # Tool invocation with loading/error
 │   │   └── lib/
 │   │       ├── api.ts              # REST + WS client for Python engine
 │   │       ├── supabase.ts         # Supabase client singleton
 │   │       ├── sidecar.ts          # Tauri sidecar lifecycle
+│   │       ├── settings.ts         # App settings persistence (localStorage)
 │   │       └── utils.ts            # cn(), formatBytes, formatDuration
 │   ├── src-tauri/                  # Rust backend
 │   │   ├── src/lib.rs              # Sidecar spawn/kill, system tray, hide-to-tray
@@ -407,15 +409,24 @@ The React frontend scans the port range on startup. Cache the discovered port fo
 
 - **Scrape cache**: In-memory TTLCache by default. Set `DATABASE_URL` to a PostgreSQL connection string (e.g., your Supabase PostgreSQL) for persistent caching across restarts.
 - **Auth tokens**: Persisted in browser `localStorage` by Supabase client.
-- **App settings**: Tauri Store plugin available (`@tauri-apps/plugin-store`), not yet wired to UI settings.
+- **App settings**: Persisted to `localStorage` via `lib/settings.ts`. Tauri Store plugin is available for future native persistence upgrade.
+- **Theme**: Managed by `use-theme.ts` hook. Applies `.dark` class to `<html>`, persists preference to `localStorage`, supports system theme detection. Default: dark.
 - **Logs**: Rotating files in `system/logs/`.
 - **Temp files**: Screenshots, code saves in `system/temp/`.
+
+### Database Architecture
+
+Three separate database concerns:
+
+1. **Scrape Server** -- Dedicated PostgreSQL for the scraping system (domain configs, page cache, failure logs). Connected via `DATABASE_URL` in `.env`. Runs on its own server.
+2. **Supabase (Auth)** -- The AI Matrx platform's Supabase instance. Used for authentication only. Desktop app communicates strictly using the client auth token (anon key + user JWT). Never use the service role key.
+3. **In-Memory Cache** -- Default when no `DATABASE_URL` is set. Graceful fallback using TTLCache.
 
 ### Configuring Database
 
 In `.env`:
 ```env
-DATABASE_URL=postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres
+DATABASE_URL=postgresql://user:pass@your-scrape-server:5432/scraper_db
 ```
 
 The scraper engine uses `asyncpg` (PostgreSQL only). Without `DATABASE_URL`, the system works fully but scrape cache is memory-only.

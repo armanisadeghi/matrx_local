@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { User, Session, Provider } from "@supabase/supabase-js";
-import { getSupabase } from "@/lib/supabase";
+import supabase from "@/lib/supabase";
+
 
 export interface AuthState {
   user: User | null;
@@ -29,7 +30,6 @@ export function useAuth() {
 
   useEffect(() => {
     mountedRef.current = true;
-    const supabase = getSupabase();
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       update({
@@ -61,7 +61,6 @@ export function useAuth() {
   const signInWithOAuth = useCallback(
     async (provider: Provider) => {
       update({ loading: true, error: null });
-      const supabase = getSupabase();
 
       const redirectTo = `${window.location.origin}/auth/callback`;
 
@@ -98,7 +97,6 @@ export function useAuth() {
   const signInWithEmail = useCallback(
     async (email: string, password: string) => {
       update({ loading: true, error: null });
-      const supabase = getSupabase();
 
       const { error } = await supabase.auth.signInWithPassword({
         email,
@@ -114,7 +112,6 @@ export function useAuth() {
 
   const signOut = useCallback(async () => {
     update({ loading: true, error: null });
-    const supabase = getSupabase();
     const { error } = await supabase.auth.signOut();
     if (error) {
       update({ loading: false, error: error.message });
@@ -122,7 +119,6 @@ export function useAuth() {
   }, [update]);
 
   const getAccessToken = useCallback(async (): Promise<string | null> => {
-    const supabase = getSupabase();
     const {
       data: { session },
     } = await supabase.auth.getSession();

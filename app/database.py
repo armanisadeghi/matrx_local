@@ -1,9 +1,11 @@
 import asyncpg
+from app.config import DATABASE_URL
+
 
 async def get_connection():
-    return await asyncpg.connect(
-        user="armani",
-        password="ab1234",
-        database="matrx_local",
-        host="localhost"
-    )
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is not configured. "
+            "Set it in .env to enable database features."
+        )
+    return await asyncpg.connect(DATABASE_URL)

@@ -1,14 +1,12 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { getSupabase } from "@/lib/supabase";
+import supabase from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
 
 export function AuthCallback() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const supabase = getSupabase();
-
     supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
         navigate("/", { replace: true });

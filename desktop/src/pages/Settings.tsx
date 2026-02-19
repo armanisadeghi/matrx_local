@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Settings as SettingsIcon,
   Server,
@@ -26,7 +26,15 @@ import {
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { EngineStatus } from "@/hooks/use-engine";
+import { engine } from "@/lib/api";
 import type { useAuth } from "@/hooks/use-auth";
+import type { Theme } from "@/hooks/use-theme";
+import { isTauri } from "@/lib/sidecar";
+import {
+  loadSettings,
+  saveSetting,
+  type AppSettings,
+} from "@/lib/settings";
 
 type AuthActions = ReturnType<typeof useAuth>;
 
@@ -35,14 +43,62 @@ interface SettingsProps {
   engineUrl: string | null;
   onRefresh: () => void;
   auth: AuthActions;
+  theme: Theme;
+  setTheme: (t: Theme) => void;
 }
 
-export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsProps) {
-  const [launchOnStartup, setLaunchOnStartup] = useState(false);
-  const [minimizeToTray, setMinimizeToTray] = useState(true);
-  const [headlessScraping, setHeadlessScraping] = useState(true);
-  const [scrapeDelay, setScrapeDelay] = useState("1.0");
-  const [theme, setTheme] = useState<"dark" | "light" | "system">("dark");
+export function Settings({
+  engineStatus,
+  engineUrl,
+  onRefresh,
+  auth,
+  theme,
+  setTheme,
+}: SettingsProps) {
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [restarting, setRestarting] = useState(false);
+
+  useEffect(() => {
+    loadSettings().then(setSettings);
+  }, []);
+
+  const updateSetting = <K extends keyof AppSettings>(
+    key: K,
+    value: AppSettings[K]
+  ) => {
+    setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
+    saveSetting(key, value);
+  };
+
+  const handleRestartEngine = async () => {
+    if (!isTauri()) {
+      onRefresh();
+      return;
+    }
+    setRestarting(true);
+    try {
+      const { stopSidecar, startSidecar } = await import("@/lib/sidecar");
+      await stopSidecar();
+      await startSidecar();
+      await onRefresh();
+    } catch {
+      onRefresh();
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  const handleOpenFolder = async (folder: "logs" | "data") => {
+    if (engineStatus !== "connected") return;
+    const subpath = folder === "logs" ? "system/logs" : "system/data";
+    try {
+      await engine.invokeTool("OpenPath", { path: subpath });
+    } catch {
+      // Engine may not be reachable
+    }
+  };
+
+  if (!settings) return null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -116,11 +172,12 @@ export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsP
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={onRefresh}
+                  onClick={handleRestartEngine}
+                  disabled={restarting}
                   className="flex-1"
                 >
                   <Power className="h-4 w-4" />
-                  Restart Engine
+                  {restarting ? "Restarting..." : "Restart Engine"}
                 </Button>
               </div>
             </CardContent>
@@ -144,8 +201,8 @@ export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsP
                 </div>
                 <Switch
                   id="headless"
-                  checked={headlessScraping}
-                  onCheckedChange={setHeadlessScraping}
+                  checked={settings.headlessScraping}
+                  onCheckedChange={(v) => updateSetting("headlessScraping", v)}
                 />
               </div>
 
@@ -160,8 +217,10 @@ export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsP
                 </div>
                 <div className="flex items-center gap-2">
                   <Input
-                    value={scrapeDelay}
-                    onChange={(e) => setScrapeDelay(e.target.value)}
+                    value={settings.scrapeDelay}
+                    onChange={(e) =>
+                      updateSetting("scrapeDelay", e.target.value)
+                    }
                     className="w-20 text-right font-mono text-sm"
                     type="number"
                     min="0.5"
@@ -190,12 +249,7 @@ export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsP
                     Choose the application color scheme
                   </p>
                 </div>
-                <Select
-                  value={theme}
-                  onValueChange={(v) =>
-                    setTheme(v as "dark" | "light" | "system")
-                  }
-                >
+                <Select value={theme} onValueChange={(v) => setTheme(v as Theme)}>
                   <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>
@@ -218,8 +272,8 @@ export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsP
                 </div>
                 <Switch
                   id="startup"
-                  checked={launchOnStartup}
-                  onCheckedChange={setLaunchOnStartup}
+                  checked={settings.launchOnStartup}
+                  onCheckedChange={(v) => updateSetting("launchOnStartup", v)}
                 />
               </div>
 
@@ -234,8 +288,8 @@ export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsP
                 </div>
                 <Switch
                   id="tray"
-                  checked={minimizeToTray}
-                  onCheckedChange={setMinimizeToTray}
+                  checked={settings.minimizeToTray}
+                  onCheckedChange={(v) => updateSetting("minimizeToTray", v)}
                 />
               </div>
             </CardContent>
@@ -310,11 +364,23 @@ export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsP
               </div>
               <Separator />
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="flex-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => handleOpenFolder("logs")}
+                  disabled={engineStatus !== "connected"}
+                >
                   <FolderOpen className="h-4 w-4" />
                   Open Logs Folder
                 </Button>
-                <Button variant="outline" size="sm" className="flex-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => handleOpenFolder("data")}
+                  disabled={engineStatus !== "connected"}
+                >
                   <FolderOpen className="h-4 w-4" />
                   Open Data Folder
                 </Button>

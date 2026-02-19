@@ -48,7 +48,7 @@ export async function waitForEngine(
 ): Promise<boolean> {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const resp = await fetch(`${baseUrl}/health`, {
+      const resp = await fetch(`${baseUrl}/tools/list`, {
         signal: AbortSignal.timeout(1000),
       });
       if (resp.ok) return true;

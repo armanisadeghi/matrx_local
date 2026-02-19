@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { engine, type SystemInfo, type BrowserStatus } from "@/lib/api";
 import { isTauri, startSidecar } from "@/lib/sidecar";
-import { getSupabase } from "@/lib/supabase";
+import supabase from "@/lib/supabase";
 
 export type EngineStatus = "discovering" | "starting" | "connected" | "disconnected" | "error";
 
@@ -28,6 +28,8 @@ export function useEngine() {
 
   const mountedRef = useRef(true);
   const initRef = useRef(false);
+  const statusRef = useRef(state.status);
+  statusRef.current = state.status;
 
   const update = useCallback((partial: Partial<EngineState>) => {
     if (mountedRef.current) {
@@ -40,7 +42,7 @@ export function useEngine() {
     initRef.current = true;
 
     engine.setTokenProvider(async () => {
-      const { data: { session } } = await getSupabase().auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
       return session?.access_token ?? null;
     });
 
@@ -126,9 +128,9 @@ export function useEngine() {
     // Periodic health check
     const interval = setInterval(async () => {
       const healthy = await engine.isHealthy();
-      if (!healthy && state.status === "connected") {
+      if (!healthy && statusRef.current === "connected") {
         update({ status: "disconnected" });
-      } else if (healthy && state.status === "disconnected") {
+      } else if (healthy && statusRef.current === "disconnected") {
         update({ status: "connected" });
       }
     }, 10000);

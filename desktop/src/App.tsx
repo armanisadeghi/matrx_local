@@ -10,10 +10,12 @@ import { Login } from "@/pages/Login";
 import { AuthCallback } from "@/pages/AuthCallback";
 import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
+import { useTheme } from "@/hooks/use-theme";
 import { Loader2 } from "lucide-react";
 
 export default function App() {
   const auth = useAuth();
+  const themeCtx = useTheme();
   const {
     status,
     url,
@@ -84,6 +86,8 @@ export default function App() {
                     engineUrl={url}
                     onRefresh={refresh}
                     auth={auth}
+                    theme={themeCtx.theme}
+                    setTheme={themeCtx.setTheme}
                   />
                 }
               />
