@@ -12,14 +12,17 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
 _DEFAULT_ORIGINS = ",".join([
     "https://aimatrx.com",
     "https://www.aimatrx.com",
+    "http://localhost:1420",
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:3002",
     "http://localhost:5173",
+    "http://127.0.0.1:1420",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
     "http://127.0.0.1:3002",
     "http://127.0.0.1:5173",
+    "tauri://localhost",
 ])
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
 

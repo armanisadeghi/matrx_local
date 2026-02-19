@@ -86,27 +86,53 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
       let results: ScrapeResultData[];
 
       if (method === "local-browser") {
-        results = await engine.scrapeLocally(urls);
+        const toolResult = await engine.invokeTool("FetchWithBrowser", {
+          url: urls[0],
+          extract_text: true,
+        });
+        results = [{
+          url: urls[0],
+          success: toolResult.type === "success",
+          status_code: toolResult.metadata?.status_code as number ?? 0,
+          content: toolResult.output,
+          title: "",
+          content_type: "text/html",
+          response_url: toolResult.metadata?.url as string ?? urls[0],
+          error: toolResult.type === "error" ? toolResult.output : null,
+          elapsed_ms: toolResult.metadata?.elapsed_ms as number ?? 0,
+        }];
       } else {
-        // Use the engine's multi-strategy scraper via tool invocation
         const toolResult = await engine.invokeTool("Scrape", {
           urls,
           use_cache: useCache,
         });
 
-        // Parse the tool result — it returns markdown/text, but we need
-        // structured data. For now, create stub results.
-        results = urls.map((url) => ({
-          url,
-          success: toolResult.type === "success",
-          status_code: toolResult.type === "success" ? 200 : 0,
-          content: toolResult.output,
-          title: "",
-          content_type: "text/html",
-          response_url: url,
-          error: toolResult.type === "error" ? toolResult.output : null,
-          elapsed_ms: 0,
-        }));
+        const meta = toolResult.metadata ?? {};
+        if (meta.results && Array.isArray(meta.results)) {
+          results = (meta.results as Record<string, unknown>[]).map((r) => ({
+            url: String(r.url ?? ""),
+            success: r.status === "success",
+            status_code: (r.status_code as number) ?? 0,
+            content: toolResult.output,
+            title: "",
+            content_type: String(r.content_type ?? ""),
+            response_url: String(r.url ?? ""),
+            error: r.error ? String(r.error) : null,
+            elapsed_ms: (r.elapsed_ms as number) ?? (meta.elapsed_ms as number) ?? 0,
+          }));
+        } else {
+          results = urls.map((url) => ({
+            url,
+            success: toolResult.type === "success",
+            status_code: (meta.status_code as number) ?? 0,
+            content: toolResult.output,
+            title: "",
+            content_type: String(meta.content_type ?? "text/html"),
+            response_url: String(meta.url ?? url),
+            error: toolResult.type === "error" ? toolResult.output : null,
+            elapsed_ms: (meta.elapsed_ms as number) ?? 0,
+          }));
+        }
       }
 
       setJobs((prev) =>

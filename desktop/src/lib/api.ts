@@ -69,23 +69,9 @@ class EngineAPI {
 
   /** Discover the engine port by scanning the known range. */
   async discover(): Promise<string | null> {
-    // Try reading the discovery file first (written by run.py)
-    try {
-      const resp = await fetch(`http://127.0.0.1:${DEFAULT_PORT}/health`, {
-        signal: AbortSignal.timeout(1000),
-      });
-      if (resp.ok) {
-        this.baseUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
-        this.wsUrl = `ws://127.0.0.1:${DEFAULT_PORT}/ws`;
-        return this.baseUrl;
-      }
-    } catch {
-      // Default port not available, scan the range
-    }
-
     for (const port of DISCOVERY_PORTS) {
       try {
-        const resp = await fetch(`http://127.0.0.1:${port}/health`, {
+        const resp = await fetch(`http://127.0.0.1:${port}/tools/list`, {
           signal: AbortSignal.timeout(500),
         });
         if (resp.ok) {
@@ -105,7 +91,7 @@ class EngineAPI {
   async isHealthy(): Promise<boolean> {
     if (!this.baseUrl) return false;
     try {
-      const resp = await fetch(`${this.baseUrl}/health`, {
+      const resp = await fetch(`${this.baseUrl}/tools/list`, {
         signal: AbortSignal.timeout(2000),
       });
       return resp.ok;
@@ -207,7 +193,21 @@ class EngineAPI {
   /** Get system information from the engine. */
   async getSystemInfo(): Promise<SystemInfo> {
     const result = await this.invokeTool("SystemInfo", {});
-    return JSON.parse(result.output);
+    if (result.metadata) {
+      return {
+        platform: String(result.metadata.platform ?? ""),
+        architecture: String(result.metadata.architecture ?? ""),
+        python_version: String(result.metadata.python_version ?? ""),
+        hostname: String(result.metadata.hostname ?? ""),
+        username: String(result.metadata.user ?? ""),
+        cwd: String(result.metadata.cwd ?? ""),
+        home_dir: String(result.metadata.home ?? ""),
+      };
+    }
+    return {
+      platform: "", architecture: "", python_version: "",
+      hostname: "", username: "", cwd: "", home_dir: "",
+    };
   }
 
   /** Get browser status for local scraping. */
@@ -251,13 +251,13 @@ class EngineAPI {
   }
 
   /** Search the web via the engine. */
-  async search(query: string, count = 10): Promise<ToolResult> {
-    return this.invokeTool("Search", { query, count });
+  async search(keywords: string[], count = 10, country = "us"): Promise<ToolResult> {
+    return this.invokeTool("Search", { keywords, count, country });
   }
 
   /** Deep research via the engine. */
-  async research(query: string, effort = "medium"): Promise<ToolResult> {
-    return this.invokeTool("Research", { query, effort });
+  async research(query: string, effort = "medium", country = "us"): Promise<ToolResult> {
+    return this.invokeTool("Research", { query, effort, country });
   }
 
   /** Subscribe to engine events. */
