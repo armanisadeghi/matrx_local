@@ -131,6 +131,21 @@ class EngineAPI {
     }
   }
 
+  /** Get the engine version string from the root endpoint. */
+  async getVersion(): Promise<string> {
+    if (!this.baseUrl) return "";
+    try {
+      const resp = await fetch(`${this.baseUrl}/`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        return data.version ?? "";
+      }
+    } catch { /* non-critical */ }
+    return "";
+  }
+
   /** Get the list of available tools from the engine. */
   async listTools(): Promise<string[]> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
@@ -243,36 +258,28 @@ class EngineAPI {
     };
   }
 
-  /** Get browser status for local scraping. */
+  /** Get browser status — returns defaults until a real endpoint is added. */
   async getBrowserStatus(): Promise<BrowserStatus> {
-    if (!this.baseUrl) throw new Error("Engine not discovered");
-    try {
-      const resp = await fetch(`${this.baseUrl}/local-scrape/status`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (resp.ok) return resp.json();
-    } catch {
-      // Local scrape endpoints may not be available yet
-    }
-    return {
-      chrome_found: false,
-      chrome_path: null,
-      chrome_version: null,
-      profile_found: false,
-      browser_running: false,
+    if (!this.baseUrl) return {
+      chrome_found: false, chrome_path: null, chrome_version: null,
+      profile_found: false, browser_running: false,
     };
-  }
-
-  /** Scrape URLs using the local browser. */
-  async scrapeLocally(urls: string[]): Promise<ScrapeResultData[]> {
-    if (!this.baseUrl) throw new Error("Engine not discovered");
-    const resp = await fetch(`${this.baseUrl}/local-scrape/scrape`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ urls }),
-    });
-    if (!resp.ok) throw new Error(`Scrape failed: ${resp.status}`);
-    return resp.json();
+    try {
+      const result = await this.invokeTool("SystemInfo", {});
+      const meta = result.metadata ?? {};
+      return {
+        chrome_found: Boolean(meta.playwright_available),
+        chrome_path: meta.chrome_path ? String(meta.chrome_path) : null,
+        chrome_version: meta.chrome_version ? String(meta.chrome_version) : null,
+        profile_found: false,
+        browser_running: false,
+      };
+    } catch {
+      return {
+        chrome_found: false, chrome_path: null, chrome_version: null,
+        profile_found: false, browser_running: false,
+      };
+    }
   }
 
   /** Scrape URLs using the engine's multi-strategy scraper. */

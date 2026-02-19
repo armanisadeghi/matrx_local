@@ -23,6 +23,7 @@ export default function App() {
     tools,
     systemInfo,
     browserStatus,
+    engineVersion,
     refresh,
   } = useEngine();
 
@@ -86,6 +87,7 @@ export default function App() {
                     <Settings
                       engineStatus={status}
                       engineUrl={url}
+                      engineVersion={engineVersion}
                       onRefresh={refresh}
                       auth={auth}
                       theme={themeCtx.theme}

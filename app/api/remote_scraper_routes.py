@@ -17,11 +17,8 @@ router = APIRouter(prefix="/remote-scraper", tags=["remote-scraper"])
 logger = get_logger()
 
 
-def _extract_token(request: Request) -> str | None:
-    auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth[7:]
-    return None
+def _get_user_token(request: Request) -> str | None:
+    return getattr(request.state, "user_token", None)
 
 
 class ScrapeRequest(BaseModel):
@@ -65,7 +62,7 @@ async def remote_scrape(req: ScrapeRequest, request: Request):
     if not client.is_configured:
         raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
     try:
-        return await client.scrape(req.urls, req.options, auth_token=_extract_token(request))
+        return await client.scrape(req.urls, req.options, auth_token=_get_user_token(request))
     except Exception as e:
         logger.error(f"Remote scrape failed: {e}")
         raise HTTPException(502, f"Remote scraper error: {e}")
@@ -78,7 +75,7 @@ async def remote_search(req: SearchRequest, request: Request):
         raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
     try:
         return await client.search(
-            req.keywords, req.count, req.country, auth_token=_extract_token(request),
+            req.keywords, req.count, req.country, auth_token=_get_user_token(request),
         )
     except Exception as e:
         logger.error(f"Remote search failed: {e}")
@@ -93,7 +90,7 @@ async def remote_search_and_scrape(req: SearchAndScrapeRequest, request: Request
     try:
         return await client.search_and_scrape(
             req.keywords, req.total_results_per_keyword, req.options,
-            auth_token=_extract_token(request),
+            auth_token=_get_user_token(request),
         )
     except Exception as e:
         logger.error(f"Remote search-and-scrape failed: {e}")
@@ -107,7 +104,7 @@ async def remote_research(req: ResearchRequest, request: Request):
         raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
     try:
         return await client.research(
-            req.query, req.effort, req.country, auth_token=_extract_token(request),
+            req.query, req.effort, req.country, auth_token=_get_user_token(request),
         )
     except Exception as e:
         logger.error(f"Remote research failed: {e}")

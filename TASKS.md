@@ -23,7 +23,7 @@
 - [x] **Deployed to production** -- Scraper-service pushed to main, `SUPABASE_JWKS_URL` set in Coolify.
 - [x] **OAuth app registered** -- Client ID `af37ec97-3e0c-423c-a205-3d6c5adc5645`, type `public`.
 - [x] **JWT forwarding** -- Proxy routes forward user's JWT from incoming request to scraper server.
-- [ ] **Auth middleware on Python engine** -- Local engine endpoints still have no JWT validation.
+- [x] **Auth middleware on Python engine** -- Bearer token required on protected routes. Token stored on `request.state` for forwarding.
 
 ---
 
@@ -33,6 +33,7 @@
 - [x] **Settings persisted** -- `lib/settings.ts` with localStorage backend.
 - [x] **Folder buttons wired** -- Open Logs/Data via engine `OpenPath` tool.
 - [x] **Restart Engine** -- Proper sidecar stop/start in Tauri mode.
+- [x] **Version dynamic** -- App version from `package.json` via Vite define. Engine version from `/` endpoint.
 - [ ] **Launch on Startup** -- Persisted locally but not wired to OS. Needs Tauri autostart plugin.
 - [ ] **Minimize to Tray** -- Persisted but doesn't control Rust-side behavior.
 - [ ] **Headless mode / Request delay** -- Persisted locally but never sent to engine. Need engine settings API.
@@ -57,7 +58,8 @@
 - [x] **Database connection unified** -- Uses `DATABASE_URL` from config.
 - [x] **Health endpoint mismatch** -- `sidecar.ts` now uses `/tools/list`.
 - [x] **Remote scraper integration** -- Full proxy + JWT forwarding.
-- [ ] **`/local-scrape/status` and `/local-scrape/scrape` endpoints** -- Referenced in `api.ts` but don't exist. `getBrowserStatus()` gracefully falls back. `scrapeLocally()` is dead code.
+- [x] **Dead `/local-scrape/*` code cleaned up** -- Removed `scrapeLocally()`. `getBrowserStatus()` now uses `SystemInfo` tool fallback.
+- [x] **`.gitignore` fixed** -- `desktop/src/lib/` was incorrectly ignored by Python `lib/` pattern. Added negation.
 
 ---
 
@@ -83,8 +85,8 @@
 
 - [x] **Stale closure fixed** in `use-engine.ts` health check.
 - [x] **Error boundary added** -- `ErrorBoundary.tsx` wraps entire app in `App.tsx`.
-- [ ] **Version hardcoded** in Settings About section. Should be dynamic.
-- [ ] **Dead code in api.ts** -- `scrapeLocally()` and `getBrowserStatus()` call non-existent `/local-scrape/*` routes.
+- [x] **Version dynamic** -- App version from package.json, engine version from API.
+- [x] **Dead code cleaned** -- Removed `scrapeLocally()`, cleaned unused imports in Scraping.tsx.
 
 ---
 
@@ -97,8 +99,9 @@
 - [ ] Result sync to cloud storage
 - [ ] Engine settings API (headless mode, request delay)
 - [ ] SSE streaming support in desktop UI for scrape progress
-- [ ] Clean up dead `/local-scrape/*` code in api.ts
-- [ ] Auth middleware on local Python engine endpoints
+- [ ] Launch on Startup (Tauri autostart plugin)
+- [ ] Minimize to Tray (Rust-side wiring)
+- [ ] Rate limiting on scraper server
 
 ---
 

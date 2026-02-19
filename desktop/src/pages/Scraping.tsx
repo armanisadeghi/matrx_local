@@ -8,7 +8,6 @@ import {
   Clock,
   ExternalLink,
   Trash2,
-  RotateCcw,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
@@ -502,6 +501,3 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
     </div>
   );
 }
-
-// Suppress unused import warnings
-void RotateCcw;

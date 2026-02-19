@@ -11,6 +11,7 @@ interface EngineState {
   tools: string[];
   systemInfo: SystemInfo | null;
   browserStatus: BrowserStatus | null;
+  engineVersion: string;
   error: string | null;
   wsConnected: boolean;
 }
@@ -22,6 +23,7 @@ export function useEngine() {
     tools: [],
     systemInfo: null,
     browserStatus: null,
+    engineVersion: "",
     error: null,
     wsConnected: false,
   });
@@ -83,6 +85,12 @@ export function useEngine() {
     } catch {
       // Non-critical
     }
+
+    // Load engine version
+    try {
+      const engineVersion = await engine.getVersion();
+      update({ engineVersion });
+    } catch { /* non-critical */ }
 
     // Load system info
     try {

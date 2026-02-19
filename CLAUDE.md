@@ -74,11 +74,8 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Error boundary** -- `ErrorBoundary.tsx` wraps entire app in `App.tsx`
 
 ### Still Needs Work
-- **Auth middleware on Python engine** -- Local engine endpoints still unprotected
 - **Launch on Startup / Minimize to Tray** -- Need Tauri autostart plugin, Rust-side wiring
 - **Engine settings API** -- Headless mode and request delay not sent to engine
-- **Version hardcoded** in Settings About section
-- **Dead code** -- `scrapeLocally()` and `getBrowserStatus()` call non-existent `/local-scrape/*` routes
 - **SSE streaming** -- Remote scraper SSE endpoints not integrated in desktop UI
 - **Rate limiting** -- No per-user rate limiting on scraper server
 

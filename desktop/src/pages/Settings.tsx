@@ -29,6 +29,8 @@ import type { EngineStatus } from "@/hooks/use-engine";
 import { engine } from "@/lib/api";
 import type { useAuth } from "@/hooks/use-auth";
 import type { Theme } from "@/hooks/use-theme";
+
+declare const __APP_VERSION__: string;
 import { isTauri } from "@/lib/sidecar";
 import {
   loadSettings,
@@ -41,6 +43,7 @@ type AuthActions = ReturnType<typeof useAuth>;
 interface SettingsProps {
   engineStatus: EngineStatus;
   engineUrl: string | null;
+  engineVersion: string;
   onRefresh: () => void;
   auth: AuthActions;
   theme: Theme;
@@ -50,6 +53,7 @@ interface SettingsProps {
 export function Settings({
   engineStatus,
   engineUrl,
+  engineVersion,
   onRefresh,
   auth,
   theme,
@@ -354,13 +358,15 @@ export function Settings({
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Version</span>
-                <Badge variant="secondary">1.0.0</Badge>
+                <Badge variant="secondary">{__APP_VERSION__}</Badge>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
                   Engine Version
                 </span>
-                <Badge variant="secondary">0.3.0</Badge>
+                <Badge variant="secondary">
+                  {engineVersion || "—"}
+                </Badge>
               </div>
               <Separator />
               <div className="flex gap-2">

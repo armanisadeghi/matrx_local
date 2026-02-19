@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router as api_router
 from app.api.tool_routes import router as tool_router
 from app.api.remote_scraper_routes import router as remote_scraper_router
+from app.api.auth import AuthMiddleware
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
 from app.services.scraper.engine import get_scraper_engine
@@ -50,6 +51,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(AuthMiddleware)
 
 
 @app.middleware("http")
