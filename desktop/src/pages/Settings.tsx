@@ -24,15 +24,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { EngineStatus } from "@/hooks/use-engine";
+import type { useAuth } from "@/hooks/use-auth";
+
+type AuthActions = ReturnType<typeof useAuth>;
 
 interface SettingsProps {
   engineStatus: EngineStatus;
   engineUrl: string | null;
   onRefresh: () => void;
+  auth: AuthActions;
 }
 
-export function Settings({ engineStatus, engineUrl, onRefresh }: SettingsProps) {
+export function Settings({ engineStatus, engineUrl, onRefresh, auth }: SettingsProps) {
   const [launchOnStartup, setLaunchOnStartup] = useState(false);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [headlessScraping, setHeadlessScraping] = useState(true);
@@ -40,7 +45,7 @@ export function Settings({ engineStatus, engineUrl, onRefresh }: SettingsProps) 
   const [theme, setTheme] = useState<"dark" | "light" | "system">("dark");
 
   return (
-    <>
+    <div className="flex h-full flex-col overflow-hidden">
       <Header
         title="Settings"
         description="Configure the desktop application"
@@ -236,6 +241,54 @@ export function Settings({ engineStatus, engineUrl, onRefresh }: SettingsProps) 
             </CardContent>
           </Card>
 
+          {/* Account */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Server className="h-4 w-4 text-primary" />
+                Account
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {auth.user ? (
+                <>
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-10 w-10">
+                      <AvatarImage src={auth.user.user_metadata?.avatar_url} />
+                      <AvatarFallback>
+                        {(auth.user.email?.[0] ?? "U").toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">
+                        {auth.user.user_metadata?.full_name ?? auth.user.email}
+                      </p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {auth.user.email}
+                      </p>
+                    </div>
+                    <Badge variant="success" className="shrink-0">
+                      {auth.user.app_metadata?.provider ?? "email"}
+                    </Badge>
+                  </div>
+                  <Separator />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={auth.signOut}
+                    disabled={auth.loading}
+                  >
+                    <Power className="h-4 w-4" />
+                    Sign Out
+                  </Button>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Not signed in</p>
+              )}
+            </CardContent>
+          </Card>
+
           {/* About */}
           <Card>
             <CardHeader className="pb-3">
@@ -270,6 +323,6 @@ export function Settings({ engineStatus, engineUrl, onRefresh }: SettingsProps) 
           </Card>
         </div>
       </ScrollArea>
-    </>
+    </div>
   );
 }

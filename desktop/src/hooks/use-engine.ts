@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { engine, type SystemInfo, type BrowserStatus } from "@/lib/api";
 import { isTauri, startSidecar } from "@/lib/sidecar";
+import { getSupabase } from "@/lib/supabase";
 
 export type EngineStatus = "discovering" | "starting" | "connected" | "disconnected" | "error";
 
@@ -37,6 +38,11 @@ export function useEngine() {
   const initialize = useCallback(async () => {
     if (initRef.current) return;
     initRef.current = true;
+
+    engine.setTokenProvider(async () => {
+      const { data: { session } } = await getSupabase().auth.getSession();
+      return session?.access_token ?? null;
+    });
 
     update({ status: "discovering" });
 

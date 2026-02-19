@@ -177,7 +177,7 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
   const urlCount = parseUrls(urlInput).length;
 
   return (
-    <>
+    <div className="flex h-full flex-col overflow-hidden">
       <Header
         title="Scraping"
         description="Scrape websites using multiple strategies"
@@ -475,7 +475,7 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

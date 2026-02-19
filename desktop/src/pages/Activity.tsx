@@ -106,7 +106,7 @@ export function Activity({ engineStatus, engineUrl }: ActivityProps) {
   };
 
   return (
-    <>
+    <div className="flex h-full flex-col overflow-hidden">
       <Header
         title="Activity"
         description="Real-time engine activity log"
@@ -193,6 +193,6 @@ export function Activity({ engineStatus, engineUrl }: ActivityProps) {
           </div>
         </ScrollArea>
       </div>
-    </>
+    </div>
   );
 }

@@ -66,6 +66,19 @@ class EngineAPI {
   private eventListeners = new Map<string, Set<(data: unknown) => void>>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private requestIdCounter = 0;
+  private _getAccessToken: (() => Promise<string | null>) | null = null;
+
+  /** Register a function that provides the current Supabase JWT. */
+  setTokenProvider(fn: () => Promise<string | null>) {
+    this._getAccessToken = fn;
+  }
+
+  private async authHeaders(): Promise<Record<string, string>> {
+    if (!this._getAccessToken) return {};
+    const token = await this._getAccessToken();
+    if (!token) return {};
+    return { Authorization: `Bearer ${token}` };
+  }
 
   /** Discover the engine port by scanning the known range. */
   async discover(): Promise<string | null> {
@@ -103,7 +116,8 @@ class EngineAPI {
   /** Get the list of available tools from the engine. */
   async listTools(): Promise<string[]> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const resp = await fetch(`${this.baseUrl}/tools/list`);
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/tools/list`, { headers });
     if (!resp.ok) throw new Error(`Failed to list tools: ${resp.status}`);
     const data = await resp.json();
     return data.tools ?? data;
@@ -112,9 +126,10 @@ class EngineAPI {
   /** Invoke a tool via REST (stateless, one-shot). */
   async invokeTool(tool: string, input: Record<string, unknown>): Promise<ToolResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
     const resp = await fetch(`${this.baseUrl}/tools/invoke`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ tool, input }),
     });
     if (!resp.ok) throw new Error(`Tool invocation failed: ${resp.status}`);

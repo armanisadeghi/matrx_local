@@ -162,7 +162,7 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
   };
 
   return (
-    <>
+    <div className="flex h-full flex-col overflow-hidden">
       <Header
         title="Tools"
         description={`${tools.length} tools available`}
@@ -338,7 +338,7 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

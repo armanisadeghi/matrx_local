@@ -2,6 +2,8 @@
 
 **Matrx Local** is the companion desktop service for **AI Matrx**. It runs on the user's machine and exposes a secure, tool-based API that the web/mobile apps and AI agents call over WebSocket or REST. It bridges the gap between cloud-hosted AI and the user's local machine — filesystem, shell, network, hardware, and residential IP.
 
+For the complete system documentation, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
 ---
 
 ## Why It Exists
@@ -81,26 +83,22 @@ To force a specific port: `MATRX_PORT=9999 uv run python run.py`
 
 ### Environment Variables
 
-Create a `.env` file in the project root:
+Copy `.env.example` to `.env` and fill in values:
 
-```env
-# Required for scraper engine (set to any value for local dev)
-API_KEY=local-dev
-
-# Database (optional — scraper works without it, memory-only cache)
-DATABASE_URL=postgresql://user:pass@localhost:5432/scraper_db
-
-# Brave Search (optional — enables Search and Research tools)
-BRAVE_API_KEY=your-brave-api-key
-
-# Proxy lists (optional — comma-separated, scraper rotates through them)
-DATACENTER_PROXIES=http://proxy1:port,http://proxy2:port
-RESIDENTIAL_PROXIES=http://proxy1:port,http://proxy2:port
-
-# Server config (optional — auto-selects if not set)
-# MATRX_PORT=22140
-DEBUG=True
+```bash
+cp .env.example .env
 ```
+
+Key settings:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `API_KEY` | Yes | Any value for local dev |
+| `DATABASE_URL` | No | PostgreSQL for persistent scrape cache (Supabase or local) |
+| `BRAVE_API_KEY` | No | Enables Search and Research tools |
+| `MATRX_PORT` | No | Override default port 22140 |
+
+See `.env.example` for the full list with documentation.
 
 ### Common Commands
 
@@ -116,47 +114,14 @@ uv run python run.py             # Start the server
 
 ## Architecture
 
-```
-matrx_local/
-├── app/
-│   ├── main.py                  # FastAPI app + scraper engine lifespan
-│   ├── config.py                # App configuration
-│   ├── websocket_manager.py     # WebSocket connection handling
-│   ├── api/
-│   │   ├── routes.py            # Legacy HTTP routes
-│   │   └── tool_routes.py       # REST tool invocation (/tools/invoke, /tools/list)
-│   ├── tools/
-│   │   ├── dispatcher.py        # Tool routing (23 tools registered)
-│   │   ├── session.py           # Per-connection state (cwd, bg processes)
-│   │   ├── types.py             # ToolResult, ToolResultType
-│   │   └── tools/               # Tool implementations
-│   │       ├── file_ops.py      # Read, Write, Edit, Glob, Grep
-│   │       ├── execution.py     # Bash, BashOutput, TaskStop
-│   │       ├── system.py        # SystemInfo, Screenshot, etc.
-│   │       ├── clipboard.py     # ClipboardRead, ClipboardWrite
-│   │       ├── notify.py        # Notify
-│   │       ├── network.py       # FetchUrl, FetchWithBrowser, Scrape, Search, Research
-│   │       └── transfer.py      # DownloadFile, UploadFile
-│   └── services/
-│       └── scraper/
-│           └── engine.py        # ScraperEngine — bridge to scraper-service
-├── scraper-service/             # Git subtree from ai-dream repo (DO NOT EDIT)
-│   ├── app/                     # Full scraper-service codebase
-│   ├── alembic/                 # Database migrations
-│   ├── pyproject.toml           # Scraper-service dependencies
-│   └── Dockerfile               # Production Docker build
-├── scripts/
-│   └── update-scraper.sh        # Pull latest scraper-service from ai-dream
-├── pyproject.toml               # Project config & dependencies
-├── run.py                       # Entry point
-└── uv.lock                      # Dependency lockfile
-```
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the full system architecture, project structure, tool reference, auth flow, and packaging guide.
 
-### Key Design Decisions
+Key design decisions:
 
-- **scraper-service/ is a git subtree** — pulled from the `ai-dream` monorepo. It is **never edited in this repo**. Updates flow one-way from ai-dream. Run `./scripts/update-scraper.sh --local` to pull the latest.
-- **Import isolation** — The scraper-service uses `app.*` imports internally, which would conflict with matrx_local's own `app/`. The `ScraperEngine` in `app/services/scraper/engine.py` handles this via `sys.modules` namespace remapping. Zero modifications to the scraper-service code are needed.
-- **Graceful degradation** — The scraper engine starts with whatever is available. No database? Memory-only cache. No Playwright? curl-cffi handles it. No Brave key? Search is disabled but scraping works.
+- **scraper-service/ is a git subtree** from `ai-dream` -- never edited in this repo, updates flow one-way
+- **Import isolation** via `sys.modules` remapping -- zero modifications to scraper-service code
+- **Graceful degradation** -- works without database, Playwright, or Brave API key
+- **Tauri desktop shell** -- React UI + Rust core + Python sidecar
 
 ---
 

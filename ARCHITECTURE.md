@@ -1,0 +1,508 @@
+# Matrx Local -- System Architecture
+
+> The single source of truth for understanding this repository. Start here.
+
+---
+
+## What is Matrx Local?
+
+Matrx Local is the companion desktop application for **AI Matrx**. It runs on the user's machine and exposes a tool-based API (REST + WebSocket) that the AI Matrx web/mobile apps and AI agents call to interact with the user's local environment: filesystem, shell, browser, clipboard, hardware, and residential IP. It also integrates a production-grade scraping engine for bypassing anti-bot protections using the user's real browser and real IP.
+
+---
+
+## High-Level Architecture
+
+```mermaid
+graph TB
+  subgraph TauriApp [Tauri Desktop App]
+    RustCore["Rust Core<br/>Window, tray, sidecar lifecycle"]
+    ReactUI["React/Vite UI<br/>Dashboard, Scraping, Tools, Settings"]
+    RustCore -->|WebView| ReactUI
+  end
+
+  subgraph PythonEngine [Python/FastAPI Engine]
+    FastAPI["FastAPI Server<br/>run.py :22140"]
+    ToolDispatcher["Tool Dispatcher<br/>23 tools"]
+    ScraperEngine["Scraper Engine<br/>scraper-service subtree"]
+    WSManager["WebSocket Manager<br/>Concurrent sessions"]
+    FastAPI --> ToolDispatcher
+    FastAPI --> WSManager
+    ToolDispatcher --> ScraperEngine
+  end
+
+  ReactUI -->|"HTTP / WS<br/>localhost:22140"| FastAPI
+  RustCore -->|"Sidecar spawn/kill"| PythonEngine
+
+  Cloud["AI Matrx Cloud<br/>aimatrx.com"]
+  SupabaseAuth["Supabase Auth<br/>OAuth + JWT"]
+  SupabaseDB["Supabase PostgreSQL<br/>Optional persistence"]
+
+  ReactUI -->|OAuth| SupabaseAuth
+  PythonEngine -->|"Validate JWT"| SupabaseAuth
+  PythonEngine -->|"Cache storage"| SupabaseDB
+  Cloud -->|"Scrape jobs"| PythonEngine
+```
+
+### Data Flow
+
+1. **User interacts** with the React UI in the Tauri WebView.
+2. **React sends** REST or WebSocket requests to the Python engine at `localhost:22140`.
+3. **Python dispatches** the request to the appropriate tool handler.
+4. **Tool executes** the operation (file I/O, shell command, scrape, etc.).
+5. **Result returns** through the same transport to the UI.
+
+In production, Tauri spawns the Python engine as a managed child process (sidecar). In development, the Python engine runs standalone.
+
+---
+
+## Project Structure
+
+```
+matrx_local/
+├── app/                            # Python engine source
+│   ├── main.py                     # FastAPI app, CORS, scraper lifespan
+│   ├── config.py                   # Env-based configuration
+│   ├── websocket_manager.py        # WS connection handling
+│   ├── api/
+│   │   ├── routes.py               # Legacy HTTP routes
+│   │   └── tool_routes.py          # /tools/invoke, /tools/list
+│   ├── tools/
+│   │   ├── dispatcher.py           # Tool routing (23 tools registered)
+│   │   ├── session.py              # Per-connection state (cwd, bg processes)
+│   │   ├── types.py                # ToolResult, ToolResultType
+│   │   └── tools/                  # Individual tool implementations
+│   │       ├── file_ops.py         # Read, Write, Edit, Glob, Grep
+│   │       ├── execution.py        # Bash, BashOutput, TaskStop
+│   │       ├── system.py           # SystemInfo, Screenshot, etc.
+│   │       ├── clipboard.py        # ClipboardRead, ClipboardWrite
+│   │       ├── notify.py           # Notify
+│   │       ├── network.py          # FetchUrl, FetchWithBrowser, Scrape, Search, Research
+│   │       └── transfer.py         # DownloadFile, UploadFile
+│   ├── services/
+│   │   └── scraper/
+│   │       └── engine.py           # ScraperEngine bridge to scraper-service
+│   └── common/
+│       └── system_logger.py        # Rotating file + console logging
+├── scraper-service/                # Git subtree -- DO NOT EDIT directly
+│   ├── app/                        # Upstream scraper codebase
+│   ├── alembic/                    # DB migrations (PostgreSQL)
+│   └── pyproject.toml              # Upstream dependencies
+├── desktop/                        # Tauri + React desktop UI
+│   ├── src/
+│   │   ├── App.tsx                 # Router, auth guard, engine context
+│   │   ├── index.css               # Dark theme (shadcn/ui CSS vars)
+│   │   ├── components/
+│   │   │   ├── layout/             # Sidebar, Header, AppLayout
+│   │   │   └── ui/                 # shadcn/ui components (Button, Card, Badge, etc.)
+│   │   ├── pages/
+│   │   │   ├── Dashboard.tsx       # Engine status, system info, browser detection
+│   │   │   ├── Scraping.tsx        # URL input, batch scrape, dual-mode results
+│   │   │   ├── Tools.tsx           # Browse and invoke all 23 tools
+│   │   │   ├── Activity.tsx        # Real-time WebSocket event log
+│   │   │   ├── Settings.tsx        # Engine, scraping, theme, account
+│   │   │   ├── Login.tsx           # OAuth (Google/GitHub/Apple) + email
+│   │   │   └── AuthCallback.tsx    # OAuth redirect handler
+│   │   ├── hooks/
+│   │   │   ├── use-engine.ts       # Engine auto-discovery, health, WS
+│   │   │   ├── use-auth.ts         # Supabase auth state + OAuth methods
+│   │   │   └── use-tool.ts         # Tool invocation with loading/error
+│   │   └── lib/
+│   │       ├── api.ts              # REST + WS client for Python engine
+│   │       ├── supabase.ts         # Supabase client singleton
+│   │       ├── sidecar.ts          # Tauri sidecar lifecycle
+│   │       └── utils.ts            # cn(), formatBytes, formatDuration
+│   ├── src-tauri/                  # Rust backend
+│   │   ├── src/lib.rs              # Sidecar spawn/kill, system tray, hide-to-tray
+│   │   ├── src/main.rs             # Windows subsystem entry point
+│   │   ├── tauri.conf.json         # App config, CSP, sidecar + bundle settings
+│   │   ├── capabilities/           # Permission grants (shell, notification, store)
+│   │   └── Cargo.toml              # tauri v2, shell/notification/store plugins
+│   ├── package.json
+│   ├── vite.config.ts
+│   └── tailwind.config.ts
+├── scripts/
+│   ├── update-scraper.sh           # Pull upstream scraper-service changes
+│   └── build-sidecar.sh            # PyInstaller -> platform-named binary
+├── run.py                          # Entry point (port discovery, tray, uvicorn)
+├── pyproject.toml                  # Python deps (uv-managed)
+└── .env                            # Local config (not committed)
+```
+
+---
+
+## Technology Stack
+
+| Layer | Technology | Version |
+|-------|-----------|---------|
+| **Desktop Shell** | Tauri v2 (Rust) | 2.x |
+| **Frontend** | React + TypeScript + Vite | React 19, TS 5.7, Vite 6 |
+| **Styling** | Tailwind CSS + shadcn/ui | TW 3.4 |
+| **Python Runtime** | Python | 3.13+ |
+| **API Framework** | FastAPI + Uvicorn | Latest |
+| **Auth** | Supabase Auth | OAuth (Google, GitHub, Apple) + email |
+| **Database** | PostgreSQL via Supabase (optional) | asyncpg |
+| **Scraping** | httpx, curl-cffi, Playwright, BeautifulSoup, PyMuPDF | See pyproject.toml |
+| **Search** | Brave Search API | Optional |
+| **Package Manager (JS)** | npm | 10.x |
+| **Package Manager (Python)** | uv | Latest |
+
+---
+
+## Communication Protocols
+
+### REST API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/tools/list` | GET | List all available tools |
+| `/tools/invoke` | POST | Invoke a tool (stateless session) |
+
+**POST /tools/invoke** body:
+```json
+{
+  "tool": "Scrape",
+  "input": { "urls": ["https://example.com"], "use_cache": true }
+}
+```
+
+**Response:**
+```json
+{
+  "type": "success",
+  "output": "Human-readable text output",
+  "image": null,
+  "metadata": { "status_code": 200, "content_type": "html" }
+}
+```
+
+REST creates a fresh session per request. State does not persist between calls.
+
+### WebSocket (`/ws`)
+
+Persistent sessions with concurrent tool execution and cancellation.
+
+```json
+// Send a tool call
+{ "id": "req-1", "tool": "Scrape", "input": { "urls": ["https://example.com"] } }
+
+// Receive result
+{ "id": "req-1", "type": "success", "output": "...", "metadata": { ... } }
+
+// Cancel a task
+{ "id": "req-1", "action": "cancel" }
+
+// Cancel all running tasks
+{ "action": "cancel_all" }
+
+// Ping
+{ "action": "ping" }
+```
+
+Multiple tool calls run simultaneously on one connection. Each uses its own `id`.
+
+---
+
+## Tool Reference (23 Tools)
+
+### File Operations
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `Read` | `path` | Read file contents |
+| `Write` | `path`, `content` | Write/overwrite a file |
+| `Edit` | `path`, `old_text`, `new_text` | Find-and-replace in a file |
+| `Glob` | `pattern`, `path?` | Find files matching a glob pattern |
+| `Grep` | `pattern`, `path?`, `include?` | Search file contents with regex |
+
+### Shell Execution
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `Bash` | `command`, `timeout?` | Execute shell command (fg or bg) |
+| `BashOutput` | `shell_id` | Read background shell output |
+| `TaskStop` | `shell_id` | Kill a background process |
+
+### System
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `SystemInfo` | *(none)* | OS, CPU, memory, disk, Python version |
+| `Screenshot` | *(none)* | Capture screen (base64 PNG) |
+| `ListDirectory` | `path?` | List directory contents |
+| `OpenUrl` | `url` | Open URL in default browser |
+| `OpenPath` | `path` | Open file/folder in default app |
+
+### Clipboard
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `ClipboardRead` | *(none)* | Read clipboard text |
+| `ClipboardWrite` | `text` | Write text to clipboard |
+
+### Notifications
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `Notify` | `title`, `message` | Native OS notification |
+
+### Network -- Simple
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `FetchUrl` | `url`, `method?`, `headers?`, `body?`, `follow_redirects?`, `timeout?` | Direct HTTP from residential IP |
+| `FetchWithBrowser` | `url`, `wait_for?`, `wait_timeout?`, `extract_text?` | Playwright headless fetch |
+
+### Network -- Scraper Engine
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `Scrape` | `urls[]`, `use_cache?`, `output_mode?`, `get_links?`, `get_overview?` | Full multi-strategy scraper |
+| `Search` | `keywords[]`, `country?`, `count?`, `freshness?` | Brave Search API |
+| `Research` | `query`, `country?`, `effort?`, `freshness?` | Deep research (search + scrape + compile) |
+
+### File Transfer
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `DownloadFile` | `url`, `path` | Download file to local path |
+| `UploadFile` | `path`, `url` | Upload local file to URL |
+
+---
+
+## Scraper Engine
+
+The scraper engine is sourced from the `ai-dream` monorepo via **git subtree**. The `scraper-service/` directory is a read-only copy; changes flow one-way from upstream.
+
+### Import Isolation
+
+Both `matrx_local` and `scraper-service` have an `app/` package. The `ScraperEngine` class in `app/services/scraper/engine.py` resolves this conflict by manipulating `sys.modules` to alias the scraper's `app` as `scraper_app` at import time. This means:
+
+- Zero modifications to `scraper-service/` code
+- Upstream updates merge cleanly via `./scripts/update-scraper.sh`
+
+### Multi-Strategy Fetching
+
+1. **httpx** -- Fast, lightweight HTTP client
+2. **curl-cffi** -- Browser TLS impersonation (bypasses JA3 fingerprinting)
+3. **Playwright** -- Full headless browser (Cloudflare Turnstile, JS-heavy sites)
+
+The engine tries strategies in order, escalating only when the simpler approach fails.
+
+### Graceful Degradation
+
+The engine starts with whatever resources are available:
+
+| Resource | Available | Degraded |
+|----------|-----------|----------|
+| PostgreSQL (`DATABASE_URL`) | Persistent page cache | In-memory TTLCache only |
+| Playwright | Full browser fallback | httpx + curl-cffi only |
+| Brave API key | Search + Research tools | Search disabled, Scrape works |
+| Proxies | Proxy rotation on blocks | Direct requests only |
+
+### Updating the Scraper
+
+```bash
+./scripts/update-scraper.sh --local   # From local ai-dream repo
+./scripts/update-scraper.sh           # From GitHub
+uv sync --extra browser               # If scraper deps changed
+```
+
+---
+
+## Authentication
+
+### OAuth Flow (Desktop)
+
+The desktop app uses Supabase Auth with three OAuth providers: Google, GitHub, and Apple.
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant DesktopApp as React UI
+  participant Supabase
+  participant OAuthProvider as Google/GitHub/Apple
+
+  User->>DesktopApp: Click "Sign in with Google"
+  DesktopApp->>Supabase: signInWithOAuth(google)
+  Supabase-->>DesktopApp: Redirect URL
+  DesktopApp->>OAuthProvider: Open in browser
+  OAuthProvider-->>Supabase: Auth callback
+  Supabase-->>DesktopApp: Redirect to /auth/callback#tokens
+  DesktopApp->>Supabase: setSession(tokens)
+  Supabase-->>DesktopApp: Session + User
+  DesktopApp->>PythonEngine: API calls with Authorization header
+```
+
+### Supabase Configuration Required
+
+In **Supabase Dashboard > Auth > URL Configuration > Redirect URLs**, add:
+```
+http://localhost:1420/auth/callback
+tauri://localhost/auth/callback
+```
+
+Ensure Google, GitHub, and Apple providers are enabled in **Auth > Providers**.
+
+### Token Handling
+
+- The React app stores the Supabase session in `localStorage` (managed by `@supabase/supabase-js`)
+- All API requests to the Python engine include `Authorization: Bearer <jwt>` via the `EngineAPI.setTokenProvider()` mechanism
+- The Python engine can validate the JWT against Supabase for cloud-sync features
+
+---
+
+## Desktop App (Tauri)
+
+### Sidecar Lifecycle
+
+In production, the Rust core spawns the Python engine as a child process:
+
+1. `start_sidecar` -- Spawns PyInstaller binary, streams stdout/stderr to Tauri logs
+2. React UI polls `localhost:22140` until the engine responds
+3. On window close -- Hides to system tray instead of quitting
+4. On quit (tray menu) -- Kills the sidecar process, then exits
+
+### System Tray
+
+The app persists in the system tray for receiving background scrape jobs from the cloud. Menu items: Show, Status, Quit.
+
+### Content Security Policy
+
+The Tauri CSP allows connections to:
+- `127.0.0.1:*` (local Python engine)
+- `*.supabase.co` (auth + database)
+- Profile image CDNs (Google, GitHub, Supabase)
+
+---
+
+## Port Discovery
+
+The Python engine uses port **22140** by default (chosen to avoid conflicts with 3000, 5173, 8000, 8001). If taken, it scans 22140-22159.
+
+| Priority | Mechanism |
+|----------|-----------|
+| 1 | `MATRX_PORT` env var (exact port, no fallback) |
+| 2 | Default 22140 |
+| 3 | Auto-scan 22140-22159 |
+
+The engine writes connection info to `~/.matrx/local.json`:
+```json
+{
+  "port": 22140,
+  "host": "127.0.0.1",
+  "url": "http://127.0.0.1:22140",
+  "ws": "ws://127.0.0.1:22140/ws",
+  "pid": 12345,
+  "version": "0.3.0"
+}
+```
+
+The React frontend scans the port range on startup. Cache the discovered port for the session; re-scan only on connection failure.
+
+---
+
+## Data Persistence
+
+### Current State
+
+- **Scrape cache**: In-memory TTLCache by default. Set `DATABASE_URL` to a PostgreSQL connection string (e.g., your Supabase PostgreSQL) for persistent caching across restarts.
+- **Auth tokens**: Persisted in browser `localStorage` by Supabase client.
+- **App settings**: Tauri Store plugin available (`@tauri-apps/plugin-store`), not yet wired to UI settings.
+- **Logs**: Rotating files in `system/logs/`.
+- **Temp files**: Screenshots, code saves in `system/temp/`.
+
+### Configuring Database
+
+In `.env`:
+```env
+DATABASE_URL=postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres
+```
+
+The scraper engine uses `asyncpg` (PostgreSQL only). Without `DATABASE_URL`, the system works fully but scrape cache is memory-only.
+
+---
+
+## Development Setup
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- [Node.js](https://nodejs.org/) 20+ (for desktop frontend)
+- [Rust](https://rustup.rs/) (only needed for Tauri production builds)
+
+### Running (Development)
+
+```bash
+# Terminal 1: Python engine
+cd /path/to/matrx_local
+cp .env.example .env   # Configure API_KEY, optionally DATABASE_URL
+uv sync --extra browser
+uv run playwright install chromium
+API_KEY=local-dev uv run python run.py
+
+# Terminal 2: React frontend (Vite dev server)
+cd desktop
+npm install
+npm run dev
+# Open http://localhost:1420
+```
+
+### Running (Tauri, requires Rust)
+
+```bash
+cd desktop
+npm run tauri:dev
+```
+
+---
+
+## Building for Distribution
+
+### 1. Build the Python sidecar
+
+```bash
+cd /path/to/matrx_local
+./scripts/build-sidecar.sh
+```
+
+This creates a PyInstaller binary and copies it to `desktop/src-tauri/sidecar/` with the correct platform naming.
+
+### 2. Build the desktop app
+
+```bash
+cd desktop
+npm run tauri:build
+```
+
+Outputs: `.dmg` (macOS), `.msi` (Windows), `.AppImage`/`.deb` (Linux).
+
+### 3. CI/CD
+
+Cross-platform builds run via GitHub Actions (see `.github/workflows/build-desktop.yml`). Artifacts are uploaded to GitHub Releases and optionally synced to S3 for download hosting.
+
+---
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `API_KEY` | Yes | -- | API key for engine access (any value for local dev) |
+| `DATABASE_URL` | No | `""` | PostgreSQL connection string for persistent cache |
+| `BRAVE_API_KEY` | No | -- | Enables Search and Research tools |
+| `DATACENTER_PROXIES` | No | -- | Comma-separated proxy list |
+| `RESIDENTIAL_PROXIES` | No | -- | Comma-separated proxy list |
+| `MATRX_PORT` | No | `22140` | Force a specific port |
+| `DEBUG` | No | `True` | Debug mode |
+| `LOG_LEVEL` | No | `DEBUG` | Logging level |
+
+---
+
+## CORS Configuration
+
+The Python engine allows requests from:
+- `https://aimatrx.com`, `https://www.aimatrx.com`
+- `http://localhost:1420`, `http://localhost:3000-3002`, `http://localhost:5173`
+- `http://127.0.0.1:1420`, `http://127.0.0.1:3000-3002`, `http://127.0.0.1:5173`
+- `tauri://localhost`
+
+Override via `ALLOWED_ORIGINS` env var (comma-separated).

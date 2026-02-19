@@ -29,7 +29,7 @@
       "tooltip": "AI Matrx Desktop"
     },
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* https://*.supabase.co wss://*.supabase.co; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.googleusercontent.com https://*.githubusercontent.com https://*.supabase.co"
     }
   },
   "bundle": {

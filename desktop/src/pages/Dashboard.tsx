@@ -36,7 +36,7 @@ export function Dashboard({
   onRefresh,
 }: DashboardProps) {
   return (
-    <>
+    <div className="flex h-full flex-col overflow-hidden">
       <Header
         title="Dashboard"
         description="System overview and engine status"
@@ -236,7 +236,7 @@ export function Dashboard({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
