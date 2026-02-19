@@ -67,14 +67,20 @@ mkdir -p "$SIDECAR_DIR"
 # Build with PyInstaller
 cd "$PROJECT_ROOT"
 
-PYTHON="$PROJECT_ROOT/.venv/bin/python"
-if [[ ! -f "$PYTHON" ]]; then
-    echo "ERROR: .venv not found. Run 'uv sync' first."
-    exit 1
+# Prefer uv run (CI), fall back to .venv/bin/python (local dev)
+if command -v uv &>/dev/null; then
+    PYTHON_CMD="uv run python"
+else
+    PYTHON="$PROJECT_ROOT/.venv/bin/python"
+    if [[ ! -f "$PYTHON" ]]; then
+        echo "ERROR: .venv not found. Run 'uv sync' first."
+        exit 1
+    fi
+    PYTHON_CMD="$PYTHON"
 fi
 
-echo "Running PyInstaller (using $PYTHON)..."
-"$PYTHON" -m PyInstaller \
+echo "Running PyInstaller (using $PYTHON_CMD)..."
+$PYTHON_CMD -m PyInstaller \
     --name "aimatrx-engine-$TARGET" \
     --onefile \
     --clean \

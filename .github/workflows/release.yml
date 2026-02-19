@@ -27,6 +27,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ---- Python sidecar build ----
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Build Python sidecar binary
+        run: |
+          chmod +x scripts/build-sidecar.sh
+          ./scripts/build-sidecar.sh
+        shell: bash
+
+      # ---- Frontend + Tauri build ----
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
