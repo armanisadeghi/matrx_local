@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-node/
+src-tauri/target/
+src-tauri/sidecar/
+src-tauri/gen/
+*.tsbuildinfo
