@@ -1,0 +1,140 @@
+"""Remote scraper client — delegates scrape jobs to the dedicated scraper server.
+
+This is used when the desktop app wants to use the remote scraper server
+(scraper.app.matrxserver.com) instead of or in addition to the local
+scraper engine. Useful for offloading heavy scraping, leveraging the
+server's proxy pool, or accessing server-side cached content.
+
+All communication uses the scraper server's REST API with Bearer token auth.
+No direct database access — the server handles all persistence.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import httpx
+
+from app.config import SCRAPER_API_KEY, SCRAPER_SERVER_URL
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_TIMEOUT = 60.0
+
+
+class RemoteScraperClient:
+    """HTTP client for the remote scraper server API."""
+
+    def __init__(
+        self,
+        server_url: str = SCRAPER_SERVER_URL,
+        api_key: str = SCRAPER_API_KEY,
+    ) -> None:
+        self._server_url = server_url.rstrip("/")
+        self._api_key = api_key
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self._api_key and self._server_url)
+
+    def _headers(self, auth_token: str | None = None) -> dict[str, str]:
+        token = auth_token or self._api_key
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+
+    async def health(self) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{self._server_url}/api/v1/health",
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def scrape(
+        self,
+        urls: list[str],
+        options: dict[str, Any] | None = None,
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.post(
+                f"{self._server_url}/api/v1/scrape",
+                headers=self._headers(auth_token),
+                json={"urls": urls, "options": options or {}},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def search(
+        self,
+        keywords: list[str],
+        count: int = 10,
+        country: str = "US",
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.post(
+                f"{self._server_url}/api/v1/search",
+                headers=self._headers(auth_token),
+                json={"keywords": keywords, "count": count, "country": country},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def search_and_scrape(
+        self,
+        keywords: list[str],
+        total_results_per_keyword: int = 5,
+        options: dict[str, Any] | None = None,
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{self._server_url}/api/v1/search-and-scrape",
+                headers=self._headers(auth_token),
+                json={
+                    "keywords": keywords,
+                    "total_results_per_keyword": total_results_per_keyword,
+                    "options": options or {},
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def research(
+        self,
+        query: str,
+        effort: str = "thorough",
+        country: str = "US",
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.post(
+                f"{self._server_url}/api/v1/research",
+                headers=self._headers(auth_token),
+                json={"query": query, "effort": effort, "country": country},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_domain_configs(self, auth_token: str | None = None) -> dict[str, Any]:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.get(
+                f"{self._server_url}/api/v1/config/domains",
+                headers=self._headers(auth_token),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+
+_client: RemoteScraperClient | None = None
+
+
+def get_remote_scraper() -> RemoteScraperClient:
+    global _client
+    if _client is None:
+        _client = RemoteScraperClient()
+    return _client

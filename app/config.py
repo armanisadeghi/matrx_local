@@ -28,6 +28,10 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
+# Remote scraper server (dedicated server at scraper.app.matrxserver.com)
+SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
+SCRAPER_SERVER_URL = os.getenv("SCRAPER_SERVER_URL", "https://scraper.app.matrxserver.com")
+
 TEMP_DIR = BASE_DIR / "system" / "temp"
 DATA_DIR = BASE_DIR / "system" / "data"
 CONFIG_DIR = BASE_DIR / "system" / "config"

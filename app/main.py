@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as api_router
 from app.api.tool_routes import router as tool_router
+from app.api.remote_scraper_routes import router as remote_scraper_router
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
 from app.services.scraper.engine import get_scraper_engine
@@ -40,6 +41,7 @@ app = FastAPI(
 
 app.include_router(api_router)
 app.include_router(tool_router, prefix="/tools", tags=["tools"])
+app.include_router(remote_scraper_router)
 
 app.add_middleware(
     CORSMiddleware,

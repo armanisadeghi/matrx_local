@@ -35,11 +35,13 @@ graph TB
 
   Cloud["AI Matrx Cloud<br/>aimatrx.com"]
   SupabaseAuth["Supabase Auth<br/>OAuth + JWT"]
-  SupabaseDB["Supabase PostgreSQL<br/>Optional persistence"]
+  RemoteScraper["Remote Scraper Server<br/>scraper.app.matrxserver.com"]
+  SupabaseDB["Supabase PostgreSQL<br/>Optional local cache"]
 
   ReactUI -->|OAuth| SupabaseAuth
   PythonEngine -->|"Validate JWT"| SupabaseAuth
   PythonEngine -->|"Cache storage"| SupabaseDB
+  PythonEngine -->|"X-API-Key"| RemoteScraper
   Cloud -->|"Scrape jobs"| PythonEngine
 ```
 
@@ -65,7 +67,8 @@ matrx_local/
 │   ├── websocket_manager.py        # WS connection handling
 │   ├── api/
 │   │   ├── routes.py               # Legacy HTTP routes
-│   │   └── tool_routes.py          # /tools/invoke, /tools/list
+│   │   ├── tool_routes.py          # /tools/invoke, /tools/list
+│   │   └── remote_scraper_routes.py # /remote-scraper/* proxy to scraper server
 │   ├── tools/
 │   │   ├── dispatcher.py           # Tool routing (23 tools registered)
 │   │   ├── session.py              # Per-connection state (cwd, bg processes)
@@ -80,7 +83,8 @@ matrx_local/
 │   │       └── transfer.py         # DownloadFile, UploadFile
 │   ├── services/
 │   │   └── scraper/
-│   │       └── engine.py           # ScraperEngine bridge to scraper-service
+│   │       ├── engine.py           # ScraperEngine bridge to scraper-service
+│   │       └── remote_client.py    # HTTP client for remote scraper server API
 │   └── common/
 │       └── system_logger.py        # Rotating file + console logging
 ├── scraper-service/                # Git subtree -- DO NOT EDIT directly
@@ -142,7 +146,8 @@ matrx_local/
 | **Python Runtime** | Python | 3.13+ |
 | **API Framework** | FastAPI + Uvicorn | Latest |
 | **Auth** | Supabase Auth | OAuth (Google, GitHub, Apple) + email |
-| **Database** | PostgreSQL via Supabase (optional) | asyncpg |
+| **Database** | PostgreSQL (optional local cache) | asyncpg |
+| **Remote Scraper** | REST API at scraper.app.matrxserver.com | httpx |
 | **Scraping** | httpx, curl-cffi, Playwright, BeautifulSoup, PyMuPDF | See pyproject.toml |
 | **Search** | Brave Search API | Optional |
 | **Package Manager (JS)** | npm | 10.x |
@@ -201,6 +206,28 @@ Persistent sessions with concurrent tool execution and cancellation.
 ```
 
 Multiple tool calls run simultaneously on one connection. Each uses its own `id`.
+
+### Remote Scraper Proxy (`/remote-scraper/*`)
+
+The React frontend calls the Python engine's `/remote-scraper/*` routes, which proxy requests to the remote scraper server (`scraper.app.matrxserver.com`). This keeps the `SCRAPER_API_KEY` server-side -- the frontend never talks to the remote server directly.
+
+| Endpoint | Method | Proxies To | Description |
+|----------|--------|-----------|-------------|
+| `/remote-scraper/status` | GET | `GET /api/v1/health` | Check remote server availability |
+| `/remote-scraper/scrape` | POST | `POST /api/v1/scrape` | Scrape URLs via remote server |
+| `/remote-scraper/search` | POST | `POST /api/v1/search` | Search via remote server |
+| `/remote-scraper/search-and-scrape` | POST | `POST /api/v1/search-and-scrape` | Combined search + scrape |
+| `/remote-scraper/research` | POST | `POST /api/v1/research` | Deep research via remote server |
+
+**POST /remote-scraper/scrape** body:
+```json
+{
+  "urls": ["https://example.com"],
+  "options": { "use_cache": true }
+}
+```
+
+Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from the env var. No auth header needed from the frontend for these routes. In production, this can be replaced with the user's Supabase JWT.
 
 ---
 
@@ -311,6 +338,60 @@ uv sync --extra browser               # If scraper deps changed
 
 ---
 
+## Remote Scraper Server
+
+The desktop app can delegate scraping to a remote server at `scraper.app.matrxserver.com` instead of (or in addition to) the local scraper engine.
+
+### Architecture
+
+```mermaid
+graph LR
+  ReactUI["React UI"] -->|"POST /remote-scraper/scrape"| PythonEngine["Python Engine<br/>:22140"]
+  PythonEngine -->|"POST /api/v1/scrape<br/>Bearer token"| RemoteServer["Remote Scraper<br/>scraper.app.matrxserver.com"]
+  RemoteServer -->|JSON response| PythonEngine
+  PythonEngine -->|JSON response| ReactUI
+```
+
+### Authentication
+
+The remote server supports dual auth:
+1. **API Key** -- `Authorization: Bearer <API_KEY>` (existing, for server-to-server)
+2. **Supabase JWT** -- `Authorization: Bearer <supabase_jwt>` (new, for end users)
+
+JWT validation uses the Supabase JWKS endpoint (`https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json`) with ES256 signing. When a Bearer token doesn't match the API key, the server tries JWT validation. Both auth methods coexist.
+
+### Why Proxy Through the Engine?
+
+The React frontend never talks to the remote scraper directly. All requests go through the Python engine's `/remote-scraper/*` proxy routes. This:
+- Keeps auth tokens server-side (never exposed to frontend)
+- Allows the engine to add request signing, caching, or rate limiting
+- Provides a uniform interface whether scraping locally or remotely
+
+### Remote Server API
+
+The remote server provides these endpoints (see `.arman/scraper-api-reference.md` for full docs):
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/health` | Server health and capabilities |
+| `POST /api/v1/scrape` | Scrape one or more URLs |
+| `POST /api/v1/search` | Search via Brave Search API |
+| `POST /api/v1/search-and-scrape` | Search + scrape results |
+| `POST /api/v1/research` | Deep research (iterative search + scrape) |
+| `GET /api/v1/scrape/stream` | SSE streaming scrape progress |
+| `GET /api/v1/config/domains` | Domain-specific scraping configs |
+
+### Local vs Remote Scraping
+
+| Mode | IP | Best For |
+|------|-----|----------|
+| **Local** (scraper engine) | User's residential IP | Sites blocking datacenter IPs |
+| **Remote** (scraper server) | Server infrastructure + proxy rotation | Bulk scraping, parallel jobs |
+
+Both modes coexist. The UI will support toggling between them (not yet implemented).
+
+---
+
 ## Authentication
 
 ### OAuth Flow (Desktop)
@@ -350,6 +431,16 @@ Ensure Google, GitHub, and Apple providers are enabled in **Auth > Providers**.
 - The React app stores the Supabase session in `localStorage` (managed by `@supabase/supabase-js`)
 - All API requests to the Python engine include `Authorization: Bearer <jwt>` via the `EngineAPI.setTokenProvider()` mechanism
 - The Python engine can validate the JWT against Supabase for cloud-sync features
+- The remote scraper server also validates Supabase JWTs via JWKS endpoint (ES256)
+
+### Shipping Auth Strategy
+
+Supabase acts as an **OAuth 2.1 Server** (https://supabase.com/docs/guides/auth/oauth-server):
+
+1. **Publishable key** -- Safe to embed in the desktop binary (RLS enforced, client-side by design)
+2. **User JWT** -- Obtained via Supabase OAuth, used to authenticate with both the local engine and remote scraper server
+3. **No embedded API keys** -- The `SCRAPER_API_KEY` is only used in development. In production, the user's Supabase JWT authenticates directly with the scraper server via JWKS validation
+4. **JWKS endpoint** -- `https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json`
 
 ---
 
@@ -416,11 +507,11 @@ The React frontend scans the port range on startup. Cache the discovered port fo
 
 ### Database Architecture
 
-Three separate database concerns:
+Three separate concerns:
 
-1. **Scrape Server** -- Dedicated PostgreSQL for the scraping system (domain configs, page cache, failure logs). Connected via `DATABASE_URL` in `.env`. Runs on its own server.
-2. **Supabase (Auth)** -- The AI Matrx platform's Supabase instance. Used for authentication only. Desktop app communicates strictly using the client auth token (anon key + user JWT). Never use the service role key.
-3. **In-Memory Cache** -- Default when no `DATABASE_URL` is set. Graceful fallback using TTLCache.
+1. **Remote Scraper Server** -- Dedicated server at `scraper.app.matrxserver.com` with its own internal PostgreSQL (domain configs, page cache, failure logs). The DB has **no public port** -- all access is via REST API with `X-API-Key`. The desktop app never connects to this DB directly.
+2. **Supabase (Auth)** -- The AI Matrx platform's Supabase instance. Used for authentication only. Desktop app communicates using the publishable key + user JWT. Never use the service role key.
+3. **Local Scraper Cache** -- Optional PostgreSQL for the local scraper engine (set `DATABASE_URL` in root `.env`). Defaults to in-memory TTLCache when not set.
 
 ### Configuring Database
 
@@ -498,13 +589,22 @@ Cross-platform builds run via GitHub Actions (see `.github/workflows/build-deskt
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `API_KEY` | Yes | -- | API key for engine access (any value for local dev) |
-| `DATABASE_URL` | No | `""` | PostgreSQL connection string for persistent cache |
+| `SCRAPER_API_KEY` | No | `""` | API key for remote scraper server (`X-API-Key` header) |
+| `SCRAPER_SERVER_URL` | No | `https://scraper.app.matrxserver.com` | Remote scraper server base URL |
+| `DATABASE_URL` | No | `""` | PostgreSQL connection string for local scraper cache |
 | `BRAVE_API_KEY` | No | -- | Enables Search and Research tools |
 | `DATACENTER_PROXIES` | No | -- | Comma-separated proxy list |
 | `RESIDENTIAL_PROXIES` | No | -- | Comma-separated proxy list |
 | `MATRX_PORT` | No | `22140` | Force a specific port |
 | `DEBUG` | No | `True` | Debug mode |
 | `LOG_LEVEL` | No | `DEBUG` | Logging level |
+
+### Desktop Environment Variables (`desktop/.env`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VITE_SUPABASE_URL` | Yes | Supabase project URL |
+| `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Yes | Supabase publishable key (safe to embed, RLS enforced) |
 
 ---
 

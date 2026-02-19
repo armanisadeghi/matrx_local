@@ -1,13 +1,24 @@
 # Arman Tasks
 
-- [X] Copy `desktop/.env.example` to `desktop/.env` and fill in your Supabase project URL and anon key (from AI Matrx Supabase Dashboard > Settings > API)
-    - ARMAN: USED Updated supabase "Publishable key" and updated supabase client implementation
-- [X] Ensure these OAuth redirect URLs are in Supabase Dashboard > Auth > URL Configuration > Redirect URLs:
-  - `http://localhost:1420/auth/callback`
-  - `tauri://localhost/auth/callback`
-- [x] Ensure Google, GitHub, and Apple providers are enabled in Supabase Dashboard > Auth > Providers
-- [x] Copy `.env.example` to `.env` at project root and set `API_KEY` (any value for local dev)
-    - ARMAN: Generated using: openssl rand -hex 32
-    Or do we need the actual api key? 
-- [ ] Optionally set `DATABASE_URL` in `.env` to the dedicated scrape server PostgreSQL connection string
-    - see for all info: /Users/armanisadeghi/Code/matrx_local/.arman/scraper-api-refernce.md
+## Completed
+
+- [x] Copy `desktop/.env.example` to `desktop/.env` with Supabase publishable key
+- [x] Ensure OAuth redirect URLs are in Supabase Dashboard
+- [x] Ensure Google, GitHub, and Apple providers are enabled
+- [x] Copy root `.env.example` to `.env` and set `API_KEY`
+- [x] Create root `.env` file with API_KEY, SCRAPER_API_KEY, SCRAPER_SERVER_URL
+- [x] Do NOT set `DATABASE_URL` -- scraper DB is internal-only, all via REST API
+- [x] Add `SUPABASE_JWKS_URL` to scraper server's Coolify env vars
+- [x] Push scraper-service changes to main (JWT auth, PyJWT dependency)
+- [x] Register matrx_local as OAuth application in Supabase (Client ID: `af37ec97-3e0c-423c-a205-3d6c5adc5645`)
+
+## Current
+
+No manual tasks pending.
+
+## Notes
+
+- The scraper server now supports dual auth: API key (existing) AND Supabase JWT (new). Both work simultaneously.
+- OAuth app registered: Client ID `af37ec97-3e0c-423c-a205-3d6c5adc5645`, type `public`.
+- For shipping: desktop app users authenticate via Supabase OAuth, get a JWT, and that JWT works directly with the scraper server.
+- No need to embed API keys in the desktop binary.

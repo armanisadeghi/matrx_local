@@ -20,7 +20,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { engine, type ScrapeResultData } from "@/lib/api";
+import { engine, type ScrapeResultData, type RemoteScrapeResponse } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
 import { formatDuration, truncateUrl } from "@/lib/utils";
 
@@ -37,13 +37,13 @@ interface ScrapeJob {
   startedAt: Date;
   completedAt?: Date;
   useCache: boolean;
-  method: "engine" | "local-browser";
+  method: "engine" | "local-browser" | "remote";
 }
 
 export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
   const [urlInput, setUrlInput] = useState("");
   const [useCache, setUseCache] = useState(true);
-  const [method, setMethod] = useState<"engine" | "local-browser">("engine");
+  const [method, setMethod] = useState<"engine" | "local-browser" | "remote">("engine");
   const [jobs, setJobs] = useState<ScrapeJob[]>([]);
   const [selectedJob, setSelectedJob] = useState<string | null>(null);
   const [selectedResult, setSelectedResult] = useState<ScrapeResultData | null>(
@@ -85,7 +85,23 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
     try {
       let results: ScrapeResultData[];
 
-      if (method === "local-browser") {
+      if (method === "remote") {
+        const resp: RemoteScrapeResponse = await engine.scrapeRemotely(
+          urls,
+          { use_cache: useCache },
+        );
+        results = resp.results.map((r) => ({
+          url: r.url,
+          success: r.status === "success",
+          status_code: r.status_code ?? 0,
+          content: r.text_data ?? "",
+          title: "",
+          content_type: r.content_type ?? "",
+          response_url: r.url,
+          error: r.error,
+          elapsed_ms: resp.execution_time_ms ?? 0,
+        }));
+      } else if (method === "local-browser") {
         const toolResult = await engine.invokeTool("FetchWithBrowser", {
           url: urls[0],
           extract_text: true,
@@ -224,7 +240,15 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
                   className="text-xs h-7"
                   onClick={() => setMethod("local-browser")}
                 >
-                  Local Browser
+                  Browser
+                </Button>
+                <Button
+                  variant={method === "remote" ? "default" : "outline"}
+                  size="sm"
+                  className="text-xs h-7"
+                  onClick={() => setMethod("remote")}
+                >
+                  Remote
                 </Button>
               </div>
             </div>
@@ -318,7 +342,7 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
                         variant="secondary"
                         className="text-[10px] px-1.5"
                       >
-                        {job.method === "local-browser" ? "Browser" : "Engine"}
+                        {job.method === "remote" ? "Remote" : job.method === "local-browser" ? "Browser" : "Engine"}
                       </Badge>
                     </div>
                     {job.status === "completed" && (

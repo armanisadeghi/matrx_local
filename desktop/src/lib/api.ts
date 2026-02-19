@@ -45,6 +45,24 @@ export interface ScrapeResultData {
   elapsed_ms: number;
 }
 
+export interface RemoteScrapeResult {
+  status: "success" | "error";
+  url: string;
+  error: string | null;
+  status_code: number | null;
+  content_type: string | null;
+  text_data: string | null;
+  from_cache: boolean;
+  overview: Record<string, unknown> | null;
+  scraped_at: string | null;
+}
+
+export interface RemoteScrapeResponse {
+  status: string;
+  execution_time_ms: number;
+  results: RemoteScrapeResult[];
+}
+
 export interface SystemInfo {
   platform: string;
   architecture: string;
@@ -273,6 +291,34 @@ class EngineAPI {
   /** Deep research via the engine. */
   async research(query: string, effort = "medium", country = "us"): Promise<ToolResult> {
     return this.invokeTool("Research", { query, effort, country });
+  }
+
+  // ---- Remote Scraper Server (via /remote-scraper/* proxy) ----
+
+  /** Check if the remote scraper server is available. */
+  async remoteScraperStatus(): Promise<{ available: boolean; reason?: string; status?: string }> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/status`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`Remote scraper status failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Scrape URLs via the remote scraper server. */
+  async scrapeRemotely(
+    urls: string[],
+    options?: Record<string, unknown>
+  ): Promise<RemoteScrapeResponse> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/scrape`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ urls, options: options ?? {} }),
+    });
+    if (!resp.ok) throw new Error(`Remote scrape failed: ${resp.status}`);
+    return resp.json();
   }
 
   /** Subscribe to engine events. */

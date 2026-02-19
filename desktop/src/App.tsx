@@ -11,6 +11,7 @@ import { AuthCallback } from "@/pages/AuthCallback";
 import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/hooks/use-theme";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Loader2 } from "lucide-react";
 
 export default function App() {
@@ -34,67 +35,69 @@ export default function App() {
   }
 
   return (
-    <TooltipProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/auth/callback" element={<AuthCallback />} />
+    <ErrorBoundary>
+      <TooltipProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/auth/callback" element={<AuthCallback />} />
 
-          {!auth.isAuthenticated ? (
-            <Route path="*" element={<Login auth={auth} />} />
-          ) : (
-            <Route element={<AppLayout engineStatus={status} />}>
-              <Route
-                index
-                element={
-                  <Dashboard
-                    engineStatus={status}
-                    engineUrl={url}
-                    tools={tools}
-                    systemInfo={systemInfo}
-                    browserStatus={browserStatus}
-                    onRefresh={refresh}
-                  />
-                }
-              />
-              <Route
-                path="scraping"
-                element={
-                  <Scraping engineStatus={status} engineUrl={url} />
-                }
-              />
-              <Route
-                path="tools"
-                element={
-                  <Tools
-                    engineStatus={status}
-                    engineUrl={url}
-                    tools={tools}
-                  />
-                }
-              />
-              <Route
-                path="activity"
-                element={
-                  <Activity engineStatus={status} engineUrl={url} />
-                }
-              />
-              <Route
-                path="settings"
-                element={
-                  <Settings
-                    engineStatus={status}
-                    engineUrl={url}
-                    onRefresh={refresh}
-                    auth={auth}
-                    theme={themeCtx.theme}
-                    setTheme={themeCtx.setTheme}
-                  />
-                }
-              />
-            </Route>
-          )}
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
+            {!auth.isAuthenticated ? (
+              <Route path="*" element={<Login auth={auth} />} />
+            ) : (
+              <Route element={<AppLayout engineStatus={status} />}>
+                <Route
+                  index
+                  element={
+                    <Dashboard
+                      engineStatus={status}
+                      engineUrl={url}
+                      tools={tools}
+                      systemInfo={systemInfo}
+                      browserStatus={browserStatus}
+                      onRefresh={refresh}
+                    />
+                  }
+                />
+                <Route
+                  path="scraping"
+                  element={
+                    <Scraping engineStatus={status} engineUrl={url} />
+                  }
+                />
+                <Route
+                  path="tools"
+                  element={
+                    <Tools
+                      engineStatus={status}
+                      engineUrl={url}
+                      tools={tools}
+                    />
+                  }
+                />
+                <Route
+                  path="activity"
+                  element={
+                    <Activity engineStatus={status} engineUrl={url} />
+                  }
+                />
+                <Route
+                  path="settings"
+                  element={
+                    <Settings
+                      engineStatus={status}
+                      engineUrl={url}
+                      onRefresh={refresh}
+                      auth={auth}
+                      theme={themeCtx.theme}
+                      setTheme={themeCtx.setTheme}
+                    />
+                  }
+                />
+              </Route>
+            )}
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </ErrorBoundary>
   );
 }

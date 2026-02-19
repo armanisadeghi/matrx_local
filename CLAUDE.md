@@ -13,16 +13,16 @@ Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Pytho
 - **Desktop:** Tauri v2 (Rust) + React 19 + TypeScript 5.7 + Vite 6
 - **Styling:** Tailwind CSS 3.4 + shadcn/ui (Radix UI) -- `darkMode: "class"` strategy
 - **Backend:** Python 3.13+ / FastAPI / Uvicorn
-- **Auth:** Supabase Auth (OAuth + email)
+- **Auth:** Supabase Auth (OAuth + email) -- Supabase also acts as OAuth Server for shipping
 - **DB:** PostgreSQL via Supabase (optional, graceful degradation to in-memory)
-- **Scraping:** Integrated scraper-service (git subtree, read-only)
+- **Scraping:** Integrated scraper-service (git subtree, read-only in matrx_local; editable at source repo)
 - **Package Managers:** npm (desktop), uv (Python)
 
 ---
 
 ## Key Architecture Rules
 
-1. **scraper-service/ is read-only** -- It's a git subtree from the `ai-dream` repo. Never edit files there directly. Use `./scripts/update-scraper.sh` to pull updates.
+1. **scraper-service/ is read-only in this repo** -- It's a git subtree from the `ai-dream` repo. Never edit files there directly. Use `./scripts/update-scraper.sh` to pull updates. The source repo is at `/Users/armanisadeghi/Code/aidream-current/scraper-service` and CAN be edited directly.
 2. **Module isolation** -- The scraper's `app/` is aliased as `scraper_app/` via `sys.modules` in `app/services/scraper/engine.py`. Do not create naming conflicts.
 3. **Graceful degradation** -- The engine works without PostgreSQL (memory cache), Playwright (curl-cffi fallback), or Brave API (search disabled). Never make these hard dependencies.
 4. **Port 22140** -- Default engine port. Auto-scans 22140-22159. Discovery file at `~/.matrx/local.json`.
@@ -38,7 +38,7 @@ Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Pytho
    - An existing task is resolved (check it off)
    - Investigation reveals new details about an existing task
 
-2. **`.arman/ARMAN_TASKS.md`** -- Tasks for Arman to complete manually (Supabase config, env setup, etc.). Keep entries **simple and concise**: just a checkbox and brief direct instructions. No verbose explanations.
+2. **`.arman/ARMAN_TASKS.md`** -- Tasks for Arman to complete manually (Supabase config, env setup, deployments, etc.). Keep entries **simple and concise**: just a checkbox and brief direct instructions. No verbose explanations.
 
 Never let a discovered issue go untracked. If we're in the middle of something else, add it to the right file and continue.
 
@@ -55,23 +55,32 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - Dashboard with live system info and browser detection
 - Tauri sidecar lifecycle (spawn/kill)
 - CORS configuration
+- Remote scraper proxy routes (`/remote-scraper/*`)
+- Root `.env` and `desktop/.env` both configured
 
 ### Recently Fixed
-- **`supabase.ts` created** -- Auth client singleton with env-based config
-- **Theme switching works** -- `use-theme.ts` hook manages `.dark` class, persists to localStorage, supports system detection
+- **`supabase.ts` created** -- Auth client singleton with publishable key
+- **Theme switching** -- `use-theme.ts` hook, `.dark` class, localStorage, system detection
 - **Settings persisted** -- `lib/settings.ts` with localStorage backend
-- **Button handlers wired** -- Open Logs/Data via `OpenPath` tool, Restart Engine via sidecar stop/start
-- **`database.py` fixed** -- Uses `DATABASE_URL` from config, no more hardcoded credentials
-- **Health endpoint mismatch fixed** -- `sidecar.ts` now uses `/tools/list` consistently
-- **Stale closure fixed** -- `use-engine.ts` health check uses ref pattern
+- **Button handlers wired** -- Open Logs/Data via `OpenPath` tool, Restart via sidecar
+- **`database.py` fixed** -- Uses `DATABASE_URL` from config, no hardcoded credentials
+- **Health endpoint mismatch** -- `sidecar.ts` uses `/tools/list` consistently
+- **Stale closure** -- `use-engine.ts` health check uses ref pattern
+- **Auth header mismatch** -- `remote_client.py` fixed from `X-API-Key` to `Authorization: Bearer`
+- **JWT auth on scraper server** -- Deployed to production, `SUPABASE_JWKS_URL` set in Coolify
+- **OAuth app registered** -- Client ID `af37ec97-3e0c-423c-a205-3d6c5adc5645`, type `public`
+- **JWT forwarding** -- Proxy routes forward user's JWT from incoming request to scraper server
+- **Remote scraping in UI** -- Scraping page has Engine/Browser/Remote toggle
+- **Error boundary** -- `ErrorBoundary.tsx` wraps entire app in `App.tsx`
 
 ### Still Needs Work
-- **No auth validation** on Python endpoints (security)
-- **Launch on Startup / Minimize to Tray** -- Persisted locally but not wired to OS/Tauri
-- **Scraping settings not sent to engine** -- Headless mode and request delay need engine API endpoint
-- **No error boundary** -- App crashes entirely on unhandled errors
+- **Auth middleware on Python engine** -- Local engine endpoints still unprotected
+- **Launch on Startup / Minimize to Tray** -- Need Tauri autostart plugin, Rust-side wiring
+- **Engine settings API** -- Headless mode and request delay not sent to engine
 - **Version hardcoded** in Settings About section
-- **Arman tasks** -- Needs to create `.env` files with actual credentials (see `.arman/ARMAN_TASKS.md`)
+- **Dead code** -- `scrapeLocally()` and `getBrowserStatus()` call non-existent `/local-scrape/*` routes
+- **SSE streaming** -- Remote scraper SSE endpoints not integrated in desktop UI
+- **Rate limiting** -- No per-user rate limiting on scraper server
 
 ---
 
@@ -103,11 +112,17 @@ npm run tauri:dev
 | Python entry point | `run.py` |
 | FastAPI app | `app/main.py` |
 | Tool implementations | `app/tools/tools/*.py` |
+| Remote scraper client | `app/services/scraper/remote_client.py` |
+| Remote scraper routes | `app/api/remote_scraper_routes.py` |
+| Error boundary | `desktop/src/components/ErrorBoundary.tsx` |
 | React entry | `desktop/src/App.tsx` |
+| Scraping page | `desktop/src/pages/Scraping.tsx` |
 | Settings page | `desktop/src/pages/Settings.tsx` |
 | Engine API client | `desktop/src/lib/api.ts` |
 | Auth hook | `desktop/src/hooks/use-auth.ts` |
 | Engine hook | `desktop/src/hooks/use-engine.ts` |
+| Theme hook | `desktop/src/hooks/use-theme.ts` |
+| Settings persistence | `desktop/src/lib/settings.ts` |
 | CSS theme vars | `desktop/src/index.css` |
 | Tailwind config | `desktop/tailwind.config.ts` |
 | Tauri config | `desktop/src-tauri/tauri.conf.json` |
@@ -116,18 +131,54 @@ npm run tauri:dev
 | Architecture docs | `ARCHITECTURE.md` |
 | Task tracker | `TASKS.md` |
 | Backlog | `BACKLOG.md` |
+| Scraper service (source) | `/Users/armanisadeghi/Code/aidream-current/scraper-service` |
 
 ---
 
-## Database Architecture
+## Database & Remote Services
 
-Three separate database concerns:
+### Three external connections:
 
-1. **Scrape Server** -- Dedicated PostgreSQL server for the scraping system. Connected via `DATABASE_URL` env var. Used for scrape cache, domain configs, failure logs. Runs on its own server, not Supabase.
-2. **Main App Supabase** -- The AI Matrx platform's Supabase instance. This desktop app communicates with it **strictly using the client auth token** (anon key + user JWT). Never use the service role key from this app.
-3. **In-Memory Cache** -- Default when no `DATABASE_URL` is set. Graceful fallback.
+1. **Supabase Auth** -- The AI Matrx Supabase instance (`txzxabzwovsujtloxrus`). Desktop app uses **publishable key** (not deprecated anon key). All operations use user's JWT. Never use service role key.
+2. **Remote Scraper Server** -- `scraper.app.matrxserver.com`. Accessed via REST API with `Authorization: Bearer <token>`. Now supports both API key and Supabase JWT auth. The scraper's PostgreSQL is **internal-only** -- no direct DB access.
+3. **Local Scraper Engine** -- The in-process scraper (scraper-service subtree). Can optionally connect to a PostgreSQL for local cache via `DATABASE_URL`, but defaults to in-memory TTLCache.
 
-**Important:** The desktop app must never bypass Supabase RLS. All Supabase operations go through the client with the user's auth token only.
+### Env var mapping:
+| Var | File | Purpose |
+|-----|------|---------|
+| `VITE_SUPABASE_URL` | `desktop/.env` | Supabase project URL |
+| `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | `desktop/.env` | Supabase publishable key (safe to embed) |
+| `API_KEY` | root `.env` | Local engine's own auth key |
+| `SCRAPER_API_KEY` | root `.env` | Remote scraper server API key (Bearer token) |
+| `SCRAPER_SERVER_URL` | root `.env` | Remote scraper server base URL |
+| `DATABASE_URL` | root `.env` | Optional local PostgreSQL for scraper cache |
+
+### Shipping / Production Auth Strategy:
+
+**Decided:** Use Supabase as OAuth Server (https://supabase.com/docs/guides/auth/oauth-server).
+
+- **Supabase publishable key** -- Safe to embed in binary (RLS enforced, client-side by design).
+- **Scraper server auth** -- JWT validation added via JWKS endpoint. Users authenticate with Supabase, get a JWT, and that JWT works directly with the scraper server. No embedded API keys needed.
+- **JWKS endpoint:** `https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json`
+- **Signing key:** ECC P-256 (ES256), Key ID `8a68756f-4254-41d7-9871-a7615685e38a`
+- **Env var on scraper server:** `SUPABASE_JWKS_URL` (set in Coolify, deployed)
+
+### Scraper Server Source:
+
+The scraper-service source repo is at `/Users/armanisadeghi/Code/aidream-current/scraper-service`. Changes pushed to main deploy automatically via Coolify. Key files:
+- Auth: `app/api/auth.py` (supports API key + JWT)
+- Config: `app/config.py` (Pydantic Settings)
+- Tests: `tests/integration/test_api_endpoints.py`
+
+---
+
+## Env Files
+
+**Root `.env`** -- Python engine config (API_KEY, SCRAPER_API_KEY, etc.). Not committed.
+
+**`desktop/.env`** -- Supabase client config (VITE_* vars only). Not committed.
+
+When editing `.env` files: comment out values instead of deleting them, with a note for Arman to clean up.
 
 ---
 
@@ -140,3 +191,4 @@ Three separate database concerns:
 - Keep solutions simple; avoid over-engineering
 - Tasks for Arman go in `.arman/ARMAN_TASKS.md` -- keep them simple checkbox items with direct instructions
 - Prefers I keep going without stopping until done or stuck
+- OK with me creating/editing .env files directly -- just comment out instead of deleting values
