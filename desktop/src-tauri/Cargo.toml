@@ -1,0 +1,21 @@
+[package]
+name = "aimatrx-desktop"
+version = "1.0.0"
+description = "AI Matrx Desktop — Local companion for the AI Matrx platform"
+authors = ["AI Matrx"]
+edition = "2021"
+
+[lib]
+name = "aimatrx_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
