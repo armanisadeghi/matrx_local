@@ -30,13 +30,13 @@
 ## Settings Page
 
 - [x] **Theme switching** -- `use-theme.ts` hook manages `.dark` class, persists to localStorage, default dark.
-- [x] **Settings persisted** -- `lib/settings.ts` with localStorage backend.
+- [x] **Settings persisted** -- `lib/settings.ts` with localStorage backend + native/engine sync.
 - [x] **Folder buttons wired** -- Open Logs/Data via engine `OpenPath` tool.
 - [x] **Restart Engine** -- Proper sidecar stop/start in Tauri mode.
 - [x] **Version dynamic** -- App version from `package.json` via Vite define. Engine version from `/` endpoint.
-- [ ] **Launch on Startup** -- Persisted locally but not wired to OS. Needs Tauri autostart plugin.
-- [ ] **Minimize to Tray** -- Persisted but doesn't control Rust-side behavior.
-- [ ] **Headless mode / Request delay** -- Persisted locally but never sent to engine. Need engine settings API.
+- [x] **Launch on Startup** -- `tauri-plugin-autostart` added. Toggle in Settings syncs to OS via `enable()`/`disable()`.
+- [x] **Minimize to Tray** -- Configurable via `set_close_to_tray` Tauri command. Toggle in Settings controls Rust-side behavior.
+- [x] **Headless mode / Request delay** -- Engine settings API (`PUT /settings`). Settings synced on change and on startup.
 
 ---
 
@@ -60,6 +60,7 @@
 - [x] **Remote scraper integration** -- Full proxy + JWT forwarding.
 - [x] **Dead `/local-scrape/*` code cleaned up** -- Removed `scrapeLocally()`. `getBrowserStatus()` now uses `SystemInfo` tool fallback.
 - [x] **`.gitignore` fixed** -- `desktop/src/lib/` was incorrectly ignored by Python `lib/` pattern. Added negation.
+- [x] **Engine settings API** -- `PUT /settings` endpoint for headless mode and scrape delay.
 
 ---
 
@@ -97,11 +98,9 @@
 - [ ] Job queue for cloud-assigned scrape jobs
 - [ ] Device registration with cloud
 - [ ] Result sync to cloud storage
-- [ ] Engine settings API (headless mode, request delay)
 - [ ] SSE streaming support in desktop UI for scrape progress
-- [ ] Launch on Startup (Tauri autostart plugin)
-- [ ] Minimize to Tray (Rust-side wiring)
 - [ ] Rate limiting on scraper server
+- [ ] No Alembic migration runner (only matters with local DATABASE_URL)
 
 ---
 

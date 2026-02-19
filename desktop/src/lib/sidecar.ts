@@ -40,6 +40,13 @@ export async function stopSidecar(): Promise<void> {
   await inv("stop_sidecar");
 }
 
+/** Set whether closing the window hides to tray or quits. */
+export async function setCloseToTray(enabled: boolean): Promise<void> {
+  const inv = await loadTauriInvoke();
+  if (!inv) return;
+  await inv("set_close_to_tray", { enabled });
+}
+
 /** Wait for the engine health endpoint to respond. */
 export async function waitForEngine(
   baseUrl: string,

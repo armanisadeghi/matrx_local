@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { engine, type SystemInfo, type BrowserStatus } from "@/lib/api";
 import { isTauri, startSidecar } from "@/lib/sidecar";
+import { syncAllSettings } from "@/lib/settings";
 import supabase from "@/lib/supabase";
 
 export type EngineStatus = "discovering" | "starting" | "connected" | "disconnected" | "error";
@@ -115,6 +116,9 @@ export function useEngine() {
     } catch {
       // WS is optional, REST still works
     }
+
+    // Sync persisted settings to Tauri + engine.
+    syncAllSettings().catch(() => {});
   }, [update]);
 
   const refresh = useCallback(async () => {

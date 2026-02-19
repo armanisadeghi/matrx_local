@@ -1,16 +1,21 @@
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::Manager;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
+use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_shell::ShellExt;
 
 /// Holds the sidecar child process handle for lifecycle management.
 struct SidecarState {
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
 }
+
+/// Controls whether window close hides to tray or quits the app.
+struct CloseToTray(AtomicBool);
 
 #[derive(Serialize)]
 struct SidecarStatus {
@@ -89,6 +94,22 @@ async fn sidecar_status(state: tauri::State<'_, SidecarState>) -> Result<Sidecar
     })
 }
 
+/// Set whether closing the window hides to tray or quits the app.
+#[tauri::command]
+async fn set_close_to_tray(
+    enabled: bool,
+    state: tauri::State<'_, CloseToTray>,
+) -> Result<(), String> {
+    state.0.store(enabled, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Get current close-to-tray setting.
+#[tauri::command]
+async fn get_close_to_tray(state: tauri::State<'_, CloseToTray>) -> Result<bool, String> {
+    Ok(state.0.load(Ordering::Relaxed))
+}
+
 /// Set up the system tray icon and menu.
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItemBuilder::with_id("show", "Show AI Matrx").build(app)?;
@@ -148,13 +169,20 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(SidecarState {
             child: Mutex::new(None),
         })
+        .manage(CloseToTray(AtomicBool::new(true)))
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
             sidecar_status,
+            set_close_to_tray,
+            get_close_to_tray,
         ])
         .setup(|app| {
             // Set up system tray
@@ -165,9 +193,24 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Hide instead of close — keep running in system tray
-                let _ = window.hide();
-                api.prevent_close();
+                let close_to_tray = window
+                    .app_handle()
+                    .try_state::<CloseToTray>()
+                    .map(|s| s.0.load(Ordering::Relaxed))
+                    .unwrap_or(true);
+
+                if close_to_tray {
+                    // Hide instead of close — keep running in system tray
+                    let _ = window.hide();
+                    api.prevent_close();
+                } else {
+                    // Actually quit — kill sidecar first
+                    if let Some(state) = window.app_handle().try_state::<SidecarState>() {
+                        if let Some(child) = state.child.lock().unwrap().take() {
+                            let _ = child.kill();
+                        }
+                    }
+                }
             }
         })
         .run(tauri::generate_context!())

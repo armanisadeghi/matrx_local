@@ -7,6 +7,7 @@
     "shell:allow-spawn",
     "shell:allow-execute",
     "notification:default",
-    "store:default"
+    "store:default",
+    "autostart:default"
   ]
 }

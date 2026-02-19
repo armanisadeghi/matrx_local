@@ -73,9 +73,12 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Remote scraping in UI** -- Scraping page has Engine/Browser/Remote toggle
 - **Error boundary** -- `ErrorBoundary.tsx` wraps entire app in `App.tsx`
 
+### Recently Completed
+- **Launch on Startup** -- `tauri-plugin-autostart` wired to Settings toggle
+- **Minimize to Tray** -- Configurable via `set_close_to_tray` Rust command, synced from Settings
+- **Engine settings API** -- `PUT /settings` endpoint, synced on change and on startup
+
 ### Still Needs Work
-- **Launch on Startup / Minimize to Tray** -- Need Tauri autostart plugin, Rust-side wiring
-- **Engine settings API** -- Headless mode and request delay not sent to engine
 - **SSE streaming** -- Remote scraper SSE endpoints not integrated in desktop UI
 - **Rate limiting** -- No per-user rate limiting on scraper server
 
@@ -111,6 +114,8 @@ npm run tauri:dev
 | Tool implementations | `app/tools/tools/*.py` |
 | Remote scraper client | `app/services/scraper/remote_client.py` |
 | Remote scraper routes | `app/api/remote_scraper_routes.py` |
+| Engine settings API | `app/api/settings_routes.py` |
+| Engine auth middleware | `app/api/auth.py` |
 | Error boundary | `desktop/src/components/ErrorBoundary.tsx` |
 | React entry | `desktop/src/App.tsx` |
 | Scraping page | `desktop/src/pages/Scraping.tsx` |

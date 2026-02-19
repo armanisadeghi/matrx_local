@@ -63,6 +63,11 @@ export interface RemoteScrapeResponse {
   results: RemoteScrapeResult[];
 }
 
+export interface EngineSettings {
+  headless_scraping: boolean;
+  scrape_delay: number;
+}
+
 export interface SystemInfo {
   platform: string;
   architecture: string;
@@ -144,6 +149,28 @@ class EngineAPI {
       }
     } catch { /* non-critical */ }
     return "";
+  }
+
+  /** Get engine runtime settings. */
+  async getSettings(): Promise<EngineSettings> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/settings`, { headers });
+    if (!resp.ok) throw new Error(`Failed to get settings: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Update engine runtime settings. */
+  async updateSettings(settings: EngineSettings): Promise<EngineSettings> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(settings),
+    });
+    if (!resp.ok) throw new Error(`Failed to update settings: ${resp.status}`);
+    return resp.json();
   }
 
   /** Get the list of available tools from the engine. */
