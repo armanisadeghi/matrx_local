@@ -5,6 +5,7 @@ import { Dashboard } from "@/pages/Dashboard";
 import { Scraping } from "@/pages/Scraping";
 import { Tools } from "@/pages/Tools";
 import { Activity } from "@/pages/Activity";
+import { Ports } from "@/pages/Ports";
 import { Settings } from "@/pages/Settings";
 import { Login } from "@/pages/Login";
 import { AuthCallback } from "@/pages/AuthCallback";
@@ -79,6 +80,12 @@ export default function App() {
                   path="activity"
                   element={
                     <Activity engineStatus={status} engineUrl={url} />
+                  }
+                />
+                <Route
+                  path="ports"
+                  element={
+                    <Ports engineStatus={status} engineUrl={url} />
                   }
                 />
                 <Route

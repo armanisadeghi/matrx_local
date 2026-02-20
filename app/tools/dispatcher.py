@@ -32,6 +32,7 @@ from app.tools.tools.process_manager import (
     tool_kill_process,
     tool_launch_app,
     tool_list_processes,
+    tool_list_ports,
 )
 from app.tools.tools.window_manager import (
     tool_focus_window,
@@ -143,6 +144,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "LaunchApp": tool_launch_app,
     "KillProcess": tool_kill_process,
     "FocusApp": tool_focus_app,
+    "ListPorts": tool_list_ports,
     # ── Window Management ────────────────────────────────────────────
     "ListWindows": tool_list_windows,
     "FocusWindow": tool_focus_window,

@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import signal
+import socket
 import subprocess
 from pathlib import Path
 
@@ -89,6 +90,205 @@ def _list_processes_fallback(filter: str | None, sort_by: str, limit: int) -> To
         return ToolResult(output=output.strip())
     except Exception as e:
         return ToolResult(type=ToolResultType.ERROR, output=f"Failed to list processes: {e}")
+
+
+async def tool_list_ports(
+    session: ToolSession,
+    filter: str | None = None,
+    limit: int = 100,
+) -> ToolResult:
+    """List listening ports and their associated processes.
+    
+    Provides PID, process name, local address (IP:Port), and protocol.
+    Filters by process name or port number if requested.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return _list_ports_fallback(filter, limit)
+
+    ports = []
+    try:
+        # Require root/admin for full listing on some OSes, but get what we can
+        connections = psutil.net_connections(kind='all')
+    except psutil.AccessDenied:
+        # net_connections requires privileges on macOS, fallback to lsof
+        return _list_ports_fallback(filter, limit)
+    except Exception as e:
+        return ToolResult(type=ToolResultType.ERROR, output=f"Failed to get connections: {e}")
+
+    # Process dict for quick lookup
+    try:
+        procs = {p.pid: p.info for p in psutil.process_iter(['pid', 'name', 'username'])}
+    except Exception:
+        procs = {}
+
+    for conn in connections:
+        if conn.status != 'LISTEN' and conn.status != 'NONE':
+            # Keep LISTEN for TCP, NONE for UDP
+            if conn.type == socket.SOCK_STREAM and conn.status != 'LISTEN':
+                continue
+
+        try:
+            pid = conn.pid
+            name = procs.get(pid, {}).get('name', 'unknown') if pid else "System"
+            user = procs.get(pid, {}).get('username', '') if pid else ""
+            
+            # Format local address
+            laddr = f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else ""
+            if not laddr:
+                continue
+
+            if filter:
+                if filter.lower() not in name.lower() and filter not in str(conn.laddr.port):
+                    continue
+
+            protocol = "TCP" if conn.type == socket.SOCK_STREAM else "UDP" if conn.type == socket.SOCK_DGRAM else str(conn.type)
+
+            ports.append({
+                "pid": pid or 0,
+                "name": name,
+                "port": conn.laddr.port,
+                "address": conn.laddr.ip,
+                "protocol": protocol,
+                "user": user,
+            })
+        except Exception:
+            continue
+
+    # Sort by port number
+    ports.sort(key=lambda p: p['port'])
+    ports = ports[:limit]
+
+    lines = [f"{'PORT':>6}  {'PROTO':<5}  {'PID':>8}  NAME"]
+    lines.append("-" * 50)
+    for p in ports:
+        lines.append(f"{p['port']:>6}  {p['protocol']:<5}  {p['pid']:>8}  {p['name']}")
+
+    return ToolResult(
+        output=f"Listening ports ({len(ports)} shown):\n" + "\n".join(lines),
+        metadata={"ports": ports, "count": len(ports)},
+    )
+
+
+def _list_ports_fallback(filter: str | None, limit: int) -> ToolResult:
+    """Fallback using netstat (Windows) or lsof (macOS/Linux) when psutil is not available or lacks permissions."""
+    ports = []
+    try:
+        if IS_WINDOWS:
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=10,
+            )
+            # Find tasklist to map PID to name
+            tasks = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=10,
+            )
+            pid_to_name = {}
+            for line in tasks.stdout.strip().split('\n'):
+                if line:
+                    parts = line.split('","')
+                    if len(parts) >= 2:
+                        name = parts[0].strip('"')
+                        pid = parts[1].strip('"')
+                        pid_to_name[pid] = name
+
+            for line in result.stdout.split("\n"):
+                if "LISTENING" in line or ("UDP" in line and "*:*" in line):
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        proto = parts[0]
+                        laddr = parts[1]
+                        pid_str = parts[-1]
+                        
+                        try:
+                            port = int(laddr.split(':')[-1])
+                            pid = int(pid_str)
+                            name = pid_to_name.get(pid_str, "unknown")
+                            
+                            if filter and filter.lower() not in name.lower() and filter not in str(port):
+                                continue
+
+                            ports.append({
+                                "pid": pid,
+                                "name": name,
+                                "port": port,
+                                "address": laddr.rsplit(':', 1)[0],
+                                "protocol": proto,
+                                "user": "",
+                            })
+                        except ValueError:
+                            continue
+
+        else:
+            # macOS / Linux
+            result = subprocess.run(
+                ["lsof", "-i", "-P", "-n"],
+                capture_output=True, text=True, timeout=10,
+            )
+            # lsof output: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+            # e.g.: python3 1234 armani 3u IPv4 0x123 0t0 TCP *:8080 (LISTEN)
+            lines = result.stdout.split("\n")[1:]  # skip header
+            for line in lines:
+                if not line.strip(): continue
+                if "LISTEN" not in line and "UDP" not in line: continue
+                
+                parts = line.split()
+                if len(parts) >= 9:
+                    name = parts[0]
+                    try:
+                        pid = int(parts[1])
+                    except ValueError:
+                        pid = 0
+                    user = parts[2]
+                    proto = parts[7]
+                    addr_str = parts[8]  # e.g. *:8080 or 127.0.0.1:8080
+                    
+                    try:
+                        port_str = addr_str.split(':')[-1]
+                        if port_str == '*':
+                            continue
+                        port = int(port_str)
+                        ip = addr_str.rsplit(':', 1)[0]
+                        
+                        if filter and filter.lower() not in name.lower() and filter not in str(port):
+                            continue
+                            
+                        ports.append({
+                            "pid": pid,
+                            "name": name,
+                            "port": port,
+                            "address": ip,
+                            "protocol": proto,
+                            "user": user,
+                        })
+                    except ValueError:
+                        continue
+
+        # Deduplicate based on port + protocol + pid
+        seen = set()
+        unique_ports = []
+        for p in ports:
+            key = (p['port'], p['protocol'], p['pid'])
+            if key not in seen:
+                seen.add(key)
+                unique_ports.append(p)
+
+        unique_ports.sort(key=lambda p: p['port'])
+        unique_ports = unique_ports[:limit]
+
+        lines = [f"{'PORT':>6}  {'PROTO':<5}  {'PID':>8}  NAME"]
+        lines.append("-" * 50)
+        for p in unique_ports:
+            lines.append(f"{p['port']:>6}  {p['protocol']:<5}  {p['pid']:>8}  {p['name']}")
+
+        return ToolResult(
+            output=f"Listening ports ({len(unique_ports)} shown):\n" + "\n".join(lines),
+            metadata={"ports": unique_ports, "count": len(unique_ports)},
+        )
+    except Exception as e:
+        return ToolResult(type=ToolResultType.ERROR, output=f"Failed to list ports fallback: {e}")
 
 
 async def tool_launch_app(

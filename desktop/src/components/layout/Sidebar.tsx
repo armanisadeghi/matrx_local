@@ -23,6 +23,7 @@ const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/scraping", icon: Globe, label: "Scraping" },
   { to: "/tools", icon: Wrench, label: "Tools" },
+  { to: "/ports", icon: Activity, label: "Port Manager" },
   { to: "/activity", icon: Activity, label: "Activity" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
