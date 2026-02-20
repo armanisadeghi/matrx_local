@@ -101,6 +101,13 @@ from app.tools.tools.wifi_bluetooth import (
     tool_connected_devices,
     tool_wifi_networks,
 )
+from app.tools.tools.documents import (
+    tool_list_documents,
+    tool_list_document_folders,
+    tool_read_document,
+    tool_search_documents,
+    tool_write_document,
+)
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
@@ -200,6 +207,12 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "WifiNetworks": tool_wifi_networks,
     "BluetoothDevices": tool_bluetooth_devices,
     "ConnectedDevices": tool_connected_devices,
+    # ── Documents ──────────────────────────────────────────────────────────
+    "ListDocuments": tool_list_documents,
+    "ListDocumentFolders": tool_list_document_folders,
+    "ReadDocument": tool_read_document,
+    "WriteDocument": tool_write_document,
+    "SearchDocuments": tool_search_documents,
 }
 
 TOOL_NAMES: list[str] = sorted(TOOL_HANDLERS.keys())
