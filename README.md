@@ -86,51 +86,55 @@ uv run playwright install chromium
 
 ---
 
-## Running the Python Engine (Backend)
+## Start / Stop
 
-The Python engine is a FastAPI server that exposes all 73 tools over REST and WebSocket. Run it standalone for quick testing — no Rust/Node required.
+### Start everything
 
-### Start
+**Terminal 1 — Python engine (start first, wait for it to be ready)**
 
 ```bash
 cd /Users/armanisadeghi/Code/matrx-local
-
-# Start in foreground (Ctrl+C to stop, logs print to terminal)
 uv run python run.py
-
-# Start in background (logs go to file)
-uv run python run.py > /tmp/matrx-engine.log 2>&1 &
-echo "Engine PID: $!"
 ```
 
-The server starts at **`http://127.0.0.1:22140`** and prints the URL on startup. It auto-selects a free port if 22140 is taken (tries 22140–22159).
+Wait until you see `Uvicorn running on http://0.0.0.0:22140` before continuing.
 
-### Stop
+**Terminal 2 — Desktop app (after engine is up)**
 
 ```bash
-# If running in foreground: press Ctrl+C
-
-# If running in background:
-pkill -f "uv run python run.py"
-
-# Or kill by port:
-lsof -ti:22140 | xargs kill -9
+cd /Users/armanisadeghi/Code/matrx-local/desktop
+pnpm tauri:dev
 ```
 
-### Check if it's running
+Takes ~60–90 seconds the first time (Rust compile). The window opens automatically when ready.
+
+### Stop everything
+
+Press `Ctrl+C` in each terminal, or run this from any terminal:
 
 ```bash
-# Should return {"name":"matrx-local","version":"..."}
+pkill -f "python.*run.py"
+pkill -f "tauri"
+pkill -f "vite"
+```
+
+### Verify engine is healthy
+
+```bash
 curl http://127.0.0.1:22140/
-
-# List all available tools
-curl http://127.0.0.1:22140/tools/list
-
-# Check engine logs (if started in background)
-tail -f /tmp/matrx-engine.log
 ```
 
-### Test a tool (REST API)
+### View API docs (Swagger UI)
+
+With the server running, open: **http://127.0.0.1:22140/docs**
+
+---
+
+## Python Engine — Advanced
+
+The engine is a FastAPI server exposing all 73 tools over REST and WebSocket. You can run it standalone without the desktop app for quick CLI testing.
+
+### Test a tool via curl
 
 All tool calls require a `Bearer` token matching your `.env` `API_KEY`:
 
@@ -141,12 +145,6 @@ curl -X POST http://127.0.0.1:22140/tools/invoke \
   -H "Authorization: Bearer YOUR_API_KEY_HERE" \
   -d '{"tool": "SystemInfo", "input": {}}'
 
-# Invoke SystemResources (needs psutil: uv sync --extra monitoring)
-curl -X POST http://127.0.0.1:22140/tools/invoke \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_API_KEY_HERE" \
-  -d '{"tool": "SystemResources", "input": {}}'
-
 # Run a bash command
 curl -X POST http://127.0.0.1:22140/tools/invoke \
   -H "Content-Type: application/json" \
@@ -154,11 +152,11 @@ curl -X POST http://127.0.0.1:22140/tools/invoke \
   -d '{"tool": "Bash", "input": {"command": "echo hello world"}}'
 ```
 
-Replace `YOUR_API_KEY_HERE` with whatever value you put in `.env` for `API_KEY`.
+### Check logs
 
-### View API docs (Swagger UI)
-
-With the server running, open: **http://127.0.0.1:22140/docs**
+```bash
+tail -f /tmp/matrx-engine.log
+```
 
 ---
 
@@ -204,7 +202,7 @@ uv sync --extra all                  # Everything above
 
 ## Desktop App (Tauri)
 
-The full desktop app wraps the Python engine in a React/Tauri shell — system tray, native window, bundled sidecar, auto-update. In dev mode the Python engine runs from source alongside Vite's hot-reload. In production it's a bundled binary with a PyInstaller sidecar.
+The full desktop app wraps the Python engine in a React/Tauri shell — system tray, native window, bundled sidecar, auto-update.
 
 ### Prerequisites (one-time setup)
 
@@ -219,21 +217,6 @@ npm install -g pnpm
 # 3. Install JS dependencies
 cd desktop && pnpm install && cd ..
 ```
-
-### Dev mode (start desktop app with hot reload)
-
-**Important:** The Tauri dev mode starts its own embedded Python engine. Stop any standalone Python engine first (`pkill -f "uv run python run.py"`) to avoid port conflicts.
-
-```bash
-cd /Users/armanisadeghi/Code/matrx-local/desktop
-pnpm tauri:dev
-```
-
-This compiles the Rust core (takes ~2 minutes the first time, seconds after that), starts the Vite dev server on port 1420, then opens the app window. Python changes are picked up by restarting the sidecar. React/TS changes hot-reload instantly.
-
-### Stop dev mode
-
-Press `Ctrl+C` in the terminal where `pnpm tauri:dev` is running, or close the app window.
 
 ### Build & ship (production binary)
 
