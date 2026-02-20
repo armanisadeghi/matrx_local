@@ -14,6 +14,12 @@
 - [x] Add `SUPABASE_JWKS_URL` to scraper server's Coolify env vars
 - [x] Push scraper-service changes to main (JWT auth, PyJWT dependency)
 - [x] Register matrx_local as OAuth application in Supabase (Client ID: `af37ec97-3e0c-423c-a205-3d6c5adc5645`)
+- [x] Install optional Python deps: `uv sync --extra monitoring --extra discovery --extra audio --extra transcription --extra browser`
+- [x] Install Playwright Chromium: `uv run playwright install chromium`
+- [x] Scheduler persistence implemented — tasks saved to `~/.matrx/scheduled_tasks.json`, restored on startup
+- [x] WiFi tool rewritten for macOS 13+ (system_profiler JSON fallback)
+- [x] AppleScript permission errors now show actionable fix instructions
+- [x] Merge `expand-desktop-tools` → `main` (73 tools live on main)
 
 ---
 
@@ -56,8 +62,8 @@ Open the desktop app, go to the Tools page, and try each category:
 - [ ] **PdfExtract** — try with any PDF
 
 ### 3. Tools that need extra setup first
-- [ ] **Audio tools** (RecordAudio, PlayAudio, TranscribeAudio) — run: `uv sync --extra audio` in `/Users/armanisadeghi/Code/matrx-local`
-- [ ] **Browser Automation tools** (BrowserNavigate, BrowserClick, etc.) — run: `uv run playwright install chromium`
+- [x] **Audio tools** (RecordAudio, PlayAudio, TranscribeAudio) — ✅ installed
+- [x] **Browser Automation tools** (BrowserNavigate, BrowserClick, etc.) — ✅ playwright + Chromium installed
 
 ### 4. Permissions to grant on macOS (System Settings → Privacy & Security)
 - [ ] **Accessibility** — needed for TypeText, Hotkey, MouseClick, MouseMove, FocusWindow, MoveWindow
@@ -68,7 +74,6 @@ Open the desktop app, go to the Tools page, and try each category:
 
 ## Known Gaps (future work — not urgent)
 
-- [ ] Scheduled tasks don't survive restart (no disk persistence yet)
 - [ ] No first-run setup wizard for new users
 - [ ] Local scrape results don't sync to cloud
 - [ ] No rate limiting on the remote scraper server per user
