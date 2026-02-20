@@ -51,8 +51,25 @@ audio = [
     "sounddevice>=0.5.5",
     "numpy>=2.4.2",
 ]
+transcription = [
+    "openai-whisper",
+]
 browser = [
     "playwright",
+]
+monitoring = [
+    "psutil>=6.0.0",
+]
+discovery = [
+    "zeroconf>=0.131.0",
+]
+all = [
+    "sounddevice>=0.5.5",
+    "numpy>=2.4.2",
+    "openai-whisper",
+    "playwright",
+    "psutil>=6.0.0",
+    "zeroconf>=0.131.0",
 ]
 
 [dependency-groups]

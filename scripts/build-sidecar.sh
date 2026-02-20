@@ -112,6 +112,33 @@ $PYTHON_CMD -m PyInstaller \
     --hidden-import tabulate \
     --hidden-import fitz \
     --hidden-import pytesseract \
+    --hidden-import app.tools.tools.system \
+    --hidden-import app.tools.tools.file_ops \
+    --hidden-import app.tools.tools.clipboard \
+    --hidden-import app.tools.tools.execution \
+    --hidden-import app.tools.tools.network \
+    --hidden-import app.tools.tools.notify \
+    --hidden-import app.tools.tools.transfer \
+    --hidden-import app.tools.tools.process_manager \
+    --hidden-import app.tools.tools.window_manager \
+    --hidden-import app.tools.tools.input_automation \
+    --hidden-import app.tools.tools.audio \
+    --hidden-import app.tools.tools.browser_automation \
+    --hidden-import app.tools.tools.network_discovery \
+    --hidden-import app.tools.tools.system_monitor \
+    --hidden-import app.tools.tools.file_watch \
+    --hidden-import app.tools.tools.app_integration \
+    --hidden-import app.tools.tools.scheduler \
+    --hidden-import app.tools.tools.media \
+    --hidden-import app.tools.tools.wifi_bluetooth \
+    --hidden-import psutil \
+    --hidden-import zeroconf \
+    --hidden-import watchfiles \
+    --hidden-import sounddevice \
+    --hidden-import soundfile \
+    --hidden-import pynput \
+    --hidden-import playwright \
+    --hidden-import playwright.async_api \
     --add-data "app:app" \
     --add-data "scraper-service/app:scraper-service/app" \
     run.py
