@@ -16,6 +16,51 @@ from app.tools.types import ImageData, ToolResult, ToolResultType
 logger = logging.getLogger(__name__)
 
 
+def _detect_chrome() -> tuple[bool, str | None, str | None]:
+    """Return (playwright_available, chrome_path, chrome_version)."""
+    try:
+        import playwright  # noqa: F401
+        pw_available = True
+    except ImportError:
+        return False, None, None
+
+    # Look for real Chrome first (user-visible, has cookies/profiles)
+    chrome_locations = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+    ]
+    chrome_path: str | None = None
+    for loc in chrome_locations:
+        if Path(loc).exists():
+            chrome_path = loc
+            break
+
+    # Fall back to playwright's bundled headless shell
+    if chrome_path is None:
+        headless_base = Path.home() / "Library" / "Caches" / "ms-playwright"
+        if headless_base.exists():
+            shells = sorted(headless_base.glob("chromium_headless_shell-*/chrome-mac/headless_shell"))
+            if shells:
+                chrome_path = str(shells[-1])
+
+    # Try to read Chrome version
+    chrome_version: str | None = None
+    if chrome_path:
+        # Info.plist is at <App>.app/Contents/Info.plist
+        ver_file = Path(chrome_path).parent.parent / "Info.plist"
+        if ver_file.exists():
+            try:
+                import plistlib
+                with open(ver_file, "rb") as f:
+                    plist = plistlib.load(f)
+                chrome_version = plist.get("CFBundleShortVersionString")
+            except Exception:
+                pass
+
+    return pw_available, chrome_path, chrome_version
+
+
 async def tool_system_info(
     session: ToolSession,
 ) -> ToolResult:
@@ -30,6 +75,10 @@ async def tool_system_info(
         "home": str(Path.home()),
         "user": os.getenv("USER", os.getenv("USERNAME", "unknown")),
     }
+    pw_available, chrome_path, chrome_version = _detect_chrome()
+    info["playwright_available"] = pw_available
+    info["chrome_path"] = chrome_path
+    info["chrome_version"] = chrome_version
     lines = [f"{k}: {v}" for k, v in info.items()]
     return ToolResult(output="\n".join(lines), metadata=info)
 

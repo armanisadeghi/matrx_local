@@ -131,6 +131,7 @@ $PYTHON_CMD -m PyInstaller \
     --hidden-import app.tools.tools.scheduler \
     --hidden-import app.tools.tools.media \
     --hidden-import app.tools.tools.wifi_bluetooth \
+    --hidden-import pydantic_settings \
     --hidden-import psutil \
     --hidden-import zeroconf \
     --hidden-import watchfiles \

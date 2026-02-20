@@ -10,7 +10,7 @@ export function AppLayout({ engineStatus }: AppLayoutProps) {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar engineStatus={engineStatus} />
-      <main className="flex flex-1 flex-col overflow-hidden">
+      <main className="flex flex-1 h-full flex-col overflow-hidden">
         <Outlet />
       </main>
     </div>
