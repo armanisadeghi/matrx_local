@@ -14,6 +14,27 @@ logger = logging.getLogger(__name__)
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 
+_ACCESSIBILITY_HINT = (
+    "macOS Accessibility permission required.\n"
+    "Go to: System Settings → Privacy & Security → Accessibility\n"
+    "Add and enable the calling application (Terminal, or the Matrx Local app)."
+)
+
+
+def _check_applescript_error(stderr: bytes) -> str | None:
+    """Return a friendly error string if stderr contains a known macOS permission error.
+
+    Returns None if the error is not permission-related (caller should
+    include the raw stderr text instead).
+    """
+    text = stderr.decode(errors="replace")
+    # -1743 = not authorised to send Apple Events
+    # -25211 = AXUIElement access denied
+    # -600 = application not running (rare but can appear)
+    if "-1743" in text or "-25211" in text or "not authorized" in text.lower() or "assistive" in text.lower():
+        return _ACCESSIBILITY_HINT
+    return None
+
 
 async def tool_type_text(
     session: ToolSession,
@@ -50,7 +71,9 @@ end tell
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             if proc.returncode != 0:
-                return ToolResult(type=ToolResultType.ERROR, output=f"AppleScript error: {stderr.decode()}")
+                friendly = _check_applescript_error(stderr)
+                msg = friendly or f"AppleScript error: {stderr.decode(errors='replace')}"
+                return ToolResult(type=ToolResultType.ERROR, output=msg)
             return ToolResult(output=f"Typed {len(text)} characters" + (f" into {app_name}" if app_name else ""))
 
         elif IS_WINDOWS:
@@ -163,7 +186,9 @@ end tell
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
             if proc.returncode != 0:
-                return ToolResult(type=ToolResultType.ERROR, output=f"AppleScript error: {stderr.decode()}")
+                friendly = _check_applescript_error(stderr)
+                msg = friendly or f"AppleScript error: {stderr.decode(errors='replace')}"
+                return ToolResult(type=ToolResultType.ERROR, output=msg)
             return ToolResult(output=f"Sent hotkey: {keys}" + (f" to {app_name}" if app_name else ""))
 
         elif IS_WINDOWS:

@@ -33,7 +33,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { useTool } from "@/hooks/use-tool";
 import type { EngineStatus } from "@/hooks/use-engine";
 
@@ -602,5 +601,3 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
   );
 }
 
-// Suppress unused import warning
-void Separator;

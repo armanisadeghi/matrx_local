@@ -15,6 +15,20 @@ logger = logging.getLogger(__name__)
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 
+_ACCESSIBILITY_HINT = (
+    "macOS Accessibility permission required.\n"
+    "Go to: System Settings → Privacy & Security → Accessibility\n"
+    "Add and enable the calling application (Terminal, or the Matrx Local app)."
+)
+
+
+def _check_applescript_error(stderr: bytes) -> str | None:
+    """Return a friendly permission hint or None if error is not permission-related."""
+    text = stderr.decode(errors="replace")
+    if "-1743" in text or "-25211" in text or "not authorized" in text.lower() or "assistive" in text.lower():
+        return _ACCESSIBILITY_HINT
+    return None
+
 
 async def tool_list_windows(
     session: ToolSession,
@@ -59,10 +73,9 @@ end tell
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
 
     if proc.returncode != 0:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output=f"AppleScript error: {stderr.decode().strip()}",
-        )
+        friendly = _check_applescript_error(stderr)
+        msg = friendly or f"AppleScript error: {stderr.decode(errors='replace').strip()}"
+        return ToolResult(type=ToolResultType.ERROR, output=msg)
 
     windows = []
     for line in stdout.decode().strip().split("\n"):
@@ -243,7 +256,9 @@ end tell
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
             if proc.returncode != 0:
-                return ToolResult(type=ToolResultType.ERROR, output=stderr.decode().strip())
+                friendly = _check_applescript_error(stderr)
+                msg = friendly or stderr.decode(errors="replace").strip()
+                return ToolResult(type=ToolResultType.ERROR, output=msg)
             return ToolResult(output=stdout.decode().strip() or f"Focused: {app_name}")
 
         elif IS_WINDOWS:
@@ -318,7 +333,9 @@ end tell
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
             if proc.returncode != 0:
-                return ToolResult(type=ToolResultType.ERROR, output=stderr.decode().strip())
+                friendly = _check_applescript_error(stderr)
+                msg = friendly or stderr.decode(errors="replace").strip()
+                return ToolResult(type=ToolResultType.ERROR, output=msg)
             return ToolResult(output=f"Moved/resized {app_name} window")
 
         elif IS_WINDOWS:
@@ -371,7 +388,9 @@ if ($proc) {{
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
             if proc.returncode != 0:
-                return ToolResult(type=ToolResultType.ERROR, output=stderr.decode().strip())
+                friendly = _check_applescript_error(stderr)
+                msg = friendly or stderr.decode(errors="replace").strip()
+                return ToolResult(type=ToolResultType.ERROR, output=msg)
             return ToolResult(output=f"Moved/resized: {app_name}")
 
     except Exception as e:

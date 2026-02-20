@@ -35,77 +35,147 @@ async def tool_wifi_networks(
 
 
 async def _wifi_macos(rescan: bool) -> ToolResult:
+    # Try airport binary (works on macOS ≤ 12, may need root on 13+)
     airport = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
 
-    # Try airport utility
     try:
-        cmd = [airport, "-s"]
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
+            airport, "-s",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
 
-        if proc.returncode != 0:
-            # Fallback to system_profiler
-            proc2 = await asyncio.create_subprocess_exec(
-                "system_profiler", "SPAirPortDataType", "-json",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=15)
-            return ToolResult(output=f"WiFi info:\n{stdout2.decode()[:5000]}")
+        if proc.returncode == 0:
+            output = stdout.decode()
+            lines = output.strip().split("\n")
+            if len(lines) >= 2:
+                bssid_pattern = re.compile(r'([0-9a-f]{2}:){5}[0-9a-f]{2}', re.IGNORECASE)
+                networks = []
+                for line in lines[1:]:
+                    match = bssid_pattern.search(line)
+                    if match:
+                        bssid_start = match.start()
+                        ssid = line[:bssid_start].strip()
+                        rest = line[match.end():].strip().split()
+                        if len(rest) >= 4:
+                            networks.append({
+                                "ssid": ssid,
+                                "bssid": match.group(0),
+                                "rssi": int(rest[0]) if rest[0].lstrip("-").isdigit() else 0,
+                                "channel": rest[1],
+                                "security": " ".join(rest[3:]),
+                            })
 
-        output = stdout.decode()
-        lines = output.strip().split("\n")
+                if networks:
+                    networks.sort(key=lambda n: n.get("rssi", -100), reverse=True)
+                    result_lines = [f"WiFi networks ({len(networks)} found):"]
+                    result_lines.append(f"{'SSID':<30} {'RSSI':>5} {'CH':>4}  SECURITY")
+                    result_lines.append("-" * 70)
+                    for n in networks:
+                        signal = _rssi_to_bars(n["rssi"])
+                        result_lines.append(
+                            f"{n['ssid']:<30} {n['rssi']:>4}dBm {n['channel']:>4}  {n['security']} {signal}"
+                        )
+                    return ToolResult(
+                        output="\n".join(result_lines),
+                        metadata={"networks": networks, "count": len(networks)},
+                    )
 
-        if len(lines) < 2:
-            return ToolResult(output="No WiFi networks found.")
+    except (FileNotFoundError, asyncio.TimeoutError):
+        pass
+
+    # Fallback: system_profiler (always available, parses JSON)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "system_profiler", "SPAirPortDataType", "-json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+        data = json.loads(stdout.decode())
 
         networks = []
-        for line in lines[1:]:  # Skip header
-            # Parse airport output: SSID BSSID RSSI CHANNEL HT CC SECURITY
-            parts = line.split()
-            if len(parts) >= 7:
-                # SSID may contain spaces, so we need to be smart
-                # The BSSID is always in format xx:xx:xx:xx:xx:xx
-                bssid_pattern = re.compile(r'([0-9a-f]{2}:){5}[0-9a-f]{2}', re.IGNORECASE)
-                match = bssid_pattern.search(line)
-                if match:
-                    bssid_start = match.start()
-                    ssid = line[:bssid_start].strip()
-                    rest = line[match.end():].strip().split()
-                    if len(rest) >= 4:
-                        networks.append({
-                            "ssid": ssid,
-                            "bssid": match.group(0),
-                            "rssi": int(rest[0]) if rest[0].lstrip("-").isdigit() else 0,
-                            "channel": rest[1],
-                            "security": " ".join(rest[3:]),
-                        })
+        seen_current = None
 
-        # Sort by signal strength (RSSI, higher = better)
-        networks.sort(key=lambda n: n.get("rssi", -100), reverse=True)
+        for iface_group in data.get("SPAirPortDataType", []):
+            for iface in iface_group.get("spairport_airport_interfaces", []):
+                # Current network
+                cur = iface.get("spairport_current_network_information")
+                if cur:
+                    seen_current = cur.get("_name", "")
+                    rssi_raw = cur.get("spairport_signal_noise", "")
+                    cur_rssi = 0
+                    if rssi_raw:
+                        try:
+                            cur_rssi = int(str(rssi_raw).split()[0])
+                        except (ValueError, IndexError):
+                            pass
+                    networks.append({
+                        "ssid": seen_current,
+                        "rssi": cur_rssi,
+                        "channel": str(cur.get("spairport_network_channel", "")),
+                        "security": cur.get("spairport_security_mode", ""),
+                        "connected": True,
+                    })
 
-        result_lines = [f"WiFi networks ({len(networks)} found):"]
-        result_lines.append(f"{'SSID':<30} {'RSSI':>5} {'CH':>4}  SECURITY")
+                # Other nearby networks
+                for net in iface.get("spairport_other_local_wireless_networks", []):
+                    ssid = net.get("_name", "")
+                    if ssid == seen_current:
+                        continue
+                    rssi_raw = net.get("spairport_signal_noise", "")
+                    rssi = 0
+                    if rssi_raw:
+                        try:
+                            rssi = int(str(rssi_raw).split()[0])
+                        except (ValueError, IndexError):
+                            pass
+                    networks.append({
+                        "ssid": ssid,
+                        "rssi": rssi,
+                        "channel": str(net.get("spairport_network_channel", "")),
+                        "security": net.get("spairport_security_mode", ""),
+                        "connected": False,
+                    })
+
+        if not networks:
+            return ToolResult(output="No WiFi data available. Check that WiFi is enabled.")
+
+        # Clean up security names
+        _sec_labels = {
+            "spairport_security_mode_wpa3_transition": "WPA3/WPA2",
+            "spairport_security_mode_wpa3_personal": "WPA3",
+            "spairport_security_mode_wpa2_personal": "WPA2",
+            "spairport_security_mode_wpa_personal": "WPA",
+            "spairport_security_mode_none": "Open",
+            "spairport_security_mode_wpa2_enterprise": "WPA2-Ent",
+        }
+        for n in networks:
+            raw_sec = n.get("security", "")
+            n["security"] = _sec_labels.get(raw_sec, raw_sec.replace("spairport_security_mode_", "").replace("_", "-"))
+            if not n["ssid"]:
+                n["ssid"] = "(hidden network)"
+
+        networks.sort(key=lambda n: (not n.get("connected", False), -(n.get("rssi") or 0)))
+        result_lines = [f"WiFi networks ({len(networks)} found, via system_profiler):"]
+        result_lines.append(f"{'SSID':<32} {'RSSI':>7}  {'CH':<6} SECURITY")
         result_lines.append("-" * 70)
         for n in networks:
-            signal = _rssi_to_bars(n["rssi"])
+            connected_mark = " ◀ connected" if n.get("connected") else ""
+            signal = _rssi_to_bars(n.get("rssi") or 0)
             result_lines.append(
-                f"{n['ssid']:<30} {n['rssi']:>4}dBm {n['channel']:>4}  {n['security']} {signal}"
+                f"{n['ssid']:<32} {str(n.get('rssi','?')):>7}  {n.get('channel','?'):<6} {n.get('security','')}{connected_mark} {signal}"
             )
-
         return ToolResult(
             output="\n".join(result_lines),
             metadata={"networks": networks, "count": len(networks)},
         )
 
-    except FileNotFoundError:
+    except Exception as e:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="WiFi scanning utility not found on this macOS version.",
+            output=f"WiFi scan failed: {e}\nTip: WiFi must be enabled and the system_profiler command must be accessible.",
         )
 
 

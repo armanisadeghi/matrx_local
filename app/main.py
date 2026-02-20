@@ -12,6 +12,7 @@ from app.api.auth import AuthMiddleware
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
 from app.services.scraper.engine import get_scraper_engine
+from app.tools.tools.scheduler import restore_scheduled_tasks
 from app.websocket_manager import WebSocketManager
 
 logger = get_logger()
@@ -25,6 +26,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await engine.start()
     except Exception:
         logger.error("Scraper engine failed to start — scraping tools will be unavailable", exc_info=True)
+
+    restored = await restore_scheduled_tasks()
+    if restored:
+        logger.info("Scheduler: %d task(s) restored from previous session", restored)
 
     yield
 

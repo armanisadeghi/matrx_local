@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import platform
@@ -10,6 +11,7 @@ import subprocess
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.tools.session import ToolSession
@@ -20,11 +22,71 @@ logger = logging.getLogger(__name__)
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 
+# Persistence file — same directory as local.json discovery file
+_TASKS_FILE = Path.home() / ".matrx" / "scheduled_tasks.json"
+
 # Global scheduler state
 _scheduled_tasks: dict[str, ScheduledTask] = {}
 _heartbeat_active = False
 _heartbeat_task: asyncio.Task | None = None
 _prevent_sleep_process: asyncio.subprocess.Process | None = None
+
+
+def _save_tasks() -> None:
+    """Persist active task configs to disk so they survive restarts."""
+    try:
+        _TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        active = [
+            {
+                "task_id": t.task_id,
+                "name": t.name,
+                "tool_name": t.tool_name,
+                "tool_input": t.tool_input,
+                "interval_seconds": t.interval_seconds,
+                "max_runs": t.max_runs,
+            }
+            for t in _scheduled_tasks.values()
+            if t.is_active
+        ]
+        _TASKS_FILE.write_text(json.dumps(active, indent=2))
+    except Exception as e:
+        logger.warning("Failed to persist scheduled tasks: %s", e)
+
+
+async def restore_scheduled_tasks() -> int:
+    """Load and re-schedule tasks saved from a previous session.
+
+    Called once at startup from app lifespan. Returns count of restored tasks.
+    """
+    if not _TASKS_FILE.exists():
+        return 0
+
+    try:
+        saved = json.loads(_TASKS_FILE.read_text())
+    except Exception as e:
+        logger.warning("Could not read scheduled_tasks.json: %s", e)
+        return 0
+
+    restored = 0
+    dummy_session = ToolSession()
+    for cfg in saved:
+        try:
+            await tool_schedule_task(
+                session=dummy_session,
+                name=cfg["name"],
+                tool_name=cfg["tool_name"],
+                tool_input=cfg.get("tool_input", {}),
+                interval_seconds=cfg["interval_seconds"],
+                max_runs=cfg.get("max_runs"),
+                _task_id=cfg.get("task_id"),
+            )
+            restored += 1
+        except Exception as e:
+            logger.warning("Could not restore task %s: %s", cfg.get("name"), e)
+
+    if restored:
+        logger.info("Restored %d scheduled task(s) from previous session", restored)
+    return restored
 
 
 @dataclass
@@ -75,11 +137,13 @@ async def tool_schedule_task(
     tool_input: dict[str, Any],
     interval_seconds: int = 60,
     max_runs: int | None = None,
+    _task_id: str | None = None,
 ) -> ToolResult:
     """Schedule a tool to run repeatedly at a given interval.
 
     This enables the heartbeat/background task system. The tool will be
-    invoked with the given input on each interval.
+    invoked with the given input on each interval. Scheduled tasks survive
+    restarts — they are persisted to ~/.matrx/scheduled_tasks.json.
 
     Examples:
     - Check disk space every 5 minutes: tool_name='DiskUsage', interval=300
@@ -97,7 +161,7 @@ async def tool_schedule_task(
             output=f"Unknown tool: {tool_name}",
         )
 
-    task_id = f"sched_{uuid.uuid4().hex[:8]}"
+    task_id = _task_id or f"sched_{uuid.uuid4().hex[:8]}"
 
     scheduled = ScheduledTask(
         task_id=task_id,
@@ -161,6 +225,7 @@ async def tool_schedule_task(
 
     scheduled._task = asyncio.create_task(_run_scheduled())
     _scheduled_tasks[task_id] = scheduled
+    _save_tasks()
 
     return ToolResult(
         output=(
@@ -235,6 +300,7 @@ async def tool_cancel_scheduled(
 
     task.is_active = False
     run_count = task.run_count
+    _save_tasks()
 
     return ToolResult(
         output=f"Cancelled: {task.name} ({task_id}). Ran {run_count} times.",
