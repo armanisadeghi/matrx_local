@@ -32,6 +32,15 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 SCRAPER_SERVER_URL = os.getenv("SCRAPER_SERVER_URL", "https://scraper.app.matrxserver.com")
 
+# Supabase (for document sync — uses PostgREST API with user JWTs)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+
+# Documents — local base directory for .md files
+DOCUMENTS_BASE_DIR = Path(
+    os.getenv("DOCUMENTS_BASE_DIR", str(Path.home() / ".matrx" / "documents"))
+)
+
 TEMP_DIR = BASE_DIR / "system" / "temp"
 DATA_DIR = BASE_DIR / "system" / "data"
 CONFIG_DIR = BASE_DIR / "system" / "config"

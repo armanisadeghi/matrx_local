@@ -5,6 +5,7 @@ import {
   Wrench,
   Settings,
   Activity,
+  FileText,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,7 @@ interface SidebarProps {
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/documents", icon: FileText, label: "Documents" },
   { to: "/scraping", icon: Globe, label: "Scraping" },
   { to: "/tools", icon: Wrench, label: "Tools" },
   { to: "/ports", icon: Activity, label: "Port Manager" },

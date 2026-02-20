@@ -112,12 +112,34 @@
 
 ---
 
+## Documents & Notes Sync (2026-02-20)
+
+- [x] **Database schema** -- SQL migration for `note_folders`, `note_shares`, `note_devices`, `note_directory_mappings`, `note_sync_log` tables + extensions to `notes` (folder_id, file_path, content_hash, sync_version, last_device_id)
+- [x] **Supabase PostgREST client** -- `app/services/documents/supabase_client.py` with full CRUD, versions, shares, devices, mappings, sync log
+- [x] **Local file manager** -- `app/services/documents/file_manager.py` for .md file I/O, scanning, conflict storage, directory mapping sync
+- [x] **Sync engine** -- `app/services/documents/sync_engine.py` with push/pull, full reconciliation, conflict detection, file watcher integration
+- [x] **Document API routes** -- `app/api/document_routes.py` with 25+ endpoints (folders, notes, versions, sync, conflicts, shares, mappings)
+- [x] **Document tools** -- ListDocuments, ReadDocument, WriteDocument, SearchDocuments, ListDocumentFolders (5 new tools, 73 total)
+- [x] **Documents page** -- Full UI with folder tree, note list, markdown editor (split/edit/preview), toolbar, search
+- [x] **Markdown support** -- `react-markdown` + `remark-gfm` for GFM rendering, toolbar with formatting buttons
+- [x] **Realtime sync** -- `use-realtime-sync.ts` subscribes to Supabase Realtime on notes/folders tables
+- [x] **Version history** -- Right panel with version list and one-click revert
+- [x] **Sharing** -- Share dialog with per-user permissions (read/comment/edit/admin) + public link support
+- [x] **Directory mappings** -- Map folders to additional local paths, auto-sync on changes
+- [x] **Sync status bar** -- Shows connection state, conflict count, watcher status, file count, last sync time
+- [ ] **Run SQL migration** -- Arman: run `migrations/001_documents_schema.sql` in Supabase SQL Editor
+- [ ] **Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to root .env** -- Needed for engine → Supabase sync
+- [ ] **Enable Supabase Realtime** -- Run `ALTER PUBLICATION supabase_realtime ADD TABLE notes, note_folders, note_shares` in Supabase
+- [ ] **Prose styling for markdown preview** -- Add `@tailwindcss/typography` for better `.prose` rendering (currently basic)
+
+---
+
 ## Future Work
 
 - [x] Auto-updater -- `tauri-plugin-updater` + `tauri-plugin-process` wired. Signing keypair generated. Settings UI shows check/install/restart buttons.
 - [ ] First-run setup wizard
 - [ ] Job queue for cloud-assigned scrape jobs
-- [ ] Device registration with cloud
+- [x] Device registration with cloud -- Implemented via document sync device registration
 - [ ] Result sync to cloud storage
 - [x] SSE streaming support in desktop UI for scrape progress
 - [ ] Rate limiting on scraper server

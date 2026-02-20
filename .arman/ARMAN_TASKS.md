@@ -72,6 +72,28 @@ Open the desktop app, go to the Tools page, and try each category:
 
 ---
 
+## Documents & Notes Sync Setup
+
+### 5. Run documents migration in Supabase SQL Editor
+- [ ] Open Supabase Dashboard → SQL Editor
+- [ ] Paste and run `migrations/001_documents_schema.sql`
+- [ ] Verify tables created: `note_folders`, `note_shares`, `note_devices`, `note_directory_mappings`, `note_sync_log`
+- [ ] Verify columns added to `notes`: `folder_id`, `file_path`, `content_hash`, `sync_version`, `last_device_id`
+
+### 6. Enable Supabase Realtime on document tables
+- [ ] In Supabase SQL Editor, run:
+  ```sql
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.note_folders;
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.note_shares;
+  ```
+
+### 7. Add Supabase env vars to root .env
+- [ ] Add `SUPABASE_URL=https://txzxabzwovsujtloxrus.supabase.co` to root `.env`
+- [ ] Add `SUPABASE_PUBLISHABLE_KEY=<same value as VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY>` to root `.env`
+
+---
+
 ## Known Gaps (future work — not urgent)
 
 - [ ] No first-run setup wizard for new users
@@ -79,7 +101,7 @@ Open the desktop app, go to the Tools page, and try each category:
 - [ ] No rate limiting on the remote scraper server per user
 - [ ] Wake-on-LAN support
 - [ ] Smart device control (HomeKit, Google Home, Alexa APIs)
-- [ ] Device registration with cloud backend
+- [x] Device registration with cloud backend — implemented via document sync
 
 ---
 

@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Dashboard } from "@/pages/Dashboard";
+import { Documents } from "@/pages/Documents";
 import { Scraping } from "@/pages/Scraping";
 import { Tools } from "@/pages/Tools";
 import { Activity } from "@/pages/Activity";
@@ -57,6 +58,15 @@ export default function App() {
                       systemInfo={systemInfo}
                       browserStatus={browserStatus}
                       onRefresh={refresh}
+                    />
+                  }
+                />
+                <Route
+                  path="documents"
+                  element={
+                    <Documents
+                      engineStatus={status}
+                      userId={auth.user?.id ?? null}
                     />
                   }
                 />

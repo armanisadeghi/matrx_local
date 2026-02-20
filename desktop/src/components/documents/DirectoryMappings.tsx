@@ -1,0 +1,206 @@
+import { useState, useEffect, useCallback } from "react";
+import {
+  FolderSync,
+  Plus,
+  Trash2,
+  HardDrive,
+  FolderOpen,
+  X,
+  Loader2,
+} from "lucide-react";
+import { engine } from "@/lib/api";
+import type { DocFolder, DocMappings } from "@/lib/api";
+
+interface DirectoryMappingsProps {
+  userId: string;
+  folders: DocFolder[];
+  onClose: () => void;
+}
+
+export function DirectoryMappings({
+  userId,
+  folders,
+  onClose,
+}: DirectoryMappingsProps) {
+  const [mappings, setMappings] = useState<DocMappings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [newFolderId, setNewFolderId] = useState("");
+  const [newPath, setNewPath] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const loadMappings = useCallback(async () => {
+    try {
+      const data = await engine.listMappings(userId);
+      setMappings(data);
+    } catch (err) {
+      console.error("Failed to load mappings:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    loadMappings();
+  }, [loadMappings]);
+
+  const handleAdd = async () => {
+    if (!newFolderId || !newPath.trim()) return;
+    setAdding(true);
+    try {
+      await engine.createMapping(userId, {
+        folder_id: newFolderId,
+        local_path: newPath.trim(),
+      });
+      setNewFolderId("");
+      setNewPath("");
+      await loadMappings();
+    } catch (err) {
+      console.error("Failed to create mapping:", err);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const handleDelete = async (mappingId: string, folderId: string, localPath: string) => {
+    try {
+      await engine.deleteMapping(mappingId, userId, folderId, localPath);
+      await loadMappings();
+    } catch (err) {
+      console.error("Failed to delete mapping:", err);
+    }
+  };
+
+  // Flatten folder tree for the select dropdown
+  const flatFolders: { id: string; name: string; path: string }[] = [];
+  const flatten = (items: DocFolder[], prefix = "") => {
+    for (const f of items) {
+      const display = prefix ? `${prefix} / ${f.name}` : f.name;
+      flatFolders.push({ id: f.id, name: display, path: f.path });
+      if (f.children) flatten(f.children, display);
+    }
+  };
+  flatten(folders);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="w-full max-w-lg rounded-lg border bg-background p-4 shadow-lg">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <FolderSync className="h-4 w-4" />
+            <h3 className="font-semibold">Directory Mappings</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 hover:bg-accent"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p className="text-xs text-muted-foreground mb-4">
+          Map document folders to additional directories on your computer.
+          When a note changes, it will be automatically synced to all mapped
+          locations.
+        </p>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            {/* Existing mappings */}
+            {mappings?.cloud_mappings &&
+              mappings.cloud_mappings.length > 0 && (
+                <div className="mb-4">
+                  <h4 className="text-xs font-medium text-muted-foreground mb-2">
+                    Active Mappings
+                  </h4>
+                  <div className="flex flex-col gap-1">
+                    {mappings.cloud_mappings.map((m) => {
+                      const folder = flatFolders.find(
+                        (f) => f.id === m.folder_id,
+                      );
+                      return (
+                        <div
+                          key={m.id}
+                          className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"
+                        >
+                          <FolderOpen className="h-4 w-4 shrink-0 text-amber-500" />
+                          <span className="font-medium">
+                            {folder?.name ?? m.folder_id}
+                          </span>
+                          <span className="text-muted-foreground mx-1">→</span>
+                          <HardDrive className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="flex-1 truncate text-xs font-mono text-muted-foreground">
+                            {m.local_path}
+                          </span>
+                          <button
+                            onClick={() =>
+                              handleDelete(m.id, m.folder_id, m.local_path)
+                            }
+                            className="text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+            {/* Add new mapping */}
+            <div className="border-t pt-3">
+              <h4 className="text-xs font-medium text-muted-foreground mb-2">
+                Add Mapping
+              </h4>
+              <div className="flex flex-col gap-2">
+                <select
+                  value={newFolderId}
+                  onChange={(e) => setNewFolderId(e.target.value)}
+                  className="rounded-md border bg-background px-3 py-1.5 text-sm outline-none"
+                >
+                  <option value="">Select a folder...</option>
+                  {flatFolders.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={newPath}
+                    onChange={(e) => setNewPath(e.target.value)}
+                    placeholder="/path/to/local/directory"
+                    className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm font-mono outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <button
+                    onClick={handleAdd}
+                    disabled={adding || !newFolderId || !newPath.trim()}
+                    className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+                  >
+                    {adding ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Plus className="h-4 w-4" />
+                    )}
+                    Add
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Device info */}
+            {mappings?.device_id && (
+              <div className="mt-3 text-xs text-muted-foreground">
+                Device ID: {mappings.device_id}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

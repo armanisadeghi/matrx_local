@@ -484,6 +484,343 @@ class EngineAPI {
   get engineUrl(): string | null {
     return this.baseUrl;
   }
+
+  // ---- Documents API ----
+
+  private async docRequest<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    userId?: string,
+  ): Promise<T> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
+    if (userId) headers["X-User-Id"] = userId;
+
+    const resp = await fetch(`${this.baseUrl}/documents${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`Documents API error (${resp.status}): ${text}`);
+    }
+    return resp.json();
+  }
+
+  /** Get folder tree with note counts. */
+  async getDocTree(userId: string): Promise<DocTree> {
+    return this.docRequest("GET", "/tree", undefined, userId);
+  }
+
+  /** List notes, optionally filtered by folder or search. */
+  async listNotes(
+    userId: string,
+    opts?: { folder_id?: string; search?: string },
+  ): Promise<DocNote[]> {
+    const params = new URLSearchParams();
+    if (opts?.folder_id) params.set("folder_id", opts.folder_id);
+    if (opts?.search) params.set("search", opts.search);
+    const qs = params.toString();
+    return this.docRequest("GET", `/notes${qs ? `?${qs}` : ""}`, undefined, userId);
+  }
+
+  /** Get a single note with full content. */
+  async getNote(noteId: string, userId: string): Promise<DocNote> {
+    return this.docRequest("GET", `/notes/${noteId}`, undefined, userId);
+  }
+
+  /** Create a new note. */
+  async createNote(userId: string, data: CreateNoteData): Promise<DocNote> {
+    return this.docRequest("POST", "/notes", data, userId);
+  }
+
+  /** Update a note. */
+  async updateNote(
+    noteId: string,
+    userId: string,
+    data: Partial<CreateNoteData>,
+  ): Promise<DocNote> {
+    return this.docRequest("PUT", `/notes/${noteId}`, data, userId);
+  }
+
+  /** Delete a note (soft delete). */
+  async deleteNote(noteId: string, userId: string): Promise<void> {
+    await this.docRequest("DELETE", `/notes/${noteId}`, undefined, userId);
+  }
+
+  /** Create a folder. */
+  async createFolder(
+    userId: string,
+    data: { name: string; parent_id?: string },
+  ): Promise<DocFolder> {
+    return this.docRequest("POST", "/folders", data, userId);
+  }
+
+  /** Update a folder. */
+  async updateFolder(
+    folderId: string,
+    userId: string,
+    data: Partial<{ name: string; parent_id: string; path: string; position: number }>,
+  ): Promise<DocFolder> {
+    return this.docRequest("PUT", `/folders/${folderId}`, data, userId);
+  }
+
+  /** Delete a folder (soft delete). */
+  async deleteFolder(folderId: string, userId: string): Promise<void> {
+    await this.docRequest("DELETE", `/folders/${folderId}`, undefined, userId);
+  }
+
+  /** Get version history for a note. */
+  async listVersions(noteId: string, userId: string): Promise<DocVersion[]> {
+    return this.docRequest("GET", `/notes/${noteId}/versions`, undefined, userId);
+  }
+
+  /** Revert a note to a specific version. */
+  async revertNote(
+    noteId: string,
+    userId: string,
+    versionNumber: number,
+  ): Promise<DocNote> {
+    return this.docRequest(
+      "POST",
+      `/notes/${noteId}/revert`,
+      { version_number: versionNumber },
+      userId,
+    );
+  }
+
+  /** Get sync status. */
+  async getSyncStatus(userId: string): Promise<SyncStatus> {
+    return this.docRequest("GET", "/sync/status", undefined, userId);
+  }
+
+  /** Trigger a full sync. */
+  async triggerSync(userId: string): Promise<SyncResult> {
+    return this.docRequest("POST", "/sync/trigger", undefined, userId);
+  }
+
+  /** Pull incremental changes. */
+  async pullChanges(userId: string): Promise<SyncResult> {
+    return this.docRequest("POST", "/sync/pull", undefined, userId);
+  }
+
+  /** Pull a single note (after Realtime notification). */
+  async pullNote(noteId: string, userId: string): Promise<DocNote> {
+    return this.docRequest("POST", "/sync/pull-note", { note_id: noteId }, userId);
+  }
+
+  /** Register this device for sync. */
+  async registerDevice(userId: string): Promise<unknown> {
+    return this.docRequest("POST", "/sync/register-device", undefined, userId);
+  }
+
+  /** Start the file watcher. */
+  async startDocWatcher(userId: string): Promise<void> {
+    await this.docRequest("POST", "/sync/start-watcher", undefined, userId);
+  }
+
+  /** Stop the file watcher. */
+  async stopDocWatcher(userId: string): Promise<void> {
+    await this.docRequest("POST", "/sync/stop-watcher", undefined, userId);
+  }
+
+  /** List conflicts. */
+  async listConflicts(userId: string): Promise<{ conflicts: string[]; count: number }> {
+    return this.docRequest("GET", "/conflicts", undefined, userId);
+  }
+
+  /** Resolve a conflict. */
+  async resolveConflict(
+    noteId: string,
+    userId: string,
+    resolution: "keep_local" | "keep_remote" | "keep_both",
+  ): Promise<void> {
+    await this.docRequest(
+      "POST",
+      `/conflicts/${noteId}/resolve`,
+      { resolution },
+      userId,
+    );
+  }
+
+  /** List shares. */
+  async listShares(userId: string): Promise<DocShare[]> {
+    return this.docRequest("GET", "/shares", undefined, userId);
+  }
+
+  /** Create a share. */
+  async createShare(
+    userId: string,
+    data: CreateShareData,
+  ): Promise<DocShare> {
+    return this.docRequest("POST", "/shares", data, userId);
+  }
+
+  /** Update a share. */
+  async updateShare(
+    shareId: string,
+    userId: string,
+    data: { permission?: string; is_public?: boolean },
+  ): Promise<DocShare> {
+    return this.docRequest("PUT", `/shares/${shareId}`, data, userId);
+  }
+
+  /** Delete a share. */
+  async deleteShare(shareId: string, userId: string): Promise<void> {
+    await this.docRequest("DELETE", `/shares/${shareId}`, undefined, userId);
+  }
+
+  /** List directory mappings. */
+  async listMappings(userId: string): Promise<DocMappings> {
+    return this.docRequest("GET", "/mappings", undefined, userId);
+  }
+
+  /** Create a directory mapping. */
+  async createMapping(
+    userId: string,
+    data: { folder_id: string; local_path: string },
+  ): Promise<unknown> {
+    return this.docRequest("POST", "/mappings", data, userId);
+  }
+
+  /** Delete a directory mapping. */
+  async deleteMapping(
+    mappingId: string,
+    userId: string,
+    folderId?: string,
+    localPath?: string,
+  ): Promise<void> {
+    const params = new URLSearchParams();
+    if (folderId) params.set("folder_id", folderId);
+    if (localPath) params.set("local_path", localPath);
+    const qs = params.toString();
+    await this.docRequest(
+      "DELETE",
+      `/mappings/${mappingId}${qs ? `?${qs}` : ""}`,
+      undefined,
+      userId,
+    );
+  }
+}
+
+// ---- Document types ----
+
+export interface DocFolder {
+  id: string;
+  user_id: string;
+  name: string;
+  parent_id: string | null;
+  path: string;
+  position: number;
+  is_deleted: boolean;
+  created_at: string;
+  updated_at: string;
+  note_count?: number;
+  children?: DocFolder[];
+}
+
+export interface DocTree {
+  folders: DocFolder[];
+  total_notes: number;
+  unfiled_notes: number;
+}
+
+export interface DocNote {
+  id: string;
+  user_id?: string;
+  label: string;
+  content?: string;
+  folder_name: string;
+  folder_id: string | null;
+  tags: string[];
+  file_path: string | null;
+  content_hash: string | null;
+  sync_version: number;
+  position: number;
+  is_deleted: boolean;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateNoteData {
+  label: string;
+  content: string;
+  folder_name?: string;
+  folder_id?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface DocVersion {
+  id: string;
+  note_id: string;
+  user_id: string;
+  content: string;
+  label: string;
+  version_number: number;
+  change_source: string;
+  change_type: string | null;
+  diff_metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DocShare {
+  id: string;
+  note_id: string | null;
+  folder_id: string | null;
+  owner_id: string;
+  shared_with_id: string | null;
+  permission: string;
+  is_public: boolean;
+  public_token: string | null;
+  created_at: string;
+  updated_at: string;
+  _direction?: "owned" | "shared_with_me";
+}
+
+export interface CreateShareData {
+  note_id?: string;
+  folder_id?: string;
+  shared_with_id?: string;
+  permission?: string;
+  is_public?: boolean;
+}
+
+export interface SyncStatus {
+  configured: boolean;
+  device_id: string;
+  last_sync_version: number;
+  last_full_sync: number | null;
+  tracked_files: number;
+  conflicts: string[];
+  conflict_count: number;
+  watcher_active: boolean;
+  base_dir: string;
+}
+
+export interface SyncResult {
+  pushed?: number;
+  pulled?: number;
+  conflicts?: number;
+  unchanged?: number;
+  error?: string;
+}
+
+export interface DocMappings {
+  cloud_mappings: Array<{
+    id: string;
+    folder_id: string;
+    local_path: string;
+    device_id: string;
+  }>;
+  local_mappings: Record<string, string[]>;
+  device_id: string;
 }
 
 // Singleton instance

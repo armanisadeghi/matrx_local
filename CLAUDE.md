@@ -47,7 +47,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 ## Current State (as of 2026-02-20)
 
 ### What Works
-- Python FastAPI engine with 68 tools (REST + WebSocket)
+- Python FastAPI engine with 73 tools (REST + WebSocket)
 - Engine auto-discovery from React UI
 - Tool browser and invocation (Tools page)
 - Scraping interface (Scraping page)
@@ -94,9 +94,27 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Auto-updater** -- `tauri-plugin-updater` + `tauri-plugin-process` wired in Rust. Signing keypair generated (`~/.tauri/matrx-local.key`). Settings UI has check/install/restart buttons. Config points to GitHub Releases.
 - **Cargo build passes** -- All Rust code compiles clean (`cargo check` + `cargo clippy`)
 
+### Documents & Notes Sync (Latest)
+- **Document system** -- Full local .md document store at `~/.matrx/documents/` with Supabase sync
+- **Folder hierarchy** -- `note_folders` table with parent_id, nested tree in UI
+- **Markdown editor** -- Split/edit/preview modes with formatting toolbar, GFM rendering
+- **Bidirectional sync** -- Push (local→cloud), pull (cloud→local), full reconciliation on demand
+- **Realtime updates** -- Supabase Realtime subscriptions on notes/folders tables
+- **File watcher** -- Detects external .md edits (e.g., VS Code) and auto-pushes to Supabase
+- **Conflict detection** -- SHA-256 content hashing, conflict files saved for manual resolution
+- **Version history** -- Full version tracking with one-click revert
+- **Sharing** -- Per-user permissions (read/comment/edit/admin) + public link sharing
+- **Directory mappings** -- Map folders to additional local paths (e.g., repo docs directories)
+- **Device tracking** -- Multi-device registration, last-seen timestamps
+- **5 new document tools** -- ListDocuments, ReadDocument, WriteDocument, SearchDocuments, ListDocumentFolders (73 total)
+- **Migration script** -- `migrations/001_documents_schema.sql` ready to run
+
 ### Still Needs Work
 - **Rate limiting** -- No per-user rate limiting on scraper server
 - **GitHub Actions** -- Need CI/CD workflow for signed release builds (`tauri-action` + signing key env var)
+- **Run documents migration** -- SQL migration needs to be run in Supabase SQL Editor
+- **Engine Supabase env vars** -- `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` need to be set in root `.env`
+- **Enable Realtime** -- Supabase Realtime publication needs to include notes, note_folders, note_shares tables
 
 ---
 
@@ -147,6 +165,16 @@ npm run tauri:dev
 | Tauri config | `desktop/src-tauri/tauri.conf.json` |
 | Rust core | `desktop/src-tauri/src/lib.rs` |
 | Scraper bridge | `app/services/scraper/engine.py` |
+| Document manager | `app/services/documents/file_manager.py` |
+| Document Supabase client | `app/services/documents/supabase_client.py` |
+| Document sync engine | `app/services/documents/sync_engine.py` |
+| Document API routes | `app/api/document_routes.py` |
+| Document tools | `app/tools/tools/documents.py` |
+| Documents page | `desktop/src/pages/Documents.tsx` |
+| Document components | `desktop/src/components/documents/*.tsx` |
+| Documents hook | `desktop/src/hooks/use-documents.ts` |
+| Realtime sync hook | `desktop/src/hooks/use-realtime-sync.ts` |
+| DB migration | `migrations/001_documents_schema.sql` |
 | Architecture docs | `ARCHITECTURE.md` |
 | Task tracker | `TASKS.md` |
 | Backlog | `BACKLOG.md` |
