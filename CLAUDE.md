@@ -44,10 +44,10 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 
 ---
 
-## Current State (as of 2026-02-19)
+## Current State (as of 2026-02-20)
 
 ### What Works
-- Python FastAPI engine with 23 tools (REST + WebSocket)
+- Python FastAPI engine with 68 tools (REST + WebSocket)
 - Engine auto-discovery from React UI
 - Tool browser and invocation (Tools page)
 - Scraping interface (Scraping page)
@@ -74,6 +74,19 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Error boundary** -- `ErrorBoundary.tsx` wraps entire app in `App.tsx`
 
 ### Recently Completed
+- **Massive tool expansion** -- 45 new tools added (23 → 68 total) across 12 new modules
+- **Process management** -- ListProcesses, LaunchApp, KillProcess, FocusApp
+- **Window management** -- ListWindows, FocusWindow, MoveWindow, MinimizeWindow
+- **Input automation** -- TypeText, Hotkey, MouseClick, MouseMove
+- **Audio tools** -- ListAudioDevices, RecordAudio, PlayAudio, TranscribeAudio (Whisper)
+- **Browser automation** -- BrowserNavigate, Click, Type, Extract, Screenshot, Eval, Tabs (Playwright)
+- **Network discovery** -- NetworkInfo, NetworkScan, PortScan, MDNSDiscover
+- **System monitoring** -- SystemResources, BatteryStatus, DiskUsage, TopProcesses (psutil)
+- **File watching** -- WatchDirectory, WatchEvents, StopWatch (watchfiles)
+- **OS integration** -- AppleScript, PowerShellScript, GetInstalledApps
+- **Scheduler/heartbeat** -- ScheduleTask, ListScheduled, CancelScheduled, HeartbeatStatus, PreventSleep
+- **Media processing** -- ImageOCR, ImageResize, PdfExtract, ArchiveCreate, ArchiveExtract
+- **WiFi/Bluetooth** -- WifiNetworks, BluetoothDevices, ConnectedDevices
 - **Launch on Startup** -- `tauri-plugin-autostart` wired to Settings toggle
 - **Minimize to Tray** -- Configurable via `set_close_to_tray` Rust command, synced from Settings
 - **Engine settings API** -- `PUT /settings` endpoint, synced on change and on startup

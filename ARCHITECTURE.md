@@ -22,7 +22,7 @@ graph TB
 
   subgraph PythonEngine [Python/FastAPI Engine]
     FastAPI["FastAPI Server<br/>run.py :22140"]
-    ToolDispatcher["Tool Dispatcher<br/>23 tools"]
+    ToolDispatcher["Tool Dispatcher<br/>68 tools"]
     ScraperEngine["Scraper Engine<br/>scraper-service subtree"]
     WSManager["WebSocket Manager<br/>Concurrent sessions"]
     FastAPI --> ToolDispatcher
@@ -70,7 +70,7 @@ matrx_local/
 │   │   ├── tool_routes.py          # /tools/invoke, /tools/list
 │   │   └── remote_scraper_routes.py # /remote-scraper/* proxy to scraper server
 │   ├── tools/
-│   │   ├── dispatcher.py           # Tool routing (23 tools registered)
+│   │   ├── dispatcher.py           # Tool routing (68 tools registered)
 │   │   ├── session.py              # Per-connection state (cwd, bg processes)
 │   │   ├── types.py                # ToolResult, ToolResultType
 │   │   └── tools/                  # Individual tool implementations
@@ -80,7 +80,19 @@ matrx_local/
 │   │       ├── clipboard.py        # ClipboardRead, ClipboardWrite
 │   │       ├── notify.py           # Notify
 │   │       ├── network.py          # FetchUrl, FetchWithBrowser, Scrape, Search, Research
-│   │       └── transfer.py         # DownloadFile, UploadFile
+│   │       ├── transfer.py         # DownloadFile, UploadFile
+│   │       ├── process_manager.py  # ListProcesses, LaunchApp, KillProcess, FocusApp
+│   │       ├── window_manager.py   # ListWindows, FocusWindow, MoveWindow, MinimizeWindow
+│   │       ├── input_automation.py # TypeText, Hotkey, MouseClick, MouseMove
+│   │       ├── audio.py            # ListAudioDevices, RecordAudio, PlayAudio, TranscribeAudio
+│   │       ├── browser_automation.py # BrowserNavigate, Click, Type, Extract, Screenshot, Eval, Tabs
+│   │       ├── network_discovery.py # NetworkInfo, NetworkScan, PortScan, MDNSDiscover
+│   │       ├── system_monitor.py   # SystemResources, BatteryStatus, DiskUsage, TopProcesses
+│   │       ├── file_watch.py       # WatchDirectory, WatchEvents, StopWatch
+│   │       ├── app_integration.py  # AppleScript, PowerShellScript, GetInstalledApps
+│   │       ├── scheduler.py        # ScheduleTask, ListScheduled, CancelScheduled, HeartbeatStatus, PreventSleep
+│   │       ├── media.py            # ImageOCR, ImageResize, PdfExtract, ArchiveCreate, ArchiveExtract
+│   │       └── wifi_bluetooth.py   # WifiNetworks, BluetoothDevices, ConnectedDevices
 │   ├── services/
 │   │   └── scraper/
 │   │       ├── engine.py           # ScraperEngine bridge to scraper-service
@@ -101,7 +113,7 @@ matrx_local/
 │   │   ├── pages/
 │   │   │   ├── Dashboard.tsx       # Engine status, system info, browser detection
 │   │   │   ├── Scraping.tsx        # URL input, batch scrape, dual-mode results
-│   │   │   ├── Tools.tsx           # Browse and invoke all 23 tools
+│   │   │   ├── Tools.tsx           # Browse and invoke all 68 tools
 │   │   │   ├── Activity.tsx        # Real-time WebSocket event log
 │   │   │   ├── Settings.tsx        # Engine, scraping, theme, account
 │   │   │   ├── Login.tsx           # OAuth (Google/GitHub/Apple) + email
@@ -231,9 +243,9 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 
 ---
 
-## Tool Reference (23 Tools)
+## Tool Reference (68 Tools)
 
-### File Operations
+### File Operations (5)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -243,7 +255,7 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 | `Glob` | `pattern`, `path?` | Find files matching a glob pattern |
 | `Grep` | `pattern`, `path?`, `include?` | Search file contents with regex |
 
-### Shell Execution
+### Shell Execution (3)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -251,7 +263,7 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 | `BashOutput` | `shell_id` | Read background shell output |
 | `TaskStop` | `shell_id` | Kill a background process |
 
-### System
+### System (5)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -261,27 +273,27 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 | `OpenUrl` | `url` | Open URL in default browser |
 | `OpenPath` | `path` | Open file/folder in default app |
 
-### Clipboard
+### Clipboard (2)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `ClipboardRead` | *(none)* | Read clipboard text |
 | `ClipboardWrite` | `text` | Write text to clipboard |
 
-### Notifications
+### Notifications (1)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `Notify` | `title`, `message` | Native OS notification |
 
-### Network -- Simple
+### Network -- Simple (2)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `FetchUrl` | `url`, `method?`, `headers?`, `body?`, `follow_redirects?`, `timeout?` | Direct HTTP from residential IP |
 | `FetchWithBrowser` | `url`, `wait_for?`, `wait_timeout?`, `extract_text?` | Playwright headless fetch |
 
-### Network -- Scraper Engine
+### Network -- Scraper Engine (3)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -289,12 +301,122 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 | `Search` | `keywords[]`, `country?`, `count?`, `freshness?` | Brave Search API |
 | `Research` | `query`, `country?`, `effort?`, `freshness?` | Deep research (search + scrape + compile) |
 
-### File Transfer
+### File Transfer (2)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `DownloadFile` | `url`, `path` | Download file to local path |
 | `UploadFile` | `path`, `url` | Upload local file to URL |
+
+### Process Management (4)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `ListProcesses` | `filter?`, `sort_by?`, `limit?` | List running processes with CPU/memory |
+| `LaunchApp` | `application`, `args?`, `wait?` | Launch an application by name or path |
+| `KillProcess` | `pid?`, `name?`, `force?` | Kill a process by PID or name |
+| `FocusApp` | `application` | Bring an app window to the foreground |
+
+### Window Management (4)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `ListWindows` | `app_filter?` | List all visible windows with positions/sizes |
+| `FocusWindow` | `app_name`, `window_title?` | Focus/activate a specific window |
+| `MoveWindow` | `app_name`, `x?`, `y?`, `width?`, `height?` | Move and/or resize a window |
+| `MinimizeWindow` | `app_name`, `action` | Minimize, maximize, or restore a window |
+
+### Input Automation (4)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `TypeText` | `text`, `delay_ms?`, `app_name?` | Type text via simulated keystrokes |
+| `Hotkey` | `keys`, `app_name?` | Send keyboard shortcut (e.g., cmd+c) |
+| `MouseClick` | `x`, `y`, `button?`, `clicks?` | Click mouse at screen coordinates |
+| `MouseMove` | `x`, `y` | Move mouse cursor to coordinates |
+
+### Audio (4)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `ListAudioDevices` | *(none)* | List microphones and speakers |
+| `RecordAudio` | `duration_seconds?`, `device_index?` | Record audio from microphone |
+| `PlayAudio` | `file_path`, `device_index?` | Play an audio file |
+| `TranscribeAudio` | `file_path`, `model?`, `language?` | Transcribe audio to text (Whisper) |
+
+### Browser Automation (7)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `BrowserNavigate` | `url`, `wait_for?` | Navigate to URL in controlled browser |
+| `BrowserClick` | `selector` | Click element by CSS selector |
+| `BrowserType` | `selector`, `text`, `press_enter?` | Type into input element |
+| `BrowserExtract` | `selector?`, `extract_type` | Extract text, HTML, links, or tables |
+| `BrowserScreenshot` | `full_page?`, `selector?` | Screenshot page or element |
+| `BrowserEval` | `javascript` | Execute JavaScript on current page |
+| `BrowserTabs` | `action`, `tab_index?`, `url?` | Manage browser tabs (list/new/close/switch) |
+
+### Network Discovery (4)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `NetworkInfo` | *(none)* | Get network interfaces, IPs, gateway, DNS |
+| `NetworkScan` | `subnet?`, `timeout?` | Scan local network for devices (ARP) |
+| `PortScan` | `host`, `ports?` | Scan ports on a host |
+| `MDNSDiscover` | `service_type?` | Discover mDNS/Bonjour services (smart devices) |
+
+### System Monitoring (4)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `SystemResources` | *(none)* | CPU, RAM, disk, network I/O, uptime |
+| `BatteryStatus` | *(none)* | Battery level and charging status |
+| `DiskUsage` | `path?` | Disk usage for all volumes or specific path |
+| `TopProcesses` | `sort_by?`, `limit?` | Top N processes by CPU or memory |
+
+### File Watching (3)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `WatchDirectory` | `path`, `recursive?`, `patterns?` | Start watching directory for changes |
+| `WatchEvents` | `watch_id`, `since_seconds?` | Get accumulated file change events |
+| `StopWatch` | `watch_id` | Stop watching a directory |
+
+### OS App Integration (3)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `AppleScript` | `script` | Run AppleScript (macOS only) |
+| `PowerShellScript` | `script` | Run PowerShell script (Windows only) |
+| `GetInstalledApps` | `filter?` | List installed applications |
+
+### Scheduler / Heartbeat (5)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `ScheduleTask` | `name`, `tool_name`, `tool_input`, `interval_seconds` | Schedule recurring tool execution |
+| `ListScheduled` | *(none)* | List all scheduled tasks |
+| `CancelScheduled` | `task_id` | Cancel a scheduled task |
+| `HeartbeatStatus` | *(none)* | Get scheduler system status |
+| `PreventSleep` | `enable`, `reason?`, `duration_minutes?` | Prevent system from sleeping |
+
+### Media Processing (5)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `ImageOCR` | `file_path`, `language?` | Extract text from image (Tesseract) |
+| `ImageResize` | `file_path`, `width?`, `height?`, `scale?` | Resize/convert images |
+| `PdfExtract` | `file_path`, `pages?`, `extract_images?` | Extract text from PDF |
+| `ArchiveCreate` | `source_paths`, `format?` | Create zip/tar archive |
+| `ArchiveExtract` | `file_path`, `output_dir?` | Extract archive |
+
+### WiFi & Bluetooth (3)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `WifiNetworks` | `rescan?` | List available WiFi networks |
+| `BluetoothDevices` | `scan_duration?` | List paired and nearby Bluetooth devices |
+| `ConnectedDevices` | *(none)* | List connected USB/Bluetooth peripherals |
 
 ---
 

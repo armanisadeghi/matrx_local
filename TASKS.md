@@ -91,6 +91,27 @@
 
 ---
 
+## Desktop Tool Expansion (2026-02-20)
+
+- [x] **Process Management tools** -- ListProcesses, LaunchApp, KillProcess, FocusApp (psutil + fallback)
+- [x] **Window Management tools** -- ListWindows, FocusWindow, MoveWindow, MinimizeWindow (AppleScript/PowerShell/wmctrl)
+- [x] **Input Automation tools** -- TypeText, Hotkey, MouseClick, MouseMove (AppleScript/PowerShell/xdotool)
+- [x] **Audio tools** -- ListAudioDevices, RecordAudio, PlayAudio, TranscribeAudio (sounddevice + Whisper)
+- [x] **Browser Automation tools** -- BrowserNavigate, BrowserClick, BrowserType, BrowserExtract, BrowserScreenshot, BrowserEval, BrowserTabs (Playwright)
+- [x] **Network Discovery tools** -- NetworkInfo, NetworkScan, PortScan, MDNSDiscover (socket + zeroconf)
+- [x] **System Monitoring tools** -- SystemResources, BatteryStatus, DiskUsage, TopProcesses (psutil)
+- [x] **File Watch tools** -- WatchDirectory, WatchEvents, StopWatch (watchfiles)
+- [x] **OS App Integration tools** -- AppleScript, PowerShellScript, GetInstalledApps
+- [x] **Scheduler/Heartbeat tools** -- ScheduleTask, ListScheduled, CancelScheduled, HeartbeatStatus, PreventSleep
+- [x] **Media Processing tools** -- ImageOCR, ImageResize, PdfExtract, ArchiveCreate, ArchiveExtract
+- [x] **WiFi & Bluetooth tools** -- WifiNetworks, BluetoothDevices, ConnectedDevices
+- [x] **Dispatcher updated** -- All 68 tools registered (was 23)
+- [x] **Frontend updated** -- Tools page has categories + input templates for all new tools
+- [x] **pyproject.toml updated** -- New optional dependency groups: monitoring, discovery, transcription, all
+- [x] **Architecture docs updated** -- ARCHITECTURE.md reflects 68 tools
+
+---
+
 ## Future Work
 
 - [x] Auto-updater -- `tauri-plugin-updater` + `tauri-plugin-process` wired. Signing keypair generated. Settings UI shows check/install/restart buttons.
@@ -102,7 +123,10 @@
 - [ ] Rate limiting on scraper server
 - [ ] No Alembic migration runner (only matters with local DATABASE_URL)
 - [ ] GitHub Actions workflow for signed release builds (uses `tauri-action` + signing key)
+- [ ] Wake-on-LAN support for remote wake of desktop from mobile
+- [ ] Smart device control protocols (HomeKit, Google Home, Alexa APIs)
+- [ ] Persistent scheduled tasks across app restarts (serialize to disk)
 
 ---
 
-*Last updated: 2026-02-19*
+*Last updated: 2026-02-20*
