@@ -9,6 +9,7 @@ from app.api.tool_routes import router as tool_router
 from app.api.remote_scraper_routes import router as remote_scraper_router
 from app.api.settings_routes import router as settings_router
 from app.api.document_routes import router as document_router
+from app.api.chat_routes import router as chat_router
 from app.api.auth import AuthMiddleware
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
@@ -52,6 +53,7 @@ app.include_router(tool_router, prefix="/tools", tags=["tools"])
 app.include_router(remote_scraper_router)
 app.include_router(settings_router)
 app.include_router(document_router)
+app.include_router(chat_router)
 
 app.add_middleware(
     CORSMiddleware,

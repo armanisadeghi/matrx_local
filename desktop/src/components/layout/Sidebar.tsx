@@ -6,6 +6,7 @@ import {
   Settings,
   Activity,
   FileText,
+  MessageSquare,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ interface SidebarProps {
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { to: "/chat", icon: MessageSquare, label: "Chat" },
   { to: "/documents", icon: FileText, label: "Documents" },
   { to: "/scraping", icon: Globe, label: "Scraping" },
   { to: "/tools", icon: Wrench, label: "Tools" },
