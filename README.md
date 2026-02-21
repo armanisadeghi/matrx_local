@@ -93,7 +93,7 @@ uv run playwright install chromium
 **Terminal 1 — Python engine (start first, wait for it to be ready)**
 
 ```bash
-cd /Users/armanisadeghi/Code/matrx-local
+cd /home/arman/projects/matrx-local
 uv run python run.py
 ```
 
@@ -102,7 +102,7 @@ Wait until you see `Uvicorn running on http://0.0.0.0:22140` before continuing.
 **Terminal 2 — Desktop app (after engine is up)**
 
 ```bash
-cd /Users/armanisadeghi/Code/matrx-local/desktop
+cd /home/arman/projects/matrx-local/desktop
 pnpm tauri:dev
 ```
 
@@ -206,17 +206,46 @@ The full desktop app wraps the Python engine in a React/Tauri shell — system t
 
 ### Prerequisites (one-time setup)
 
-```bash
-# 1. Rust toolchain
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
+**On WSL2 (Ubuntu) — install system libraries first:**
 
-# 2. pnpm
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev \
+  libgtk-3-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  libssl-dev \
+  libsoup-3.0-dev \
+  build-essential \
+  curl \
+  wget \
+  file \
+  libxdo-dev \
+  libxcb1 \
+  libxrandr2 \
+  libdbus-1-dev
+```
+
+**Then install the Rust toolchain (required on Linux/WSL2 — the Windows `cargo` does not work here):**
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Select option 1 (default install) when prompted
+source "$HOME/.cargo/env"
+```
+
+**Install pnpm and JS dependencies:**
+
+```bash
+# pnpm (if not already installed)
 npm install -g pnpm
 
-# 3. Install JS dependencies
+# Install JS dependencies
 cd desktop && pnpm install && cd ..
 ```
+
+> **WSL2 note:** Tauri builds a native Linux binary when run from WSL2. The window will not open unless you have a working X server or WSLg (Windows 11 with WSL2 GUI support). For `dev` mode you need WSLg or an X server like VcXsrv. To skip the GUI and just verify it builds, use `pnpm tauri build` instead.
 
 ### Build & ship (production binary)
 

@@ -7,6 +7,8 @@
 
 ## Critical / Blocking
 
+- [ ] **Engine lifespan hangs when shell DATABASE_URL leaks in** -- `scraper-service/app/config.py` reads `DATABASE_URL` from environment variables, which takes precedence over the project `.env`. If the user's shell has a `DATABASE_URL` set (e.g. from `~/.env.global`), the scraper engine tries to connect to that remote DB and hangs indefinitely in the lifespan startup. Workaround in `launch.sh`: `unset DATABASE_URL` before starting. Real fix: `app/services/scraper/engine.py` should pass `DATABASE_URL` explicitly from the project config rather than letting pydantic-settings read it from the ambient environment.
+
 - [x] **Missing `supabase.ts`** -- Created with publishable key pattern (default export).
 - [x] **No `.env` file for desktop** -- Created and populated with Supabase URL + publishable key.
 - [x] **Hardcoded DB credentials** -- `app/database.py` now uses `DATABASE_URL` from `config.py`.
