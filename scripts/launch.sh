@@ -37,14 +37,16 @@ ENGINE_ONLY=false
 IS_LINUX=false
 IS_MAC=false
 IS_WSL=false
+IS_WINDOWS=false
 case "$(uname -s)" in
   Linux*)
     IS_LINUX=true
-    if [[ -f /proc/version ]] && grep -qi microsoft /proc/version; then
+    if [[ -f /proc/version ]] && grep -qi microsoft /proc/version 2>/dev/null; then
       IS_WSL=true
     fi
     ;;
   Darwin*) IS_MAC=true ;;
+  CYGWIN*|MINGW*|MSYS*) IS_WINDOWS=true ;;
 esac
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -437,6 +439,23 @@ launch_with_wt() {
   _print_launch_summary "$port" "Windows Terminal"
 }
 
+# ── Windows Native: start cmd ─────────────────────────────────────────────────
+launch_with_windows_start() {
+  local port="$1"
+  local log_script; log_script=$(_write_engine_log_script "$port")
+  local desk_script; desk_script=$(_write_desktop_script "$port")
+
+  info "Opening Windows command prompts..."
+  if $ENGINE_ONLY; then
+    start "Matrx Engine" bash "$log_script"
+  else
+    start "Matrx Engine" bash "$log_script"
+    start "Matrx Desktop" bash "$desk_script"
+  fi
+  ok "Windows prompts opened."
+  _print_launch_summary "$port" "Windows start"
+}
+
 # ── macOS: iTerm2 (if running) ────────────────────────────────────────────────
 launch_with_iterm2() {
   local port="$1"
@@ -635,6 +654,12 @@ launch_fallback() {
 launch_terminals() {
   local port="$1"
 
+  # ── Windows Native ──────────────────────────────────────────────────────────
+  if $IS_WINDOWS; then
+    launch_with_windows_start "$port"
+    return
+  fi
+
   # ── WSL (Windows Subsystem for Linux) ──────────────────────────────────────
   if $IS_WSL; then
     if _wt_available; then
@@ -717,15 +742,27 @@ if ! $ENGINE_ONLY; then
     local bin=""
     if [[ -f "$HOME/.cargo/bin/cargo" ]]; then
       bin="$HOME/.cargo/bin/cargo"
+    elif [[ -f "$HOME/.cargo/bin/cargo.exe" ]]; then
+      bin="$HOME/.cargo/bin/cargo.exe"
     else
       bin=$(command -v cargo 2>/dev/null || true)
+      if [[ -z "$bin" ]]; then
+          bin=$(command -v cargo.exe 2>/dev/null || true)
+      fi
     fi
     [[ -z "$bin" ]] && return 1
+
     local resolved
     resolved=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
-    local magic
-    magic=$(od -A n -t x1 -N 4 "$resolved" 2>/dev/null | tr -d ' ')
-    [[ "$magic" == "7f454c46" ]]
+
+    if $IS_WSL; then
+        local magic
+        magic=$(od -A n -t x1 -N 2 "$resolved" 2>/dev/null | tr -d ' ' || true)
+        if [[ "$magic" == "4d5a" ]]; then
+            return 1 # It's a Windows binary
+        fi
+    fi
+    return 0
   }
 
   if _find_native_cargo_launch; then

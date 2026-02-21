@@ -30,13 +30,14 @@ ERRORS=0
 WARNINGS=0
 
 # ── OS detection ──────────────────────────────────────────────────────────────
-IS_MAC=false; IS_LINUX=false; IS_WSL=false
+IS_MAC=false; IS_LINUX=false; IS_WSL=false; IS_WINDOWS=false
 case "$(uname -s)" in
-    Darwin) IS_MAC=true ;;
-    Linux)
+    Darwin*) IS_MAC=true ;;
+    Linux*)
         IS_LINUX=true
         grep -qi microsoft /proc/version 2>/dev/null && IS_WSL=true
         ;;
+    CYGWIN*|MINGW*|MSYS*) IS_WINDOWS=true ;;
 esac
 
 # ── 1. Check uv ───────────────────────────────────────────────────────────────
@@ -171,25 +172,33 @@ step "7 / 8  Rust toolchain (needed for 'pnpm tauri:dev' / 'pnpm tauri build')"
 # Checks ~/.cargo/bin/cargo first (standard rustup install location),
 # then falls back to whatever PATH resolves. Returns the path or empty string.
 _find_native_cargo() {
-    local candidates=("$HOME/.cargo/bin/cargo" "$HOME/.cargo/bin/rustc")
     local bin=""
-    # Prefer the well-known rustup install path — works even if PATH isn't updated yet
     if [[ -f "$HOME/.cargo/bin/cargo" ]]; then
         bin="$HOME/.cargo/bin/cargo"
+    elif [[ -f "$HOME/.cargo/bin/cargo.exe" ]]; then
+        bin="$HOME/.cargo/bin/cargo.exe"
     else
         bin=$(command -v cargo 2>/dev/null || true)
+        if [[ -z "$bin" ]]; then
+            bin=$(command -v cargo.exe 2>/dev/null || true)
+        fi
     fi
     [[ -z "$bin" ]] && return 1
-    # Verify it's a native Linux ELF (magic 7f 45 4c 46) or a symlink to one
+
     local resolved
     resolved=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
-    local magic
-    magic=$(od -A n -t x1 -N 4 "$resolved" 2>/dev/null | tr -d ' ')
-    if [[ "$magic" == "7f454c46" ]]; then
-        echo "$bin"
-        return 0
+    
+    # If we are in WSL, we MUST NOT use a Windows PE binary (magic 4d5a)
+    if $IS_WSL; then
+        local magic
+        magic=$(od -A n -t x1 -N 2 "$resolved" 2>/dev/null | tr -d ' ' || true)
+        if [[ "$magic" == "4d5a" ]]; then
+            return 1 # It's a Windows binary
+        fi
     fi
-    return 1
+
+    echo "$bin"
+    return 0
 }
 
 # Find a Windows cargo.exe on any /mnt/* PATH entry (WSL interop).
@@ -291,8 +300,9 @@ _sidecar_triple() {
     local os arch
     os="$(uname -s)"; arch="$(uname -m)"
     case "$os" in
-        Linux)  case "$arch" in x86_64) echo "x86_64-unknown-linux-gnu" ;; aarch64) echo "aarch64-unknown-linux-gnu" ;; *) echo "unknown-linux" ;; esac ;;
-        Darwin) case "$arch" in x86_64) echo "x86_64-apple-darwin" ;; arm64) echo "aarch64-apple-darwin" ;; *) echo "unknown-darwin" ;; esac ;;
+        Linux*)  case "$arch" in x86_64) echo "x86_64-unknown-linux-gnu" ;; aarch64) echo "aarch64-unknown-linux-gnu" ;; *) echo "unknown-linux" ;; esac ;;
+        Darwin*) case "$arch" in x86_64) echo "x86_64-apple-darwin" ;; arm64) echo "aarch64-apple-darwin" ;; *) echo "unknown-darwin" ;; esac ;;
+        CYGWIN*|MINGW*|MSYS*) case "$arch" in x86_64|amd64) echo "x86_64-pc-windows-msvc" ;; *) echo "unknown-windows" ;; esac ;;
         *)      echo "unknown-platform" ;;
     esac
 }
