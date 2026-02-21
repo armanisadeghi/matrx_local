@@ -10,7 +10,8 @@ Public routes (health, discovery) are excluded from the check.
 
 from __future__ import annotations
 
-from fastapi import Request, HTTPException
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Routes that don't require auth (health checks, discovery).
@@ -36,9 +37,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             token = None
 
         if not token:
-            raise HTTPException(status_code=401, detail="Authorization header required")
+            return JSONResponse(
+                status_code=401, 
+                content={"detail": "Authorization header required"}
+            )
 
-        # Store token on request state for downstream forwarding (e.g. remote scraper proxy).
+        # Store token on request state for downstream forwarding.
         request.state.user_token = token
 
         return await call_next(request)

@@ -8,6 +8,10 @@ import {
   Activity,
   Cpu,
   TerminalSquare,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Copy,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
@@ -40,10 +44,15 @@ interface PortProcess {
   user: string;
 }
 
+type SortColumn = "port" | "name" | "pid" | "address" | "protocol";
+type SortDirection = "asc" | "desc";
+
 export function Ports({ engineStatus, engineUrl }: PortsProps) {
   const [ports, setPorts] = useState<PortProcess[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [sortCol, setSortCol] = useState<SortColumn>("port");
+  const [sortDir, setSortDir] = useState<SortDirection>("asc");
   const [killDialogOpen, setKillDialogOpen] = useState(false);
   const [processToKill, setProcessToKill] = useState<PortProcess | null>(null);
   const [isKilling, setIsKilling] = useState(false);
@@ -91,6 +100,18 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
     }
   };
 
+  const handleForceKillDirect = async (p: PortProcess) => {
+    setIsKilling(true);
+    try {
+      await engine.invokeToolWs("KillProcess", { pid: p.pid, force: true });
+      fetchPorts();
+    } catch (error) {
+      console.error("Failed to force kill process:", error);
+    } finally {
+      setIsKilling(false);
+    }
+  };
+
   const isUserItem = (p: PortProcess) => {
     const commonPorts = [
       3000, 3001, 8000, 8080, 5000, 5173, 4200, 8888, 5432, 6379, 27017, 3306,
@@ -115,9 +136,36 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
     );
   };
 
+  const handleSort = (col: SortColumn) => {
+    if (sortCol === col) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+  };
+
   const filteredPorts = ports.filter((p) => {
     const term = search.toLowerCase();
-    return p.name.toLowerCase().includes(term) || String(p.port).includes(term);
+    const pidStr = p.pid > 0 ? String(p.pid) : "";
+    return (
+      p.name.toLowerCase().includes(term) ||
+      String(p.port).includes(term) ||
+      p.address.toLowerCase().includes(term) ||
+      p.protocol.toLowerCase().includes(term) ||
+      pidStr.includes(term)
+    );
+  }).sort((a, b) => {
+    let aVal: string | number = a[sortCol];
+    let bVal: string | number = b[sortCol];
+    
+    // Sort strings case-insensitively
+    if (typeof aVal === 'string') aVal = aVal.toLowerCase();
+    if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+
+    if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
+    if (aVal > bVal) return sortDir === "asc" ? 1 : -1;
+    return 0;
   });
 
   const userItems = filteredPorts.filter(isUserItem);
@@ -154,6 +202,17 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => {
+              navigator.clipboard.writeText(JSON.stringify(filteredPorts, null, 2));
+            }}
+            title="Copy Filtered Data (JSON)"
+            className="h-9 w-9 bg-background/50 backdrop-blur-md"
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
           <Button
             variant="outline"
             size="icon"
@@ -194,22 +253,30 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
           <TabsContent value="user" className="flex-1 mt-4">
             <PortTable
               ports={userItems}
+              sortCol={sortCol}
+              sortDir={sortDir}
+              onSort={handleSort}
               getProcessIcon={getProcessIcon}
               onKill={(p) => {
                 setProcessToKill(p);
                 setKillDialogOpen(true);
               }}
+              onForceKill={handleForceKillDirect}
             />
           </TabsContent>
 
           <TabsContent value="all" className="flex-1 mt-4">
             <PortTable
               ports={filteredPorts}
+              sortCol={sortCol}
+              sortDir={sortDir}
+              onSort={handleSort}
               getProcessIcon={getProcessIcon}
               onKill={(p) => {
                 setProcessToKill(p);
                 setKillDialogOpen(true);
               }}
+              onForceKill={handleForceKillDirect}
             />
           </TabsContent>
         </Tabs>
@@ -218,14 +285,20 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
       <Dialog open={killDialogOpen} onOpenChange={setKillDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-background/80 backdrop-blur-2xl border-white/10">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
-              <ShieldAlert className="h-5 w-5" />
-              Kill Process
+            {/* @ts-expect-error Radix types missing children definition */}
+            <DialogTitle asChild>
+              <h2 className="flex items-center gap-2 text-destructive font-semibold">
+                <ShieldAlert className="h-5 w-5" />
+                Kill Process
+              </h2>
             </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to terminate{" "}
-              <strong>{processToKill?.name}</strong> (PID: {processToKill?.pid})
-              listening on port <strong>{processToKill?.port}</strong>?
+            {/* @ts-expect-error Radix types missing children definition */}
+            <DialogDescription asChild>
+              <p>
+                Are you sure you want to terminate{" "}
+                <strong>{processToKill?.name}</strong> (PID: {processToKill?.pid})
+                listening on port <strong>{processToKill?.port}</strong>?
+              </p>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex gap-2 sm:justify-start">
@@ -255,15 +328,29 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
   );
 }
 
+function SortIcon({ col, sortCol, sortDir }: { col: SortColumn, sortCol: SortColumn, sortDir: SortDirection }) {
+  if (col !== sortCol) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-20" />;
+  return sortDir === "asc" ? <ArrowUp className="w-3 h-3 ml-1" /> : <ArrowDown className="w-3 h-3 ml-1" />;
+}
+
 function PortTable({
   ports,
+  sortCol,
+  sortDir,
+  onSort,
   getProcessIcon,
   onKill,
 }: {
   ports: PortProcess[];
+  sortCol: SortColumn;
+  sortDir: SortDirection;
+  onSort: (col: SortColumn) => void;
   getProcessIcon: (name: string) => React.ReactNode;
   onKill: (p: PortProcess) => void;
+  onForceKill: (p: PortProcess) => void;
 }) {
+  const [expandedPort, setExpandedPort] = useState<string | null>(null);
+
   if (ports.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-muted-foreground bg-card/30 backdrop-blur-md rounded-xl border border-white/5">
@@ -275,63 +362,118 @@ function PortTable({
 
   return (
     <div className="h-full rounded-xl border border-white/10 bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
-      <div className="grid grid-cols-12 gap-4 border-b border-white/5 bg-muted/30 px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-        <div className="col-span-2">Port</div>
-        <div className="col-span-4">Process</div>
-        <div className="col-span-2">PID</div>
-        <div className="col-span-2">Protocol</div>
-        <div className="col-span-2 text-right">Actions</div>
+      <div className="grid grid-cols-12 gap-4 border-b border-white/5 bg-muted/30 px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider select-none">
+        <div className="col-span-2 flex items-center cursor-pointer hover:text-foreground transition-colors" onClick={() => onSort("port")}>
+          Port <SortIcon col="port" sortCol={sortCol} sortDir={sortDir} />
+        </div>
+        <div className="col-span-3 flex items-center cursor-pointer hover:text-foreground transition-colors" onClick={() => onSort("name")}>
+          Process <SortIcon col="name" sortCol={sortCol} sortDir={sortDir} />
+        </div>
+        <div className="col-span-3 flex items-center cursor-pointer hover:text-foreground transition-colors" onClick={() => onSort("address")}>
+          Address <SortIcon col="address" sortCol={sortCol} sortDir={sortDir} />
+        </div>
+        <div className="col-span-1 flex items-center cursor-pointer hover:text-foreground transition-colors" onClick={() => onSort("pid")}>
+          PID <SortIcon col="pid" sortCol={sortCol} sortDir={sortDir} />
+        </div>
+        <div className="col-span-1 flex items-center cursor-pointer hover:text-foreground transition-colors" onClick={() => onSort("protocol")}>
+          Protocol <SortIcon col="protocol" sortCol={sortCol} sortDir={sortDir} />
+        </div>
+        <div className="col-span-2 text-right">Ext</div>
       </div>
       <ScrollArea className="h-[calc(100%-45px)]">
         <div className="divide-y divide-white/5">
-          {ports.map((port) => (
-            <div
-              key={`${port.pid}-${port.port}-${port.protocol}`}
-              className="grid grid-cols-12 gap-4 items-center px-4 py-3 hover:bg-white/5 transition-colors group"
-            >
-              <div className="col-span-2">
-                <Badge
-                  variant="outline"
-                  className="font-mono bg-primary/10 text-primary border-primary/20"
-                >
+          {ports.map((port) => {
+            const rowKey = `${port.pid}-${port.port}-${port.protocol}`;
+            const isExpanded = expandedPort === rowKey;
+            
+            return (
+            <div key={rowKey}>
+              <div
+                className={`grid grid-cols-12 gap-4 items-center px-4 py-3 hover:bg-white/5 transition-colors group cursor-pointer ${isExpanded ? "bg-white/5" : ""}`}
+                onClick={() => setExpandedPort(isExpanded ? null : rowKey)}
+              >
+                <div className="col-span-2">
+                <span className="font-mono text-foreground/90 font-semibold text-sm">
                   {port.port}
-                </Badge>
+                </span>
               </div>
-              <div className="col-span-4 flex items-center gap-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-background/50 border border-white/5 shadow-sm">
+              <div className="col-span-3 flex items-center gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10 shadow-sm">
                   {getProcessIcon(port.name)}
                 </div>
-                <div className="flex flex-col">
-                  <span className="font-medium truncate">{port.name}</span>
-                  <span className="text-xs text-muted-foreground truncate">
-                    {port.address || "*"}
-                  </span>
+                <div className="flex flex-col min-w-0">
+                  <span className="font-medium text-foreground/90 truncate">{port.name}</span>
                 </div>
               </div>
-              <div className="col-span-2 text-sm text-muted-foreground font-mono">
+              <div className="col-span-3 flex items-center">
+                <span className="text-sm font-mono text-muted-foreground bg-white/5 px-2 py-0.5 rounded border border-white/10 truncate">
+                  {port.address || "*"}
+                </span>
+              </div>
+              <div className="col-span-1 text-sm text-muted-foreground font-mono">
                 {port.pid > 0 ? port.pid : "-"}
               </div>
-              <div className="col-span-2">
+              <div className="col-span-1">
                 <Badge
-                  variant="secondary"
-                  className="text-[10px] bg-background/50"
+                  variant="outline"
+                  className="text-[10px] bg-white/5 border-white/10 text-muted-foreground font-medium"
                 >
                   {port.protocol}
                 </Badge>
               </div>
-              <div className="col-span-2 flex justify-end">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 text-destructive opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10"
-                  onClick={() => onKill(port)}
-                  disabled={port.pid === 0}
-                >
-                  Kill
-                </Button>
+              <div className="col-span-2 flex justify-end gap-1 opacity-50 group-hover:opacity-100 transition-opacity text-xs text-muted-foreground font-medium" >
+                {isExpanded ? "Close" : "Expand"}
               </div>
             </div>
-          ))}
+            
+            {isExpanded && (
+              <div className="bg-black/20 border-t border-white/5 p-4 mx-4 mb-2 mt-[-2px] rounded-b-md shadow-inner">
+                <div className="flex justify-between items-start gap-4">
+                  <pre className="text-xs text-muted-foreground bg-black/40 p-3 rounded-md overflow-x-auto w-full font-mono border border-white/5">
+                    {JSON.stringify(port, null, 2)}
+                  </pre>
+                  <div className="flex flex-col gap-2 min-w-[140px] shrink-0">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="w-full justify-start text-xs h-8"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(JSON.stringify(port, null, 2));
+                      }}
+                    >
+                      <Copy className="h-3 w-3 mr-2" /> Copy JSON
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full justify-start text-xs h-8 border-destructive/30 text-destructive hover:bg-destructive/10"
+                      disabled={port.pid === 0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onKill(port);
+                      }}
+                    >
+                      <ShieldAlert className="h-3 w-3 mr-2" /> Grace Kill
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="w-full justify-start text-xs h-8 hover:bg-red-600"
+                      disabled={port.pid === 0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onForceKill(port);
+                      }}
+                    >
+                      Force Kill
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+            </div>
+          )})}
         </div>
       </ScrollArea>
     </div>

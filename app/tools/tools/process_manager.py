@@ -37,7 +37,7 @@ async def tool_list_processes(
         try:
             info = proc.info
             name = info.get("name", "")
-            if filter and filter.lower() not in name.lower():
+            if filter is not None and str(filter).lower() not in str(name).lower():
                 continue
             mem = info.get("memory_info")
             processes.append({
@@ -53,9 +53,9 @@ async def tool_list_processes(
 
     sort_key = "memory_mb" if sort_by == "memory" else "cpu_percent"
     processes.sort(key=lambda p: p.get(sort_key, 0), reverse=True)
-    processes = processes[:limit]
+    processes = processes[:limit]  # type: ignore
 
-    lines = [f"{'PID':>8}  {'CPU%':>6}  {'MEM MB':>8}  {'STATUS':>10}  NAME"]
+    lines: list[str] = [f"{'PID':>8}  {'CPU%':>6}  {'MEM MB':>8}  {'STATUS':>10}  NAME"]
     lines.append("-" * 70)
     for p in processes:
         lines.append(
@@ -86,7 +86,7 @@ def _list_processes_fallback(filter: str | None, sort_by: str, limit: int) -> To
             lines = output.split("\n")
             header = lines[0] if not IS_WINDOWS else ""
             filtered = [l for l in lines if filter.lower() in l.lower()]
-            output = (header + "\n" if header else "") + "\n".join(filtered[:limit])
+            output = (header + "\n" if header else "") + "\n".join(filtered[:limit])  # type: ignore
         return ToolResult(output=output.strip())
     except Exception as e:
         return ToolResult(type=ToolResultType.ERROR, output=f"Failed to list processes: {e}")
@@ -140,7 +140,7 @@ async def tool_list_ports(
                 continue
 
             if filter:
-                if filter.lower() not in name.lower() and filter not in str(conn.laddr.port):
+                if str(filter).lower() not in str(name).lower() and str(filter) not in str(conn.laddr.port):
                     continue
 
             protocol = "TCP" if conn.type == socket.SOCK_STREAM else "UDP" if conn.type == socket.SOCK_DGRAM else str(conn.type)
@@ -158,7 +158,7 @@ async def tool_list_ports(
 
     # Sort by port number
     ports.sort(key=lambda p: p['port'])
-    ports = ports[:limit]
+    ports = ports[:limit]  # type: ignore
 
     lines = [f"{'PORT':>6}  {'PROTO':<5}  {'PID':>8}  NAME"]
     lines.append("-" * 50)
@@ -207,7 +207,7 @@ def _list_ports_fallback(filter: str | None, limit: int) -> ToolResult:
                             pid = int(pid_str)
                             name = pid_to_name.get(pid_str, "unknown")
                             
-                            if filter and filter.lower() not in name.lower() and filter not in str(port):
+                            if filter and str(filter).lower() not in str(name).lower() and str(filter) not in str(port):
                                 continue
 
                             ports.append({
@@ -252,7 +252,7 @@ def _list_ports_fallback(filter: str | None, limit: int) -> ToolResult:
                         port = int(port_str)
                         ip = addr_str.rsplit(':', 1)[0]
                         
-                        if filter and filter.lower() not in name.lower() and filter not in str(port):
+                        if filter and str(filter).lower() not in str(name).lower() and str(filter) not in str(port):
                             continue
                             
                         ports.append({
@@ -276,7 +276,7 @@ def _list_ports_fallback(filter: str | None, limit: int) -> ToolResult:
                 unique_ports.append(p)
 
         unique_ports.sort(key=lambda p: p['port'])
-        unique_ports = unique_ports[:limit]
+        unique_ports = unique_ports[:limit]  # type: ignore
 
         lines = [f"{'PORT':>6}  {'PROTO':<5}  {'PID':>8}  NAME"]
         lines.append("-" * 50)

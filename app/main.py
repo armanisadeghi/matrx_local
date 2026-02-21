@@ -53,6 +53,8 @@ app.include_router(remote_scraper_router)
 app.include_router(settings_router)
 app.include_router(document_router)
 
+app.add_middleware(AuthMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -60,7 +62,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(AuthMiddleware)
 
 
 @app.middleware("http")

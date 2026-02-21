@@ -7,6 +7,7 @@ import {
   Activity,
   FileText,
   Zap,
+  Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -25,7 +26,7 @@ const navItems = [
   { to: "/documents", icon: FileText, label: "Documents" },
   { to: "/scraping", icon: Globe, label: "Scraping" },
   { to: "/tools", icon: Wrench, label: "Tools" },
-  { to: "/ports", icon: Activity, label: "Port Manager" },
+  { to: "/ports", icon: Network, label: "Port Manager" },
   { to: "/activity", icon: Activity, label: "Activity" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
@@ -48,14 +49,14 @@ const statusLabels: Record<EngineStatus, string> = {
 
 export function Sidebar({ engineStatus }: SidebarProps) {
   return (
-    <aside className="no-select flex h-full w-16 flex-col items-center border-r bg-background/50 py-4">
+    <aside className="no-select flex-none flex h-full w-16 flex-col items-center border-r bg-background/50 py-4">
       {/* Logo */}
-      <div className="mb-6 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+      <div className="mx-auto mb-6 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
         <Zap className="h-5 w-5 text-primary" />
       </div>
 
       {/* Navigation */}
-      <nav className="flex flex-1 flex-col items-center gap-1">
+      <nav className="flex flex-1 flex-col items-center gap-2 mx-auto">
         {navItems.map(({ to, icon: Icon, label }) => (
           <Tooltip key={to} delayDuration={0}>
             <TooltipTrigger asChild>

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Dashboard } from "@/pages/Dashboard";
@@ -112,6 +112,7 @@ export default function App() {
                     />
                   }
                 />
+                <Route path="*" element={<Navigate to="/" replace />} />
               </Route>
             )}
           </Routes>
