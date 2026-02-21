@@ -109,10 +109,25 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **5 new document tools** -- ListDocuments, ReadDocument, WriteDocument, SearchDocuments, ListDocumentFolders (73 total)
 - **Migration script** -- `migrations/001_documents_schema.sql` ready to run
 
+### Local Proxy & Cloud Settings Sync (Latest)
+- **HTTP proxy server** -- Local forward proxy at `127.0.0.1:22180` for routing traffic through user's IP
+- **Proxy management** -- Start/stop/test via REST API (`/proxy/*`), auto-starts on engine startup
+- **Proxy UI** -- Settings page has enable toggle, status, URL, stats, test button
+- **Cloud settings sync** -- All settings stored in Supabase `app_settings` table as JSON blob
+- **Multi-instance support** -- `app_instances` table tracks multiple installations per user
+- **System identification** -- Collects OS, CPU, RAM, hostname, generates stable instance ID
+- **Bidirectional sync** -- Push local→cloud, pull cloud→local, auto-sync on startup
+- **Cloud sync UI** -- Save to Cloud / Pull from Cloud buttons, registered devices list
+- **Instance heartbeat** -- 5-minute interval updates `last_seen` in cloud
+- **Settings persistence** -- Local JSON at `~/.matrx/settings.json` + localStorage + cloud
+- **Migration script** -- `migrations/002_app_instances_settings.sql` ready to run
+- **Integration guides** -- `docs/proxy-integration-guide.md` + `docs/proxy-testing-guide.md`
+
 ### Still Needs Work
 - **Rate limiting** -- No per-user rate limiting on scraper server
 - **GitHub Actions** -- Need CI/CD workflow for signed release builds (`tauri-action` + signing key env var)
 - **Run documents migration** -- SQL migration needs to be run in Supabase SQL Editor
+- **Run app instances migration** -- `migrations/002_app_instances_settings.sql` needs to be run in Supabase SQL Editor
 - **Engine Supabase env vars** -- `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` need to be set in root `.env`
 - **Enable Realtime** -- Supabase Realtime publication needs to include notes, note_folders, note_shares tables
 
@@ -149,6 +164,11 @@ npm run tauri:dev
 | Remote scraper client | `app/services/scraper/remote_client.py` |
 | Remote scraper routes | `app/api/remote_scraper_routes.py` |
 | Engine settings API | `app/api/settings_routes.py` |
+| Proxy routes | `app/api/proxy_routes.py` |
+| Cloud sync routes | `app/api/cloud_sync_routes.py` |
+| Proxy server | `app/services/proxy/server.py` |
+| Instance manager | `app/services/cloud_sync/instance_manager.py` |
+| Settings sync engine | `app/services/cloud_sync/settings_sync.py` |
 | Engine auth middleware | `app/api/auth.py` |
 | Error boundary | `desktop/src/components/ErrorBoundary.tsx` |
 | React entry | `desktop/src/App.tsx` |
@@ -174,7 +194,12 @@ npm run tauri:dev
 | Document components | `desktop/src/components/documents/*.tsx` |
 | Documents hook | `desktop/src/hooks/use-documents.ts` |
 | Realtime sync hook | `desktop/src/hooks/use-realtime-sync.ts` |
-| DB migration | `migrations/001_documents_schema.sql` |
+| DB migration (docs) | `migrations/001_documents_schema.sql` |
+| DB migration (instances) | `migrations/002_app_instances_settings.sql` |
+| Proxy integration guide | `docs/proxy-integration-guide.md` |
+| Proxy testing guide | `docs/proxy-testing-guide.md` |
+| Local settings file | `~/.matrx/settings.json` |
+| Instance ID file | `~/.matrx/instance.json` |
 | Architecture docs | `ARCHITECTURE.md` |
 | Task tracker | `TASKS.md` |
 | Backlog | `BACKLOG.md` |

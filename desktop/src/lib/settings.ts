@@ -4,17 +4,29 @@ import { engine } from "@/lib/api";
 const STORAGE_KEY = "matrx-settings";
 
 export interface AppSettings {
+  // Application
   launchOnStartup: boolean;
   minimizeToTray: boolean;
+  theme: "dark" | "light" | "system";
+  // Scraping
   headlessScraping: boolean;
   scrapeDelay: string;
+  // Proxy
+  proxyEnabled: boolean;
+  proxyPort: number;
+  // Instance
+  instanceName: string;
 }
 
 const DEFAULTS: AppSettings = {
   launchOnStartup: false,
   minimizeToTray: true,
+  theme: "dark",
   headlessScraping: true,
   scrapeDelay: "1.0",
+  proxyEnabled: true,
+  proxyPort: 22180,
+  instanceName: "My Computer",
 };
 
 export async function loadSettings(): Promise<AppSettings> {
@@ -27,6 +39,10 @@ export async function loadSettings(): Promise<AppSettings> {
     // Corrupted storage, reset
   }
   return { ...DEFAULTS };
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
 export async function saveSetting<K extends keyof AppSettings>(
@@ -74,6 +90,24 @@ async function syncSetting<K extends keyof AppSettings>(
           });
         }
         break;
+
+      case "proxyEnabled":
+        if (engine.engineUrl) {
+          if (all.proxyEnabled) {
+            await engine.proxyStart(all.proxyPort);
+          } else {
+            await engine.proxyStop();
+          }
+        }
+        break;
+
+      case "proxyPort":
+        // Port changes require restart of proxy
+        if (engine.engineUrl && all.proxyEnabled) {
+          await engine.proxyStop();
+          await engine.proxyStart(all.proxyPort);
+        }
+        break;
     }
   } catch (err) {
     console.warn(`[settings] Failed to sync ${key}:`, err);
@@ -112,4 +146,41 @@ export async function syncAllSettings(): Promise<void> {
       console.warn("[settings] Failed to sync engine settings:", err);
     }
   }
+}
+
+/**
+ * Merge cloud settings into local settings.
+ * Cloud settings use snake_case keys; local uses camelCase.
+ */
+export function mergeCloudSettings(
+  local: AppSettings,
+  cloud: Record<string, unknown>,
+): AppSettings {
+  return {
+    ...local,
+    proxyEnabled: cloud.proxy_enabled !== undefined ? Boolean(cloud.proxy_enabled) : local.proxyEnabled,
+    proxyPort: cloud.proxy_port !== undefined ? Number(cloud.proxy_port) : local.proxyPort,
+    headlessScraping: cloud.headless_scraping !== undefined ? Boolean(cloud.headless_scraping) : local.headlessScraping,
+    scrapeDelay: cloud.scrape_delay !== undefined ? String(cloud.scrape_delay) : local.scrapeDelay,
+    theme: (cloud.theme as AppSettings["theme"]) || local.theme,
+    launchOnStartup: cloud.launch_on_startup !== undefined ? Boolean(cloud.launch_on_startup) : local.launchOnStartup,
+    minimizeToTray: cloud.minimize_to_tray !== undefined ? Boolean(cloud.minimize_to_tray) : local.minimizeToTray,
+    instanceName: (cloud.instance_name as string) || local.instanceName,
+  };
+}
+
+/**
+ * Convert local camelCase settings to cloud snake_case format.
+ */
+export function settingsToCloud(settings: AppSettings): Record<string, unknown> {
+  return {
+    proxy_enabled: settings.proxyEnabled,
+    proxy_port: settings.proxyPort,
+    headless_scraping: settings.headlessScraping,
+    scrape_delay: parseFloat(settings.scrapeDelay) || 1.0,
+    theme: settings.theme,
+    launch_on_startup: settings.launchOnStartup,
+    minimize_to_tray: settings.minimizeToTray,
+    instance_name: settings.instanceName,
+  };
 }

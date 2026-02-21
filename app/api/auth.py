@@ -17,6 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Routes that don't require auth (health checks, discovery).
 _PUBLIC_PATHS = frozenset({
     "/", "/tools/list", "/remote-scraper/status",
+    "/proxy/status",
     "/docs", "/openapi.json", "/redoc",
 })
 

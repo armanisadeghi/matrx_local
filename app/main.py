@@ -9,10 +9,14 @@ from app.api.tool_routes import router as tool_router
 from app.api.remote_scraper_routes import router as remote_scraper_router
 from app.api.settings_routes import router as settings_router
 from app.api.document_routes import router as document_router
+from app.api.proxy_routes import router as proxy_router
+from app.api.cloud_sync_routes import router as cloud_sync_router
 from app.api.auth import AuthMiddleware
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
 from app.services.scraper.engine import get_scraper_engine
+from app.services.proxy.server import get_proxy_server
+from app.services.cloud_sync.settings_sync import get_settings_sync
 from app.tools.tools.scheduler import restore_scheduled_tasks
 from app.websocket_manager import WebSocketManager
 
@@ -32,7 +36,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if restored:
         logger.info("Scheduler: %d task(s) restored from previous session", restored)
 
+    # Start HTTP proxy if enabled in settings
+    settings_sync = get_settings_sync()
+    if settings_sync.get("proxy_enabled", True):
+        try:
+            proxy = get_proxy_server()
+            proxy_port = settings_sync.get("proxy_port", 22180)
+            await proxy.start(port=proxy_port)
+        except Exception:
+            logger.error("HTTP proxy failed to start", exc_info=True)
+
     yield
+
+    # Stop proxy server
+    try:
+        proxy = get_proxy_server()
+        await proxy.stop()
+    except Exception:
+        logger.error("HTTP proxy failed to stop cleanly", exc_info=True)
 
     try:
         await engine.stop()
@@ -52,6 +73,8 @@ app.include_router(tool_router, prefix="/tools", tags=["tools"])
 app.include_router(remote_scraper_router)
 app.include_router(settings_router)
 app.include_router(document_router)
+app.include_router(proxy_router)
+app.include_router(cloud_sync_router)
 
 app.add_middleware(AuthMiddleware)
 

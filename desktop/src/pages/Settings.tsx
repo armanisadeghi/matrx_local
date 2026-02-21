@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Settings as SettingsIcon,
   Server,
@@ -10,6 +10,16 @@ import {
   Download,
   Loader2,
   CheckCircle2,
+  Cloud,
+  CloudOff,
+  ArrowUpFromLine,
+  ArrowDownToLine,
+  Shield,
+  Monitor,
+  Wifi,
+  AlertCircle,
+  Copy,
+  CheckCheck,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +40,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { EngineStatus } from "@/hooks/use-engine";
 import { engine } from "@/lib/api";
+import type { ProxyStatus, InstanceInfo } from "@/lib/api";
 import type { useAuth } from "@/hooks/use-auth";
 import type { Theme } from "@/hooks/use-theme";
 
@@ -38,6 +49,7 @@ import { isTauri, checkForUpdates, restartApp, type UpdateStatus } from "@/lib/s
 import {
   loadSettings,
   saveSetting,
+  settingsToCloud,
   type AppSettings,
 } from "@/lib/settings";
 
@@ -67,9 +79,50 @@ export function Settings({
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [checking, setChecking] = useState(false);
 
+  // Proxy state
+  const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
+  const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyTestResult, setProxyTestResult] = useState<string | null>(null);
+
+  // Cloud sync state
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [instanceInfo, setInstanceInfo] = useState<InstanceInfo | null>(null);
+  const [instances, setInstances] = useState<InstanceInfo[]>([]);
+  const [copied, setCopied] = useState(false);
+
   useEffect(() => {
     loadSettings().then(setSettings);
+    loadProxyStatus();
+    loadInstanceInfo();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadProxyStatus = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const status = await engine.proxyStatus();
+      setProxyStatus(status);
+    } catch {
+      // Engine may not support proxy yet
+    }
+  }, [engineStatus]);
+
+  const loadInstanceInfo = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const info = await engine.getInstanceInfo();
+      setInstanceInfo(info);
+    } catch {
+      // Non-critical
+    }
+    try {
+      const result = await engine.listInstances();
+      setInstances(result.instances || []);
+    } catch {
+      // Non-critical
+    }
+  }, [engineStatus]);
 
   const handleCheckUpdate = async (install = false) => {
     setChecking(true);
@@ -119,13 +172,91 @@ export function Settings({
     }
   };
 
+  // Proxy handlers
+  const handleProxyTest = async () => {
+    setProxyTesting(true);
+    setProxyTestResult(null);
+    try {
+      const result = await engine.proxyTest();
+      if (result.success) {
+        setProxyTestResult(`Connected via ${result.proxy_url}`);
+      } else {
+        setProxyTestResult(`Failed: ${result.error}`);
+      }
+    } catch (err) {
+      setProxyTestResult(`Error: ${err}`);
+    } finally {
+      setProxyTesting(false);
+      loadProxyStatus();
+    }
+  };
+
+  // Cloud sync handlers
+  const handleSync = async () => {
+    setSyncing(true);
+    setSyncStatus(null);
+    try {
+      const result = await engine.triggerCloudSync();
+      setSyncStatus(`Sync ${result.status}${result.reason ? `: ${result.reason}` : ""}`);
+      if (result.settings) {
+        const updated = await loadSettings();
+        setSettings(updated);
+      }
+    } catch (err) {
+      setSyncStatus(`Sync failed: ${err}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handlePushToCloud = async () => {
+    setSyncing(true);
+    setSyncStatus(null);
+    try {
+      if (settings) {
+        await engine.updateCloudSettings(settingsToCloud(settings));
+      }
+      const result = await engine.pushCloudSettings();
+      setSyncStatus(`Push ${result.status}`);
+    } catch (err) {
+      setSyncStatus(`Push failed: ${err}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handlePullFromCloud = async () => {
+    setSyncing(true);
+    setSyncStatus(null);
+    try {
+      const result = await engine.pullCloudSettings();
+      setSyncStatus(`Pull ${result.status}`);
+      if (result.settings) {
+        const updated = await loadSettings();
+        setSettings(updated);
+      }
+    } catch (err) {
+      setSyncStatus(`Pull failed: ${err}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleCopyProxyUrl = () => {
+    if (proxyStatus?.proxy_url) {
+      navigator.clipboard.writeText(proxyStatus.proxy_url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
   if (!settings) return null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <Header
         title="Settings"
-        description="Configure the desktop application"
+        description="Configure the desktop application and cloud sync"
         engineStatus={engineStatus}
         engineUrl={engineUrl}
       />
@@ -204,6 +335,145 @@ export function Settings({
             </CardContent>
           </Card>
 
+          {/* Local Proxy */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Shield className="h-4 w-4 text-primary" />
+                Local Proxy
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="proxy-enabled">Enable Proxy Server</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Allow your computer to be used as an HTTP proxy for AI Matrx cloud services
+                  </p>
+                </div>
+                <Switch
+                  id="proxy-enabled"
+                  checked={settings.proxyEnabled}
+                  onCheckedChange={(v) => updateSetting("proxyEnabled", v)}
+                />
+              </div>
+
+              <Separator />
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Proxy Status</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Current state of the local HTTP proxy
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant={proxyStatus?.running ? "success" : "secondary"}>
+                    {proxyStatus?.running ? "Running" : "Stopped"}
+                  </Badge>
+                  {proxyStatus?.running && (
+                    <span className="text-xs font-mono text-muted-foreground">
+                      :{proxyStatus.port}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {proxyStatus?.running && (
+                <>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Proxy URL</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Use this URL to route traffic through your machine
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <code className="rounded bg-muted px-2 py-1 text-xs font-mono">
+                        {proxyStatus.proxy_url}
+                      </code>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        onClick={handleCopyProxyUrl}
+                      >
+                        {copied ? (
+                          <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <p className="text-lg font-semibold">{proxyStatus.request_count}</p>
+                      <p className="text-xs text-muted-foreground">Requests</p>
+                    </div>
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <p className="text-lg font-semibold">
+                        {proxyStatus.bytes_forwarded > 1048576
+                          ? `${(proxyStatus.bytes_forwarded / 1048576).toFixed(1)}MB`
+                          : proxyStatus.bytes_forwarded > 1024
+                            ? `${(proxyStatus.bytes_forwarded / 1024).toFixed(1)}KB`
+                            : `${proxyStatus.bytes_forwarded}B`}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Forwarded</p>
+                    </div>
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <p className="text-lg font-semibold">{proxyStatus.active_connections}</p>
+                      <p className="text-xs text-muted-foreground">Active</p>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={handleProxyTest}
+                  disabled={proxyTesting || !proxyStatus?.running}
+                >
+                  {proxyTesting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Wifi className="h-4 w-4" />
+                  )}
+                  Test Connection
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={loadProxyStatus}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Refresh Status
+                </Button>
+              </div>
+
+              {proxyTestResult && (
+                <div className={`rounded-lg border p-3 text-sm ${
+                  proxyTestResult.startsWith("Connected")
+                    ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+                    : "border-red-500/30 bg-red-500/5 text-red-400"
+                }`}>
+                  {proxyTestResult.startsWith("Connected") ? (
+                    <CheckCircle2 className="mr-1.5 inline h-4 w-4" />
+                  ) : (
+                    <AlertCircle className="mr-1.5 inline h-4 w-4" />
+                  )}
+                  {proxyTestResult}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Scraping Settings */}
           <Card>
             <CardHeader className="pb-3">
@@ -270,7 +540,13 @@ export function Settings({
                     Choose the application color scheme
                   </p>
                 </div>
-                <Select value={theme} onValueChange={(v) => setTheme(v as Theme)}>
+                <Select
+                  value={theme}
+                  onValueChange={(v) => {
+                    setTheme(v as Theme);
+                    updateSetting("theme", v as AppSettings["theme"]);
+                  }}
+                >
                   <SelectTrigger className="w-32">
                     <SelectValue />
                   </SelectTrigger>
@@ -313,6 +589,142 @@ export function Settings({
                   onCheckedChange={(v) => updateSetting("minimizeToTray", v)}
                 />
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Cloud Sync */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Cloud className="h-4 w-4 text-primary" />
+                Cloud Sync
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Sync Status</Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Settings are synchronized between this device and the cloud
+                  </p>
+                </div>
+                <Badge variant={auth.isAuthenticated ? "success" : "secondary"}>
+                  {auth.isAuthenticated ? "Connected" : "Not Signed In"}
+                </Badge>
+              </div>
+
+              {instanceInfo && (
+                <>
+                  <Separator />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Instance ID</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Unique identifier for this installation
+                      </p>
+                    </div>
+                    <code className="rounded bg-muted px-2 py-1 text-xs font-mono">
+                      {instanceInfo.instance_id.slice(0, 20)}...
+                    </code>
+                  </div>
+                </>
+              )}
+
+              {instances.length > 0 && (
+                <>
+                  <Separator />
+                  <div>
+                    <Label>Registered Devices</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+                      All devices linked to your account
+                    </p>
+                    <div className="space-y-2">
+                      {instances.map((inst) => (
+                        <div
+                          key={inst.instance_id}
+                          className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Monitor className="h-4 w-4 text-muted-foreground" />
+                            <div>
+                              <p className="text-sm font-medium">
+                                {inst.instance_name || inst.hostname || "Unknown"}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {inst.platform} {inst.architecture}
+                                {inst.last_seen && ` \u00b7 ${new Date(inst.last_seen).toLocaleDateString()}`}
+                              </p>
+                            </div>
+                          </div>
+                          {inst.instance_id === instanceInfo?.instance_id && (
+                            <Badge variant="outline" className="text-xs">This Device</Badge>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <Separator />
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={handlePushToCloud}
+                  disabled={syncing || !auth.isAuthenticated}
+                >
+                  {syncing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ArrowUpFromLine className="h-4 w-4" />
+                  )}
+                  Save to Cloud
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={handlePullFromCloud}
+                  disabled={syncing || !auth.isAuthenticated}
+                >
+                  {syncing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <ArrowDownToLine className="h-4 w-4" />
+                  )}
+                  Pull from Cloud
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSync}
+                  disabled={syncing || !auth.isAuthenticated}
+                >
+                  {syncing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+
+              {syncStatus && (
+                <div className={`rounded-lg border p-3 text-sm ${
+                  syncStatus.includes("error") || syncStatus.includes("failed")
+                    ? "border-red-500/30 bg-red-500/5 text-red-400"
+                    : "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+                }`}>
+                  {syncStatus.includes("error") || syncStatus.includes("failed") ? (
+                    <CloudOff className="mr-1.5 inline h-4 w-4" />
+                  ) : (
+                    <Cloud className="mr-1.5 inline h-4 w-4" />
+                  )}
+                  {syncStatus}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -364,6 +776,39 @@ export function Settings({
             </CardContent>
           </Card>
 
+          {/* System Info */}
+          {instanceInfo && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Monitor className="h-4 w-4 text-primary" />
+                  System Information
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-y-2 text-sm">
+                  {([
+                    ["Platform", instanceInfo.platform],
+                    ["OS Version", instanceInfo.os_version],
+                    ["Architecture", instanceInfo.architecture],
+                    ["Hostname", instanceInfo.hostname],
+                    ["CPU", instanceInfo.cpu_model],
+                    ["CPU Cores", instanceInfo.cpu_cores?.toString()],
+                    ["RAM", instanceInfo.ram_total_gb ? `${instanceInfo.ram_total_gb} GB` : undefined],
+                    ["Python", instanceInfo.python_version],
+                  ] as const)
+                    .filter(([, v]) => v)
+                    .map(([label, value]) => (
+                      <div key={label} className="contents">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className="font-mono text-xs">{value}</span>
+                      </div>
+                    ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* About */}
           <Card>
             <CardHeader className="pb-3">
@@ -382,7 +827,7 @@ export function Settings({
                   Engine Version
                 </span>
                 <Badge variant="secondary">
-                  {engineVersion || "—"}
+                  {engineVersion || "\u2014"}
                 </Badge>
               </div>
               <Separator />
@@ -397,7 +842,7 @@ export function Settings({
                         {updateStatus?.status === "available"
                           ? `v${updateStatus.version} available`
                           : updateStatus?.status === "installed"
-                            ? "Update installed — restart to apply"
+                            ? "Update installed \u2014 restart to apply"
                             : updateStatus?.status === "up_to_date"
                               ? "You're on the latest version"
                               : "Check for new releases"}
