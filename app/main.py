@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -46,7 +47,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception:
             logger.error("HTTP proxy failed to start", exc_info=True)
 
+    # Background heartbeat: updates last_seen and retries failed syncs
+    async def _heartbeat_loop() -> None:
+        while True:
+            await asyncio.sleep(300)  # 5 minutes
+            sync = get_settings_sync()
+            if not sync.is_configured:
+                continue
+            try:
+                await sync.heartbeat()
+            except Exception:
+                logger.debug("Heartbeat failed", exc_info=True)
+
+    heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
     yield
+
+    heartbeat_task.cancel()
+    try:
+        await heartbeat_task
+    except asyncio.CancelledError:
+        pass
 
     # Stop proxy server
     try:
