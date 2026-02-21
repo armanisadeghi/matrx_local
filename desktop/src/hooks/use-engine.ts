@@ -119,6 +119,19 @@ export function useEngine() {
 
     // Sync persisted settings to Tauri + engine.
     syncAllSettings().catch(() => {});
+
+    // Configure cloud sync if authenticated.
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token && session?.user?.id) {
+        await engine.configureCloudSync(session.access_token, session.user.id);
+      }
+    } catch {
+      // Cloud sync configuration is non-critical
+    }
+
+    // Send periodic heartbeat (every 5 minutes)
+    engine.cloudHeartbeat().catch(() => {});
   }, [update]);
 
   const refresh = useCallback(async () => {
@@ -138,7 +151,7 @@ export function useEngine() {
     );
 
     // Periodic health check
-    const interval = setInterval(async () => {
+    const healthInterval = setInterval(async () => {
       const healthy = await engine.isHealthy();
       if (!healthy && statusRef.current === "connected") {
         update({ status: "disconnected" });
@@ -147,11 +160,17 @@ export function useEngine() {
       }
     }, 10000);
 
+    // Periodic cloud heartbeat (every 5 minutes)
+    const heartbeatInterval = setInterval(() => {
+      engine.cloudHeartbeat().catch(() => {});
+    }, 300000);
+
     return () => {
       mountedRef.current = false;
       offConnected();
       offDisconnected();
-      clearInterval(interval);
+      clearInterval(healthInterval);
+      clearInterval(heartbeatInterval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

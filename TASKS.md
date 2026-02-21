@@ -136,12 +136,35 @@
 
 ---
 
+## Local Proxy & Cloud Settings Sync (2026-02-21)
+
+- [x] **HTTP proxy server** -- `app/services/proxy/server.py` — async forward proxy with CONNECT tunneling
+- [x] **Proxy API routes** -- `app/api/proxy_routes.py` — start/stop/status/test endpoints
+- [x] **Proxy auto-start** -- Proxy starts on engine startup if `proxy_enabled` is true (default)
+- [x] **Proxy settings toggle** -- Settings page has enable/disable toggle, status, stats, test button
+- [x] **Cloud sync engine** -- `app/services/cloud_sync/settings_sync.py` — bidirectional sync with Supabase
+- [x] **Instance manager** -- `app/services/cloud_sync/instance_manager.py` — stable machine ID, system info collection
+- [x] **Cloud sync API routes** -- `app/api/cloud_sync_routes.py` — configure, settings CRUD, sync push/pull, heartbeat
+- [x] **Multi-instance support** -- `app_instances` table stores multiple installations per user
+- [x] **App settings table** -- `app_settings` stores all settings as JSON blob per instance
+- [x] **Sync status table** -- `app_sync_status` tracks last sync time, direction, result
+- [x] **Supabase migration** -- `migrations/002_app_instances_settings.sql` with RLS policies
+- [x] **Frontend API client** -- Added proxy + cloud sync methods to `api.ts`
+- [x] **Settings expanded** -- `settings.ts` now includes proxy, theme, and instance name
+- [x] **Settings dashboard** -- Enhanced Settings.tsx with Proxy, Cloud Sync, System Info cards
+- [x] **Cloud sync on startup** -- `use-engine.ts` configures cloud sync when authenticated
+- [x] **Heartbeat** -- 5-minute interval updates `last_seen` in cloud
+- [x] **Integration guides** -- `docs/proxy-integration-guide.md` + `docs/proxy-testing-guide.md`
+- [ ] **Run SQL migration** -- Arman: run `migrations/002_app_instances_settings.sql` in Supabase SQL Editor
+
+---
+
 ## Future Work
 
 - [x] Auto-updater -- `tauri-plugin-updater` + `tauri-plugin-process` wired. Signing keypair generated. Settings UI shows check/install/restart buttons.
 - [ ] First-run setup wizard
 - [ ] Job queue for cloud-assigned scrape jobs
-- [x] Device registration with cloud -- Implemented via document sync device registration
+- [x] Device registration with cloud -- Implemented via document sync + app instance registration
 - [ ] Result sync to cloud storage
 - [x] SSE streaming support in desktop UI for scrape progress
 - [ ] Rate limiting on scraper server
@@ -150,7 +173,8 @@
 - [ ] Wake-on-LAN support for remote wake of desktop from mobile
 - [ ] Smart device control protocols (HomeKit, Google Home, Alexa APIs)
 - [ ] Persistent scheduled tasks across app restarts (serialize to disk)
+- [ ] Reverse tunnel for cloud→local proxy routing (allow cloud services to use user's proxy remotely)
 
 ---
 
-*Last updated: 2026-02-20*
+*Last updated: 2026-02-21*

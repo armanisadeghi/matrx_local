@@ -94,6 +94,16 @@ Open the desktop app, go to the Tools page, and try each category:
 
 ---
 
+## Local Proxy & Cloud Settings Setup
+
+### 8. Run app instances migration in Supabase SQL Editor
+- [ ] Open Supabase Dashboard → SQL Editor
+- [ ] Paste and run `migrations/002_app_instances_settings.sql`
+- [ ] Verify tables created: `app_instances`, `app_settings`, `app_sync_status`
+- [ ] Verify RLS policies applied on all three tables
+
+---
+
 ## Known Gaps (future work — not urgent)
 
 - [ ] No first-run setup wizard for new users
@@ -101,7 +111,8 @@ Open the desktop app, go to the Tools page, and try each category:
 - [ ] No rate limiting on the remote scraper server per user
 - [ ] Wake-on-LAN support
 - [ ] Smart device control (HomeKit, Google Home, Alexa APIs)
-- [x] Device registration with cloud backend — implemented via document sync
+- [x] Device registration with cloud backend — implemented via document sync + app instance registration
+- [ ] Reverse tunnel for cloud→local proxy routing
 
 ---
 

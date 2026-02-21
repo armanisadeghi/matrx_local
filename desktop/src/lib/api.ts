@@ -485,6 +485,157 @@ class EngineAPI {
     return this.baseUrl;
   }
 
+  // ---- Proxy API ----
+
+  /** Get proxy server status. */
+  async proxyStatus(): Promise<ProxyStatus> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/proxy/status`, { headers });
+    if (!resp.ok) throw new Error(`Proxy status failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Start the proxy server. */
+  async proxyStart(port = 0): Promise<ProxyStatus> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/proxy/start`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ port }),
+    });
+    if (!resp.ok) throw new Error(`Proxy start failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Stop the proxy server. */
+  async proxyStop(): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    await fetch(`${this.baseUrl}/proxy/stop`, { method: "POST", headers });
+  }
+
+  /** Test proxy connectivity. */
+  async proxyTest(): Promise<ProxyTestResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/proxy/test`, { method: "POST", headers });
+    if (!resp.ok) throw new Error(`Proxy test failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  // ---- Cloud Sync API ----
+
+  /** Configure cloud sync with user credentials. */
+  async configureCloudSync(jwt: string, userId: string): Promise<CloudConfigResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/cloud/configure`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jwt, user_id: userId }),
+    });
+    if (!resp.ok) throw new Error(`Cloud configure failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Reconfigure cloud sync with fresh JWT. */
+  async reconfigureCloudSync(jwt: string, userId: string): Promise<void> {
+    if (!this.baseUrl) return;
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    await fetch(`${this.baseUrl}/cloud/reconfigure`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jwt, user_id: userId }),
+    }).catch(() => {});
+  }
+
+  /** Get cloud-synced settings. */
+  async getCloudSettings(): Promise<CloudSettingsResponse> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/cloud/settings`, { headers });
+    if (!resp.ok) throw new Error(`Cloud settings failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Update cloud-synced settings. */
+  async updateCloudSettings(settings: Record<string, unknown>): Promise<CloudSettingsResponse> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/cloud/settings`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ settings }),
+    });
+    if (!resp.ok) throw new Error(`Cloud settings update failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Trigger a bidirectional sync. */
+  async triggerCloudSync(): Promise<CloudSyncResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/cloud/sync`, { method: "POST", headers });
+    if (!resp.ok) throw new Error(`Cloud sync failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Force push local settings to cloud. */
+  async pushCloudSettings(): Promise<CloudSyncResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/cloud/sync/push`, { method: "POST", headers });
+    if (!resp.ok) throw new Error(`Cloud push failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Force pull cloud settings to local. */
+  async pullCloudSettings(): Promise<CloudSyncResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/cloud/sync/pull`, { method: "POST", headers });
+    if (!resp.ok) throw new Error(`Cloud pull failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Get this instance's info. */
+  async getInstanceInfo(): Promise<InstanceInfo> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/cloud/instance`, { headers });
+    if (!resp.ok) throw new Error(`Instance info failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** List all registered instances for the current user. */
+  async listInstances(): Promise<{ instances: InstanceInfo[] }> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/cloud/instances`, { headers });
+    if (!resp.ok) throw new Error(`List instances failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Update instance display name. */
+  async updateInstanceName(name: string): Promise<void> {
+    if (!this.baseUrl) return;
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    await fetch(`${this.baseUrl}/cloud/instance/name`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  /** Send heartbeat for this instance. */
+  async cloudHeartbeat(): Promise<void> {
+    if (!this.baseUrl) return;
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    await fetch(`${this.baseUrl}/cloud/heartbeat`, { method: "POST", headers }).catch(() => {});
+  }
+
   // ---- Documents API ----
 
   private async docRequest<T>(
@@ -821,6 +972,64 @@ export interface DocMappings {
   }>;
   local_mappings: Record<string, string[]>;
   device_id: string;
+}
+
+// ---- Proxy types ----
+
+export interface ProxyStatus {
+  running: boolean;
+  port: number;
+  proxy_url: string;
+  request_count: number;
+  bytes_forwarded: number;
+  active_connections: number;
+  uptime_seconds: number;
+}
+
+export interface ProxyTestResult {
+  success: boolean;
+  status_code?: number;
+  body?: string;
+  error?: string;
+  proxy_url: string;
+}
+
+// ---- Cloud Sync types ----
+
+export interface CloudConfigResult {
+  configured: boolean;
+  instance_id: string;
+  sync_result: { status: string; reason?: string };
+}
+
+export interface CloudSettingsResponse {
+  settings: Record<string, unknown>;
+  configured: boolean;
+  push_result?: { status: string; reason?: string };
+}
+
+export interface CloudSyncResult {
+  status: string;
+  reason?: string;
+  settings?: Record<string, unknown>;
+}
+
+export interface InstanceInfo {
+  instance_id: string;
+  instance_name: string;
+  platform?: string;
+  os_version?: string;
+  architecture?: string;
+  hostname?: string;
+  username?: string;
+  python_version?: string;
+  home_dir?: string;
+  cpu_model?: string;
+  cpu_cores?: number;
+  ram_total_gb?: number;
+  last_seen?: string;
+  is_active?: boolean;
+  id?: string;
 }
 
 // Singleton instance
