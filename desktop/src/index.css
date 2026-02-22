@@ -229,6 +229,8 @@
 .chat-prose h2 { font-size: 1.125rem; }
 .chat-prose h3 { font-size: 1rem; }
 
+/* ── Tool panel animations ────────────────────────────────────── */
+
 /* Audio waveform animation for AudioPanel */
 @keyframes waveform {
   0%,
@@ -244,4 +246,83 @@
 
 .animate-waveform {
   animation: waveform 800ms ease-in-out infinite;
+}
+
+/* Smooth fade-in for panel content */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 200ms ease-out;
+}
+
+/* Gauge ring fill animation */
+@keyframes gaugeGrow {
+  from {
+    stroke-dashoffset: var(--circumference, 283);
+  }
+}
+
+/* Subtle pulse for active status indicators */
+@keyframes statusPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-status-pulse {
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+/* Terminal cursor blink */
+@keyframes cursorBlink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.animate-cursor {
+  animation: cursorBlink 1s step-end infinite;
+}
+
+/* Tool panel section transitions */
+.tool-section-enter {
+  animation: fadeIn 150ms ease-out;
+}
+
+/* Sparkline shimmer for loading state */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted) / 0.3) 25%,
+    hsl(var(--muted) / 0.6) 50%,
+    hsl(var(--muted) / 0.3) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
 }

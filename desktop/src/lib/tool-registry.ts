@@ -15,34 +15,58 @@ export interface CategoryMeta {
   label: string;
   description: string;
   icon: string;
-  color: string; // tailwind color token e.g. "violet", "emerald"
-  panelType: "monitoring" | "clipboard" | "audio" | "network" | "process" | "apps" | "scheduler" | "notify" | "browser" | "file" | "generic";
+  color: string;
+  panelType: string;
+}
+
+// ── Map backend category names → consolidated UI groups ────────────────────────
+const categoryMapping: Record<string, string> = {
+  "System Monitoring": "system-monitor",
+  "Process Management": "system-monitor",
+  "System":            "system-monitor",
+
+  "Network Discovery":   "network",
+  "Network":             "network",
+  "WiFi & Bluetooth":    "network",
+
+  "File Operations":   "files",
+  "File Watching":     "files",
+  "File Transfer":     "files",
+  "Documents":         "files",
+
+  "Audio":             "media",
+  "Media Processing":  "media",
+
+  "Browser Automation": "browser",
+
+  "Clipboard":         "clipboard",
+  "Notifications":     "clipboard",
+
+  "Window Management":  "automation",
+  "Input Automation":   "automation",
+
+  "Scheduler":         "scheduler",
+
+  "Execution":         "terminal",
+  "OS Integration":    "terminal",
+};
+
+export function mapCategory(backendCategory: string): string {
+  return categoryMapping[backendCategory] ?? "terminal";
 }
 
 export const toolCategories: CategoryMeta[] = [
-  { id: "System Monitoring",   label: "Monitoring",        description: "CPU, memory, disk & battery",      icon: "activity",      color: "violet",  panelType: "monitoring" },
-  { id: "Process Management",  label: "Processes",         description: "Manage running processes",         icon: "cpu",           color: "blue",    panelType: "process" },
-  { id: "Network Discovery",   label: "Network",           description: "Interfaces, ports & discovery",    icon: "wifi",          color: "sky",     panelType: "network" },
-  { id: "Network",             label: "Web & Scraping",    description: "Fetch, scrape and search web",     icon: "globe",         color: "indigo",  panelType: "generic" },
-  { id: "Clipboard",           label: "Clipboard",         description: "Read and write clipboard",         icon: "clipboard",     color: "amber",   panelType: "clipboard" },
-  { id: "Audio",               label: "Audio",             description: "Record, play back & transcribe",   icon: "mic",           color: "rose",    panelType: "audio" },
-  { id: "Scheduler",           label: "Scheduler",         description: "Schedule tasks & heartbeat",       icon: "clock",         color: "orange",  panelType: "scheduler" },
-  { id: "Notifications",       label: "Notifications",     description: "Native desktop notifications",     icon: "bell",          color: "yellow",  panelType: "notify" },
-  { id: "Browser Automation",  label: "Browser",           description: "Automate & control browser",       icon: "monitor",       color: "cyan",    panelType: "browser" },
-  { id: "OS Integration",      label: "OS Scripting",      description: "AppleScript & PowerShell",         icon: "terminal",      color: "slate",   panelType: "generic" },
-  { id: "Execution",           label: "Terminal",          description: "Shell command execution",          icon: "code-2",        color: "zinc",    panelType: "generic" },
-  { id: "File Operations",     label: "Files",             description: "Read, write & search files",       icon: "folder-open",   color: "teal",    panelType: "file" },
-  { id: "File Watching",       label: "File Watcher",      description: "Watch filesystem for changes",     icon: "eye",           color: "teal",    panelType: "generic" },
-  { id: "File Transfer",       label: "Transfer",          description: "Upload and download files",        icon: "arrow-up-down", color: "teal",    panelType: "generic" },
-  { id: "Documents",           label: "Documents",         description: "Document workspace tools",         icon: "file-text",     color: "purple",  panelType: "generic" },
-  { id: "Media Processing",    label: "Media",             description: "OCR, PDF, images & archives",      icon: "image",         color: "pink",    panelType: "generic" },
-  { id: "Window Management",   label: "Windows",           description: "Move and manage app windows",      icon: "layout",        color: "blue",    panelType: "generic" },
-  { id: "Input Automation",    label: "Input",             description: "Keyboard & mouse automation",      icon: "mouse-pointer", color: "indigo",  panelType: "generic" },
-  { id: "WiFi & Bluetooth",    label: "Connectivity",      description: "Wireless & connected devices",     icon: "bluetooth",     color: "sky",     panelType: "generic" },
-  { id: "System",              label: "System Utilities",  description: "OS-level utilities & info",        icon: "settings-2",    color: "slate",   panelType: "generic" },
+  { id: "system-monitor", label: "System",     description: "CPU, memory, disk, battery & processes",     icon: "activity",       color: "violet",  panelType: "monitoring" },
+  { id: "network",        label: "Network",     description: "Interfaces, ports, WiFi, scraping",         icon: "wifi",           color: "sky",     panelType: "network" },
+  { id: "files",          label: "Files",       description: "Read, write, search, transfer & documents", icon: "folder-open",    color: "teal",    panelType: "files" },
+  { id: "media",          label: "Media",       description: "Audio, images, OCR, PDF & archives",        icon: "image",          color: "rose",    panelType: "media" },
+  { id: "browser",        label: "Browser",     description: "Navigate, click, extract & screenshot",     icon: "globe",          color: "cyan",    panelType: "browser" },
+  { id: "clipboard",      label: "Clipboard",   description: "Read/write clipboard & notifications",      icon: "clipboard",      color: "amber",   panelType: "clipboard" },
+  { id: "automation",     label: "Automation",  description: "Window management, keyboard & mouse",       icon: "mouse-pointer",  color: "indigo",  panelType: "automation" },
+  { id: "scheduler",      label: "Scheduler",   description: "Scheduled tasks, heartbeat & sleep",        icon: "clock",          color: "orange",  panelType: "scheduler" },
+  { id: "terminal",       label: "Terminal",    description: "Shell commands, scripts & OS integration",   icon: "terminal",       color: "zinc",    panelType: "terminal" },
 ];
 
-// Solid tailwind bg/text pairs for category color dots — light & dark safe
 export const categoryColorMap: Record<string, { bg: string; text: string; border: string; glow: string }> = {
   violet:  { bg: "bg-violet-500/15",  text: "text-violet-400",  border: "border-violet-500/30",  glow: "shadow-violet-500/20" },
   blue:    { bg: "bg-blue-500/15",    text: "text-blue-400",    border: "border-blue-500/30",    glow: "shadow-blue-500/20" },
@@ -75,9 +99,10 @@ const toTitleCase = (value: string) =>
   value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 export function fromEngineSchema(schema: EngineToolSchema): ToolUISchema {
-  const properties = schema.input_schema?.properties ?? {};
-  const required   = new Set(schema.input_schema?.required ?? []);
-  const meta       = toolCategories.find((c) => c.id === (schema.category ?? ""));
+  const properties  = schema.input_schema?.properties ?? {};
+  const required    = new Set(schema.input_schema?.required ?? []);
+  const mappedCat   = mapCategory(schema.category ?? "");
+  const meta        = toolCategories.find((c) => c.id === mappedCat);
 
   const fields = Object.entries(properties).map(([name, def]): ToolFieldSchema => ({
     name,
@@ -93,7 +118,7 @@ export function fromEngineSchema(schema: EngineToolSchema): ToolUISchema {
     toolName:    schema.name,
     displayName: schema.name.replace(/([A-Z])/g, " $1").trim(),
     description: schema.description,
-    category:    schema.category ?? "System",
+    category:    mappedCat,
     icon:        meta?.icon ?? "wrench",
     fields,
     outputType:  "json",
@@ -113,5 +138,4 @@ export function getCategoryMeta(categoryId: string): CategoryMeta {
   };
 }
 
-// Legacy shim so existing imports still work
 export type { ToolCategory };

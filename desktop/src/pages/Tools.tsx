@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { Search, Code2, Sparkles, History, X, ChevronRight, Bot } from "lucide-react";
+import { Search, Code2, History, X, ChevronRight, Bot } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 import type { LucideProps } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -8,17 +8,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToolDetailPanel } from "@/components/tools/ToolDetailPanel";
-import { MonitoringPanel }   from "@/components/tools/panels/MonitoringPanel";
-import { ClipboardPanel }    from "@/components/tools/panels/ClipboardPanel";
-import { AudioPanel }        from "@/components/tools/panels/AudioPanel";
-import { NetworkPanel }      from "@/components/tools/panels/NetworkPanel";
-import { ProcessPanel }      from "@/components/tools/panels/ProcessPanel";
-import { InstalledAppsPanel } from "@/components/tools/panels/InstalledAppsPanel";
-import { SchedulerPanel }    from "@/components/tools/panels/SchedulerPanel";
-import { NotifyPanel }       from "@/components/tools/panels/NotifyPanel";
-import { BrowserPanel }      from "@/components/tools/panels/BrowserPanel";
-import { GenericToolPanel }  from "@/components/tools/panels/GenericToolPanel";
-import { useToolExecution }  from "@/hooks/use-tool-execution";
+import { MonitoringPanel }    from "@/components/tools/panels/MonitoringPanel";
+import { ClipboardPanel }     from "@/components/tools/panels/ClipboardPanel";
+import { AudioMediaPanel }    from "@/components/tools/panels/AudioMediaPanel";
+import { NetworkPanel }       from "@/components/tools/panels/NetworkPanel";
+import { SchedulerPanel }     from "@/components/tools/panels/SchedulerPanel";
+import { BrowserPanel }       from "@/components/tools/panels/BrowserPanel";
+import { GenericToolPanel }   from "@/components/tools/panels/GenericToolPanel";
+import { FilesPanel }         from "@/components/tools/panels/FilesPanel";
+import { AutomationPanel }    from "@/components/tools/panels/AutomationPanel";
+import { TerminalPanel }      from "@/components/tools/panels/TerminalPanel";
+import { useToolExecution }   from "@/hooks/use-tool-execution";
 import { fromEngineSchema, toolCategories, toolSchemas, categoryColorMap, getCategoryMeta } from "@/lib/tool-registry";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { ToolUISchema } from "@/types/tool-schema";
@@ -48,11 +48,11 @@ function DynamicIcon({ name, ...props }: { name: string } & LucideProps) {
   return <Icon {...props} />;
 }
 
-// Panel router — maps category panelType to the consumer component
 function ConsumerPanel({
-  schema, onInvoke, loading, result, error, elapsedMs, onReset,
+  schema, allSchemas, onInvoke, loading, result, error, elapsedMs, onReset,
 }: {
   schema: ToolUISchema;
+  allSchemas: ToolUISchema[];
   onInvoke: (toolName: string, params: Record<string, unknown>) => Promise<void>;
   loading: boolean;
   result: unknown;
@@ -61,18 +61,19 @@ function ConsumerPanel({
   onReset: () => void;
 }) {
   const meta = getCategoryMeta(schema.category);
-  const sharedProps = { onInvoke, loading, result };
+  const categoryTools = allSchemas.filter((s) => s.category === schema.category);
+  const sharedProps = { onInvoke, loading, result, tools: categoryTools };
 
   switch (meta.panelType) {
     case "monitoring":  return <MonitoringPanel {...sharedProps} />;
-    case "clipboard":   return <ClipboardPanel  {...sharedProps} />;
-    case "audio":       return <AudioPanel       {...sharedProps} />;
-    case "network":     return <NetworkPanel     {...sharedProps} />;
-    case "process":     return <ProcessPanel     {...sharedProps} />;
-    case "apps":        return <InstalledAppsPanel {...sharedProps} />;
-    case "scheduler":   return <SchedulerPanel   {...sharedProps} />;
-    case "notify":      return <NotifyPanel      {...sharedProps} />;
-    case "browser":     return <BrowserPanel     {...sharedProps} />;
+    case "clipboard":   return <ClipboardPanel  onInvoke={onInvoke} loading={loading} result={result} />;
+    case "media":       return <AudioMediaPanel {...sharedProps} />;
+    case "network":     return <NetworkPanel    onInvoke={onInvoke} loading={loading} result={result} />;
+    case "browser":     return <BrowserPanel    onInvoke={onInvoke} loading={loading} result={result} />;
+    case "scheduler":   return <SchedulerPanel  onInvoke={onInvoke} loading={loading} result={result} />;
+    case "files":       return <FilesPanel      {...sharedProps} />;
+    case "automation":  return <AutomationPanel {...sharedProps} />;
+    case "terminal":    return <TerminalPanel   {...sharedProps} />;
     default:
       return <GenericToolPanel schema={schema} onInvoke={onInvoke}
         loading={loading} result={result} error={error} elapsedMs={elapsedMs} onReset={onReset} />;
@@ -89,7 +90,6 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
 
   const { loading, result, error, elapsedMs, history, invoke, reset } = useToolExecution();
 
-  // Load schemas from engine
   useEffect(() => {
     if (engineStatus !== "connected" || !engineUrl) return;
     const load = async () => {
@@ -114,13 +114,11 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
     return toolSchemas;
   }, [tools, engineSchemas]);
 
-  // Build category list from schemas
   const categoryList = useMemo(() => {
     const counts = new Map<string, number>();
     for (const s of schemas) {
       counts.set(s.category, (counts.get(s.category) ?? 0) + 1);
     }
-    // Sort by toolCategories order, then alphabetically for unknowns
     const ordered = toolCategories
       .filter((c) => counts.has(c.id))
       .map((c) => ({ ...c, count: counts.get(c.id)! }));
@@ -133,14 +131,12 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
     return [...ordered, ...extra];
   }, [schemas]);
 
-  // Set initial category
   useEffect(() => {
     if (!selectedCategory && categoryList.length > 0) {
       setSelectedCategory(categoryList[0].id);
     }
   }, [categoryList, selectedCategory]);
 
-  // Filtered tools for the sidebar under search
   const filteredSchemas = useMemo(() => {
     if (!search) return schemas.filter((s) => s.category === selectedCategory);
     const q = search.toLowerCase();
@@ -159,7 +155,6 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
     setSelectedCategory(catId);
     setSearch("");
     reset();
-    // Auto-select first tool in the category
     const first = schemas.find((s) => s.category === catId);
     if (first) setSelectedToolName(first.toolName);
   }, [schemas, reset]);
@@ -177,27 +172,22 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
     [invoke]
   );
 
-  const activeCat = selectedCategory
-    ? toolCategories.find((c) => c.id === selectedCategory) ?? { id: selectedCategory, label: selectedCategory, color: "slate", icon: "wrench" }
-    : null;
-  const catColors = categoryColorMap[activeCat?.color ?? "slate"] ?? categoryColorMap["slate"];
-
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
-        title="Tool Workbench"
-        description={`${schemas.length} tools — your AI's full capability set`}
+        title="Tools"
+        description={`${schemas.length} tools available`}
       />
 
       <div className="flex flex-1 overflow-hidden">
 
-        {/* ===== LEFT CATEGORY NAV ===== */}
-        <div className="flex w-[220px] shrink-0 flex-col border-r bg-sidebar">
+        {/* ===== LEFT: Unified sidebar ===== */}
+        <div className="flex w-[240px] shrink-0 flex-col border-r bg-sidebar">
           <div className="p-3 border-b">
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                placeholder="Search tools…"
+                placeholder="Search tools..."
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); if (e.target.value) setSelectedToolName(null); }}
                 className="h-8 pl-8 text-xs bg-background/50"
@@ -210,37 +200,61 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
               {!search && categoryList.map((cat) => {
                 const colors  = categoryColorMap[cat.color] ?? categoryColorMap["slate"];
                 const isActive = selectedCategory === cat.id;
+                const catTools = schemas.filter((s) => s.category === cat.id);
+
                 return (
-                  <button
-                    key={cat.id}
-                    onClick={() => handleCategorySelect(cat.id)}
-                    className={cn(
-                      "w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all group",
-                      isActive
-                        ? `${colors.bg} ${colors.border} border`
-                        : "border border-transparent hover:bg-muted/40"
+                  <div key={cat.id}>
+                    <button
+                      onClick={() => handleCategorySelect(cat.id)}
+                      className={cn(
+                        "w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all group",
+                        isActive
+                          ? `${colors.bg} ${colors.border} border`
+                          : "border border-transparent hover:bg-muted/40"
+                      )}
+                    >
+                      <div className={cn(
+                        "h-6 w-6 shrink-0 rounded-md flex items-center justify-center transition-colors",
+                        isActive ? colors.text : "text-muted-foreground group-hover:text-foreground"
+                      )}>
+                        <DynamicIcon name={cat.icon} className="h-3.5 w-3.5" />
+                      </div>
+                      <span className={cn(
+                        "flex-1 text-xs font-medium truncate",
+                        isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
+                      )}>
+                        {cat.label}
+                      </span>
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5 shrink-0 tabular-nums">
+                        {cat.count}
+                      </Badge>
+                    </button>
+
+                    {isActive && catTools.length > 0 && (
+                      <div className="ml-4 mt-0.5 mb-1 space-y-px border-l border-border/40 pl-2">
+                        {catTools.map((s) => {
+                          const isToolActive = selectedToolName === s.toolName;
+                          return (
+                            <button key={s.toolName} onClick={() => handleToolSelect(s)}
+                              className={cn(
+                                "w-full text-left rounded-md px-2 py-1.5 transition-all text-[11px]",
+                                isToolActive
+                                  ? `${colors.text} font-medium bg-background/60`
+                                  : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                              )}>
+                              <div className="flex items-center gap-1.5">
+                                <span className="truncate flex-1">{s.displayName}</span>
+                                {isToolActive && <ChevronRight className="h-2.5 w-2.5 shrink-0 opacity-50" />}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
-                  >
-                    <div className={cn(
-                      "h-6 w-6 shrink-0 rounded-md flex items-center justify-center transition-colors",
-                      isActive ? `${colors.text}` : "text-muted-foreground group-hover:text-foreground"
-                    )}>
-                      <DynamicIcon name={cat.icon} className="h-3.5 w-3.5" />
-                    </div>
-                    <span className={cn(
-                      "flex-1 text-xs font-medium truncate",
-                      isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground"
-                    )}>
-                      {cat.label}
-                    </span>
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5 shrink-0 tabular-nums">
-                      {cat.count}
-                    </Badge>
-                  </button>
+                  </div>
                 );
               })}
 
-              {/* Search results — flat list */}
               {search && filteredSchemas.map((s) => {
                 const isActive = selectedToolName === s.toolName;
                 const meta     = getCategoryMeta(s.category);
@@ -254,14 +268,13 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
                         : "border-transparent hover:bg-muted/40"
                     )}>
                     <p className="text-xs font-medium truncate">{s.displayName}</p>
-                    <p className="text-[10px] text-muted-foreground truncate">{s.category}</p>
+                    <p className="text-[10px] text-muted-foreground truncate">{meta.label}</p>
                   </button>
                 );
               })}
             </div>
           </ScrollArea>
 
-          {/* AI tools count */}
           <div className="border-t p-3">
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <Bot className="h-3.5 w-3.5 text-primary" />
@@ -270,52 +283,10 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
           </div>
         </div>
 
-        {/* ===== MIDDLE TOOL LIST (when category selected, no search) ===== */}
-        {!search && selectedCategory && (
-          <div className="flex w-[220px] shrink-0 flex-col border-r">
-            {/* Category header */}
-            <div className={cn("border-b p-3", catColors.bg)}>
-              <div className="flex items-center gap-2">
-                <div className={cn("h-6 w-6 rounded-md flex items-center justify-center", catColors.bg, catColors.text)}>
-                  <DynamicIcon name={activeCat?.icon ?? "wrench"} className="h-3.5 w-3.5" />
-                </div>
-                <span className="text-sm font-semibold">{activeCat?.label}</span>
-              </div>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                {schemas.filter((s) => s.category === selectedCategory).length} tools
-              </p>
-            </div>
-
-            <ScrollArea className="flex-1">
-              <div className="p-2 space-y-0.5">
-                {schemas.filter((s) => s.category === selectedCategory).map((s) => {
-                  const isActive = selectedToolName === s.toolName;
-                  return (
-                    <button key={s.toolName} onClick={() => handleToolSelect(s)}
-                      className={cn(
-                        "w-full text-left rounded-lg px-3 py-2.5 transition-all border group",
-                        isActive
-                          ? `${catColors.bg} ${catColors.border}`
-                          : "border-transparent hover:bg-muted/40"
-                      )}>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium truncate flex-1">{s.displayName}</span>
-                        {isActive && <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
-                      </div>
-                      <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">{s.description}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </ScrollArea>
-          </div>
-        )}
-
         {/* ===== RIGHT PANEL ===== */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {selectedSchema ? (
             <>
-              {/* Panel header */}
               <div className="flex items-center justify-between border-b px-4 py-2.5 bg-card/30">
                 <div className="min-w-0">
                   <h2 className="text-sm font-semibold text-foreground truncate">{selectedSchema.displayName}</h2>
@@ -323,14 +294,13 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
                 </div>
                 <div className="flex items-center gap-1.5 ml-4 shrink-0">
                   <Badge variant="secondary" className="text-[10px]">
-                    {selectedSchema.category}
+                    {getCategoryMeta(selectedSchema.category).label}
                   </Badge>
                   <Button
                     variant={advancedMode ? "secondary" : "ghost"}
                     size="sm"
                     className={cn("h-7 gap-1 text-xs", advancedMode && "bg-muted")}
                     onClick={() => setAdvancedMode((v) => !v)}
-                    title={advancedMode ? "Switch to Consumer View" : "Switch to Advanced (Raw JSON) Mode"}
                   >
                     <Code2 className="h-3.5 w-3.5" />
                     {advancedMode ? "Simple" : "Advanced"}
@@ -340,14 +310,12 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
                     size="icon"
                     className="h-7 w-7"
                     onClick={() => setHistoryOpen((v) => !v)}
-                    title="Execution history"
                   >
                     <History className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </div>
 
-              {/* Panel body */}
               <div className="flex flex-1 overflow-hidden">
                 <div className="flex-1 overflow-hidden">
                   {advancedMode ? (
@@ -364,6 +332,7 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
                     <div className="h-full overflow-auto">
                       <ConsumerPanel
                         schema={selectedSchema}
+                        allSchemas={schemas}
                         onInvoke={invokeForPanel}
                         loading={loading}
                         result={result}
@@ -375,7 +344,6 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
                   )}
                 </div>
 
-                {/* History drawer */}
                 {historyOpen && (
                   <div className="w-[260px] shrink-0 border-l flex flex-col bg-card/30">
                     <div className="flex items-center justify-between border-b px-3 py-2">
@@ -422,20 +390,15 @@ export function Tools({ engineStatus, engineUrl, tools }: ToolsProps) {
               </div>
             </>
           ) : (
-            /* Empty state */
             <div className="flex h-full flex-col items-center justify-center gap-4 text-muted-foreground">
               <div className="rounded-3xl bg-primary/5 border border-primary/10 p-6">
-                <Sparkles className="h-12 w-12 text-primary/40" />
+                <Bot className="h-12 w-12 text-primary/40" />
               </div>
               <div className="text-center">
-                <p className="text-sm font-medium text-foreground">Select a category and tool</p>
+                <p className="text-sm font-medium text-foreground">Select a category</p>
                 <p className="mt-1 text-xs max-w-xs">
-                  {schemas.length} tools are available. Your AI model has access to all of them.
+                  {schemas.length} tools organized into {categoryList.length} categories
                 </p>
-              </div>
-              <div className="flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5">
-                <Bot className="h-3.5 w-3.5 text-primary" />
-                <span className="text-xs text-primary/80 font-medium">AI-Ready • {schemas.length} tools</span>
               </div>
             </div>
           )}
