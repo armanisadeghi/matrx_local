@@ -275,14 +275,162 @@ The remote server and local engine are the **same codebase** (`scraper-service/`
 
 ---
 
-## Future: Retry Queue (Not Built Yet)
+## CRITICAL: Saving Scraped Content Back to the Server
 
-We're planning a retry queue system where:
-1. Server scrapes fail → auto-queued for desktop retry
-2. Desktop polls `GET /api/v1/queue/pending` for URLs needing residential IP
-3. Desktop scrapes locally, pushes results back via `POST /api/v1/queue/submit`
+This is the **most important integration** for matrx-local. When the desktop app scrapes a page locally (using the user's residential IP), it must save the result back to the server's database so all clients can access it.
 
-This is designed but not yet implemented on the server. Full spec is at the server-side docs. When it's built, we'll update this doc.
+### Direct Save (No Queue Involved)
+
+For any locally-scraped content that should be stored centrally:
+
+```
+POST /api/v1/content/save
+Authorization: Bearer <api_key_or_jwt>
+Content-Type: application/json
+
+{
+  "url": "https://example.com/page",
+  "content": {
+    "text_data": "Full extracted text from the page...",
+    "ai_research_content": "Cleaned text optimized for AI consumption...",
+    "overview": {"title": "Page Title", "description": "Brief summary"},
+    "links": {"internal": ["https://example.com/other"], "external": ["https://other.com"]},
+    "hashes": ["sha256_of_content"],
+    "main_image": "https://example.com/hero.jpg"
+  },
+  "content_type": "html",
+  "char_count": 5432,
+  "ttl_days": 30
+}
+
+Response:
+{
+  "status": "stored",
+  "page_name": "example_com_page",
+  "url": "https://example.com/page",
+  "domain": "example.com",
+  "char_count": 5432
+}
+```
+
+This stores the content in `scrape_parsed_page` — the exact same table the server uses for its own scrapes. All content fields are optional except `text_data` or `ai_research_content` (at least one should be present).
+
+### Content Field Reference
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `text_data` | string | Recommended | Full extracted text |
+| `ai_research_content` | string | Recommended | Cleaned text for AI |
+| `overview` | object | Optional | `{title, description}` |
+| `links` | object | Optional | `{internal: [], external: []}` |
+| `hashes` | array | Optional | Content hashes for dedup |
+| `main_image` | string | Optional | Primary image URL |
+
+---
+
+## Retry Queue (LIVE — Built and Deployed)
+
+The server automatically queues failed scrapes for desktop retry. The full pipeline:
+
+```
+1. Frontend requests scrape → server tries → FAILS (Cloudflare, blocked, etc.)
+2. Server logs failure + auto-enqueues in scrape_retry_queue (tier=desktop)
+3. matrx-local polls GET /queue/pending → gets list of failed URLs
+4. matrx-local claims items → scrapes locally with residential IP
+5. On success: POST /queue/submit → content saved to server DB
+6. On failure: POST /queue/fail → optionally promotes to Chrome extension tier
+```
+
+### Queue API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/queue/pending?tier=desktop&limit=10` | Get URLs needing retry |
+| `POST` | `/api/v1/queue/claim` | Claim items (10 min TTL) |
+| `POST` | `/api/v1/queue/submit` | Submit scraped content for claimed item |
+| `POST` | `/api/v1/queue/fail` | Report failure, optionally promote tier |
+| `GET` | `/api/v1/queue/stats` | Queue statistics |
+
+### Polling Flow (What matrx-local Needs to Build)
+
+```python
+# Background task — runs every 30 seconds
+async def poll_retry_queue():
+    # 1. Check for pending items
+    resp = await client.get(
+        f"{SERVER}/api/v1/queue/pending?tier=desktop&limit=5",
+        headers=auth_headers,
+    )
+    items = resp.json()["items"]
+    if not items:
+        return
+
+    # 2. Claim them
+    ids = [item["id"] for item in items]
+    claim_resp = await client.post(
+        f"{SERVER}/api/v1/queue/claim",
+        headers=auth_headers,
+        json={"item_ids": ids, "client_id": MY_CLIENT_ID, "client_type": "desktop"},
+    )
+
+    # 3. Scrape each URL locally
+    for item in items:
+        result = await local_scraper.scrape(item["target_url"])
+
+        if result.success:
+            # 4a. Save back to server
+            await client.post(
+                f"{SERVER}/api/v1/queue/submit",
+                headers=auth_headers,
+                json={
+                    "queue_item_id": item["id"],
+                    "url": item["target_url"],
+                    "content": {
+                        "text_data": result.text,
+                        "ai_research_content": result.ai_text,
+                    },
+                    "content_type": "html",
+                    "char_count": len(result.text),
+                },
+            )
+        else:
+            # 4b. Report failure, promote to extension tier
+            await client.post(
+                f"{SERVER}/api/v1/queue/fail",
+                headers=auth_headers,
+                json={
+                    "queue_item_id": item["id"],
+                    "error": str(result.error),
+                    "promote_to_extension": True,
+                },
+            )
+```
+
+### Claim Expiration
+
+Claims expire after 10 minutes. If the desktop doesn't submit or fail the item in time, it automatically returns to `pending` for another client to pick up.
+
+### Retryable Failure Reasons (What Gets Auto-Queued)
+
+- `cloudflare_block` — residential IP usually bypasses this
+- `blocked` — generic IP/geo blocks
+- `bad_status` — 403, 429 rate limiting
+- `request_error` — connection failures
+- `proxy_error` — server proxy failures
+
+**NOT auto-queued:** `parse_error`, `non_html_content`, `low_text_content` (retrying won't help)
+
+---
+
+## Machine-Readable API Docs
+
+For agents and automated tools:
+
+```
+GET https://scraper.app.matrxserver.com/api/v1/docs/api
+```
+
+Returns the full API documentation as JSON — no auth required, no secrets. Includes all endpoints, request/response schemas, the retry pipeline flow, and content save guide.
 
 ---
 
