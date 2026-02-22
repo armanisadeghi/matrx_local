@@ -93,3 +93,59 @@ This enables settings persistence across devices. Without this call, all sync op
 6. **Conflict resolution** — Multi-device scenarios
 7. **Engine settings** — Proxy config, scraping options
 8. **Sharing** — Lower priority, defer if needed
+
+# RESPONSES AND NOTES:
+
+**Updated: 2026-02-21 by ai-matrx-admin frontend**
+
+---
+
+## ✅ All Items Addressed
+
+### 1. Documents / Notes UI — DONE
+
+- **New page**: `/demos/local-tools/documents`
+- 7 tabs covering every `/documents/*` endpoint:
+  - **Notes tab**: Folder tree sidebar (collapsible, with create/rename/delete), note list with search & folder filter, inline note editor with save
+  - **Sync tab**: Sync status display (`GET /documents/sync/status`), full sync trigger, pull changes
+  - **Versions tab**: Load version history by note ID, preview content, revert button
+  - **Conflicts tab**: Side-by-side local vs remote content, resolve with "Keep Local" / "Keep Remote"
+  - **Local Files tab**: Browse local folders/files via path input
+  - **Shares tab**: List, create (JSON form), delete shares
+  - **Mappings tab**: List, create, delete directory mappings
+- **Auth note**: Since demo pages are under `(public)` with no auth, a **mock `X-User-Id` input** is provided at the top of the page for testing. The value is sent as the `X-User-Id` header on all document requests.
+
+### 2. Cloud Sync Configuration — DONE
+
+- **New page**: `/demos/local-tools/cloud-sync`
+- Configure form with JWT + User ID fields → `POST /cloud/configure`
+- Cloud settings viewer/editor with reload/save → `GET/PUT /cloud/settings`
+- Push/Pull sync buttons → `POST /cloud/sync/push`, `POST /cloud/sync/pull`
+- Instance management display → `GET /cloud/instance`, `GET /cloud/instances`
+
+### 3. Engine Health & Status — DONE
+
+- `useMatrxLocal` hook now polls `GET /health`, `GET /version`, `GET /ports` every 15s
+- **ConnectionBar** shows health badge (green "Healthy"), version badge, alongside existing connection status
+- **New page**: `/demos/local-tools/engine` with:
+  - Health/Version/Port info cards
+  - Settings JSON editor → `GET/PUT /settings`
+
+### 4. WebSocket Enhancements — DONE
+
+- `cancelRequest(id)` method sends `{"id":"…","action":"cancel"}` to cancel individual requests
+- `cancelAll()` sends `{"action":"cancel_all"}` (was already partly done, now fully wired)
+- **Active request tracking**: Hook tracks all in-flight WS calls with tool name + timestamp
+- **ConnectionBar** shows orange "N in-flight" dropdown badge → click to see each active request with its duration and individual ✕ cancel button
+
+---
+
+## New Pages Summary
+
+| Page              | URL                             | Endpoints Covered                            |
+| ----------------- | ------------------------------- | -------------------------------------------- |
+| Documents & Notes | `/demos/local-tools/documents`  | All `/documents/*` endpoints                 |
+| Cloud Sync        | `/demos/local-tools/cloud-sync` | All `/cloud/*` endpoints                     |
+| Engine Settings   | `/demos/local-tools/engine`     | `/health`, `/version`, `/ports`, `/settings` |
+
+All 3 new pages are linked from the landing page (`/demos/local-tools`) as nav cards with "New" badges.
