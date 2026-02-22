@@ -106,3 +106,62 @@
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
 }
+
+/* Chat prose overrides — tighter spacing for chat bubbles */
+.prose.prose-sm p {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.prose.prose-sm p:first-child {
+  margin-top: 0;
+}
+
+.prose.prose-sm p:last-child {
+  margin-bottom: 0;
+}
+
+.prose.prose-sm ul,
+.prose.prose-sm ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding-left: 1.25em;
+}
+
+.prose.prose-sm li {
+  margin-top: 0.125em;
+  margin-bottom: 0.125em;
+}
+
+.prose.prose-sm pre {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.prose.prose-sm blockquote {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  border-left: 2px solid hsl(var(--border));
+  padding-left: 0.75em;
+  font-style: italic;
+  color: hsl(var(--muted-foreground));
+}
+
+.prose.prose-sm table {
+  font-size: 0.75rem;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.prose.prose-sm th,
+.prose.prose-sm td {
+  padding: 0.25em 0.5em;
+  border: 1px solid hsl(var(--border));
+}
+
+.prose.prose-sm h1,
+.prose.prose-sm h2,
+.prose.prose-sm h3 {
+  margin-top: 0.75em;
+  margin-bottom: 0.25em;
+}

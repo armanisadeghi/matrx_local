@@ -8,6 +8,7 @@ import { Tools } from "@/pages/Tools";
 import { Activity } from "@/pages/Activity";
 import { Ports } from "@/pages/Ports";
 import { Settings } from "@/pages/Settings";
+import { Chat } from "@/pages/Chat";
 import { Login } from "@/pages/Login";
 import { AuthCallback } from "@/pages/AuthCallback";
 import { useEngine } from "@/hooks/use-engine";
@@ -58,6 +59,16 @@ export default function App() {
                       systemInfo={systemInfo}
                       browserStatus={browserStatus}
                       onRefresh={refresh}
+                    />
+                  }
+                />
+                <Route
+                  path="chat"
+                  element={
+                    <Chat
+                      engineStatus={status}
+                      engineUrl={url}
+                      tools={tools}
                     />
                   }
                 />
