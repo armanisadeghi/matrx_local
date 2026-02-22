@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { Mic, MicOff, Play, Square, Volume2, RefreshCw } from "lucide-react";
+import { Mic, Play, Square, Volume2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AiBadge } from "@/components/tools/panels/AiBadge";
 

@@ -16,7 +16,7 @@ async function openFilePicker(directory?: boolean): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const result = await open({ directory: directory ?? false, multiple: false });
     if (typeof result === "string") return result;
-    if (Array.isArray(result) && result.length > 0) return result[0];
+    if (Array.isArray(result) && (result as string[]).length > 0) return (result as string[])[0];
     return null;
   } catch {
     // Running in browser (not Tauri) — return null so user types manually
