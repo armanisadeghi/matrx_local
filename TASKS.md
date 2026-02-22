@@ -5,10 +5,127 @@
 
 ---
 
-## Critical / Blocking
+## 🔴 NEW — Testing Findings (2026-02-21)
 
-- [ ] **Engine lifespan hangs when shell DATABASE_URL leaks in** -- `scraper-service/app/config.py` reads `DATABASE_URL` from environment variables, which takes precedence over the project `.env`. If the user's shell has a `DATABASE_URL` set (e.g. from `~/.env.global`), the scraper engine tries to connect to that remote DB and hangs indefinitely in the lifespan startup. Workaround in `launch.sh`: `unset DATABASE_URL` before starting. Real fix: `app/services/scraper/engine.py` should pass `DATABASE_URL` explicitly from the project config rather than letting pydantic-settings read it from the ambient environment.
+> Full QA pass by Arman. Every item below is an open bug or missing feature.
 
+---
+
+### Dashboard
+
+- [ ] **User profile shows "Not Found"** — Profile data is not loading on the dashboard card.
+- [ ] **Browser Engine shows "standby"** — Engine status indicator stuck on standby; should reflect actual running state.
+
+---
+
+### Documents
+
+- [ ] **New Folder doesn't work** — Button has no effect; folder is not created locally or in cloud.
+- [ ] **New Note doesn't work** — Button has no effect; note is not created.
+- [ ] **Sync bar claims "Connected" but does nothing** — 0 files, last sync shows "never". The sync bar is cosmetically connected but has no real backend sync happening.
+
+---
+
+### Scraping
+
+- [ ] **No persistence — scrapes not saved anywhere** — Local scrapes must be saved BOTH to the local SQLite/DB AND to Supabase cloud. Neither is happening.
+- [ ] **UX: URL list should be flat, not batched with tabs** — Currently shows strange batch/tab combo. Replace with: flat list of all scraped URLs on the left (regardless of which batch they came from), clicking a URL shows its content on the right. No tab navigation required.
+- [ ] **Content panel does not scroll** — The container holding scraped content must have its own independent scroll; long content is clipped.
+- [ ] **Auto-prefix URLs with https://** — If a user types `yahoo.com`, automatically prepend `https://` before scraping. Do not reject bare domains.
+
+---
+
+### Tools Page
+
+- [ ] **Tools UI is not user-friendly** — Current UI is developer-only (raw JSON input, etc.). GPT has submitted PR #1 with a redesigned categorized UI. **Pull and review PR #1 (`codex/create-user-friendly-ui-for-tools-tab`).**
+- [ ] **Monitoring tools need iOS-style UI** — Tools for system monitoring, battery, disk, etc. should use a beautiful, consumer-facing card/widget UI, not raw tool forms.
+- [ ] **Browser control tool: no order/structure + no visible session** — The browser control UI has no clear flow. It should also ideally show a live visual (screenshot) of the current browser state and confirm whether a session is being persisted.
+- [ ] **Large text output areas don't scroll** — PDF Extract and other tools that display large text blocks are not scrollable. All output text areas must scroll independently.
+- [ ] **Scheduler is fake / no persistence** — ScheduleTask UI accepts input but does NOT persist to DB or local storage. Needs real persistence (DB + local file fallback).
+- [ ] **Tool results not shown for action tools** — Tools like "Read Clipboard", "Get Screen State", etc. must display the result in the UI so the user can confirm the tool captured what they expected.
+- [ ] **Web search tool: argument errors** — Web search calls fail due to incorrect argument mapping. Fix the argument schema passed to the tool.
+- [ ] **Record Audio: broken, gives errors** — Should be a fully functional audio recorder with start/stop/playback. Currently throws errors.
+- [ ] **Transcribe Audio: needs live transcription mode** — Two modes needed: (1) from file upload, (2) live microphone with periodic file saves to prevent data loss.
+- [ ] **Notify tool: does nothing** — The Notify tool has no visible effect. Should trigger a native OS notification.
+- [ ] **Installed Apps: needs persistent list with refresh** — `GetInstalledApps` works but should save the result and display as a persistent sorted list with an explicit "Refresh" button (no auto-refresh on every open).
+- [ ] **Path-required tools (ImageOCR, etc.) need a file picker** — Tools that require a file path (ImageOCR, PdfExtract, ArchiveCreate, etc.) must use a native OS file-picker / directory-tree UI, not a raw text input.
+
+---
+
+### Ports
+
+- [ ] **"Grace Kill" text is invisible in dark mode** — Dark red text on black background. Must fix contrast: either use white text on a dark red background (like Force Kill), or change color entirely. Contrast is required for accessibility.
+
+---
+
+### Settings — General
+
+- [ ] **Verify "Launch on Startup" actually works** — The toggle sets the OS entry, but has it been confirmed to actually relaunch on login? Needs an end-to-end test.
+- [ ] **Verify "Minimize to Tray" actually works** — The Rust command is wired, but needs confirmation the window actually goes to tray and can be reopened.
+- [ ] **"Engine" concept needs clarity + reliability** — Settings shows "Engine Port", "Reconnect", "Restart" buttons. Does restarting the engine actually restart the Python sidecar reliably for end users? Needs confirmation + error handling if it fails.
+
+---
+
+### Settings — Proxy
+
+- [ ] **"Test Connection" is fake / misleading** — The button currently returns a local success response. A real test must: (1) call our main Python server at `MAIN_SERVER` (env var, do NOT hardcode), (2) have the server send a SEPARATE, independent request back to this client, (3) only mark as "Connected" after that callback is confirmed. Add `MAIN_SERVER=https://server.appp.matrxserver.com` as a new env variable (never hardcoded).
+
+---
+
+### Settings — Scraping
+
+- [ ] **Verify headless mode actually does something** — The toggle must be confirmed to switch Playwright to `headless=True/False` at runtime.
+- [ ] **Add forbidden URL list** — A UI-managed list of URLs that are forbidden from being scraped, even if requested. List must sync to Supabase (per user).
+
+---
+
+### Settings — Cloud Account
+
+- [ ] **Cloud sync broken: 404 on `app_settings` table** — Error: `404 Not Found` for `/rest/v1/app_settings?user_id=...&instance_id=...`. The `app_settings` table (from migration 002) may not exist in production Supabase. Run/verify migration.
+  ```
+  Sync error: Client error '404 Not Found' for url
+  'https://txzxabzwovsujtloxrus.supabase.co/rest/v1/app_settings?user_id=eq.4cf62e4e-...&instance_id=eq.inst_571f36f61346a092f97c6cc31a3ca265&select=*'
+  ```
+- [ ] **User avatar not shown** — Account card shows username and email but not the avatar from Supabase auth metadata.
+
+---
+
+### Settings — About
+
+- [ ] **"Open Logs Folder" button doesn't work** — Should open the OS file manager at the logs directory.
+- [ ] **"Open Data Folder" button doesn't work** — Should open the OS file manager at the app data directory.
+
+---
+
+### Global / UI
+
+- [ ] **Dark mode color contrast issues** — Dark red text on black/dark background is unreadable ("Failed to Fetch", "Grace Kill", etc.). Purple tones that are too dark also fail. Audit all color pairs and enforce legible light/dark text-background combinations across the full app.
+
+---
+
+### Missing Features — System Info
+
+- [ ] **No system info UI for end users** — CPU, RAM, disk, battery, etc. are buried in raw JSON tool outputs. Normal users will never find this. Build a proper System Info section (could be a dashboard widget or dedicated page) that shows at minimum: CPU usage, memory usage, disk usage, battery status, and uptime — in a readable, visual format.
+
+---
+
+## Pending / Open
+
+- [ ] **Rate limiting** — No per-user rate limiting on scraper server yet.
+- [ ] **Prose markdown styling** — Add `@tailwindcss/typography` for better `.prose` rendering in Documents page (currently basic).
+- [ ] **First-run setup wizard**
+- [ ] **Job queue for cloud-assigned scrape jobs**
+- [ ] **No Alembic migration runner** (only matters if `DATABASE_URL` is set locally)
+- [ ] **GitHub Actions workflow** for signed release builds (signing key env vars now set in GitHub)
+- [ ] **Wake-on-LAN support**
+- [ ] **Smart device control protocols** (HomeKit, Google Home, Alexa APIs)
+- [ ] **Reverse tunnel** for cloud→local proxy routing
+
+---
+
+## Critical / Blocking ✅
+
+- [x] **Engine lifespan hangs when shell DATABASE_URL leaks in** — Fixed in `engine.py` (lines 191-192): sets `DATABASE_URL=""` via `os.environ.setdefault` if not in project env, preventing shell leakage from blocking scraper startup.
 - [x] **Missing `supabase.ts`** -- Created with publishable key pattern (default export).
 - [x] **No `.env` file for desktop** -- Created and populated with Supabase URL + publishable key.
 - [x] **Hardcoded DB credentials** -- `app/database.py` now uses `DATABASE_URL` from `config.py`.
@@ -18,7 +135,7 @@
 
 ---
 
-## Auth & Shipping Strategy
+## Auth & Shipping Strategy ✅
 
 - [x] **JWT auth added to scraper server** -- Accepts both API key and Supabase JWT via JWKS (ES256).
 - [x] **Shipping strategy decided** -- Supabase OAuth, JWT auth on scraper server, no embedded API keys.
@@ -29,7 +146,7 @@
 
 ---
 
-## Settings Page
+## Settings Page ✅
 
 - [x] **Theme switching** -- `use-theme.ts` hook manages `.dark` class, persists to localStorage, default dark.
 - [x] **Settings persisted** -- `lib/settings.ts` with localStorage backend + native/engine sync.
@@ -42,7 +159,7 @@
 
 ---
 
-## Remote Scraper Integration
+## Remote Scraper Integration ✅
 
 - [x] **`remote_client.py` created** -- HTTP client with `Authorization: Bearer` auth + JWT forwarding.
 - [x] **`remote_scraper_routes.py` created** -- Proxy routes at `/remote-scraper/*` with auth forwarding.
@@ -51,11 +168,10 @@
 - [x] **Frontend integration** -- Scraping page has Engine/Browser/Remote toggle. Remote calls `/remote-scraper/scrape`.
 - [x] **`api.ts` methods** -- Added `scrapeRemotely()`, `remoteScraperStatus()`, `RemoteScrapeResponse` type.
 - [x] **SSE streaming** -- Proxy routes + `stream_sse()` on engine, `streamSSE()` in frontend API, real-time results in Scraping page.
-- [ ] **Rate limiting** -- No per-user rate limiting on scraper server yet.
 
 ---
 
-## API / Backend Connections
+## API / Backend Connections ✅
 
 - [x] **Database connection unified** -- Uses `DATABASE_URL` from config.
 - [x] **Health endpoint mismatch** -- `sidecar.ts` now uses `/tools/list`.
@@ -66,15 +182,14 @@
 
 ---
 
-## Database & Sync
+## Database & Sync ✅
 
 - [x] **DB strategy clarified** -- Scraper DB is internal-only. All data via REST API with Bearer auth.
-- [ ] **No Alembic migration runner** -- Only matters if `DATABASE_URL` is set locally.
-- [ ] **No data sync** -- Local scrape results don't push to cloud. Future feature.
+- [x] **No Alembic migration runner** -- Only matters if `DATABASE_URL` is set locally.
 
 ---
 
-## Supabase Integration
+## Supabase Integration ✅
 
 - [x] **Client file** -- `desktop/src/lib/supabase.ts` with publishable key.
 - [x] **Env vars** -- `desktop/.env` populated.
@@ -84,7 +199,7 @@
 
 ---
 
-## Code Quality
+## Code Quality ✅
 
 - [x] **Stale closure fixed** in `use-engine.ts` health check.
 - [x] **Error boundary added** -- `ErrorBoundary.tsx` wraps entire app in `App.tsx`.
@@ -93,7 +208,7 @@
 
 ---
 
-## Desktop Tool Expansion (2026-02-20)
+## Desktop Tool Expansion ✅ (2026-02-20)
 
 - [x] **Process Management tools** -- ListProcesses, LaunchApp, KillProcess, FocusApp (psutil + fallback)
 - [x] **Window Management tools** -- ListWindows, FocusWindow, MoveWindow, MinimizeWindow (AppleScript/PowerShell/wmctrl)
@@ -114,29 +229,25 @@
 
 ---
 
-## Documents & Notes Sync (2026-02-20)
+## Documents & Notes Sync ✅ (2026-02-20)
 
-- [x] **Database schema** -- SQL migration for `note_folders`, `note_shares`, `note_devices`, `note_directory_mappings`, `note_sync_log` tables + extensions to `notes` (folder_id, file_path, content_hash, sync_version, last_device_id)
-- [x] **Supabase PostgREST client** -- `app/services/documents/supabase_client.py` with full CRUD, versions, shares, devices, mappings, sync log
-- [x] **Local file manager** -- `app/services/documents/file_manager.py` for .md file I/O, scanning, conflict storage, directory mapping sync
-- [x] **Sync engine** -- `app/services/documents/sync_engine.py` with push/pull, full reconciliation, conflict detection, file watcher integration
-- [x] **Document API routes** -- `app/api/document_routes.py` with 25+ endpoints (folders, notes, versions, sync, conflicts, shares, mappings)
+- [x] **Database schema** -- SQL migration for `note_folders`, `note_shares`, `note_devices`, `note_directory_mappings`, `note_sync_log` tables + extensions to `notes`
+- [x] **Supabase PostgREST client** -- `app/services/documents/supabase_client.py` with full CRUD
+- [x] **Local file manager** -- `app/services/documents/file_manager.py`
+- [x] **Sync engine** -- `app/services/documents/sync_engine.py` with push/pull, conflict detection, file watcher
+- [x] **Document API routes** -- `app/api/document_routes.py` with 25+ endpoints
 - [x] **Document tools** -- ListDocuments, ReadDocument, WriteDocument, SearchDocuments, ListDocumentFolders (5 new tools, 73 total)
 - [x] **Documents page** -- Full UI with folder tree, note list, markdown editor (split/edit/preview), toolbar, search
-- [x] **Markdown support** -- `react-markdown` + `remark-gfm` for GFM rendering, toolbar with formatting buttons
 - [x] **Realtime sync** -- `use-realtime-sync.ts` subscribes to Supabase Realtime on notes/folders tables
 - [x] **Version history** -- Right panel with version list and one-click revert
-- [x] **Sharing** -- Share dialog with per-user permissions (read/comment/edit/admin) + public link support
-- [x] **Directory mappings** -- Map folders to additional local paths, auto-sync on changes
+- [x] **Sharing** -- Share dialog with per-user permissions + public link support
 - [x] **Sync status bar** -- Shows connection state, conflict count, watcher status, file count, last sync time
-- [x] **Run SQL migration** -- `migrations/001_documents_schema.sql` run in Supabase SQL Editor
-- [x] **Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to root .env** -- Both env vars confirmed set
-- [x] **Enable Supabase Realtime** -- `ALTER PUBLICATION supabase_realtime` run for notes, note_folders, note_shares
-- [ ] **Prose styling for markdown preview** -- Add `@tailwindcss/typography` for better `.prose` rendering (currently basic)
+- [x] **Run SQL migration** -- `migrations/001_documents_schema.sql` run in Supabase ✓
+- [x] **Enable Supabase Realtime** -- `notes`, `note_folders`, `note_shares` added to publication ✓
 
 ---
 
-## Chat UI with Sidebar (2026-02-21)
+## Chat UI with Sidebar ✅ (2026-02-21)
 
 - [x] **Chat page** -- `desktop/src/pages/Chat.tsx` with full chat layout
 - [x] **Chat components** -- `ChatInput`, `ChatMessages`, `ChatSidebar`, `ChatToolCall`, `ChatWelcome`
@@ -147,63 +258,20 @@
 
 ---
 
-## Local Proxy & Cloud Settings Sync (2026-02-21)
+## Local Proxy & Cloud Settings Sync ✅ (2026-02-21)
 
 - [x] **HTTP proxy server** -- `app/services/proxy/server.py` — async forward proxy with CONNECT tunneling
 - [x] **Proxy API routes** -- `app/api/proxy_routes.py` — start/stop/status/test endpoints
-- [x] **Proxy auto-start** -- Proxy starts on engine startup if `proxy_enabled` is true (default)
+- [x] **Proxy auto-start** -- Proxy starts on engine startup if `proxy_enabled` is true
 - [x] **Proxy settings toggle** -- Settings page has enable/disable toggle, status, stats, test button
 - [x] **Cloud sync engine** -- `app/services/cloud_sync/settings_sync.py` — bidirectional sync with Supabase
 - [x] **Instance manager** -- `app/services/cloud_sync/instance_manager.py` — stable machine ID, system info collection
 - [x] **Cloud sync API routes** -- `app/api/cloud_sync_routes.py` — configure, settings CRUD, sync push/pull, heartbeat
-- [x] **Multi-instance support** -- `app_instances` table stores multiple installations per user
-- [x] **App settings table** -- `app_settings` stores all settings as JSON blob per instance
-- [x] **Sync status table** -- `app_sync_status` tracks last sync time, direction, result
 - [x] **Supabase migration** -- `migrations/002_app_instances_settings.sql` with RLS policies
-- [x] **Frontend API client** -- Added proxy + cloud sync methods to `api.ts`
-- [x] **Settings expanded** -- `settings.ts` now includes proxy, theme, and instance name
-- [x] **Settings dashboard** -- Enhanced Settings.tsx with Proxy, Cloud Sync, System Info cards
 - [x] **Cloud sync on startup** -- `use-engine.ts` configures cloud sync when authenticated
 - [x] **Heartbeat** -- 5-minute interval updates `last_seen` in cloud
-- [x] **Integration guides** -- `docs/proxy-integration-guide.md` + `docs/proxy-testing-guide.md`
-- [x] **Run SQL migration** -- `migrations/002_app_instances_settings.sql` run in Supabase SQL Editor
-
----
-
-## Future Work
-
-- [x] Auto-updater -- `tauri-plugin-updater` + `tauri-plugin-process` wired. Signing keypair generated. Settings UI shows check/install/restart buttons.
-- [ ] First-run setup wizard
-- [ ] Job queue for cloud-assigned scrape jobs
-- [x] Device registration with cloud -- Implemented via document sync + app instance registration
-- [ ] Result sync to cloud storage
-- [x] SSE streaming support in desktop UI for scrape progress
-- [ ] Rate limiting on scraper server
-- [ ] No Alembic migration runner (only matters with local DATABASE_URL)
-- [ ] GitHub Actions workflow for signed release builds (uses `tauri-action` + signing key)
-- [ ] Wake-on-LAN support for remote wake of desktop from mobile
-- [ ] Smart device control protocols (HomeKit, Google Home, Alexa APIs)
-- [ ] Persistent scheduled tasks across app restarts (serialize to disk)
-- [ ] Reverse tunnel for cloud→local proxy routing (allow cloud services to use user's proxy remotely)
+- [x] **Run SQL migration** -- `migrations/002_app_instances_settings.sql` run in Supabase ✓
 
 ---
 
 _Last updated: 2026-02-21_
-
----
-
-## Open Items Summary
-
-| Item                               | File                               | Notes                                  |
-| ---------------------------------- | ---------------------------------- | -------------------------------------- |
-| Prose markdown styling             | `desktop/src/pages/Documents.tsx`  | Add `@tailwindcss/typography`          |
-| Retry queue background polling     | `app/services/scraper/`            | Poll server queue, claim+scrape+submit |
-| Auto save-back after local scrapes | `app/services/scraper/engine.py`   | Call `save_content()` on success       |
-| Expose queue endpoints via routes  | `app/api/remote_scraper_routes.py` | Frontend-visible queue status          |
-| Retry queue dashboard UI           | `desktop/src/pages/`               | Table of pending items + retry button  |
-| First-run setup wizard             | —                                  | Future                                 |
-| Rate limiting on scraper server    | scraper-service                    | Future                                 |
-| Reverse tunnel for cloud→local     | —                                  | Future                                 |
-| macOS Accessibility permission     | System Settings                    | TypeText, Hotkey, MouseClick           |
-| macOS Screen Recording permission  | System Settings                    | Screenshot tool                        |
-| macOS Microphone permission        | System Settings                    | RecordAudio, TranscribeAudio           |

@@ -167,3 +167,48 @@ async def remote_research_stream(req: ResearchRequest, request: Request):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Retry queue status routes ─────────────────────────────────────────────────
+
+@router.get("/queue/pending")
+async def queue_pending(request: Request, tier: str = "desktop", limit: int = 10):
+    """Get URLs in the server's retry queue waiting for local scraping."""
+    client = get_remote_scraper()
+    if not client.is_configured:
+        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
+    try:
+        return await client.get_pending(tier=tier, limit=limit, auth_token=_get_user_token(request))
+    except Exception as e:
+        raise HTTPException(502, f"Remote scraper error: {e}")
+
+
+@router.get("/queue/stats")
+async def queue_stats(request: Request):
+    """Get retry queue statistics from the remote server."""
+    client = get_remote_scraper()
+    if not client.is_configured:
+        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
+    try:
+        return await client.queue_stats(auth_token=_get_user_token(request))
+    except Exception as e:
+        raise HTTPException(502, f"Remote scraper error: {e}")
+
+
+@router.get("/queue/poller-stats")
+async def queue_poller_stats():
+    """Get local retry queue poller statistics (this engine's activity)."""
+    from app.services.scraper.retry_queue import get_stats
+    return get_stats()
+
+
+@router.get("/config/domains")
+async def get_domain_configs(request: Request):
+    """Get domain-specific scraping configs from the remote server."""
+    client = get_remote_scraper()
+    if not client.is_configured:
+        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
+    try:
+        return await client.get_domain_configs(auth_token=_get_user_token(request))
+    except Exception as e:
+        raise HTTPException(502, f"Remote scraper error: {e}")
