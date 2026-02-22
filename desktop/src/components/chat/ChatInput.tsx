@@ -1,12 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
-  Send,
+  ArrowUp,
   Square,
-  Paperclip,
+  Plus,
   ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import type { ChatMode } from "@/hooks/use-chat";
 
 interface ChatInputProps {
@@ -26,7 +25,6 @@ const modeLabels: Record<ChatMode, string> = {
   "co-work": "Co-Work",
   code: "Code",
 };
-
 
 export function ChatInput({
   onSend,
@@ -70,7 +68,6 @@ export function ChatInput({
     if (!value.trim() || isStreaming || disabled) return;
     onSend(value);
     setValue("");
-    // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -89,27 +86,38 @@ export function ChatInput({
   const selectedModel = availableModels.find((m) => m.id === model);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 pb-4 md:px-8">
-      {/* Mode Tabs */}
-      <div className="mb-2 flex items-center gap-1">
+    <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-2 md:px-8">
+      {/* Mode Tabs — centered above composer */}
+      <div className="mb-3 flex items-center justify-center gap-1">
         {(Object.keys(modeLabels) as ChatMode[]).map((m) => (
           <button
             key={m}
             onClick={() => onModeChange(m)}
             className={cn(
-              "rounded-full px-3.5 py-1 text-xs font-medium transition-colors",
+              "rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-200",
               mode === m
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                ? "text-white shadow-sm"
+                : "hover:opacity-80"
             )}
+            style={{
+              background: mode === m ? "var(--chat-accent)" : "transparent",
+              color: mode === m ? "#fff" : "var(--chat-text-muted)",
+            }}
           >
             {modeLabels[m]}
           </button>
         ))}
       </div>
 
-      {/* Input Container */}
-      <div className="relative rounded-2xl border border-border/60 bg-muted/30 shadow-sm transition-colors focus-within:border-primary/30 focus-within:shadow-md">
+      {/* Composer Container */}
+      <div
+        className="relative rounded-2xl transition-shadow focus-within:shadow-md"
+        style={{
+          background: "var(--chat-composer-bg)",
+          border: "1px solid var(--chat-composer-border)",
+          boxShadow: "var(--chat-composer-shadow)",
+        }}
+      >
         {/* Textarea */}
         <textarea
           ref={textareaRef}
@@ -125,27 +133,46 @@ export function ChatInput({
           }
           rows={1}
           disabled={disabled}
-          className="w-full resize-none bg-transparent px-4 pt-3 pb-2 text-sm leading-relaxed placeholder:text-muted-foreground/50 focus:outline-none disabled:opacity-50"
+          className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[0.9375rem] leading-relaxed focus:outline-none disabled:opacity-50"
+          style={{
+            color: "var(--chat-text)",
+          }}
         />
 
         {/* Bottom bar */}
-        <div className="flex items-center justify-between px-3 pb-2">
-          {/* Left: Model selector + attachments */}
-          <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between px-3 pb-2.5">
+          {/* Left: Attach + Model */}
+          <div className="flex items-center gap-1">
+            {/* Attach / plus button */}
+            <button
+              className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors"
+              style={{ color: "var(--chat-text-muted)" }}
+              title="Attach files"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+
             {/* Model selector */}
             <div className="relative" ref={dropdownRef}>
               <button
                 onClick={() => setShowModelDropdown(!showModelDropdown)}
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs transition-colors"
+                style={{ color: "var(--chat-text-muted)" }}
               >
-                <span className="max-w-[120px] truncate">
+                <span className="max-w-[140px] truncate">
                   {selectedModel?.label ?? "Select model"}
                 </span>
                 <ChevronDown className="h-3 w-3" />
               </button>
 
               {showModelDropdown && (
-                <div className="absolute bottom-full left-0 mb-1 min-w-[200px] rounded-lg border bg-popover p-1 shadow-lg">
+                <div
+                  className="absolute bottom-full left-0 mb-1.5 min-w-[220px] rounded-xl p-1.5 shadow-lg"
+                  style={{
+                    background: "var(--chat-composer-bg)",
+                    border: "1px solid var(--chat-composer-border)",
+                  }}
+                >
                   {availableModels.map((m) => (
                     <button
                       key={m.id}
@@ -154,15 +181,22 @@ export function ChatInput({
                         setShowModelDropdown(false);
                       }}
                       className={cn(
-                        "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
-                        model === m.id
-                          ? "bg-accent text-accent-foreground"
-                          : "text-foreground hover:bg-accent/50"
+                        "flex w-full items-center rounded-lg px-3 py-2.5 text-left text-xs transition-colors",
                       )}
+                      style={{
+                        background:
+                          model === m.id
+                            ? "var(--chat-sidebar-hover)"
+                            : "transparent",
+                        color: "var(--chat-text)",
+                      }}
                     >
                       <span className="font-medium">{m.label}</span>
                       {m.default && (
-                        <span className="ml-auto text-[10px] text-muted-foreground">
+                        <span
+                          className="ml-auto text-[10px]"
+                          style={{ color: "var(--chat-text-faint)" }}
+                        >
                           default
                         </span>
                       )}
@@ -171,46 +205,51 @@ export function ChatInput({
                 </div>
               )}
             </div>
-
-            {/* Attach button */}
-            <button className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
-              <Paperclip className="h-3.5 w-3.5" />
-            </button>
           </div>
 
-          {/* Right: Send / Stop button */}
+          {/* Right: Send / Stop */}
           <div>
             {isStreaming ? (
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20"
+              <button
                 onClick={onStop}
+                className="flex h-8 w-8 items-center justify-center rounded-full transition-colors"
+                style={{
+                  background: "var(--chat-accent)",
+                  color: "#fff",
+                }}
               >
                 <Square className="h-3.5 w-3.5" />
-              </Button>
+              </button>
             ) : (
-              <Button
-                size="icon"
-                variant="ghost"
-                className={cn(
-                  "h-8 w-8 rounded-full transition-colors",
-                  value.trim()
-                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                    : "text-muted-foreground"
-                )}
+              <button
                 onClick={handleSend}
                 disabled={!value.trim() || disabled}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200",
+                  !value.trim() || disabled
+                    ? "opacity-30 cursor-not-allowed"
+                    : "active:scale-[0.96]"
+                )}
+                style={{
+                  background:
+                    value.trim() && !disabled
+                      ? "var(--chat-accent)"
+                      : "var(--chat-text-faint)",
+                  color: "#fff",
+                }}
               >
-                <Send className="h-3.5 w-3.5" />
-              </Button>
+                <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
+              </button>
             )}
           </div>
         </div>
       </div>
 
       {/* Disclaimer */}
-      <p className="mt-1.5 text-center text-[10px] text-muted-foreground/50">
+      <p
+        className="mt-2 text-center text-[10px]"
+        style={{ color: "var(--chat-text-faint)" }}
+      >
         AI Matrx can make mistakes. Verify important information.
       </p>
     </div>

@@ -69,7 +69,7 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
   const showWelcome = !activeConversation || messages.length === 0;
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="chat-page flex h-full overflow-hidden">
       {/* Chat Sidebar */}
       <ChatSidebar
         conversations={conversations}
@@ -84,27 +84,41 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
       />
 
       {/* Main Chat Area */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div
+        className="flex flex-1 flex-col overflow-hidden"
+        style={{ background: "var(--chat-bg)" }}
+      >
         {/* Chat Header */}
-        <header className="no-select flex h-12 items-center justify-between border-b border-border/40 px-4">
+        <header
+          className="no-select flex h-12 items-center justify-between px-4"
+          style={{
+            borderBottom: "1px solid var(--chat-border)",
+          }}
+        >
           <div className="flex items-center gap-2">
-            <h1 className="text-sm font-medium">
+            <h1
+              className="text-sm font-medium"
+              style={{ color: "var(--chat-text)" }}
+            >
               {activeConversation?.title ?? "New chat"}
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {/* Engine status dot */}
             <div className="flex items-center gap-1.5">
               <div
                 className={`h-2 w-2 rounded-full ${
                   engineStatus === "connected"
                     ? "bg-emerald-500"
-                    : engineStatus === "discovering" || engineStatus === "starting"
+                    : engineStatus === "discovering" ||
+                      engineStatus === "starting"
                     ? "bg-amber-500 animate-pulse"
                     : "bg-zinc-500"
                 }`}
               />
-              <span className="text-[11px] text-muted-foreground">
+              <span
+                className="text-[11px]"
+                style={{ color: "var(--chat-text-faint)" }}
+              >
                 {tools.length} tools
               </span>
             </div>
