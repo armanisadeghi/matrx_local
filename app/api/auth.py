@@ -14,10 +14,12 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Routes that don't require auth (health checks, discovery).
+# Routes that don't require auth (health checks, discovery, read-only metadata).
 _PUBLIC_PATHS = frozenset({
     "/", "/tools/list", "/remote-scraper/status",
     "/proxy/status",
+    "/chat/tools", "/chat/tools/by-category", "/chat/tools/anthropic",
+    "/remote-scraper/queue/poller-stats",
     "/docs", "/openapi.json", "/redoc",
 })
 

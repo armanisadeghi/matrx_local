@@ -20,6 +20,7 @@ from app.services.scraper.engine import get_scraper_engine
 from app.services.proxy.server import get_proxy_server
 from app.services.cloud_sync.settings_sync import get_settings_sync
 from app.tools.tools.scheduler import restore_scheduled_tasks
+import app.services.scraper.retry_queue as retry_queue
 from app.websocket_manager import WebSocketManager
 
 logger = get_logger()
@@ -62,8 +63,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     heartbeat_task = asyncio.create_task(_heartbeat_loop())
 
+    # Start retry queue poller (polls remote server for failed scrapes to retry locally)
+    retry_queue.start()
+
     yield
 
+    retry_queue.stop()
     heartbeat_task.cancel()
     try:
         await heartbeat_task
