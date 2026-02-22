@@ -150,6 +150,140 @@ class RemoteScraperClient:
             resp.raise_for_status()
             return resp.json()
 
+    # ── Content save-back ────────────────────────────────────────────────────
+
+    async def save_content(
+        self,
+        url: str,
+        content: dict[str, Any],
+        content_type: str = "html",
+        char_count: int | None = None,
+        ttl_days: int = 30,
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Push locally-scraped content to the server's central database.
+
+        The server stores it in ``scrape_parsed_page`` — the same table it
+        uses for its own scrapes — so all clients can access the result.
+
+        ``content`` should include at least ``text_data`` or
+        ``ai_research_content``.  Optional keys: ``overview``, ``links``,
+        ``hashes``, ``main_image``.
+        """
+        body: dict[str, Any] = {
+            "url": url,
+            "content": content,
+            "content_type": content_type,
+            "ttl_days": ttl_days,
+        }
+        if char_count is not None:
+            body["char_count"] = char_count
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.post(
+                f"{self._server_url}/api/v1/content/save",
+                headers=self._headers(auth_token),
+                json=body,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    # ── Retry queue ──────────────────────────────────────────────────────────
+
+    async def get_pending(
+        self,
+        tier: str = "desktop",
+        limit: int = 10,
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch URLs that failed on the server and need local retry."""
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.get(
+                f"{self._server_url}/api/v1/queue/pending",
+                headers=self._headers(auth_token),
+                params={"tier": tier, "limit": limit},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def claim_items(
+        self,
+        item_ids: list[str],
+        client_id: str,
+        client_type: str = "desktop",
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Claim queue items (10-min TTL) so no other client picks them up."""
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.post(
+                f"{self._server_url}/api/v1/queue/claim",
+                headers=self._headers(auth_token),
+                json={
+                    "item_ids": item_ids,
+                    "client_id": client_id,
+                    "client_type": client_type,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def submit_result(
+        self,
+        queue_item_id: str,
+        url: str,
+        content: dict[str, Any],
+        content_type: str = "html",
+        char_count: int | None = None,
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Submit a successfully scraped result for a claimed queue item."""
+        body: dict[str, Any] = {
+            "queue_item_id": queue_item_id,
+            "url": url,
+            "content": content,
+            "content_type": content_type,
+        }
+        if char_count is not None:
+            body["char_count"] = char_count
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.post(
+                f"{self._server_url}/api/v1/queue/submit",
+                headers=self._headers(auth_token),
+                json=body,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def report_failure(
+        self,
+        queue_item_id: str,
+        error: str,
+        promote_to_extension: bool = True,
+        auth_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Report that a local scrape attempt failed for a queue item."""
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.post(
+                f"{self._server_url}/api/v1/queue/fail",
+                headers=self._headers(auth_token),
+                json={
+                    "queue_item_id": queue_item_id,
+                    "error": error,
+                    "promote_to_extension": promote_to_extension,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def queue_stats(self, auth_token: str | None = None) -> dict[str, Any]:
+        """Get retry queue statistics."""
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            resp = await client.get(
+                f"{self._server_url}/api/v1/queue/stats",
+                headers=self._headers(auth_token),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
 
 _client: RemoteScraperClient | None = None
 
