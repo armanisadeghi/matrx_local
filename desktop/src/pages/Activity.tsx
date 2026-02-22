@@ -1,11 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Activity as ActivityIcon,
   Trash2,
   Pause,
   Play,
   ArrowDown,
-  RefreshCw,
   Filter,
   CheckCircle,
   AlertCircle,
