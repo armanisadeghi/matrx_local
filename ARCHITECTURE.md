@@ -36,12 +36,12 @@ graph TB
   Cloud["AI Matrx Cloud<br/>aimatrx.com"]
   SupabaseAuth["Supabase Auth<br/>OAuth + JWT"]
   RemoteScraper["Remote Scraper Server<br/>scraper.app.matrxserver.com"]
-  SupabaseDB["Supabase PostgreSQL<br/>Optional local cache"]
+  LocalDB["Local PostgreSQL<br/>Optional scrape cache"]
 
   ReactUI -->|OAuth| SupabaseAuth
   PythonEngine -->|"Validate JWT"| SupabaseAuth
-  PythonEngine -->|"Cache storage"| SupabaseDB
-  PythonEngine -->|"X-API-Key"| RemoteScraper
+  PythonEngine -->|"Local cache"| LocalDB
+  PythonEngine -->|"Bearer token"| RemoteScraper
   Cloud -->|"Scrape jobs"| PythonEngine
 ```
 
@@ -631,9 +631,9 @@ The React frontend scans the port range on startup. Cache the discovered port fo
 
 Three separate concerns:
 
-1. **Remote Scraper Server** -- Dedicated server at `scraper.app.matrxserver.com` with its own internal PostgreSQL (domain configs, page cache, failure logs). The DB has **no public port** -- all access is via REST API with `X-API-Key`. The desktop app never connects to this DB directly.
-2. **Supabase (Auth)** -- The AI Matrx platform's Supabase instance. Used for authentication only. Desktop app communicates using the publishable key + user JWT. Never use the service role key.
-3. **Local Scraper Cache** -- Optional PostgreSQL for the local scraper engine (set `DATABASE_URL` in root `.env`). Defaults to in-memory TTLCache when not set.
+1. **Remote Scraper Server** -- Dedicated server at `scraper.app.matrxserver.com` with its own internal PostgreSQL (domain configs, page cache, failure logs). The DB has **no public port** -- all access is via REST API with `Authorization: Bearer` token. The desktop app never connects to this DB directly.
+2. **Supabase (everything except scrapes)** -- The AI Matrx platform's Supabase instance. Handles auth, user accounts, document sync, settings sync, app instances, and all non-scrape data. Desktop app communicates using the publishable key + user JWT. Never use the service role key.
+3. **Local Scraper Cache** -- Optional **local** PostgreSQL for the local scraper engine only (set `DATABASE_URL` in root `.env`). This is a database running on the user's machine for caching scrape results locally. It does NOT connect to the remote scraper server's database. Defaults to in-memory TTLCache when not set.
 
 ### Configuring Database
 
@@ -734,9 +734,9 @@ Cross-platform builds run via GitHub Actions (see `.github/workflows/build-deskt
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `API_KEY` | Yes | -- | API key for engine access (any value for local dev) |
-| `SCRAPER_API_KEY` | No | `""` | API key for remote scraper server (`X-API-Key` header) |
+| `SCRAPER_API_KEY` | No | `""` | API key for remote scraper server (`Authorization: Bearer` header) |
 | `SCRAPER_SERVER_URL` | No | `https://scraper.app.matrxserver.com` | Remote scraper server base URL |
-| `DATABASE_URL` | No | `""` | PostgreSQL connection string for local scraper cache |
+| `DATABASE_URL` | No | `""` | **Local** PostgreSQL connection string for scraper cache (user's machine, NOT remote server) |
 | `BRAVE_API_KEY` | No | -- | Enables Search and Research tools |
 | `DATACENTER_PROXIES` | No | -- | Comma-separated proxy list |
 | `RESIDENTIAL_PROXIES` | No | -- | Comma-separated proxy list |

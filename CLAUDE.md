@@ -213,7 +213,7 @@ npm run tauri:dev
 
 1. **Supabase Auth** -- The AI Matrx Supabase instance (`txzxabzwovsujtloxrus`). Desktop app uses **publishable key** (not deprecated anon key). All operations use user's JWT. Never use service role key.
 2. **Remote Scraper Server** -- `scraper.app.matrxserver.com`. Accessed via REST API with `Authorization: Bearer <token>`. Now supports both API key and Supabase JWT auth. The scraper's PostgreSQL is **internal-only** -- no direct DB access.
-3. **Local Scraper Engine** -- The in-process scraper (scraper-service subtree). Can optionally connect to a PostgreSQL for local cache via `DATABASE_URL`, but defaults to in-memory TTLCache.
+3. **Local Scraper Engine** -- The in-process scraper (scraper-service subtree). Can optionally connect to a **local** PostgreSQL (on the user's machine) for persistent scrape cache via `DATABASE_URL`, but defaults to in-memory TTLCache. This is NOT the remote server's database.
 
 ### Env var mapping:
 | Var | File | Purpose |
@@ -223,7 +223,7 @@ npm run tauri:dev
 | `API_KEY` | root `.env` | Local engine's own auth key |
 | `SCRAPER_API_KEY` | root `.env` | Remote scraper server API key (Bearer token) |
 | `SCRAPER_SERVER_URL` | root `.env` | Remote scraper server base URL |
-| `DATABASE_URL` | root `.env` | Optional local PostgreSQL for scraper cache |
+| `DATABASE_URL` | root `.env` | Optional **local** PostgreSQL for scraper cache (user's machine, NOT remote server) |
 
 ### Shipping / Production Auth Strategy:
 
