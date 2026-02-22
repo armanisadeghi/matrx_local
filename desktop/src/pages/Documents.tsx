@@ -426,7 +426,7 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
 
       {/* Error toast */}
       {docs.error && (
-        <div className="fixed bottom-4 right-4 z-50 rounded-lg border bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-lg">
+        <div className="fixed bottom-4 right-4 z-50 rounded-lg border border-red-500/30 bg-red-500/10 dark:bg-red-400/10 px-4 py-3 text-sm text-red-600 dark:text-red-400 shadow-lg">
           {docs.error}
         </div>
       )}

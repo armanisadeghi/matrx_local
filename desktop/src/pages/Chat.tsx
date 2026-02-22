@@ -69,7 +69,7 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
   const showWelcome = !activeConversation || messages.length === 0;
 
   return (
-    <div className="chat-page flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Chat Sidebar */}
       <ChatSidebar
         conversations={conversations}
@@ -84,22 +84,11 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
       />
 
       {/* Main Chat Area */}
-      <div
-        className="flex flex-1 flex-col overflow-hidden"
-        style={{ background: "var(--chat-bg)" }}
-      >
+      <div className="flex flex-1 flex-col overflow-hidden bg-background">
         {/* Chat Header */}
-        <header
-          className="no-select flex h-12 items-center justify-between px-4"
-          style={{
-            borderBottom: "1px solid var(--chat-border)",
-          }}
-        >
+        <header className="no-select flex h-12 items-center justify-between border-b px-4">
           <div className="flex items-center gap-2">
-            <h1
-              className="text-sm font-medium"
-              style={{ color: "var(--chat-text)" }}
-            >
+            <h1 className="text-sm font-medium">
               {activeConversation?.title ?? "New chat"}
             </h1>
           </div>
@@ -115,10 +104,7 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
                     : "bg-zinc-500"
                 }`}
               />
-              <span
-                className="text-[11px]"
-                style={{ color: "var(--chat-text-faint)" }}
-              >
+              <span className="text-[11px] text-muted-foreground">
                 {tools.length} tools
               </span>
             </div>
