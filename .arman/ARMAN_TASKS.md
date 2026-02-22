@@ -1,5 +1,6 @@
 # Arman Tasks
-*Last updated: 2026-02-19*
+
+_Last updated: 2026-02-21_
 
 ---
 
@@ -26,12 +27,14 @@
 ## Active — Do These Now
 
 ### 1. GitHub Actions secrets (required for signed releases)
+
 Go to: https://github.com/armanisadeghi/matrx-local/settings/secrets/actions
 
-- [ ] Set `TAURI_SIGNING_PRIVATE_KEY` → paste contents of `~/.tauri/matrx-local.key`
-- [ ] Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` → value: `matrx-signing-2026`
+- [x] Set `TAURI_SIGNING_PRIVATE_KEY` → paste contents of `~/.tauri/matrx-local.key`
+- [x] Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` → value: `matrx-signing-2026`
 
 ### 2. Test the new Tools page (73 tools, was 23)
+
 Open the desktop app, go to the Tools page, and try each category:
 
 - [ ] **SystemResources** — should show real CPU/RAM/disk breakdown
@@ -62,10 +65,12 @@ Open the desktop app, go to the Tools page, and try each category:
 - [ ] **PdfExtract** — try with any PDF
 
 ### 3. Tools that need extra setup first
+
 - [x] **Audio tools** (RecordAudio, PlayAudio, TranscribeAudio) — ✅ installed
 - [x] **Browser Automation tools** (BrowserNavigate, BrowserClick, etc.) — ✅ playwright + Chromium installed
 
 ### 4. Permissions to grant on macOS (System Settings → Privacy & Security)
+
 - [ ] **Accessibility** — needed for TypeText, Hotkey, MouseClick, MouseMove, FocusWindow, MoveWindow
 - [ ] **Screen Recording** — needed for Screenshot tool working inside sandboxed Tauri app
 - [ ] **Microphone** — needed for RecordAudio, TranscribeAudio
@@ -75,13 +80,15 @@ Open the desktop app, go to the Tools page, and try each category:
 ## Documents & Notes Sync Setup
 
 ### 5. Run documents migration in Supabase SQL Editor
-- [ ] Open Supabase Dashboard → SQL Editor
-- [ ] Paste and run `migrations/001_documents_schema.sql`
-- [ ] Verify tables created: `note_folders`, `note_shares`, `note_devices`, `note_directory_mappings`, `note_sync_log`
-- [ ] Verify columns added to `notes`: `folder_id`, `file_path`, `content_hash`, `sync_version`, `last_device_id`
+
+- [x] Open Supabase Dashboard → SQL Editor
+- [x] Paste and run `migrations/001_documents_schema.sql`
+- [x] Verify tables created: `note_folders`, `note_shares`, `note_devices`, `note_directory_mappings`, `note_sync_log`
+- [x] Verify columns added to `notes`: `folder_id`, `file_path`, `content_hash`, `sync_version`, `last_device_id`
 
 ### 6. Enable Supabase Realtime on document tables
-- [ ] In Supabase SQL Editor, run:
+
+- [x] In Supabase SQL Editor, run:
   ```sql
   ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
   ALTER PUBLICATION supabase_realtime ADD TABLE public.note_folders;
@@ -89,18 +96,20 @@ Open the desktop app, go to the Tools page, and try each category:
   ```
 
 ### 7. Add Supabase env vars to root .env
-- [ ] Add `SUPABASE_URL=https://txzxabzwovsujtloxrus.supabase.co` to root `.env`
-- [ ] Add `SUPABASE_PUBLISHABLE_KEY=<same value as VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY>` to root `.env`
+
+- [x] Add `SUPABASE_URL=https://txzxabzwovsujtloxrus.supabase.co` to root `.env`
+- [x] Add `SUPABASE_PUBLISHABLE_KEY=<same value as VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY>` to root `.env`
 
 ---
 
 ## Local Proxy & Cloud Settings Setup
 
 ### 8. Run app instances migration in Supabase SQL Editor
-- [ ] Open Supabase Dashboard → SQL Editor
-- [ ] Paste and run `migrations/002_app_instances_settings.sql`
-- [ ] Verify tables created: `app_instances`, `app_settings`, `app_sync_status`
-- [ ] Verify RLS policies applied on all three tables
+
+- [x] Open Supabase Dashboard → SQL Editor
+- [x] Paste and run `migrations/002_app_instances_settings.sql`
+- [x] Verify tables created: `app_instances`, `app_settings`, `app_sync_status`
+- [x] Verify RLS policies applied on all three tables
 
 ---
 
@@ -121,5 +130,5 @@ Open the desktop app, go to the Tools page, and try each category:
 - **Auth:** Scraper server supports dual auth — API key (existing) AND Supabase JWT (new). Both work.
 - **OAuth app:** Client ID `af37ec97-3e0c-423c-a205-3d6c5adc5645`, type `public`
 - **Shipping:** desktop users auth via Supabase OAuth → get JWT → JWT works directly on scraper server. No embedded API keys in binary.
-- **Current branch:** `expand-desktop-tools` — merge to `main` after testing
-- **Tool count:** 73 tools registered (was 23 before this branch)
+- **Tool count:** 73 tools on `main` (was 23 before desktop-tools expansion)
+- **Chat UI:** Merged 2026-02-21 — collapsible sidebar, conversation history, tool call rendering

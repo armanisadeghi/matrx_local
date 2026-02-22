@@ -1,7 +1,25 @@
-# Matrx Local -- Backlog
+# Matrx Local — Backlog
 
 > Features and enhancements not yet implemented. Prioritized, roughly ordered.
 > See `ARCHITECTURE.md` for the current system documentation.
+
+---
+
+## ✅ Shipped (moved from backlog)
+
+These were backlog items now implemented as of 2026-02-21:
+
+- **AudioRecord / AudioPlay / AudioTranscribe / AudioDeviceList** — `tools/audio_tools.py` (sounddevice + Whisper)
+- **ProcessList / ProcessKill** — `tools/system_tools.py` (psutil)
+- **AppLaunch / AppFocus / AppList (GetInstalledApps)** — `tools/system_tools.py`
+- **WindowList / FocusWindow / MoveWindow / MinimizeWindow** — `tools/system_tools.py` (AppleScript)
+- **MouseClick / MouseMove / KeyboardType (TypeText) / KeyboardShortcut (Hotkey)** — `tools/input_tools.py`
+- **ScreenCapture (Screenshot)** — available via browser tools
+- **PortScan / NetworkInfo / NetworkScan** — `tools/network_tools.py`
+- **PdfExtract / OcrImage (ImageOCR) / ImageResize** — `tools/media_tools.py`
+- **ClipboardWatch** — not yet, but clipboard read/write available
+
+---
 
 ---
 
@@ -44,19 +62,17 @@ Building on the v0.3 scraper engine:
 
 ## Audio I/O Pipeline
 
-- **`AudioRecord`** -- Record from microphone.
-- **`AudioPlay`** -- Play audio on speakers.
-- **`AudioStream`** -- Real-time bidirectional audio streaming over WebSocket (foundation for voice-mode AI).
-- **`AudioDeviceList`** -- List audio devices.
-- **`AudioTranscribe`** -- Local speech-to-text using Whisper (no API cost, no data leaves machine).
+~~**`AudioRecord`** / **`AudioPlay`** / **`AudioStream`** / **`AudioDeviceList`** / **`AudioTranscribe`**~~ ✅ Shipped (stream not yet)
+
+- **`AudioStream`** — Real-time bidirectional audio over WebSocket (voice-mode AI foundation) — still todo
 
 ---
 
 ## Process and Application Management
 
-- **`ProcessList`**, **`ProcessKill`**
-- **`AppLaunch`**, **`AppFocus`**, **`AppList`**
-- **`WindowList`**
+~~**`ProcessList`**, **`ProcessKill`**~~ ✅ Shipped
+~~**`AppLaunch`**, **`AppFocus`**, **`AppList`**~~ ✅ Shipped
+~~**`WindowList`**~~ ✅ Shipped
 
 ## Local AI Model Execution
 
@@ -64,19 +80,21 @@ Building on the v0.3 scraper engine:
 
 ## Screen and Input Automation
 
-- **`ScreenCapture`** (region/window), **`ScreenRecord`** (video)
-- **`MouseClick`**, **`MouseMove`**, **`KeyboardType`**, **`KeyboardShortcut`**
+~~**`ScreenCapture`** (region/window)~~ ✅ Shipped (Screenshot via browser tools)
+
+- **`ScreenRecord`** (video) — not yet
+  ~~**`MouseClick`**, **`MouseMove`**, **`KeyboardType`**, **`KeyboardShortcut`**~~ ✅ Shipped
 
 ---
 
 ## Lower Priority
 
-- **Git Operations** -- `GitStatus`, `GitDiff`, `GitCommit`, `GitLog`, `GitBranch`, `GitClone`
-- **Database Access** -- `DbQuery`, `DbSchema`, `DbExport`, `DbImport`
-- **Network Utilities** -- `PortScan`, `DnsLookup`, `HttpTest`, `NetworkInfo`, `SpeedTest`
-- **Docker Management** -- `DockerPs`, `DockerLogs`, `DockerExec`, `DockerCompose`, `DockerBuild`
-- **Environment Config** -- `EnvRead`, `EnvSet`, `DotenvRead`, `DotenvWrite`, `SshKeyList`, `SshTest`
-- **Document Processing** -- `PdfExtract`, `PdfGenerate`, `OcrImage`, `DocConvert` (note: PDF/OCR already in scraper engine, these would expose them as standalone tools)
+- **Git Operations** — `GitStatus`, `GitDiff`, `GitCommit`, `GitLog`, `GitBranch`, `GitClone`
+- **Database Access** — `DbQuery`, `DbSchema`, `DbExport`, `DbImport`
+  ~~**Network Utilities** — `PortScan`, `DnsLookup`, `HttpTest`, `NetworkInfo`, `SpeedTest`~~ (PortScan, NetworkInfo ✅ Shipped; DnsLookup, SpeedTest still todo)
+- **Docker Management** — `DockerPs`, `DockerLogs`, `DockerExec`, `DockerCompose`, `DockerBuild`
+- **Environment Config** — `EnvRead`, `EnvSet`, `DotenvRead`, `DotenvWrite`, `SshKeyList`, `SshTest`
+  ~~**Document Processing** — `PdfExtract`, `OcrImage`~~ ✅ Shipped — `PdfGenerate`, `DocConvert` still todo
 
 ---
 

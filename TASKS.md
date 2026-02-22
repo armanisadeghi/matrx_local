@@ -129,10 +129,21 @@
 - [x] **Sharing** -- Share dialog with per-user permissions (read/comment/edit/admin) + public link support
 - [x] **Directory mappings** -- Map folders to additional local paths, auto-sync on changes
 - [x] **Sync status bar** -- Shows connection state, conflict count, watcher status, file count, last sync time
-- [ ] **Run SQL migration** -- Arman: run `migrations/001_documents_schema.sql` in Supabase SQL Editor
-- [ ] **Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to root .env** -- Needed for engine → Supabase sync
-- [ ] **Enable Supabase Realtime** -- Run `ALTER PUBLICATION supabase_realtime ADD TABLE notes, note_folders, note_shares` in Supabase
+- [x] **Run SQL migration** -- `migrations/001_documents_schema.sql` run in Supabase SQL Editor
+- [x] **Add SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to root .env** -- Both env vars confirmed set
+- [x] **Enable Supabase Realtime** -- `ALTER PUBLICATION supabase_realtime` run for notes, note_folders, note_shares
 - [ ] **Prose styling for markdown preview** -- Add `@tailwindcss/typography` for better `.prose` rendering (currently basic)
+
+---
+
+## Chat UI with Sidebar (2026-02-21)
+
+- [x] **Chat page** -- `desktop/src/pages/Chat.tsx` with full chat layout
+- [x] **Chat components** -- `ChatInput`, `ChatMessages`, `ChatSidebar`, `ChatToolCall`, `ChatWelcome`
+- [x] **Chat hook** -- `use-chat.ts` with message state, streaming, conversation management
+- [x] **Tool schema system** -- `app/tools/tool_schemas.py` — structured tool definitions for AI
+- [x] **Chat API routes** -- `app/api/chat_routes.py` for backend chat endpoints
+- [x] **Collapsible sidebar** -- Conversation history sidebar with collapse/expand
 
 ---
 
@@ -155,7 +166,7 @@
 - [x] **Cloud sync on startup** -- `use-engine.ts` configures cloud sync when authenticated
 - [x] **Heartbeat** -- 5-minute interval updates `last_seen` in cloud
 - [x] **Integration guides** -- `docs/proxy-integration-guide.md` + `docs/proxy-testing-guide.md`
-- [ ] **Run SQL migration** -- Arman: run `migrations/002_app_instances_settings.sql` in Supabase SQL Editor
+- [x] **Run SQL migration** -- `migrations/002_app_instances_settings.sql` run in Supabase SQL Editor
 
 ---
 
@@ -177,4 +188,22 @@
 
 ---
 
-*Last updated: 2026-02-21*
+_Last updated: 2026-02-21_
+
+---
+
+## Open Items Summary
+
+| Item                               | File                               | Notes                                  |
+| ---------------------------------- | ---------------------------------- | -------------------------------------- |
+| Prose markdown styling             | `desktop/src/pages/Documents.tsx`  | Add `@tailwindcss/typography`          |
+| Retry queue background polling     | `app/services/scraper/`            | Poll server queue, claim+scrape+submit |
+| Auto save-back after local scrapes | `app/services/scraper/engine.py`   | Call `save_content()` on success       |
+| Expose queue endpoints via routes  | `app/api/remote_scraper_routes.py` | Frontend-visible queue status          |
+| Retry queue dashboard UI           | `desktop/src/pages/`               | Table of pending items + retry button  |
+| First-run setup wizard             | —                                  | Future                                 |
+| Rate limiting on scraper server    | scraper-service                    | Future                                 |
+| Reverse tunnel for cloud→local     | —                                  | Future                                 |
+| macOS Accessibility permission     | System Settings                    | TypeText, Hotkey, MouseClick           |
+| macOS Screen Recording permission  | System Settings                    | Screenshot tool                        |
+| macOS Microphone permission        | System Settings                    | RecordAudio, TranscribeAudio           |
