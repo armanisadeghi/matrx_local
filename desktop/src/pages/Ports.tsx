@@ -13,7 +13,7 @@ import {
   ArrowDown,
   Copy,
 } from "lucide-react";
-import { Header } from "@/components/layout/Header";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -47,7 +47,7 @@ interface PortProcess {
 type SortColumn = "port" | "name" | "pid" | "address" | "protocol";
 type SortDirection = "asc" | "desc";
 
-export function Ports({ engineStatus, engineUrl }: PortsProps) {
+export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
   const [ports, setPorts] = useState<PortProcess[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -185,11 +185,9 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <Header
+      <PageHeader
         title="Port Manager"
         description="Monitor and control listening network ports and services"
-        engineStatus={engineStatus}
-        engineUrl={engineUrl}
       >
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -223,7 +221,7 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </Button>
         </div>
-      </Header>
+      </PageHeader>
 
       <div className="flex-1 p-6 overflow-hidden">
         <Tabs defaultValue="user" className="h-full flex flex-col">
@@ -285,14 +283,12 @@ export function Ports({ engineStatus, engineUrl }: PortsProps) {
       <Dialog open={killDialogOpen} onOpenChange={setKillDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-background/80 backdrop-blur-2xl border-white/10">
           <DialogHeader>
-            {/* @ts-expect-error Radix types missing children definition */}
             <DialogTitle asChild>
               <h2 className="flex items-center gap-2 text-destructive font-semibold">
                 <ShieldAlert className="h-5 w-5" />
                 Kill Process
               </h2>
             </DialogTitle>
-            {/* @ts-expect-error Radix types missing children definition */}
             <DialogDescription asChild>
               <p>
                 Are you sure you want to terminate{" "}
@@ -340,6 +336,7 @@ function PortTable({
   onSort,
   getProcessIcon,
   onKill,
+  onForceKill,
 }: {
   ports: PortProcess[];
   sortCol: SortColumn;

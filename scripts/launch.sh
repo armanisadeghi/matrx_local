@@ -160,7 +160,17 @@ check_and_handle_engine() {
     warn "Not touching it — this does not belong to $ROOT"
     echo ""
     fail "Cannot continue: a Matrx engine from a different project root is occupying the port."
-    fail "Stop it manually, then re-run this script."
+    echo ""
+    echo "  To resolve this manually, run:"
+    echo ""
+    echo "    # Graceful stop"
+    echo "    kill $json_pid"
+    echo ""
+    echo "    # Force kill (if the above doesn't work)"
+    echo "    kill -9 $json_pid"
+    echo ""
+    echo "  Then re-run:  bash scripts/launch.sh"
+    echo ""
     exit 1
   fi
 
@@ -194,7 +204,20 @@ check_and_handle_desktop() {
     warn "Not touching it."
     echo ""
     fail "Cannot start the desktop app: port $VITE_PORT is occupied by another process."
-    fail "Free port $VITE_PORT manually or choose a different port."
+    echo ""
+    echo "  To resolve this manually, run:"
+    echo ""
+    echo "    # See what's using port $VITE_PORT"
+    echo "    lsof -ti :$VITE_PORT"
+    echo ""
+    echo "    # Graceful stop"
+    echo "    kill $pid"
+    echo ""
+    echo "    # Force kill (if the above doesn't work)"
+    echo "    kill -9 $pid"
+    echo ""
+    echo "  Then re-run:  bash scripts/launch.sh"
+    echo ""
     exit 1
   fi
 
@@ -285,7 +308,7 @@ read_engine_port() {
 
 _write_engine_log_script() {
   local port="$1"
-  local f; f=$(mktemp /tmp/matrx-engine-XXXXXX.sh)
+  local f; f=$(mktemp /tmp/matrx-engine-XXXXXX)
   cat > "$f" << SCRIPT
 #!/usr/bin/env bash
 echo ""
@@ -300,7 +323,7 @@ SCRIPT
 
 _write_desktop_script() {
   local port="$1"
-  local f; f=$(mktemp /tmp/matrx-desktop-XXXXXX.sh)
+  local f; f=$(mktemp /tmp/matrx-desktop-XXXXXX)
   # When bash runs this as a plain script (not an interactive shell), .bashrc is
   # NOT sourced automatically. That means nvm, pnpm, and cargo are absent from
   # PATH — only Windows /mnt/c/... binaries are visible, which fail with

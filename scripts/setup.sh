@@ -62,7 +62,7 @@ if [[ -f "$ROOT/.env" ]]; then
 else
     cp "$ROOT/.env.example" "$ROOT/.env"
     ok ".env created from .env.example"
-    warn "Open .env and set API_KEY (and any optional keys you want)."
+    warn "Open .env and set API_KEY, SUPABASE_PUBLISHABLE_KEY, and any other optional keys."
     WARNINGS=$((WARNINGS + 1))
 fi
 

@@ -6,7 +6,7 @@ import {
   Play,
   ArrowDown,
 } from "lucide-react";
-import { Header } from "@/components/layout/Header";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -29,7 +29,7 @@ interface LogEntry {
 
 let logIdCounter = 0;
 
-export function Activity({ engineStatus, engineUrl }: ActivityProps) {
+export function Activity({ engineStatus, engineUrl: _engineUrl }: ActivityProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -107,11 +107,9 @@ export function Activity({ engineStatus, engineUrl }: ActivityProps) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <Header
+      <PageHeader
         title="Activity"
         description="Real-time engine activity log"
-        engineStatus={engineStatus}
-        engineUrl={engineUrl}
       >
         <div className="flex items-center gap-1">
           <Button
@@ -145,7 +143,7 @@ export function Activity({ engineStatus, engineUrl }: ActivityProps) {
             <Trash2 className="h-4 w-4" />
           </Button>
         </div>
-      </Header>
+      </PageHeader>
 
       <div className="flex-1 overflow-hidden" ref={scrollRef}>
         <ScrollArea className="h-full">

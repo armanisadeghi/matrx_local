@@ -9,7 +9,7 @@ import {
   Wrench,
   Zap,
 } from "lucide-react";
-import { Header } from "@/components/layout/Header";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -37,17 +37,15 @@ export function Dashboard({
 }: DashboardProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <Header
+      <PageHeader
         title="Dashboard"
         description="System overview and engine status"
-        engineStatus={engineStatus}
-        engineUrl={engineUrl}
       >
         <Button variant="ghost" size="sm" onClick={onRefresh}>
           <Activity className="h-4 w-4" />
           Refresh
         </Button>
-      </Header>
+      </PageHeader>
 
       <div className="flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">

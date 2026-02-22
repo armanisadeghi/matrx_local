@@ -10,7 +10,7 @@ import {
   Trash2,
   StopCircle,
 } from "lucide-react";
-import { Header } from "@/components/layout/Header";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +40,7 @@ interface ScrapeJob {
   method: "engine" | "local-browser" | "remote";
 }
 
-export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
+export function Scraping({ engineStatus, engineUrl: _engineUrl }: ScrapingProps) {
   const [urlInput, setUrlInput] = useState("");
   const [useCache, setUseCache] = useState(true);
   const [method, setMethod] = useState<"engine" | "local-browser" | "remote">("engine");
@@ -222,11 +222,9 @@ export function Scraping({ engineStatus, engineUrl }: ScrapingProps) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <Header
+      <PageHeader
         title="Scraping"
         description="Scrape websites using multiple strategies"
-        engineStatus={engineStatus}
-        engineUrl={engineUrl}
       />
 
       <div className="flex flex-1 overflow-hidden">
