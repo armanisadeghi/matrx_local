@@ -29,7 +29,7 @@ const statusText: Record<EngineStatus, string> = {
 
 export function StatusBar({ engineStatus, engineUrl, engineVersion }: StatusBarProps) {
   return (
-    <footer className="no-select flex h-8 items-center justify-between border-t bg-background/80 px-4">
+    <footer className="no-select glass flex h-8 items-center justify-between border-t px-4">
       <div className="flex items-center gap-2">
         <div
           className={cn(

@@ -23,10 +23,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={copy}
-      className="rounded-md p-1.5 transition-colors"
-      style={{
-        color: copied ? "#788c5d" : "var(--chat-text-faint)",
-      }}
+      className={`rounded-md p-1.5 transition-colors ${copied ? "text-emerald-500" : "text-muted-foreground hover:text-foreground"}`}
       title="Copy"
     >
       {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -36,27 +33,22 @@ function CopyButton({ text }: { text: string }) {
 
 function MessageActions({ text }: { text: string }) {
   return (
-    <div
-      className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
-    >
+    <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
       <CopyButton text={text} />
       <button
-        className="rounded-md p-1.5 transition-colors"
-        style={{ color: "var(--chat-text-faint)" }}
+        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
         title="Good response"
       >
         <ThumbsUp className="h-3.5 w-3.5" />
       </button>
       <button
-        className="rounded-md p-1.5 transition-colors"
-        style={{ color: "var(--chat-text-faint)" }}
+        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
         title="Bad response"
       >
         <ThumbsDown className="h-3.5 w-3.5" />
       </button>
       <button
-        className="rounded-md p-1.5 transition-colors"
-        style={{ color: "var(--chat-text-faint)" }}
+        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
         title="Retry"
       >
         <RotateCcw className="h-3.5 w-3.5" />
@@ -71,22 +63,11 @@ function UserMessage({ message }: { message: ChatMessage }) {
       <div className="mx-auto max-w-3xl">
         {/* Label */}
         <div className="mb-1.5 flex items-center gap-2">
-          <span
-            className="text-xs font-semibold"
-            style={{ color: "var(--chat-text)" }}
-          >
-            You
-          </span>
+          <span className="text-xs font-semibold">You</span>
         </div>
         {/* Content */}
-        <div
-          className="rounded-2xl px-4 py-3"
-          style={{ background: "var(--chat-user-bg)" }}
-        >
-          <p
-            className="whitespace-pre-wrap text-[0.9375rem] leading-relaxed"
-            style={{ color: "var(--chat-text)" }}
-          >
+        <div className="rounded-2xl bg-muted px-4 py-3">
+          <p className="whitespace-pre-wrap text-[0.9375rem] leading-relaxed">
             {message.content}
           </p>
         </div>
@@ -102,10 +83,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
         {/* Label row */}
         <div className="mb-1.5 flex items-center gap-2">
           {/* AI Matrx logo mark */}
-          <div
-            className="flex h-5 w-5 items-center justify-center rounded-full"
-            style={{ background: "var(--chat-accent)", opacity: 0.85 }}
-          >
+          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/85">
             <svg
               width="12"
               height="12"
@@ -119,35 +97,21 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
               <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
             </svg>
           </div>
-          <span
-            className="text-xs font-semibold"
-            style={{ color: "var(--chat-text)" }}
-          >
-            AI Matrx
-          </span>
+          <span className="text-xs font-semibold">AI Matrx</span>
           {message.model && !message.isStreaming && (
-            <span
-              className="text-[10px]"
-              style={{ color: "var(--chat-text-faint)" }}
-            >
+            <span className="text-[10px] text-muted-foreground">
               {message.model.replace("claude-", "").replace(/-\d+$/, "")}
             </span>
           )}
         </div>
 
         {/* Content */}
-        <div
-          className="chat-prose text-[0.9375rem] leading-[1.7]"
-          style={{ color: "var(--chat-text)" }}
-        >
+        <div className="chat-prose text-[0.9375rem] leading-[1.7]">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
               pre: ({ children }) => (
-                <pre
-                  className="overflow-x-auto rounded-lg p-3 text-[0.8125rem]"
-                  style={{ background: "var(--chat-code-bg)" }}
-                >
+                <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[0.8125rem]">
                   {children}
                 </pre>
               ),
@@ -156,8 +120,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
                 if (isInline) {
                   return (
                     <code
-                      className="rounded px-1.5 py-0.5 text-[0.8125rem] font-mono"
-                      style={{ background: "var(--chat-code-bg)" }}
+                      className="rounded bg-muted px-1.5 py-0.5 text-[0.8125rem] font-mono"
                       {...props}
                     >
                       {children}
@@ -177,10 +140,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
 
           {/* Streaming cursor */}
           {message.isStreaming && (
-            <span
-              className="ml-0.5 inline-block h-[1.1em] w-[2px] animate-pulse align-text-bottom"
-              style={{ background: "var(--chat-accent)" }}
-            />
+            <span className="ml-0.5 inline-block h-[1.1em] w-[2px] animate-pulse bg-primary align-text-bottom" />
           )}
         </div>
 
@@ -215,10 +175,7 @@ export function TypingIndicator() {
     <div className="py-5 px-4 md:px-0">
       <div className="mx-auto max-w-3xl">
         <div className="mb-1.5 flex items-center gap-2">
-          <div
-            className="flex h-5 w-5 items-center justify-center rounded-full"
-            style={{ background: "var(--chat-accent)", opacity: 0.85 }}
-          >
+          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/85">
             <svg
               width="12"
               height="12"
@@ -232,26 +189,12 @@ export function TypingIndicator() {
               <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
             </svg>
           </div>
-          <span
-            className="text-xs font-semibold"
-            style={{ color: "var(--chat-text)" }}
-          >
-            AI Matrx
-          </span>
+          <span className="text-xs font-semibold">AI Matrx</span>
         </div>
         <div className="flex items-center gap-1.5 py-1">
-          <div
-            className="h-2 w-2 animate-bounce rounded-full [animation-delay:0ms]"
-            style={{ background: "var(--chat-text-faint)", opacity: 0.5 }}
-          />
-          <div
-            className="h-2 w-2 animate-bounce rounded-full [animation-delay:150ms]"
-            style={{ background: "var(--chat-text-faint)", opacity: 0.5 }}
-          />
-          <div
-            className="h-2 w-2 animate-bounce rounded-full [animation-delay:300ms]"
-            style={{ background: "var(--chat-text-faint)", opacity: 0.5 }}
-          />
+          <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />
+          <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:150ms]" />
+          <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
         </div>
       </div>
     </div>

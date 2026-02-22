@@ -2,66 +2,105 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════════
+   MATRX LOCAL — Unified Design System
+   Apple-inspired glassmorphism with high-density VSCode layout
+   ═══════════════════════════════════════════════════════════════ */
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    /* ── Backgrounds ──────────────────────────────────── */
+    --background: 240 20% 96%;       /* #F2F2F7 — Apple standard light gray */
+    --foreground: 240 6% 11%;        /* #1C1C1E — soft dark (not pure black) */
+
+    /* ── Surfaces ─────────────────────────────────────── */
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 240 6% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --popover-foreground: 240 6% 11%;
+
+    /* ── Brand / Primary ──────────────────────────────── */
+    --primary: 211 100% 50%;         /* #007AFF — classic iOS blue */
+    --primary-foreground: 0 0% 100%;
+
+    /* ── Secondary / Muted / Accent ───────────────────── */
+    --secondary: 240 6% 93%;
+    --secondary-foreground: 240 6% 11%;
+    --muted: 240 6% 93%;
+    --muted-foreground: 240 2% 57%;  /* #8E8E93 */
+    --accent: 240 6% 93%;
+    --accent-foreground: 240 6% 11%;
+
+    /* ── Semantic ─────────────────────────────────────── */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* ── Borders / Inputs ─────────────────────────────── */
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 211 100% 50%;
+
+    /* ── Radius ───────────────────────────────────────── */
     --radius: 0.5rem;
 
-    /* Sidebar tokens */
-    --sidebar: 240 4.8% 97%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-accent: 240 4.8% 91%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 240 5.9% 90%;
+    /* ── Glass / Glassmorphism ────────────────────────── */
+    --glass-bg: rgba(255, 255, 255, 0.72);
+    --glass-border: rgba(255, 255, 255, 0.4);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+
+    /* ── Sidebar ──────────────────────────────────────── */
+    --sidebar: 240 20% 96%;
+    --sidebar-foreground: 240 6% 20%;
+    --sidebar-accent: 240 6% 90%;
+    --sidebar-accent-foreground: 240 6% 11%;
+    --sidebar-border: 240 6% 90%;
     --sidebar-width: 15rem;
     --sidebar-width-collapsed: 3.5rem;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 263.4 70% 50.4%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 263.4 70% 50.4%;
+    /* ── Backgrounds ──────────────────────────────────── */
+    --background: 240 5% 9%;         /* #161618 — deep gray, not pure black */
+    --foreground: 240 20% 96%;       /* #F2F2F7 — off-white */
 
-    /* Sidebar tokens (dark) */
-    --sidebar: 240 6% 6%;
+    /* ── Surfaces ─────────────────────────────────────── */
+    --card: 240 5% 12%;
+    --card-foreground: 240 20% 96%;
+    --popover: 240 5% 12%;
+    --popover-foreground: 240 20% 96%;
+
+    /* ── Brand / Primary ──────────────────────────────── */
+    --primary: 211 100% 52%;         /* #0A84FF — brighter for dark mode */
+    --primary-foreground: 0 0% 100%;
+
+    /* ── Secondary / Muted / Accent ───────────────────── */
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 240 20% 96%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 3% 61%;  /* #98989D */
+    --accent: 240 4% 16%;
+    --accent-foreground: 240 20% 96%;
+
+    /* ── Semantic ─────────────────────────────────────── */
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* ── Borders / Inputs ─────────────────────────────── */
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 211 100% 52%;
+
+    /* ── Glass / Glassmorphism ────────────────────────── */
+    --glass-bg: rgba(30, 30, 32, 0.72);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+
+    /* ── Sidebar ──────────────────────────────────────── */
+    --sidebar: 240 5% 7%;
     --sidebar-foreground: 0 0% 90%;
     --sidebar-accent: 240 4% 12%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 20% 96%;
+    --sidebar-border: 240 4% 16%;
   }
 }
 
@@ -69,15 +108,73 @@
   * {
     @apply border-border;
   }
+
+  html {
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
     @apply bg-background text-foreground;
-    font-feature-settings:
-      "rlig" 1,
-      "calt" 1;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+      "Segoe UI", Roboto, sans-serif;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* iOS Safari auto-zooms inputs < 16px — force 16px on mobile */
+  @media (max-width: 768px) {
+    input,
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
   }
 }
 
-/* Custom scrollbar */
+/* ═══════════════════════════════════════════════════════════════
+   GLASSMORPHISM UTILITIES
+   ═══════════════════════════════════════════════════════════════ */
+
+@layer components {
+  /* Full glass — modals, floating headers, popovers */
+  .glass {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+  }
+
+  /* Subtle glass — cards, panels (no blur, just transparency) */
+  .glass-subtle {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NOISE TEXTURE OVERLAY
+   Subtle grain at 3% opacity for matte finish
+   ═══════════════════════════════════════════════════════════════ */
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCROLLBAR
+   ═══════════════════════════════════════════════════════════════ */
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -96,7 +193,11 @@
   background: hsl(var(--muted-foreground) / 0.5);
 }
 
-/* Disable text selection on UI chrome (feels more native) */
+/* ═══════════════════════════════════════════════════════════════
+   NATIVE FEEL
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Disable text selection on UI chrome */
 .no-select {
   user-select: none;
   -webkit-user-select: none;
@@ -107,48 +208,10 @@
   -webkit-app-region: drag;
 }
 
-/* ---- Chat page — Claude-inspired warm theme ---- */
-.chat-page {
-  --chat-bg: #f5f5f0;
-  --chat-sidebar-bg: #eae8e0;
-  --chat-sidebar-hover: #ddd9ce;
-  --chat-sidebar-active: #d4d0c6;
-  --chat-sidebar-text: #6b6a68;
-  --chat-sidebar-text-active: #1a1a18;
-  --chat-user-bg: #ddd9ce;
-  --chat-text: #1a1a18;
-  --chat-text-muted: #6b6a68;
-  --chat-text-faint: #9a9893;
-  --chat-accent: #d97757;
-  --chat-accent-hover: #c4683e;
-  --chat-composer-bg: #ffffff;
-  --chat-composer-border: rgba(0, 0, 0, 0.08);
-  --chat-composer-shadow: 0 0.25rem 1.25rem rgba(0, 0, 0, 0.035);
-  --chat-code-bg: rgba(0, 0, 0, 0.04);
-  --chat-border: rgba(0, 0, 0, 0.06);
-}
+/* ═══════════════════════════════════════════════════════════════
+   PROSE / MARKDOWN — tight spacing for chat & document rendering
+   ═══════════════════════════════════════════════════════════════ */
 
-.dark .chat-page {
-  --chat-bg: #2b2a27;
-  --chat-sidebar-bg: #232220;
-  --chat-sidebar-hover: #2e2d2a;
-  --chat-sidebar-active: #393937;
-  --chat-sidebar-text: #9a9893;
-  --chat-sidebar-text-active: #eeeeee;
-  --chat-user-bg: #393937;
-  --chat-text: #eeeeee;
-  --chat-text-muted: #9a9893;
-  --chat-text-faint: #6b6a68;
-  --chat-accent: #d97757;
-  --chat-accent-hover: #e0896b;
-  --chat-composer-bg: #1f1e1b;
-  --chat-composer-border: rgba(255, 255, 255, 0.06);
-  --chat-composer-shadow: 0 0.25rem 1.25rem rgba(0, 0, 0, 0.15);
-  --chat-code-bg: rgba(255, 255, 255, 0.06);
-  --chat-border: rgba(255, 255, 255, 0.06);
-}
-
-/* Chat prose — tighter spacing for message content */
 .chat-prose p {
   margin-top: 0.35em;
   margin-bottom: 0.35em;
@@ -177,8 +240,8 @@
 .chat-prose pre {
   margin-top: 0.75em;
   margin-bottom: 0.75em;
-  border-radius: 0.5rem;
-  background: var(--chat-code-bg);
+  border-radius: 8px;
+  background: hsl(var(--muted));
   padding: 0.75rem 1rem;
   overflow-x: auto;
   font-size: 0.8125rem;
@@ -186,9 +249,9 @@
 
 .chat-prose code {
   font-size: 0.8125rem;
-  background: var(--chat-code-bg);
+  background: hsl(var(--muted));
   padding: 0.125rem 0.3rem;
-  border-radius: 0.25rem;
+  border-radius: 4px;
 }
 
 .chat-prose pre code {
@@ -199,10 +262,10 @@
 .chat-prose blockquote {
   margin-top: 0.5em;
   margin-bottom: 0.5em;
-  border-left: 2px solid var(--chat-border);
+  border-left: 2px solid hsl(var(--border));
   padding-left: 0.75em;
   font-style: italic;
-  color: var(--chat-text-muted);
+  color: hsl(var(--muted-foreground));
 }
 
 .chat-prose table {
@@ -214,7 +277,7 @@
 .chat-prose th,
 .chat-prose td {
   padding: 0.25em 0.5em;
-  border: 1px solid var(--chat-border);
+  border: 1px solid hsl(var(--border));
 }
 
 .chat-prose h1,
@@ -225,11 +288,19 @@
   font-weight: 600;
 }
 
-.chat-prose h1 { font-size: 1.25rem; }
-.chat-prose h2 { font-size: 1.125rem; }
-.chat-prose h3 { font-size: 1rem; }
+.chat-prose h1 {
+  font-size: 1.25rem;
+}
+.chat-prose h2 {
+  font-size: 1.125rem;
+}
+.chat-prose h3 {
+  font-size: 1rem;
+}
 
-/* ── Tool panel animations ────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════ */
 
 /* Audio waveform animation for AudioPanel */
 @keyframes waveform {

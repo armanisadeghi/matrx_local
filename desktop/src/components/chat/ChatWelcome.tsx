@@ -73,10 +73,7 @@ export function ChatWelcome({
     <div className="flex flex-1 flex-col items-center justify-center px-4">
       <div className="mb-10 flex flex-col items-center">
         {/* Logo mark */}
-        <div
-          className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl"
-          style={{ background: "var(--chat-accent)", opacity: 0.9 }}
-        >
+        <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/90">
           <svg
             width="32"
             height="32"
@@ -90,16 +87,10 @@ export function ChatWelcome({
             <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
           </svg>
         </div>
-        <h2
-          className="mb-1.5 text-2xl font-semibold"
-          style={{ color: "var(--chat-text)" }}
-        >
+        <h2 className="mb-1.5 text-2xl font-semibold">
           AI Matrx
         </h2>
-        <p
-          className="text-sm"
-          style={{ color: "var(--chat-text-muted)" }}
-        >
+        <p className="text-sm text-muted-foreground">
           {toolCount > 0
             ? `${toolCount} tools available on your local system`
             : "Your AI-powered local assistant"}
@@ -111,27 +102,14 @@ export function ChatWelcome({
           <button
             key={label}
             onClick={() => onSuggestionClick(prompt)}
-            className="group flex items-start gap-3 rounded-xl px-4 py-3.5 text-left transition-all duration-200 active:scale-[0.98]"
-            style={{
-              background: "var(--chat-composer-bg)",
-              border: "1px solid var(--chat-border)",
-            }}
+            className="glass-subtle group flex items-start gap-3 rounded-lg px-4 py-3.5 text-left transition-all duration-200 hover:shadow-md active:scale-[0.98]"
           >
-            <Icon
-              className="mt-0.5 h-4 w-4 shrink-0 transition-colors duration-200"
-              style={{ color: "var(--chat-text-faint)" }}
-            />
+            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-colors duration-200 group-hover:text-primary" />
             <div>
-              <span
-                className="block text-sm font-medium transition-colors duration-200"
-                style={{ color: "var(--chat-text)" }}
-              >
+              <span className="block text-sm font-medium">
                 {label}
               </span>
-              <span
-                className="block text-xs"
-                style={{ color: "var(--chat-text-faint)" }}
-              >
+              <span className="block text-xs text-muted-foreground">
                 {description}
               </span>
             </div>

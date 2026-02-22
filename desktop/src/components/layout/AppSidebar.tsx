@@ -69,7 +69,7 @@ export function AppSidebar({ engineStatus }: AppSidebarProps) {
   return (
     <aside
       className={cn(
-        "no-select flex h-full flex-col border-r bg-sidebar transition-[width] duration-200 ease-in-out overflow-hidden",
+        "no-select flex h-full flex-col border-r bg-sidebar transition-[width] duration-200 ease-in-out overflow-hidden backdrop-blur-xl",
         collapsed
           ? "w-[var(--sidebar-width-collapsed)]"
           : "w-[var(--sidebar-width)]",

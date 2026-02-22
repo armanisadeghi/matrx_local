@@ -14,6 +14,21 @@ export default {
       },
     },
     extend: {
+      /* ── Typography ────────────────────────────────── */
+      fontFamily: {
+        sans: [
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"SF Pro Text"',
+          '"Segoe UI"',
+          "Roboto",
+          "sans-serif",
+        ],
+        mono: ['"SF Mono"', '"JetBrains Mono"', "monospace"],
+      },
+
+      /* ── Colors (CSS variable backed) ──────────────── */
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -56,11 +71,20 @@ export default {
           border: "hsl(var(--sidebar-border))",
         },
       },
+
+      /* ── Border Radius (Apple-style) ───────────────── */
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        lg: "calc(var(--radius) + 4px)",  /* 12px — cards, dropdowns */
+        md: "var(--radius)",               /* 8px — inputs, buttons */
+        sm: "calc(var(--radius) - 2px)",   /* 6px — tags, chips */
       },
+
+      /* ── Shadows (soft, diffused) ──────────────────── */
+      boxShadow: {
+        glass: "var(--glass-shadow)",
+      },
+
+      /* ── Keyframes ─────────────────────────────────── */
       keyframes: {
         "accordion-down": {
           from: { height: "0" },

@@ -7,6 +7,7 @@ import {
   XCircle,
   Loader2,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { ToolCall, ToolCallResult } from "@/hooks/use-chat";
 
 interface ChatToolCallProps {
@@ -23,48 +24,31 @@ export function ChatToolCall({ toolCall, result }: ChatToolCallProps) {
 
   return (
     <div
-      className="rounded-lg text-xs"
-      style={{
-        border: `1px solid ${
-          isSuccess
-            ? "rgba(120, 140, 93, 0.25)"
-            : isError
-            ? "rgba(217, 119, 87, 0.25)"
-            : "var(--chat-border)"
-        }`,
-        background: isSuccess
-          ? "rgba(120, 140, 93, 0.06)"
-          : isError
-          ? "rgba(217, 119, 87, 0.06)"
-          : "var(--chat-code-bg)",
-      }}
+      className={cn(
+        "rounded-md border text-xs",
+        isSuccess && "border-emerald-500/25 bg-emerald-500/5",
+        isError && "border-destructive/25 bg-destructive/5",
+        !isSuccess && !isError && "border-border bg-muted"
+      )}
     >
       <button
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
         onClick={() => setExpanded(!expanded)}
       >
         {isPending && (
-          <Loader2
-            className="h-3.5 w-3.5 animate-spin"
-            style={{ color: "var(--chat-text-faint)" }}
-          />
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         )}
         {isSuccess && (
-          <CheckCircle2 className="h-3.5 w-3.5" style={{ color: "#788c5d" }} />
+          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
         )}
         {isError && (
-          <XCircle className="h-3.5 w-3.5" style={{ color: "#d97757" }} />
+          <XCircle className="h-3.5 w-3.5 text-destructive" />
         )}
 
-        <Wrench
-          className="h-3 w-3"
-          style={{ color: "var(--chat-text-faint)" }}
-        />
-        <span className="font-medium" style={{ color: "var(--chat-text)" }}>
-          {toolCall.name}
-        </span>
+        <Wrench className="h-3 w-3 text-muted-foreground" />
+        <span className="font-medium">{toolCall.name}</span>
 
-        <span className="ml-auto" style={{ color: "var(--chat-text-faint)" }}>
+        <span className="ml-auto text-muted-foreground">
           {expanded ? (
             <ChevronDown className="h-3.5 w-3.5" />
           ) : (
@@ -74,44 +58,27 @@ export function ChatToolCall({ toolCall, result }: ChatToolCallProps) {
       </button>
 
       {expanded && (
-        <div
-          className="space-y-2 px-3 py-2"
-          style={{ borderTop: "1px solid var(--chat-border)" }}
-        >
+        <div className="space-y-2 border-t px-3 py-2">
           <div>
-            <span
-              className="text-[10px] font-semibold uppercase tracking-wider"
-              style={{ color: "var(--chat-text-faint)" }}
-            >
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Input
             </span>
-            <pre
-              className="mt-1 overflow-x-auto rounded p-2 font-mono text-[11px] leading-relaxed"
-              style={{
-                background: "var(--chat-code-bg)",
-                color: "var(--chat-text)",
-              }}
-            >
+            <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 font-mono text-[11px] leading-relaxed">
               {JSON.stringify(toolCall.input, null, 2)}
             </pre>
           </div>
 
           {result && (
             <div>
-              <span
-                className="text-[10px] font-semibold uppercase tracking-wider"
-                style={{ color: "var(--chat-text-faint)" }}
-              >
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Output
               </span>
               <pre
-                className="mt-1 overflow-x-auto rounded p-2 font-mono text-[11px] leading-relaxed"
-                style={{
-                  background: isSuccess
-                    ? "rgba(120, 140, 93, 0.06)"
-                    : "rgba(217, 119, 87, 0.06)",
-                  color: isError ? "#d97757" : "var(--chat-text)",
-                }}
+                className={cn(
+                  "mt-1 overflow-x-auto rounded p-2 font-mono text-[11px] leading-relaxed",
+                  isSuccess && "bg-emerald-500/5",
+                  isError && "bg-destructive/5 text-destructive"
+                )}
               >
                 {result.output.length > 500
                   ? result.output.slice(0, 500) + "\n... [truncated]"
