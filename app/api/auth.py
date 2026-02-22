@@ -32,17 +32,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path in _PUBLIC_PATHS or request.method == "OPTIONS":
             return await call_next(request)
 
-        # Extract Bearer token.
+        # Extract Bearer token — prefer Authorization header, fall back to
+        # ?token query param (required for EventSource / SSE connections that
+        # cannot set custom request headers).
         auth = request.headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
             token = auth[7:]
         else:
-            token = None
+            token = request.query_params.get("token") or None
 
         if not token:
             return JSONResponse(
-                status_code=401, 
-                content={"detail": "Authorization header required"}
+                status_code=401,
+                content={"detail": "Authorization header required"},
             )
 
         # Store token on request state for downstream forwarding.

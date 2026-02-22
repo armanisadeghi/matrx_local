@@ -16,6 +16,7 @@ from app.api.chat_routes import router as chat_router
 from app.api.auth import AuthMiddleware
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
+import app.common.access_log as access_log
 from app.services.scraper.engine import get_scraper_engine
 from app.services.proxy.server import get_proxy_server
 from app.services.cloud_sync.settings_sync import get_settings_sync
@@ -117,6 +118,10 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    import time as _time
+    t0 = _time.monotonic()
+
+    # Best-effort body preview for system logger (doesn't consume the stream).
     try:
         body = await request.json() if request.method in ["POST", "PUT", "PATCH"] else None
         logger.info(f"Request: {request.method} {request.url} | Body: {body}")
@@ -124,7 +129,21 @@ async def log_requests(request: Request, call_next):
         logger.info(f"Request: {request.method} {request.url}")
 
     response = await call_next(request)
+    duration_ms = (_time.monotonic() - t0) * 1000
+
     logger.info(f"Response: {response.status_code} for {request.method} {request.url}")
+
+    # Write structured access-log entry.
+    access_log.record(
+        method=request.method,
+        path=request.url.path,
+        query=str(request.url.query or ""),
+        origin=request.headers.get("origin", ""),
+        user_agent=request.headers.get("user-agent", ""),
+        status=response.status_code,
+        duration_ms=duration_ms,
+    )
+
     return response
 
 

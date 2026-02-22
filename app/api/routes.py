@@ -1,19 +1,25 @@
+import asyncio
+import io
 import os
+import uuid
+import zipfile
 from typing import Optional
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.responses import StreamingResponse
-from fastapi.responses import JSONResponse
+
 from app.api.browser_events import handle_browser_event
 from app.api.system_control import get_system_info
+from app.common.system_logger import get_logger
+import app.common.access_log as access_log
+from app.config import BASE_DIR, LOG_DIR, TEMP_DIR
 from app.database import get_connection
 from app.services.screenshots.capture import take_screenshot
 from app.utils.directory_utils.generate_directory_structure import get_structure_with_common_configs
-from app.common.system_logger import get_logger
-import zipfile
-import io
-from app.config import BASE_DIR, TEMP_DIR
-import uuid
+
+import time
+from pathlib import Path
 
 # Initialize the APIRouter
 router = APIRouter()
@@ -90,21 +96,88 @@ async def get_data():
         logger.error(f"Error fetching data from database: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error fetching data from database: {str(e)}")
 
-# Retrieve logs
+# ── Logging endpoints ────────────────────────────────────────────────────────
+
 @router.get("/logs")
-async def get_logs():
-    log_file = os.path.join("logs", "system.log")
+async def get_logs(n: int = Query(default=100, ge=1, le=2000)):
+    """Return the last *n* lines of system.log as plain strings."""
+    log_file = Path(LOG_DIR) / "system.log"
     logger.info("Logs endpoint accessed")
     try:
-        with open(log_file, "r") as file:
-            logs = file.readlines()[-50:]
-        return {"logs": logs}
+        with open(log_file, "r", encoding="utf-8") as fh:
+            lines = fh.readlines()[-n:]
+        return {"logs": [l.rstrip("\n") for l in lines]}
     except FileNotFoundError:
-        logger.warning("Log file not found")
+        logger.warning("Log file not found: %s", log_file)
         raise HTTPException(status_code=404, detail="Log file not found")
     except Exception as e:
-        logger.error(f"Error reading log file: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error reading log file: {str(e)}")
+        logger.error(f"Error reading log file: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/logs/access")
+async def get_access_logs(n: int = Query(default=100, ge=1, le=500)):
+    """Return the last *n* structured access-log entries as JSON."""
+    return {"entries": access_log.recent(n)}
+
+
+@router.get("/logs/stream")
+async def stream_system_log():
+    """SSE stream that tails system.log in real time (text/event-stream)."""
+    log_file = Path(LOG_DIR) / "system.log"
+
+    async def _tail():
+        try:
+            with open(log_file, "r", encoding="utf-8") as fh:
+                fh.seek(0, 2)  # jump to end
+                while True:
+                    line = fh.readline()
+                    if line:
+                        yield f"data: {line.rstrip()}\n\n"
+                    else:
+                        await asyncio.sleep(0.25)
+        except FileNotFoundError:
+            yield "data: [log file not found]\n\n"
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        _tail(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/logs/access/stream")
+async def stream_access_log():
+    """SSE stream that pushes new structured access-log entries as JSON."""
+    q = access_log.subscribe()
+
+    async def _push():
+        import json
+        try:
+            while True:
+                try:
+                    entry = await asyncio.wait_for(q.get(), timeout=15.0)
+                    yield f"data: {json.dumps(entry)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"  # prevent proxy timeouts
+        except asyncio.CancelledError:
+            pass
+        finally:
+            access_log.unsubscribe(q)
+
+    return StreamingResponse(
+        _push(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 # Generate directory structure and serve files
 @router.post("/generate-directory-structure/text")

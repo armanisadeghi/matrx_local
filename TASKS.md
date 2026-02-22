@@ -274,4 +274,20 @@
 
 ---
 
-_Last updated: 2026-02-21_
+## Activity Log & Real-Time Monitoring ✅ (2026-02-22)
+
+- [x] **Structured access logger** — `app/common/access_log.py` — JSON-line file (`system/logs/access.log`), 500-entry in-memory ring buffer, SSE subscriber queues
+- [x] **Fixed `GET /logs` path bug** — was `"logs/system.log"` (always 404), now uses `Path(LOG_DIR)/"system.log"` from config
+- [x] **`GET /logs/access`** — last-N structured access entries as JSON (`?n=100`, max 500)
+- [x] **`GET /logs/stream`** — SSE that tails `system.log` in real time
+- [x] **`GET /logs/access/stream`** — SSE live-push of structured access entries; keepalive every 15 s
+- [x] **Auth `?token=` fallback** — `AuthMiddleware` now accepts token via query param for SSE (`EventSource` cannot set headers)
+- [x] **`Activity.tsx` replaced** — two-tab real-time viewer: "HTTP Requests" (structured, filterable, stats bar) + "System Log" (color-coded raw tail)
+- [x] **Sidebar** — "Activity" nav item added (`Radio` icon, between Tools and Ports)
+- [x] **Integration doc** — `docs/activity-log.md` — full API reference + ready-made React hook for aimatrx.com
+
+> **For aimatrx.com team:** see `docs/activity-log.md` for the SSE stream endpoint, React hook, and cURL examples.
+
+---
+
+_Last updated: 2026-02-22_
