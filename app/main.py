@@ -13,6 +13,7 @@ from app.api.document_routes import router as document_router
 from app.api.proxy_routes import router as proxy_router
 from app.api.cloud_sync_routes import router as cloud_sync_router
 from app.api.chat_routes import router as chat_router
+from app.api.permissions_routes import router as permissions_router
 from app.api.auth import AuthMiddleware
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
@@ -104,6 +105,7 @@ app.include_router(document_router)
 app.include_router(proxy_router)
 app.include_router(cloud_sync_router)
 app.include_router(chat_router)
+app.include_router(permissions_router)
 
 app.add_middleware(AuthMiddleware)
 

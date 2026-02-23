@@ -1,22 +1,32 @@
+import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import {
   Activity,
+  Bluetooth,
   Chrome,
   Cpu,
   Globe,
   HardDrive,
+  Mic,
   Monitor,
   Server,
+  Shield,
+  Wifi,
   Wrench,
   Zap,
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
+  ArrowRight,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
+import { engine } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
-import type { SystemInfo, BrowserStatus } from "@/lib/api";
+import type { SystemInfo, BrowserStatus, PermissionInfo } from "@/lib/api";
 
 interface DashboardProps {
   engineStatus: EngineStatus;
@@ -35,6 +45,25 @@ export function Dashboard({
   browserStatus,
   onRefresh,
 }: DashboardProps) {
+  const [permissions, setPermissions] = useState<PermissionInfo[]>([]);
+
+  const loadPermissions = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const result = await engine.getDevicePermissions();
+      setPermissions(result.permissions);
+    } catch {
+      // non-critical
+    }
+  }, [engineStatus]);
+
+  useEffect(() => {
+    loadPermissions();
+  }, [loadPermissions]);
+
+  const grantedCount = permissions.filter((p) => p.status === "granted").length;
+  const totalCount = permissions.length;
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <PageHeader
@@ -77,11 +106,21 @@ export function Dashboard({
               variant={browserStatus?.chrome_found ? "success" : "warning"}
             />
             <StatusCard
-              title="Platform"
-              value={systemInfo?.platform ?? "Unknown"}
-              description={systemInfo?.architecture ?? ""}
-              icon={<Monitor className="h-4 w-4" />}
-              variant="default"
+              title="Device Access"
+              value={totalCount > 0 ? `${grantedCount}/${totalCount}` : "---"}
+              description={
+                totalCount > 0
+                  ? `${grantedCount} permissions granted`
+                  : "Checking..."
+              }
+              icon={<Shield className="h-4 w-4" />}
+              variant={
+                grantedCount === totalCount && totalCount > 0
+                  ? "success"
+                  : grantedCount > 0
+                    ? "warning"
+                    : "default"
+              }
             />
           </div>
 
@@ -124,83 +163,34 @@ export function Dashboard({
               </CardContent>
             </Card>
 
-            {/* Browser Status */}
+            {/* Device Access Overview */}
             <Card>
               <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Globe className="h-4 w-4 text-primary" />
-                  Local Browser Scraping
+                <CardTitle className="flex items-center justify-between text-base">
+                  <span className="flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-primary" />
+                    Device Access
+                  </span>
+                  <Link to="/devices">
+                    <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+                      Manage
+                      <ArrowRight className="h-3 w-3" />
+                    </Button>
+                  </Link>
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                {browserStatus ? (
+              <CardContent className="space-y-2">
+                {permissions.length > 0 ? (
                   <>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">
-                        Chrome Detected
-                      </span>
-                      <Badge
-                        variant={
-                          browserStatus.chrome_found ? "success" : "warning"
-                        }
-                      >
-                        {browserStatus.chrome_found ? "Yes" : "No"}
-                      </Badge>
-                    </div>
-                    {browserStatus.chrome_path && (
-                      <InfoRow
-                        label="Path"
-                        value={browserStatus.chrome_path}
-                        mono
-                      />
-                    )}
-                    {browserStatus.chrome_version && (
-                      <InfoRow
-                        label="Version"
-                        value={browserStatus.chrome_version}
-                      />
-                    )}
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">
-                        User Profile
-                      </span>
-                      <Badge
-                        variant={
-                          browserStatus.profile_found ? "success" : "secondary"
-                        }
-                      >
-                        {browserStatus.profile_found
-                          ? "Available"
-                          : "Not Found"}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">
-                        Browser Engine
-                      </span>
-                      <Badge
-                        variant={
-                          browserStatus.browser_running
-                            ? "success"
-                            : "secondary"
-                        }
-                      >
-                        {browserStatus.browser_running ? "Running" : "Standby"}
-                      </Badge>
-                    </div>
-                    <Separator />
-                    <p className="text-xs text-muted-foreground">
-                      Local browser scraping uses your installed Chrome with
-                      your real cookies and IP address. This is the most
-                      effective approach for sites with aggressive anti-bot
-                      protection.
-                    </p>
+                    {permissions.map((p) => (
+                      <DeviceStatusRow key={p.permission} perm={p} />
+                    ))}
                   </>
                 ) : (
                   <p className="text-sm text-muted-foreground">
                     {engineStatus === "connected"
-                      ? "Loading browser status..."
-                      : "Connect to engine to view browser status"}
+                      ? "Checking device permissions..."
+                      : "Connect to engine to check device access"}
                   </p>
                 )}
               </CardContent>
@@ -234,6 +224,49 @@ export function Dashboard({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Map permission keys to icons
+const PERMISSION_ICONS: Record<string, React.ReactNode> = {
+  microphone: <Mic className="h-3.5 w-3.5" />,
+  camera: <Monitor className="h-3.5 w-3.5" />,
+  accessibility: <Shield className="h-3.5 w-3.5" />,
+  bluetooth: <Bluetooth className="h-3.5 w-3.5" />,
+  network: <Wifi className="h-3.5 w-3.5" />,
+  screen_recording: <Monitor className="h-3.5 w-3.5" />,
+  location: <Globe className="h-3.5 w-3.5" />,
+};
+
+const PERMISSION_LABELS: Record<string, string> = {
+  microphone: "Microphone",
+  camera: "Camera",
+  accessibility: "Accessibility",
+  bluetooth: "Bluetooth",
+  network: "Network",
+  screen_recording: "Screen Recording",
+  location: "Location",
+};
+
+function DeviceStatusRow({ perm }: { perm: PermissionInfo }) {
+  const icon = PERMISSION_ICONS[perm.permission] ?? <HelpCircle className="h-3.5 w-3.5" />;
+  const label = PERMISSION_LABELS[perm.permission] ?? perm.permission;
+
+  const statusIcon =
+    perm.status === "granted" ? (
+      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+    ) : perm.status === "denied" ? (
+      <XCircle className="h-3.5 w-3.5 text-red-500" />
+    ) : (
+      <HelpCircle className="h-3.5 w-3.5 text-zinc-400" />
+    );
+
+  return (
+    <div className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors">
+      <span className="text-muted-foreground">{icon}</span>
+      <span className="flex-1 text-sm">{label}</span>
+      {statusIcon}
     </div>
   );
 }

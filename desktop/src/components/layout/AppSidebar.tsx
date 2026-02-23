@@ -10,6 +10,7 @@ import {
   Zap,
   Network,
   Radio,
+  Cpu,
   PanelLeftClose,
   PanelLeft,
 } from "lucide-react";
@@ -33,6 +34,7 @@ const navItems = [
   { to: "/tools", icon: Wrench, label: "Tools" },
   { to: "/activity", icon: Radio, label: "Activity" },
   { to: "/ports", icon: Network, label: "Ports" },
+  { to: "/devices", icon: Cpu, label: "Devices" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
 

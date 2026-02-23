@@ -8,6 +8,7 @@ import { Tools } from "@/pages/Tools";
 import { Activity } from "@/pages/Activity";
 import { Ports } from "@/pages/Ports";
 import { Settings } from "@/pages/Settings";
+import { Devices } from "@/pages/Devices";
 import { Chat } from "@/pages/Chat";
 import { Login } from "@/pages/Login";
 import { AuthCallback } from "@/pages/AuthCallback";
@@ -107,6 +108,12 @@ export default function App() {
                   path="ports"
                   element={
                     <Ports engineStatus={status} engineUrl={url} />
+                  }
+                />
+                <Route
+                  path="devices"
+                  element={
+                    <Devices engineStatus={status} engineUrl={url} />
                   }
                 />
                 <Route

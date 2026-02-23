@@ -857,6 +857,88 @@ class EngineAPI {
       userId,
     );
   }
+
+  // ---- Device & Permission API ----
+
+  /** Get all device/OS permission statuses. */
+  async getDevicePermissions(): Promise<DevicePermissionsResponse> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/devices/permissions`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`Permissions check failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Get a single permission status. */
+  async getDevicePermission(name: string): Promise<PermissionInfo> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/devices/permissions/${name}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`Permission check failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** List audio input/output devices. */
+  async getAudioDevices(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/devices/audio`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`Audio device check failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** List Bluetooth devices. */
+  async getBluetoothDevices(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/devices/bluetooth`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`Bluetooth check failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** List WiFi networks. */
+  async getWifiNetworks(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/devices/wifi`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`WiFi scan failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Get network interface info. */
+  async getNetworkInfo(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/devices/network`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`Network info failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** List connected peripherals (USB, Bluetooth, etc.). */
+  async getConnectedDevices(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/devices/connected`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`Connected devices check failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Get system resource usage. */
+  async getSystemResources(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/devices/system`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`System resources check failed: ${resp.status}`);
+    return resp.json();
+  }
 }
 
 // ---- Document types ----
@@ -1030,6 +1112,35 @@ export interface InstanceInfo {
   last_seen?: string;
   is_active?: boolean;
   id?: string;
+}
+
+// ---- Device & Permission types ----
+
+export type PermissionStatusValue =
+  | "granted"
+  | "denied"
+  | "not_determined"
+  | "restricted"
+  | "unavailable"
+  | "unknown";
+
+export interface PermissionInfo {
+  permission: string;
+  status: PermissionStatusValue;
+  details: string;
+  grant_instructions: string;
+  devices?: Array<Record<string, unknown>>;
+}
+
+export interface DevicePermissionsResponse {
+  permissions: PermissionInfo[];
+  platform: string;
+}
+
+export interface DeviceProbeResult {
+  output: string;
+  metadata: Record<string, unknown> | null;
+  type: string;
 }
 
 // Singleton instance

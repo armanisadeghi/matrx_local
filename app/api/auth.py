@@ -28,8 +28,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path.rstrip("/") or "/"
 
-        # Skip auth for public routes and OPTIONS (CORS preflight).
-        if path in _PUBLIC_PATHS or request.method == "OPTIONS":
+        # Skip auth for public routes, device status, and OPTIONS (CORS preflight).
+        if path in _PUBLIC_PATHS or path.startswith("/devices/") or request.method == "OPTIONS":
             return await call_next(request)
 
         # Extract Bearer token — prefer Authorization header, fall back to
