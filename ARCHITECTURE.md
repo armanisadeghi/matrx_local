@@ -422,7 +422,7 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 
 ## Scraper Engine
 
-The scraper engine is sourced from the `ai-dream` monorepo via **git subtree**. The `scraper-service/` directory is a read-only copy; changes flow one-way from upstream.
+The scraper engine is sourced from the `aidream` monorepo via **git subtree**. The `scraper-service/` directory is a read-only copy; changes flow one-way from upstream.
 
 ### Import Isolation
 
@@ -453,7 +453,7 @@ The engine starts with whatever resources are available:
 ### Updating the Scraper
 
 ```bash
-./scripts/update-scraper.sh --local   # From local ai-dream repo
+./scripts/update-scraper.sh --local   # From local aidream repo
 ./scripts/update-scraper.sh           # From GitHub
 uv sync --extra browser               # If scraper deps changed
 ```

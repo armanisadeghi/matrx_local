@@ -6,7 +6,7 @@
 
 ### Scraper Engine (from scraper-service)
 
-Integrated the full `scraper-service` from the `ai-dream` monorepo as a git subtree. This brings production-grade web scraping into Matrx Local without modifying the upstream code.
+Integrated the full `scraper-service` from the `aidream` monorepo as a git subtree. This brings production-grade web scraping into Matrx Local without modifying the upstream code.
 
 **New tools:**
 - **`Scrape`** — Full scraper engine: multi-strategy fetching (httpx → curl-cffi → Playwright), Cloudflare detection, proxy rotation, content extraction (HTML, PDF, images with OCR), domain-specific parsing rules, two-tier caching
@@ -14,7 +14,7 @@ Integrated the full `scraper-service` from the `ai-dream` monorepo as a git subt
 - **`Research`** — Deep research workflow: search + scrape all results + compile findings. Configurable effort levels (low/medium/high/extreme)
 
 **Architecture:**
-- `scraper-service/` directory added via `git subtree` — updates pulled from ai-dream with `./scripts/update-scraper.sh`
+- `scraper-service/` directory added via `git subtree` — updates pulled from aidream with `./scripts/update-scraper.sh`
 - `ScraperEngine` in `app/services/scraper/engine.py` manages lifecycle and `sys.modules` isolation (both repos have `app/` packages)
 - Graceful degradation: works without database (memory-only cache), without Playwright (curl-cffi fallback), without Brave API key (search disabled, scraping works)
 
@@ -26,7 +26,7 @@ Integrated the full `scraper-service` from the `ai-dream` monorepo as a git subt
 - `app/tools/tools/network.py` — new Scrape/Search/Research tool handlers
 - `app/tools/dispatcher.py` — 3 new tools registered (23 total)
 - `app/main.py` — lifespan added for scraper engine startup/shutdown
-- `scripts/update-scraper.sh` — one-command scraper-service update from ai-dream
+- `scripts/update-scraper.sh` — one-command scraper-service update from aidream
 
 ---
 

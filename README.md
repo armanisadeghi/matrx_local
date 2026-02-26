@@ -303,7 +303,7 @@ See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the full system architecture, pro
 
 Key design decisions:
 
-- **scraper-service/ is a git subtree** from `ai-dream` -- never edited in this repo, updates flow one-way
+- **scraper-service/ is a git subtree** from `aidream` -- never edited in this repo, updates flow one-way
 - **Import isolation** via `sys.modules` remapping -- zero modifications to scraper-service code
 - **Graceful degradation** -- works without database, Playwright, or Brave API key
 - **Tauri desktop shell** -- React UI + Rust core + Python sidecar
@@ -312,10 +312,10 @@ Key design decisions:
 
 ## Updating the Scraper Engine
 
-When the scraper-service is updated in the `ai-dream` repo:
+When the scraper-service is updated in the `aidream` repo:
 
 ```bash
-# From local ai-dream repo (development)
+# From local aidream repo (development)
 ./scripts/update-scraper.sh --local
 
 # From GitHub (CI/CD)

@@ -9,7 +9,7 @@ No Docker, no local PostgreSQL. Here's the complete guide for you:
 The integration tests use mocked dependencies so they work right now with zero setup:
 
 ```bash
-cd /home/arman/projects/ai-dream/scraper-service
+cd /home/arman/projects/aidream/scraper-service
 uv run pytest tests/ -v
 ```
 
@@ -26,7 +26,7 @@ You need a PostgreSQL 17 instance. Pick one of these options:
 Open Docker Desktop on Windows, go to Settings > Resources > WSL Integration, enable it for your distro. Then:
 
 ```bash
-cd /home/arman/projects/ai-dream/scraper-service
+cd /home/arman/projects/aidream/scraper-service
 docker compose up -d postgres
 ```
 
@@ -52,7 +52,7 @@ Just set the `DATABASE_URL` in your `.env` accordingly.
 ### 3. Create the `.env` File
 
 ```bash
-cd /home/arman/projects/ai-dream/scraper-service
+cd /home/arman/projects/aidream/scraper-service
 cp .env.example .env
 ```
 
@@ -71,7 +71,7 @@ Adjust the port to `5432` if using local PostgreSQL (Option B).
 ### 4. Run Database Migrations
 
 ```bash
-cd /home/arman/projects/ai-dream/scraper-service
+cd /home/arman/projects/aidream/scraper-service
 uv run alembic upgrade head
 ```
 
@@ -82,7 +82,7 @@ This creates all 7 tables (`scrape_domain`, `scrape_domain_settings`, `scrape_pa
 ### 5. Install Playwright Browser
 
 ```bash
-cd /home/arman/projects/ai-dream/scraper-service
+cd /home/arman/projects/aidream/scraper-service
 uv run playwright install chromium
 uv run playwright install-deps chromium
 ```
@@ -94,7 +94,7 @@ The second command installs system libraries Chromium needs. If it fails due to 
 ### 6. Start the Server
 
 ```bash
-cd /home/arman/projects/ai-dream/scraper-service
+cd /home/arman/projects/aidream/scraper-service
 uv run python -m app.main
 ```
 
