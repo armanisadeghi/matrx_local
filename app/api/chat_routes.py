@@ -15,6 +15,7 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -146,47 +147,90 @@ async def list_models() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Agents endpoint — live from Supabase DB via matrx-ai
+# Agents endpoint — builtins + user prompts, full variable_defaults included
 # ---------------------------------------------------------------------------
+
+
+def _shape_agent(d: dict[str, Any], source: str) -> dict[str, Any]:
+    """Normalize a prompt/builtin DB row into a consistent agent shape."""
+    settings: dict[str, Any] = d.get("settings") or {}
+    return {
+        "id": d.get("id", ""),
+        "name": d.get("name", ""),
+        "description": d.get("description") or "",
+        "source": source,                          # "builtin" | "user" | "shared"
+        "variable_defaults": d.get("variable_defaults") or [],
+        "settings": {
+            "model_id": settings.get("model_id"),
+            "temperature": settings.get("temperature"),
+            "max_tokens": settings.get("max_tokens") or settings.get("max_output_tokens"),
+            "stream": settings.get("stream", True),
+            "tools": settings.get("tools") or [],
+        },
+    }
 
 
 @router.get("/agents")
 async def list_agents() -> dict[str, Any]:
-    """Return all agents/prompts from the Supabase database.
+    """Return all agents available to the current user.
 
-    Falls back to empty if DB not configured.
-    Each agent includes: id, name, description, model (if set).
+    Three categories:
+      - builtins: from prompt_builtins table (system agents, available to everyone)
+      - user:     from prompts table (user's own agents)
+      - shared:   TODO — requires user JWT; returns empty for now
+
+    Falls back gracefully if DB not configured.
+    Full variable_defaults (with customComponent config) are included so the
+    frontend can render the correct input widgets per variable.
     """
     import matrx_ai as _matrx_ai
 
     if not _matrx_ai._initialized:
-        return {"agents": [], "total": 0, "source": "fallback"}
+        return {"builtins": [], "user": [], "shared": [], "source": "fallback"}
 
     try:
+        from matrx_ai.db.managers.prompt_builtins import PromptBuiltinsBase
         from matrx_ai.db.managers.prompts import PromptsBase
+
+        class _PB(PromptBuiltinsBase):
+            pass
 
         class _PM(PromptsBase):
             pass
 
-        pm = _PM()
-        prompts = await pm.load_items()
+        pb_mgr = _PB()
+        pm_mgr = _PM()
 
-        agents_out = []
-        for p in prompts:
-            d = p.to_dict() if hasattr(p, "to_dict") else {}
-            agents_out.append({
-                "id": d.get("id") or getattr(p, "id", None),
-                "name": d.get("name") or getattr(p, "name", ""),
-                "description": d.get("description") or getattr(p, "description", ""),
-                "model": d.get("model") or getattr(p, "model", None),
-            })
+        builtins_raw, prompts_raw = await asyncio.gather(
+            pb_mgr.load_items(),
+            pm_mgr.load_items(),
+        )
 
-        agents_out.sort(key=lambda x: x["name"])
-        return {"agents": agents_out, "total": len(agents_out), "source": "database"}
+        builtins = sorted(
+            [_shape_agent(b.to_dict(), "builtin") for b in builtins_raw if b.to_dict().get("is_active", True)],
+            key=lambda x: x["name"],
+        )
+        user_agents = sorted(
+            [_shape_agent(p.to_dict(), "user") for p in prompts_raw],
+            key=lambda x: x["name"],
+        )
+
+        return {
+            "builtins": builtins,
+            "user": user_agents,
+            "shared": [],   # populated once we have a user JWT to call get_prompts_shared_with_me
+            "source": "database",
+            "totals": {
+                "builtins": len(builtins),
+                "user": len(user_agents),
+                "shared": 0,
+                "total": len(builtins) + len(user_agents),
+            },
+        }
 
     except Exception:
         logger.warning("Failed to load agents from DB", exc_info=True)
-        return {"agents": [], "total": 0, "source": "error"}
+        return {"builtins": [], "user": [], "shared": [], "source": "error"}
 
 
 # ---------------------------------------------------------------------------

@@ -256,7 +256,13 @@ export function useChat({ engineUrl }: UseChatOptions) {
   }, []);
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (
+      content: string,
+      options?: {
+        agentId?: string;
+        variables?: Record<string, string>;
+      }
+    ) => {
       if (!content.trim() || isStreaming) return;
       if (!engineUrl) return;
 
@@ -352,18 +358,28 @@ export function useChat({ engineUrl }: UseChatOptions) {
         // Build message history including the new user message
         const apiMessages = toApiMessages([...existingMessages, userMsg]);
 
+        // Build request body — use agent endpoint when an agent is selected
+        const hasAgent = !!options?.agentId;
+        const requestBody: Record<string, unknown> = {
+          ai_model_id: model,
+          messages: apiMessages,
+          stream: true,
+          max_iterations: 20,
+        };
+        if (hasAgent) {
+          requestBody.prompt_id = options!.agentId;
+        }
+        if (options?.variables && Object.keys(options.variables).length > 0) {
+          requestBody.variables = options.variables;
+        }
+
         const resp = await fetch(`${engineUrl}/chat/ai/api/ai/chat`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({
-            ai_model_id: model,
-            messages: apiMessages,
-            stream: true,
-            max_iterations: 20,
-          }),
+          body: JSON.stringify(requestBody),
           signal: abort.signal,
         });
 
@@ -440,7 +456,7 @@ export function useChat({ engineUrl }: UseChatOptions) {
         setIsStreaming(false);
       }
     },
-    [activeConversationId, createConversation, engineUrl, isStreaming, model]
+    [activeConversationId, createConversation, engineUrl, isStreaming, model] // options excluded — stable ref via useCallback
   );
 
   const stopStreaming = useCallback(() => {

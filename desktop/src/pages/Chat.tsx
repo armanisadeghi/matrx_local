@@ -1,10 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Bot, ChevronDown } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
+import { useAgents } from "@/hooks/use-agents";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ChatMessages } from "@/components/chat/ChatMessages";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatWelcome } from "@/components/chat/ChatWelcome";
+import { AgentPicker } from "@/components/chat/AgentPicker";
+import { GuidedVariableInputs } from "@/components/chat/GuidedVariableInputs";
+import { cn } from "@/lib/utils";
 import type { EngineStatus } from "@/hooks/use-engine";
+import type { ActiveAgent, PromptVariable } from "@/types/agents";
 
 interface ChatPageProps {
   engineStatus: EngineStatus;
@@ -14,6 +20,16 @@ interface ChatPageProps {
 
 export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  // ---- Agent state ----
+  const { builtins, userAgents, sharedAgents, isLoading: agentsLoading } = useAgents({ engineUrl });
+  const [activeAgent, setActiveAgent] = useState<ActiveAgent | null>(null);
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
+
+  // ---- Variable state ----
+  const [variableValues, setVariableValues] = useState<Record<string, string>>({});
+  const [activeVariables, setActiveVariables] = useState<PromptVariable[]>([]);
+  const agentPickerRef = useRef<HTMLDivElement>(null);
 
   const {
     conversations,
@@ -38,7 +54,6 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
   // Load tool schemas from engine on mount
   useEffect(() => {
     if (engineStatus !== "connected" || !engineUrl) return;
-
     const loadSchemas = async () => {
       try {
         const resp = await fetch(`${engineUrl}/chat/tools`);
@@ -47,12 +62,35 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
           setToolSchemas(data.tools ?? []);
         }
       } catch {
-        // Tool schemas are optional — chat works without them
+        // Tool schemas are optional
       }
     };
-
     loadSchemas();
   }, [engineStatus, engineUrl, setToolSchemas]);
+
+  // When agent changes, populate variables from its defaults. Clear vars on new conversation start.
+  const messages = activeConversation?.messages ?? [];
+  const hasMessages = messages.length > 0;
+
+  useEffect(() => {
+    if (hasMessages) {
+      setActiveVariables([]);
+      setVariableValues({});
+      return;
+    }
+    if (!activeAgent || activeAgent.id === "") {
+      setActiveVariables([]);
+      setVariableValues({});
+      return;
+    }
+    const vars = activeAgent.variable_defaults ?? [];
+    setActiveVariables(vars);
+    const defaults: Record<string, string> = {};
+    vars.forEach((v) => {
+      if (v.defaultValue) defaults[v.name] = v.defaultValue;
+    });
+    setVariableValues(defaults);
+  }, [activeAgent?.id, hasMessages]);
 
   const handleNewChat = useCallback(() => {
     createConversation();
@@ -65,8 +103,25 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
     [sendMessage]
   );
 
-  const messages = activeConversation?.messages ?? [];
+  const handleSend = useCallback(
+    async (content: string) => {
+      const submittedVars = { ...variableValues };
+      setActiveVariables([]);
+      setVariableValues({});
+      await sendMessage(content, {
+        agentId: activeAgent?.id || undefined,
+        variables: submittedVars,
+      });
+    },
+    [sendMessage, activeAgent, variableValues]
+  );
+
+  const handleVariableChange = (name: string, value: string) => {
+    setVariableValues((prev) => ({ ...prev, [name]: value }));
+  };
+
   const showWelcome = !activeConversation || messages.length === 0;
+  const hasVariables = activeVariables.length > 0;
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -98,10 +153,9 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
                 className={`h-2 w-2 rounded-full ${
                   engineStatus === "connected"
                     ? "bg-emerald-500"
-                    : engineStatus === "discovering" ||
-                      engineStatus === "starting"
-                    ? "bg-amber-500 animate-pulse"
-                    : "bg-zinc-500"
+                    : engineStatus === "discovering" || engineStatus === "starting"
+                      ? "bg-amber-500 animate-pulse"
+                      : "bg-zinc-500"
                 }`}
               />
               <span className="text-[11px] text-muted-foreground">
@@ -112,27 +166,79 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
         </header>
 
         {/* Messages or Welcome */}
-        {showWelcome ? (
-          <ChatWelcome
-            onSuggestionClick={handleSuggestionClick}
-            toolCount={tools.length}
-          />
-        ) : (
-          <ChatMessages messages={messages} isStreaming={isStreaming} />
+        <div className="flex-1 overflow-hidden">
+          {showWelcome ? (
+            <ChatWelcome
+              onSuggestionClick={handleSuggestionClick}
+              toolCount={tools.length}
+            />
+          ) : (
+            <ChatMessages messages={messages} isStreaming={isStreaming} />
+          )}
+        </div>
+
+        {/* Variable inputs — shown above chat input when agent has vars */}
+        {hasVariables && (
+          <div className="px-4 pt-2">
+            <GuidedVariableInputs
+              variableDefaults={activeVariables}
+              values={variableValues}
+              onChange={handleVariableChange}
+              disabled={isStreaming}
+              seamless
+            />
+          </div>
         )}
 
         {/* Input Area */}
-        <ChatInput
-          onSend={sendMessage}
-          onStop={stopStreaming}
-          isStreaming={isStreaming}
-          mode={mode}
-          model={model}
-          availableModels={availableModels}
-          onModelChange={setModel}
-          onModeChange={setMode}
-          engineReady={engineStatus === "connected"}
-        />
+        <div className={cn("px-4 pb-4", hasVariables ? "pt-0" : "pt-2")}>
+          {/* Agent selector button */}
+          <div className="relative mb-1.5" ref={agentPickerRef}>
+            <button
+              type="button"
+              onClick={() => setAgentPickerOpen((o) => !o)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
+                "border border-border hover:bg-accent",
+                activeAgent?.id
+                  ? "text-primary border-primary/30 bg-primary/5"
+                  : "text-muted-foreground"
+              )}
+            >
+              <Bot className="w-3.5 h-3.5" />
+              <span className="max-w-[160px] truncate">
+                {activeAgent?.id ? activeAgent.name : "No Agent"}
+              </span>
+              <ChevronDown className="w-3 h-3 opacity-60" />
+            </button>
+
+            <AgentPicker
+              builtins={builtins}
+              userAgents={userAgents}
+              sharedAgents={sharedAgents}
+              isLoading={agentsLoading}
+              selectedAgentId={activeAgent?.id ?? null}
+              isOpen={agentPickerOpen}
+              onSelect={(agent) => {
+                setActiveAgent(agent.id ? agent : null);
+                setAgentPickerOpen(false);
+              }}
+              onClose={() => setAgentPickerOpen(false)}
+            />
+          </div>
+
+          <ChatInput
+            onSend={handleSend}
+            onStop={stopStreaming}
+            isStreaming={isStreaming}
+            mode={mode}
+            model={model}
+            availableModels={availableModels}
+            onModelChange={setModel}
+            onModeChange={setMode}
+            engineReady={engineStatus === "connected"}
+          />
+        </div>
       </div>
     </div>
   );

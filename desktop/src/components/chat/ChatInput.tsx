@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import type { ChatMode } from "@/hooks/use-chat";
 
 interface ChatInputProps {
-  onSend: (message: string) => void;
+  onSend: (message: string) => void | Promise<void>;
   onStop: () => void;
   isStreaming: boolean;
   mode: ChatMode;
