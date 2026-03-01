@@ -33,7 +33,7 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
     setMode,
     setModel,
     setToolSchemas,
-  } = useChat();
+  } = useChat({ engineUrl });
 
   // Load tool schemas from engine on mount
   useEffect(() => {
@@ -131,7 +131,7 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
           availableModels={availableModels}
           onModelChange={setModel}
           onModeChange={setMode}
-          disabled={engineStatus !== "connected"}
+          engineReady={engineStatus === "connected"}
         />
       </div>
     </div>

@@ -1,12 +1,13 @@
 /**
  * Chat state management hook.
  *
- * Manages conversations, messages, and tool call state.
- * Stores conversations in localStorage for persistence.
- * Designed for future API integration (streaming, tool execution).
+ * Manages conversations, messages, and streaming AI responses via the
+ * matrx-ai engine (NDJSON streaming over /chat/ai/api/ai/chat).
+ * Conversations are persisted to localStorage.
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import supabase from "@/lib/supabase";
 
 // ---- Types ----
 
@@ -34,6 +35,7 @@ export interface ChatMessage {
   tool_results?: ToolCallResult[];
   model?: string;
   isStreaming?: boolean;
+  error?: string;
 }
 
 export interface Conversation {
@@ -57,15 +59,31 @@ export interface ToolSchema {
   };
 }
 
+export interface ModelOption {
+  id: string;           // API model name — sent as ai_model_id in requests
+  label: string;        // Display name
+  provider: string;     // anthropic | openai | google | groq | together | xai | cerebras
+  default?: boolean;
+  is_primary?: boolean;
+  is_premium?: boolean;
+  capabilities?: string[];
+  context_window?: number;
+}
+
 // ---- Constants ----
 
 const STORAGE_KEY = "matrx-chat-conversations";
 const MAX_CONVERSATIONS = 100;
 
-const AVAILABLE_MODELS = [
-  { id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4", default: true },
-  { id: "claude-opus-4-20250514", label: "Claude Opus 4" },
-  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+// Fallback models used before/if the engine responds with live DB models.
+// These match real names in the DB so they work immediately.
+export const FALLBACK_MODELS: ModelOption[] = [
+  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", default: true },
+  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: "anthropic" },
+  { id: "gpt-4o", label: "GPT-4o", provider: "openai" },
+  { id: "gpt-4o-mini", label: "GPT-4o Mini", provider: "openai" },
+  { id: "gemini-2.5-pro-preview-06-05", label: "Gemini 2.5 Pro", provider: "google" },
+  { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", provider: "groq" },
 ];
 
 // ---- Helpers ----
@@ -86,19 +104,15 @@ function loadConversations(): Conversation[] {
 
 function saveConversations(conversations: Conversation[]) {
   try {
-    // Keep only the most recent conversations
-    const trimmed = conversations.slice(0, MAX_CONVERSATIONS);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations.slice(0, MAX_CONVERSATIONS)));
   } catch {
     // Storage full — silently degrade
   }
 }
 
 function generateTitle(content: string): string {
-  // Use the first message content, trimmed to 50 chars
   const cleaned = content.replace(/\n/g, " ").trim();
-  if (cleaned.length <= 50) return cleaned;
-  return cleaned.slice(0, 47) + "...";
+  return cleaned.length <= 50 ? cleaned : cleaned.slice(0, 47) + "...";
 }
 
 function groupByDate(conversations: Conversation[]): Record<string, Conversation[]> {
@@ -107,7 +121,6 @@ function groupByDate(conversations: Conversation[]): Record<string, Conversation
   const yesterday = new Date(today.getTime() - 86400000);
   const weekAgo = new Date(today.getTime() - 7 * 86400000);
   const monthAgo = new Date(today.getTime() - 30 * 86400000);
-
   const groups: Record<string, Conversation[]> = {};
 
   for (const conv of conversations) {
@@ -126,9 +139,23 @@ function groupByDate(conversations: Conversation[]): Record<string, Conversation
   return groups;
 }
 
+/** Convert our ChatMessage history to the wire format matrx-ai expects. */
+function toApiMessages(messages: ChatMessage[]): Array<{role: string; content: Array<{type: string; text: string}>}> {
+  return messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({
+      role: m.role,
+      content: [{ type: "text", text: m.content }],
+    }));
+}
+
 // ---- Hook ----
 
-export function useChat() {
+export interface UseChatOptions {
+  engineUrl: string | null;
+}
+
+export function useChat({ engineUrl }: UseChatOptions) {
   const [conversations, setConversations] = useState<Conversation[]>(() =>
     loadConversations().sort(
       (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
@@ -137,11 +164,48 @@ export function useChat() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [mode, setMode] = useState<ChatMode>("chat");
-  const [model, setModel] = useState(AVAILABLE_MODELS[0].id);
+  const [model, setModel] = useState(FALLBACK_MODELS[0].id);
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>(FALLBACK_MODELS);
   const [toolSchemas, setToolSchemas] = useState<ToolSchema[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Persist conversations on change
+  // Load live models from DB via engine
+  useEffect(() => {
+    if (!engineUrl) return;
+
+    const load = async () => {
+      try {
+        const resp = await fetch(`${engineUrl}/chat/models`);
+        if (!resp.ok) return;
+        const data = await resp.json() as { models: Array<{
+          name: string; common_name: string; provider: string;
+          is_primary: boolean; is_premium: boolean;
+          capabilities: string[]; context_window: number;
+        }>; source: string };
+        if (!data.models?.length) return;
+
+        const mapped: ModelOption[] = data.models.map((m, i) => ({
+          id: m.name,
+          label: m.common_name,
+          provider: m.provider,
+          is_primary: m.is_primary,
+          is_premium: m.is_premium,
+          capabilities: m.capabilities,
+          context_window: m.context_window,
+          default: i === 0,
+        }));
+
+        setAvailableModels(mapped);
+        // If current model isn't in the new list, switch to first
+        setModel((prev) => mapped.find((m) => m.id === prev) ? prev : mapped[0].id);
+      } catch {
+        // Keep fallback models if engine unreachable
+      }
+    };
+
+    load();
+  }, [engineUrl]);
+
   useEffect(() => {
     saveConversations(conversations);
   }, [conversations]);
@@ -168,7 +232,6 @@ export function useChat() {
 
   const selectConversation = useCallback((id: string | null) => {
     setActiveConversationId(id);
-    // If selecting an existing conversation, restore its mode and model
     if (id) {
       const conv = loadConversations().find((c) => c.id === id);
       if (conv) {
@@ -181,41 +244,55 @@ export function useChat() {
   const deleteConversation = useCallback(
     (id: string) => {
       setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeConversationId === id) {
-        setActiveConversationId(null);
-      }
+      if (activeConversationId === id) setActiveConversationId(null);
     },
     [activeConversationId]
   );
 
   const renameConversation = useCallback((id: string, title: string) => {
     setConversations((prev) =>
-      prev.map((c) =>
-        c.id === id ? { ...c, title, updated_at: new Date().toISOString() } : c
-      )
+      prev.map((c) => (c.id === id ? { ...c, title, updated_at: new Date().toISOString() } : c))
     );
   }, []);
 
   const sendMessage = useCallback(
     async (content: string) => {
-      if (!content.trim()) return;
+      if (!content.trim() || isStreaming) return;
+      if (!engineUrl) return;
 
+      // Abort any previous stream
+      abortRef.current?.abort();
+      const abort = new AbortController();
+      abortRef.current = abort;
+
+      // Ensure we have a conversation
       let convId = activeConversationId;
+      let existingMessages: ChatMessage[] = [];
 
-      // Auto-create conversation on first message
+      setConversations((prev) => {
+        if (!convId) return prev;
+        const c = prev.find((x) => x.id === convId);
+        if (c) existingMessages = c.messages;
+        return prev;
+      });
+
       if (!convId) {
         const conv = createConversation();
         convId = conv.id;
+        existingMessages = [];
+      } else {
+        const conv = loadConversations().find((c) => c.id === convId);
+        existingMessages = conv?.messages ?? [];
       }
 
-      const userMessage: ChatMessage = {
+      const userMsg: ChatMessage = {
         id: generateId(),
         role: "user",
         content: content.trim(),
         timestamp: new Date().toISOString(),
       };
 
-      // Add user message and update title if first message
+      // Add user message; set conversation title on first message
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== convId) return c;
@@ -223,17 +300,16 @@ export function useChat() {
           return {
             ...c,
             title: isFirst ? generateTitle(content) : c.title,
-            messages: [...c.messages, userMessage],
+            messages: [...c.messages, userMsg],
             updated_at: new Date().toISOString(),
           };
         })
       );
 
-      // Simulate assistant response (placeholder for API integration)
-      setIsStreaming(true);
-
-      const assistantMessage: ChatMessage = {
-        id: generateId(),
+      // Add placeholder assistant message
+      const assistantMsgId = generateId();
+      const assistantMsg: ChatMessage = {
+        id: assistantMsgId,
         role: "assistant",
         content: "",
         timestamp: new Date().toISOString(),
@@ -244,67 +320,136 @@ export function useChat() {
       setConversations((prev) =>
         prev.map((c) =>
           c.id === convId
-            ? { ...c, messages: [...c.messages, assistantMessage], updated_at: new Date().toISOString() }
+            ? { ...c, messages: [...c.messages, assistantMsg], updated_at: new Date().toISOString() }
             : c
         )
       );
 
-      // Simulate streaming with a placeholder response
-      const placeholderResponse =
-        "I'm the AI Matrx assistant. The chat API is not yet connected, but the UI is fully functional. " +
-        "Once connected, I'll be able to use all 73 tools available on your local system — " +
-        "file operations, shell execution, browser automation, network discovery, and more.";
+      setIsStreaming(true);
 
-      let accumulated = "";
-      for (let i = 0; i < placeholderResponse.length; i += 3) {
-        await new Promise((r) => setTimeout(r, 15));
-        accumulated = placeholderResponse.slice(0, i + 3);
-
+      const updateAssistant = (patch: Partial<ChatMessage>) => {
         setConversations((prev) =>
           prev.map((c) => {
             if (c.id !== convId) return c;
-            const msgs = [...c.messages];
-            const lastIdx = msgs.length - 1;
-            if (msgs[lastIdx]?.id === assistantMessage.id) {
-              msgs[lastIdx] = { ...msgs[lastIdx], content: accumulated, isStreaming: true };
-            }
-            return { ...c, messages: msgs };
+            return {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === assistantMsgId ? { ...m, ...patch } : m
+              ),
+              updated_at: new Date().toISOString(),
+            };
           })
         );
-      }
+      };
 
-      // Finalize
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id !== convId) return c;
-          const msgs = [...c.messages];
-          const lastIdx = msgs.length - 1;
-          if (msgs[lastIdx]?.id === assistantMessage.id) {
-            msgs[lastIdx] = {
-              ...msgs[lastIdx],
-              content: placeholderResponse,
-              isStreaming: false,
-            };
+      let accumulated = "";
+
+      try {
+        // Get current Supabase JWT
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token ?? "";
+
+        // Build message history including the new user message
+        const apiMessages = toApiMessages([...existingMessages, userMsg]);
+
+        const resp = await fetch(`${engineUrl}/chat/ai/api/ai/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            ai_model_id: model,
+            messages: apiMessages,
+            stream: true,
+            max_iterations: 20,
+          }),
+          signal: abort.signal,
+        });
+
+        if (!resp.ok || !resp.body) {
+          const errText = await resp.text().catch(() => `HTTP ${resp.status}`);
+          updateAssistant({ content: `Error: ${errText}`, isStreaming: false, error: errText });
+          setIsStreaming(false);
+          return;
+        }
+
+        // Read NDJSON stream
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            try {
+              const event = JSON.parse(trimmed) as {
+                event: string;
+                data?: Record<string, unknown>;
+              };
+
+              switch (event.event) {
+                case "chunk": {
+                  const text = (event.data as { text?: string })?.text ?? "";
+                  accumulated += text;
+                  updateAssistant({ content: accumulated, isStreaming: true });
+                  break;
+                }
+                case "completion": {
+                  // Final output from completion payload
+                  const output = (event.data as { output?: string })?.output;
+                  if (output && !accumulated) accumulated = output;
+                  break;
+                }
+                case "error": {
+                  const msg = (event.data as { message?: string })?.message ?? "Unknown error";
+                  updateAssistant({ content: accumulated || msg, isStreaming: false, error: msg });
+                  break;
+                }
+                case "end":
+                  break;
+              }
+            } catch {
+              // Malformed line — skip
+            }
           }
-          return { ...c, messages: msgs, updated_at: new Date().toISOString() };
-        })
-      );
+        }
 
-      setIsStreaming(false);
+        updateAssistant({ content: accumulated, isStreaming: false });
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") {
+          updateAssistant({ isStreaming: false });
+        } else {
+          const msg = err instanceof Error ? err.message : "Connection error";
+          updateAssistant({
+            content: accumulated || `Failed to reach engine: ${msg}`,
+            isStreaming: false,
+            error: msg,
+          });
+        }
+      } finally {
+        setIsStreaming(false);
+      }
     },
-    [activeConversationId, createConversation, model]
+    [activeConversationId, createConversation, engineUrl, isStreaming, model]
   );
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
     setIsStreaming(false);
-    // Mark any streaming messages as complete
     setConversations((prev) =>
       prev.map((c) => ({
         ...c,
-        messages: c.messages.map((m) =>
-          m.isStreaming ? { ...m, isStreaming: false } : m
-        ),
+        messages: c.messages.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)),
       }))
     );
   }, []);
@@ -314,10 +459,7 @@ export function useChat() {
     setActiveConversationId(null);
   }, []);
 
-  const groupedConversations = groupByDate(conversations);
-
   return {
-    // State
     conversations,
     activeConversation,
     activeConversationId,
@@ -325,10 +467,9 @@ export function useChat() {
     mode,
     model,
     toolSchemas,
-    groupedConversations,
-    availableModels: AVAILABLE_MODELS,
+    availableModels,
+    groupedConversations: groupByDate(conversations),
 
-    // Actions
     createConversation,
     selectConversation,
     deleteConversation,

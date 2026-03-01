@@ -14,10 +14,11 @@ interface ChatInputProps {
   isStreaming: boolean;
   mode: ChatMode;
   model: string;
-  availableModels: { id: string; label: string; default?: boolean }[];
+  availableModels: { id: string; label: string; provider?: string; default?: boolean }[];
   onModelChange: (model: string) => void;
   onModeChange: (mode: ChatMode) => void;
-  disabled?: boolean;
+  /** When true, the send button is disabled but the textarea remains typeable. */
+  engineReady?: boolean;
 }
 
 const modeLabels: Record<ChatMode, string> = {
@@ -35,7 +36,7 @@ export function ChatInput({
   availableModels,
   onModelChange,
   onModeChange,
-  disabled,
+  engineReady = true,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -64,14 +65,16 @@ export function ChatInput({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  const canSend = value.trim().length > 0 && !isStreaming && engineReady;
+
   const handleSend = useCallback(() => {
-    if (!value.trim() || isStreaming || disabled) return;
+    if (!canSend) return;
     onSend(value);
     setValue("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [value, isStreaming, disabled, onSend]);
+  }, [canSend, value, onSend]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -114,15 +117,16 @@ export function ChatInput({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            mode === "code"
+            !engineReady
+              ? "Waiting for engine..."
+              : mode === "code"
               ? "Write or ask about code..."
               : mode === "co-work"
               ? "What would you like to work on together?"
               : "Message AI Matrx..."
           }
           rows={1}
-          disabled={disabled}
-          className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[0.9375rem] leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-50"
+          className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[0.9375rem] leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
         />
 
         {/* Bottom bar */}
@@ -150,28 +154,40 @@ export function ChatInput({
               </button>
 
               {showModelDropdown && (
-                <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[220px] rounded-lg p-1.5">
-                  {availableModels.map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => {
-                        onModelChange(m.id);
-                        setShowModelDropdown(false);
-                      }}
-                      className={cn(
-                        "flex w-full items-center rounded-md px-3 py-2.5 text-left text-xs transition-colors",
-                        model === m.id
-                          ? "bg-accent text-accent-foreground"
-                          : "text-foreground hover:bg-accent/50"
-                      )}
-                    >
-                      <span className="font-medium">{m.label}</span>
-                      {m.default && (
-                        <span className="ml-auto text-[10px] text-muted-foreground">
-                          default
-                        </span>
-                      )}
-                    </button>
+                <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[240px] max-h-80 overflow-y-auto rounded-lg p-1.5">
+                  {Object.entries(
+                    availableModels.reduce<Record<string, typeof availableModels>>((acc, m) => {
+                      const p = m.provider ?? "other";
+                      if (!acc[p]) acc[p] = [];
+                      acc[p].push(m);
+                      return acc;
+                    }, {})
+                  ).map(([provider, models]) => (
+                    <div key={provider}>
+                      <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                        {provider}
+                      </div>
+                      {models.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => {
+                            onModelChange(m.id);
+                            setShowModelDropdown(false);
+                          }}
+                          className={cn(
+                            "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
+                            model === m.id
+                              ? "bg-accent text-accent-foreground"
+                              : "text-foreground hover:bg-accent/50"
+                          )}
+                        >
+                          <span className="font-medium">{m.label}</span>
+                          {m.default && (
+                            <span className="ml-auto text-[10px] text-muted-foreground">default</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
               )}
@@ -190,10 +206,11 @@ export function ChatInput({
             ) : (
               <button
                 onClick={handleSend}
-                disabled={!value.trim() || disabled}
+                disabled={!canSend}
+                title={!engineReady ? "Engine not connected" : undefined}
                 className={cn(
                   "flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200",
-                  !value.trim() || disabled
+                  !canSend
                     ? "bg-muted-foreground/30 text-primary-foreground opacity-30 cursor-not-allowed"
                     : "bg-primary text-primary-foreground active:scale-[0.96]"
                 )}
