@@ -12,7 +12,7 @@ from app.api.settings_routes import router as settings_router
 from app.api.document_routes import router as document_router
 from app.api.proxy_routes import router as proxy_router
 from app.api.cloud_sync_routes import router as cloud_sync_router
-from app.api.chat_routes import router as chat_router
+from app.api.chat_routes import router as chat_router, build_ai_sub_app
 from app.api.permissions_routes import router as permissions_router
 from app.api.auth import AuthMiddleware
 from app.config import ALLOWED_ORIGINS
@@ -21,6 +21,7 @@ import app.common.access_log as access_log
 from app.services.scraper.engine import get_scraper_engine
 from app.services.proxy.server import get_proxy_server
 from app.services.cloud_sync.settings_sync import get_settings_sync
+from app.services.ai.engine import initialize_matrx_ai
 from app.tools.tools.scheduler import restore_scheduled_tasks
 import app.services.scraper.retry_queue as retry_queue
 from app.websocket_manager import WebSocketManager
@@ -31,6 +32,12 @@ websocket_manager = WebSocketManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    # Initialize matrx-ai (loads env, registers DB if credentials present)
+    try:
+        initialize_matrx_ai()
+    except Exception:
+        logger.error("matrx-ai initialization failed — AI endpoints may not work", exc_info=True)
+
     engine = get_scraper_engine()
     try:
         await engine.start()
@@ -106,6 +113,15 @@ app.include_router(proxy_router)
 app.include_router(cloud_sync_router)
 app.include_router(chat_router)
 app.include_router(permissions_router)
+
+# Mount the matrx-ai engine as a sub-application.
+# It has its own AuthMiddleware (sets AppContext + StreamEmitter per request).
+# Effective AI endpoint paths:
+#   POST /chat/ai/api/ai/chat
+#   POST /chat/ai/api/ai/agents/{agent_id}
+#   POST /chat/ai/api/ai/conversations/{conversation_id}
+#   POST /chat/ai/api/ai/cancel/{request_id}
+app.mount("/chat/ai", build_ai_sub_app())
 
 app.add_middleware(AuthMiddleware)
 
