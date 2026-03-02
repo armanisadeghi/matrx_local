@@ -446,7 +446,63 @@ export function Scraping({ engineStatus, engineUrl: _engineUrl }: ScrapingProps)
 
           {/* Flat URL list or History */}
           <ScrollArea className="flex-1">
-            <div className="space-y-0.5 px-2 pb-3">
+            {showHistory && (
+              <div className="space-y-0.5 px-2 pb-3">
+                {history.length === 0 ? (
+                  <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
+                    <History className="h-8 w-8 opacity-20" />
+                    <p className="text-xs">No scrape history yet</p>
+                  </div>
+                ) : (
+                  history.map((h) => (
+                    <button
+                      key={h.url + h.savedAt}
+                      onClick={() => {
+                        const existing = entries.find((e) => e.url === h.url);
+                        if (!existing && h.content) {
+                          const restored: ScrapeEntry = {
+                            url: h.url,
+                            status: h.success ? "success" : "error",
+                            result: {
+                              url: h.url,
+                              success: h.success,
+                              status_code: 0,
+                              content: h.content ?? "",
+                              title: h.title,
+                              content_type: "text/html",
+                              response_url: h.url,
+                              error: h.success ? null : "Historical error",
+                              elapsed_ms: h.elapsed_ms,
+                            },
+                            startedAt: new Date(h.savedAt),
+                            completedAt: new Date(h.savedAt),
+                          };
+                          setEntries((prev) => [restored, ...prev]);
+                        }
+                        setSelectedUrl(h.url);
+                        setShowHistory(false);
+                      }}
+                      className="group flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent/50"
+                    >
+                      <span className="shrink-0">
+                        {h.success
+                          ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                          : <XCircle className="h-3.5 w-3.5 text-red-400" />
+                        }
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block truncate font-mono text-xs">{truncateUrl(h.url)}</span>
+                        {h.title && <span className="block truncate text-[10px] text-muted-foreground">{h.title}</span>}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {new Date(h.savedAt).toLocaleDateString()}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+            <div className={cn("space-y-0.5 px-2 pb-3", showHistory && "hidden")}>
               {entries.map((entry) => (
                 <button
                   key={entry.url}

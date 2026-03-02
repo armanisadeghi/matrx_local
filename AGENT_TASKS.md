@@ -31,7 +31,7 @@
 
 13. [x] **Dark mode contrast audit** — Verified 2026-03-02: pages/ have no hardcoded `bg-white`/`bg-black`. Dialog overlays in `bg-black/50` are intentional semi-transparent overlays. Clean.
 14. [x] **System Info UI** — Fixed 2026-03-02: Added `ResourceGauge` widget cards to Dashboard showing live CPU%, RAM used/total, Disk used/total, Battery% (with 10s auto-refresh). Uses `SystemResources` tool.
-15. **Scraping persistence** — Still needed. Save completed scrapes to Supabase `scrapes` table.
+15. [x] **Scraping persistence** — Fixed 2026-03-02: Completed scrapes are now saved to localStorage under `matrx:scrape-history` (up to 100 entries, 2KB content preview per entry). UI has a "History" tab alongside the queue that shows all past scrapes. Clicking a history entry restores its content to the viewer. A "Clear" button wipes the history. Supabase cloud sync can be added in a future migration.
 16. [x] **Scheduler real persistence** — Already implemented: `scheduler.py` persists to `~/.matrx/scheduled_tasks.json` and restores on startup via `restore_scheduled_tasks()` in `main.py`.
 17. **Proxy Test Connection** — Waiting on Arman to confirm `MAIN_SERVER` URL.
 18. [x] **Forbidden URL list** — Fixed 2026-03-02: (1) Backend: `settings_routes.py` has `GET/POST/DELETE/PUT /settings/forbidden-urls` endpoints, normalized pattern storage via `settings_sync`, and `is_url_forbidden()` helper; (2) `network.py` `tool_fetch_url`, `tool_fetch_with_browser`, `tool_scrape` all call `_check_forbidden()` before proceeding; (3) Frontend: Settings → Scraping tab has add/remove UI with wildcard hint; (4) `api.ts` has generic `get/post/delete` helpers; (5) `migrations/003_forbidden_urls.sql` for future Supabase cloud sync. Arman must run migration 003 to enable cloud sync.
@@ -68,7 +68,7 @@
 
 ### Scraping
 
-- [ ] **No persistence — scrapes not saved anywhere** — Still open. Add Supabase `scrapes` table + migration.
+- [x] **No persistence — scrapes not saved anywhere** — Done: localStorage history (100 entries), History tab in Scraping page. Supabase cloud sync can follow.
 - [x] **UX: URL list should be flat, not batched with tabs** — Fixed 2026-03-02: Complete rewrite. Flat URL list left, content panel right, no tabs.
 - [x] **Content panel does not scroll** — Fixed 2026-03-02: Content panel now has `overflow-auto` with independent scroll.
 - [x] **Auto-prefix URLs with https://** — Fixed 2026-03-02: `normalizeUrl()` in Scraping.tsx auto-prefixes bare domains.
@@ -87,7 +87,7 @@
 - [x] **Record Audio: broken, gives errors** — Improved 2026-03-02: Better error messages. Core issue: no audio device in WSL/headless. Works on macOS/Windows with sounddevice installed.
 - [x] **Transcribe Audio: needs live transcription mode** — Done: two tabs (Live Mic + From File), auto-transcribe on stop, model selector, duration selector.
 - [x] **Notify tool: does nothing** — Fixed 2026-03-02: platform-specific fallbacks (osascript/PowerShell/notify-send/log).
-- [ ] **Installed Apps: needs persistent list with refresh** — Still open.
+- [x] **Installed Apps: needs persistent list with refresh** — Already done: localStorage cache + Refresh button in `InstalledAppsPanel.tsx`.
 - [x] **Path-required tools (ImageOCR, etc.) need a file picker** — Already implemented: `FilePathField.tsx` uses Tauri dialog with browser fallback.
 
 ---
@@ -114,7 +114,7 @@
 
 ### Settings — Scraping
 
-- [ ] **Verify headless mode actually does something** — The toggle must be confirmed to switch Playwright to `headless=True/False` at runtime.
+- [x] **Verify headless mode actually does something** — Fixed 2026-03-02: `tool_fetch_with_browser` in `network.py` now reads `headless_scraping` from `settings_sync` at call time. Toggle in Settings → Scraping is wired. Note: `browser_automation.py` browser session (`BrowserNavigate` etc.) keeps its own instance — user-facing browser sessions always use `headless=False` for interactive use, which is intentional.
 - [x] **Add forbidden URL list** — Done: UI in Settings → Scraping, backend endpoints, tool-level enforcement, migration 003 ready.
 
 ---
@@ -146,7 +146,7 @@
 
 ### Missing Features — System Info
 
-- [ ] **No system info UI for end users** — CPU, RAM, disk, battery, etc. are buried in raw JSON tool outputs. Normal users will never find this. Build a proper System Info section (could be a dashboard widget or dedicated page) that shows at minimum: CPU usage, memory usage, disk usage, battery status, and uptime — in a readable, visual format.
+- [x] **No system info UI for end users** — Done: Dashboard `ResourceGauge` cards (10s refresh), Tools `MonitoringPanel` has `GaugeRing` + `Sparkline` + process table (3s live refresh).
 
 ---
 

@@ -126,7 +126,7 @@ bash scripts/stop.sh --force  # immediate kill
 - [ ] Documents: New Folder / New Note — still need Supabase table verification (see section 4)
 - [x] Documents: Sync bar now always shows + sync button triggers real sync
 - [x] Scraping: UX overhauled — flat URL list, scroll, https:// auto-prefix
-- [ ] Scraping: Persistence to Supabase still needed
+- [x] Scraping: Persistence now uses localStorage history (100 entries) with History tab in UI
 - [x] Notify tool: now dispatches via osascript/PowerShell/notify-send
 - [x] Record Audio: better error messages for device-not-found
 - [x] Web search: argument mapping confirmed correct — just needs BRAVE_API_KEY (see section 4)

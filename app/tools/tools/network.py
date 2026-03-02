@@ -122,10 +122,17 @@ async def tool_fetch_with_browser(
             ),
         )
 
+    # Read headless setting from engine settings
+    try:
+        from app.services.cloud_sync.settings_sync import get_settings_sync
+        _headless = get_settings_sync().get("headless_scraping", True)
+    except Exception:
+        _headless = True
+
     start = time.monotonic()
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=_headless)
             context = await browser.new_context(
                 user_agent=(
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
