@@ -8,141 +8,80 @@ _Last updated: 2026-03-02_
 
 ---
 
-### 1. How to Release
-
-v1.0.1 is already pushed and CI is running. For future releases:
-
-```bash
-git add . && git commit -m "your changes"
-./scripts/release.sh              # auto-bumps patch (1.0.1 → 1.0.2)
-./scripts/release.sh minor        # bump minor      (1.0.1 → 1.1.0)
-./scripts/release.sh major        # bump major      (1.0.1 → 2.0.0)
-./scripts/release.sh 2.3.4        # set exact version
-```
-The script auto-bumps the version, syncs it across `pyproject.toml`, `tauri.conf.json`, `package.json`, and `run.py`, commits, tags, and pushes — triggering GitHub Actions CI.
-
-- [x] **v1.0.1 CI triggered** — https://github.com/armanisadeghi/matrx-local/actions
+### 1. Release v1.0.1
+- [x] v1.0.1 CI triggered — https://github.com/armanisadeghi/matrx-local/actions
+- For future releases, see [HOWTO.md → Releasing](HOWTO.md#releasing)
 
 ---
 
 ### 2. Code Signing Certificates (before shipping to public)
-
-These require purchases and external accounts — only you can do this.
-
-- [ ] **Apple Developer account** ($99/yr) — https://developer.apple.com — needed to notarize macOS DMG so Gatekeeper doesn't block it. After enrolling:
-  - Get your `APPLE_ID` (your Apple ID email)
-  - Create an App-Specific Password at https://appleid.apple.com → "App-Specific Passwords" — this is `APPLE_PASSWORD`
-  - Find your `APPLE_TEAM_ID` in Xcode → Settings → Accounts → your team (10-character code)
-  - Add all three to GitHub Actions secrets: Settings → Secrets → Actions → New repository secret
-
-  - **CURRENT STATUS**: NONE
-
-- [ ] **Windows EV code signing cert** (optional for first release, ~$200–500/yr) — DigiCert or Sectigo. Without it, SmartScreen shows "Windows protected your PC" warning. Users can click "More info → Run anyway" but it's scary. Skip for beta; add before public launch.
-  - **CURRENT STATUS**: Cert purchased, but shippig takes a few days.
+- [ ] **Apple Developer account** — enroll + add secrets to GitHub Actions. **STATUS**: NONE
+  - See [HOWTO.md → Apple Developer Setup](HOWTO.md#apple-developer-setup)
+- [ ] **Windows EV code signing cert** — **STATUS**: Cert purchased, shipping takes a few days
+  - See [HOWTO.md → Windows Code Signing](HOWTO.md#windows-code-signing)
 
 ---
 
-### 3. Manual Verification (only you can test these on your hardware)
+### 3. Manual Verification (only you can test on your hardware)
 
 #### macOS
-- [ ] **Test DMG install** — Download `.dmg` from the GitHub Release, open it, drag to Applications, launch. Confirm Gatekeeper reaction (expected: warning without notarization). Confirm app opens and connects to engine.
-  - **CURRENT STATUS**: NONE
-- [ ] **Launch on Startup** — In Settings → General, toggle on "Launch on Startup". Quit the app. Log out and back in. Confirm AI Matrx launches automatically.
-  - **CURRENT STATUS**: NONE
-- [ ] **Minimize to Tray** — In Settings → General, toggle on "Minimize to Tray". Click the window close button (red X). Confirm app goes to menu bar (not quits). Click tray icon to reopen.
-  - **CURRENT STATUS**: NONE
-- [ ] **macOS Permissions** — First time a tool requiring them runs, macOS will prompt. Or grant manually in System Settings → Privacy & Security:
-  - Accessibility → AI Matrx (for TypeText, MouseClick, Hotkey, FocusWindow)
-  - Screen Recording → AI Matrx (for Screenshot tool)
-  - Microphone → AI Matrx (for RecordAudio, TranscribeAudio)
-- [ ] **User avatar** — Sign in with Google or GitHub. Go to Settings → Cloud & Account. Confirm your profile photo appears.
-- [ ] **Headless mode** — In Settings → Scraping, toggle headless off. Run a scrape. Confirm a real Chromium window opens.
-
-  - **CURRENT STATUS**: NONE
-
+- [ ] Test DMG install — download from GitHub Release, drag to Apps, launch, check Gatekeeper. **STATUS**: NONE
+- [ ] Launch on Startup — toggle in Settings → General, log out/in, confirm auto-launch. **STATUS**: NONE
+- [ ] Minimize to Tray — toggle in Settings → General, close window, confirm tray icon. **STATUS**: NONE
+- [ ] macOS Permissions — grant Accessibility, Screen Recording, Microphone
+  - See [HOWTO.md → macOS Permissions](HOWTO.md#macos-permissions). **STATUS**: NONE
+- [ ] User avatar — sign in with Google/GitHub, check Settings → Cloud & Account
+- [ ] Headless mode — toggle off in Settings → Scraping, run a scrape, confirm Chromium window opens
 
 #### Windows
-- [ ] **Test MSI install** — Download `.msi` from GitHub Release, install it. Confirm SmartScreen reaction. Confirm app launches.
-  - **CURRENT STATUS**: NONE
-- [ ] **Launch on Startup** — Same test as macOS above.
-  - **CURRENT STATUS**: NONE
+- [ ] Test MSI install — download from GitHub Release, install, check SmartScreen. **STATUS**: NONE
+- [ ] Launch on Startup — same as macOS test. **STATUS**: NONE
 
 #### Linux
-- [ ] **Test .deb or .AppImage** — Download from GitHub Release, install/run. Confirm launch.
-  - **CURRENT STATUS**: NONE
+- [ ] Test .deb or .AppImage — download from GitHub Release, install/run. **STATUS**: NONE
 
 ---
 
 ### 4. Cloud Sync Verification
-
-- [ ] **app_settings table** — In Supabase SQL Editor at https://app.supabase.com, run: `SELECT * FROM app_settings LIMIT 1;`. If error "table does not exist": re-run `migrations/002_app_instances_settings.sql`.
-- [ ] **note_folders table (Documents "New Folder" broken)** — Run in Supabase SQL Editor: `SELECT * FROM note_folders LIMIT 1;`. Then check RLS: `SELECT * FROM pg_policies WHERE tablename = 'note_folders';`. Policy must allow INSERT for `auth.uid() = user_id`. If missing, re-run `migrations/001_documents_schema.sql`.
-- [ ] **BRAVE_API_KEY for web search** — Get a key at https://api.search.brave.com, then add to root `.env`: `BRAVE_API_KEY=<your-key>`. Restart engine to enable web search in Tools page.
-- [ ] **Confirm Proxy "Test Connection" server URL** — What is the correct URL for our main server for the proxy roundtrip test? Tell the agent so it can implement the real test.
-- [x] **Run migration 003** — Done by agent via MCP 2026-03-02.
+- [ ] Verify `app_settings` table exists in Supabase
+  - See [HOWTO.md → Cloud Sync Verification](HOWTO.md#app_settings-table)
+- [ ] Verify `note_folders` table + RLS (Documents "New Folder" broken)
+  - See [HOWTO.md → Cloud Sync Verification](HOWTO.md#note_folders-table-documents-new-folder-broken)
+- [ ] Add `BRAVE_API_KEY` to `.env` for web search
+  - See [HOWTO.md → Cloud Sync Verification](HOWTO.md#brave_api_key-for-web-search)
+- [ ] Confirm Proxy "Test Connection" server URL — tell the agent the correct URL
+- [x] Run migration 003 — Done by agent via MCP 2026-03-02
 
 ---
 
-### 5. Testing Flow (how to test locally without a full build)
-
-**Quick test (daily development) — no build needed:**
-```bash
-# Terminal 1 — Python engine
-uv run python run.py
-
-# Terminal 2 — React web UI only (fast, no Tauri)
-cd desktop && pnpm dev
-# → Opens http://localhost:1420 in browser
-```
-This tests: engine API, all tools, all UI pages, auth, scraping.
-**Does NOT test:** Tauri-specific features (tray, autostart, sidecar lifecycle, system dialogs, OS file pickers).
-
-**Full desktop test (weekly / before releases):**
-```bash
-bash scripts/launch.sh
-# → Launches engine + pnpm tauri:dev
-# → Opens actual native desktop window
-```
-This tests everything including Tauri features. First run: 60–90s Rust compile.
-
-**After changes to the Python sidecar binary** (rarely needed):
-```bash
-bash scripts/build-sidecar.sh  # ~5 min build
-# Then pnpm tauri:dev uses the new binary
-```
-
-**Cleanup when you have stuck ports or multiple windows:**
-```bash
-bash scripts/stop.sh          # graceful
-bash scripts/stop.sh --force  # immediate kill
-```
+### 5. Testing Flow
+- See [HOWTO.md → Testing Locally](HOWTO.md#testing-locally) for all commands
 
 ---
 
 ### 6. Agent Fix Verification (confirm fixes worked)
-
-- [x] Dashboard: User profile card added (shows name, email, avatar, sign-out)
-- [x] Dashboard: Browser Engine label fixed ("Not Installed" + install hint)
-- [ ] Documents: New Folder / New Note — still need Supabase table verification (see section 4)
-- [x] Documents: Sync bar now always shows + sync button triggers real sync
-- [x] Scraping: UX overhauled — flat URL list, scroll, https:// auto-prefix
-- [x] Scraping: Persistence now uses localStorage history (100 entries) with History tab in UI
-- [x] Notify tool: now dispatches via osascript/PowerShell/notify-send
-- [x] Record Audio: better error messages for device-not-found
-- [x] Web search: argument mapping confirmed correct — just needs BRAVE_API_KEY (see section 4)
-- [x] System Info UI: Dashboard now shows live CPU/RAM/Disk/Battery gauges (10s refresh)
-- [x] Dark mode contrast: pages are clean
-- [ ] Settings → Proxy: "Test Connection" still fake (confirm server URL first)
-- [x] Settings → Scraping: Forbidden URL list — implemented (add/remove UI + backend enforcement)
-- [x] **Run migration 003** — `forbidden_urls` table created with RLS (select/insert/delete own) and index. Run by agent via MCP 2026-03-02.
-- [x] Installed Apps: persistent list with refresh — already implemented with localStorage cache
+- [x] Dashboard: User profile card added
+- [x] Dashboard: Browser Engine label fixed
+- [ ] Documents: New Folder / New Note — need Supabase table verification (see section 4)
+- [x] Documents: Sync bar shows + sync button works
+- [x] Scraping: UX overhauled — flat URL list, scroll, auto-prefix
+- [x] Scraping: localStorage history (100 entries) with History tab
+- [x] Notify tool: dispatches via osascript/PowerShell/notify-send
+- [x] Record Audio: better device-not-found errors
+- [x] Web search: argument mapping correct — needs BRAVE_API_KEY (see section 4)
+- [x] System Info UI: live CPU/RAM/Disk/Battery gauges
+- [x] Dark mode contrast: clean
+- [ ] Settings → Proxy: "Test Connection" still fake (need server URL)
+- [x] Settings → Scraping: Forbidden URL list implemented
+- [x] Migration 003: `forbidden_urls` table created with RLS
+- [x] Installed Apps: persistent list with refresh
 
 ---
 
 ## Known Gaps (future work — not urgent)
 
-- [ ] No first-run setup wizard for new users
-- [ ] No rate limiting on the remote scraper server per user
+- [ ] First-run setup wizard for new users
+- [ ] Rate limiting on remote scraper server per user
 - [ ] Wake-on-LAN support
 - [ ] Smart device control (HomeKit, Google Home, Alexa APIs)
 - [ ] Reverse tunnel for cloud→local proxy routing
@@ -153,10 +92,10 @@ bash scripts/stop.sh --force  # immediate kill
 
 ## Notes
 
-- **Auth:** Scraper server supports dual auth — API key AND Supabase JWT. Both work.
+- **Auth:** Scraper server supports dual auth — API key AND Supabase JWT
 - **OAuth app:** Client ID `af37ec97-3e0c-423c-a205-3d6c5adc5645`, type `public`
-- **Shipping:** Users auth via Supabase OAuth → JWT works directly on scraper server. No embedded API keys in binary.
-- **Tool count:** 79 tools on `main` (dispatcher; LOCAL_TOOL_MANIFEST has 62 for cloud sync)
+- **Shipping:** Users auth via Supabase OAuth → JWT works on scraper server. No embedded API keys
+- **Tool count:** 79 tools on `main` (62 in LOCAL_TOOL_MANIFEST for cloud sync)
 - **Chat UI:** Merged 2026-02-21 — collapsible sidebar, conversation history, tool call rendering
 - **GPT PR #1:** `codex/create-user-friendly-ui-for-tools-tab` — Tools page redesign
 
@@ -166,30 +105,29 @@ bash scripts/stop.sh --force  # immediate kill
 
 ### Recently (2026-03-02)
 
-- [x] **Ports Grace Kill contrast** — Semantic tokens in Ports.tsx; no more dark red on black.
-- [x] **Open Logs / Open Data Folder** — Now use `POST /system/open-folder`; buttons work when engine connected.
-- [x] **User avatar CSP** — `img-src` expanded for `lh3.google.com`, `avatars.githubusercontent.com`, `gravatar.com`.
-- [x] **Prose markdown** — `@tailwindcss/typography` installed; NoteEditor uses `prose prose-sm dark:prose-invert`.
-- [x] **GitHub Actions** — `release.yml` builds 4 platforms; Apple notarization env vars wired; auto-publishes releases.
-- [x] **v1.0.0 tag pushed** — CI build triggered. Version synced: pyproject.toml + tauri.conf.json + engine root endpoint.
-- [x] **Capabilities tab** — Settings → Capabilities shows Playwright/Whisper/sounddevice/psutil/etc. status + Install buttons.
-- [x] **stop.sh created** — `bash scripts/stop.sh` kills all Matrx processes and frees ports 22140–22159 + 1420.
+- [x] Ports Grace Kill contrast — semantic tokens in Ports.tsx
+- [x] Open Logs / Open Data Folder — uses `POST /system/open-folder`
+- [x] User avatar CSP — `img-src` expanded for Google/GitHub/Gravatar
+- [x] Prose markdown — `@tailwindcss/typography` installed, NoteEditor uses prose classes
+- [x] GitHub Actions — `release.yml` builds 4 platforms with notarization wired
+- [x] v1.0.0 tag pushed — CI build triggered, version synced everywhere
+- [x] Capabilities tab — Settings → Capabilities shows status + Install buttons
+- [x] stop.sh created — kills all Matrx processes and frees ports
 
 ### Earlier
 
-- [x] Full QA pass completed 2026-02-21 — all findings documented in `AGENT_TASKS.md`
-- [x] Copy `desktop/.env.example` → `desktop/.env` with Supabase publishable key
-- [x] OAuth redirect URLs in Supabase Dashboard; Google, GitHub, Apple providers enabled
-- [x] Root `.env` created with `API_KEY`, `SCRAPER_API_KEY`, `SCRAPER_SERVER_URL`
-- [x] `SUPABASE_JWKS_URL` set in Coolify; scraper-service JWT auth pushed to main
-- [x] OAuth app registered (Client ID: `af37ec97-3e0c-423c-a205-3d6c5adc5645`)
+- [x] Full QA pass completed 2026-02-21
+- [x] Copy `desktop/.env.example` → `desktop/.env` with Supabase key
+- [x] OAuth redirect URLs + providers enabled in Supabase
+- [x] Root `.env` created with API keys
+- [x] `SUPABASE_JWKS_URL` set in Coolify; JWT auth pushed to main
+- [x] OAuth app registered
 - [x] `uv sync --extra all` run; Playwright Chromium installed
-- [x] Scheduler persistence, WiFi tool macOS 13+ rewrite, AppleScript permission messages
-- [x] Merged `expand-desktop-tools` → `main` (79 tools in dispatcher)
-- [x] GitHub Actions secrets set (`TAURI_SIGNING_PRIVATE_KEY` + password)
-- [x] `migrations/001_documents_schema.sql` run in Supabase ✓
-- [x] `migrations/002_app_instances_settings.sql` run in Supabase ✓
-- [x] Supabase Realtime enabled on `notes`, `note_folders`, `note_shares`
-- [x] `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` added to root `.env`
-- [x] Device registration with cloud backend — implemented via app instance registration
-- [x] Smoke-tested individual tool categories — full findings in AGENT_TASKS.md
+- [x] Scheduler persistence, WiFi tool rewrite, AppleScript permission messages
+- [x] Merged `expand-desktop-tools` → `main` (79 tools)
+- [x] GitHub Actions secrets set
+- [x] Migrations 001 & 002 run in Supabase
+- [x] Supabase Realtime enabled on notes tables
+- [x] Supabase env vars added to root `.env`
+- [x] Device registration implemented
+- [x] Smoke-tested individual tool categories
