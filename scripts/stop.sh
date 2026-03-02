@@ -142,10 +142,12 @@ if $IS_LINUX || $IS_WSL; then
   while IFS= read -r pid_dir; do
     pid="${pid_dir##*/}"
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null || true)
+    # Read cmdline safely — process may have exited between ls and here
+    [[ -r "$pid_dir/cmdline" ]] || continue
+    cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null) || continue
     if [[ "$cmdline" == *"run.py"* ]]; then
       label="run.py"
-      [[ "$cmdline" == *"$ROOT"* ]] && label="run.py (this project)" || label="run.py (other project: $cmdline)"
+      [[ "$cmdline" == *"$ROOT"* ]] && label="run.py (this project)" || label="run.py (other project)"
       do_kill "$pid" "$label"
       killed_any=true
     fi
@@ -194,7 +196,8 @@ if $IS_LINUX || $IS_WSL; then
   while IFS= read -r pid_dir; do
     pid="${pid_dir##*/}"
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null || true)
+    [[ -r "$pid_dir/cmdline" ]] || continue
+    cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null) || continue
     if [[ "$cmdline" == *"ai-matrx"* ]] || [[ "$cmdline" == *"AI Matrx"* ]] || \
        [[ "$cmdline" == *"tauri:dev"* ]] || \
        ([[ "$cmdline" == *"cargo"* ]] && [[ "$cmdline" == *"$ROOT"* ]]); then
@@ -219,7 +222,8 @@ if $IS_LINUX || $IS_WSL; then
   while IFS= read -r pid_dir; do
     pid="${pid_dir##*/}"
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null || true)
+    [[ -r "$pid_dir/cmdline" ]] || continue
+    cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null) || continue
     if [[ "$cmdline" == *"aimatrx-engine"* ]]; then
       do_kill "$pid" "aimatrx-engine sidecar"
       sidecar_killed=true
