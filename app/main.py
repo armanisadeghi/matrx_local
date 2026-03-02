@@ -33,41 +33,71 @@ websocket_manager = WebSocketManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    import time as _startup_time
+    _t0 = _startup_time.monotonic()
+    logger.info("[app/main.py] ── Matrx Local startup ─────────────────────────────────────")
+
     # Phase 1: Initialize matrx-ai (loads env, registers DB if credentials present)
+    logger.info("[app/main.py] Phase 1: Initializing matrx-ai engine...")
     try:
         initialize_matrx_ai()
-    except Exception:
-        logger.error("matrx-ai initialization failed — AI endpoints may not work", exc_info=True)
-
-    # Phase 2: Load tool registry from DB and register all local OS tools.
-    # Done async here so DB queries can run without blocking the event loop.
-    try:
-        await load_tools_and_register()
+        logger.info("[app/main.py] Phase 1: matrx-ai initialized ✓")
     except Exception:
         logger.error(
-            "matrx-ai tool registration failed — AI may not have tool access",
+            "[app/main.py] Phase 1: matrx-ai initialization FAILED — AI endpoints will not work. "
+            "Check SUPABASE_MATRIX_* vars in .env",
             exc_info=True,
         )
 
+    # Phase 2: Load tool registry from DB and register all local OS tools.
+    logger.info("[app/main.py] Phase 2: Loading tool registry...")
+    try:
+        await load_tools_and_register()
+        logger.info("[app/main.py] Phase 2: Tool registry loaded ✓")
+    except Exception:
+        logger.error(
+            "[app/main.py] Phase 2: Tool registration FAILED — AI may not have tool access",
+            exc_info=True,
+        )
+
+    # Phase 3: Start scraper engine
+    logger.info("[app/main.py] Phase 3: Starting scraper engine...")
     engine = get_scraper_engine()
     try:
         await engine.start()
+        logger.info("[app/main.py] Phase 3: Scraper engine started ✓")
     except Exception:
-        logger.error("Scraper engine failed to start — scraping tools will be unavailable", exc_info=True)
+        logger.error(
+            "[app/main.py] Phase 3: Scraper engine FAILED to start — scraping tools will be unavailable",
+            exc_info=True,
+        )
 
     restored = await restore_scheduled_tasks()
     if restored:
-        logger.info("Scheduler: %d task(s) restored from previous session", restored)
+        logger.info("[app/main.py] Scheduler: %d task(s) restored from previous session", restored)
 
-    # Start HTTP proxy if enabled in settings
+    # Phase 4: Start HTTP proxy if enabled in settings
     settings_sync = get_settings_sync()
-    if settings_sync.get("proxy_enabled", True):
+    proxy_enabled = settings_sync.get("proxy_enabled", True)
+    logger.info("[app/main.py] Phase 4: HTTP proxy enabled=%s", proxy_enabled)
+    if proxy_enabled:
         try:
             proxy = get_proxy_server()
             proxy_port = settings_sync.get("proxy_port", 22180)
+            logger.info("[app/main.py] Phase 4: Starting proxy on 127.0.0.1:%d...", proxy_port)
             await proxy.start(port=proxy_port)
+            logger.info("[app/main.py] Phase 4: HTTP proxy started ✓ on port %d", proxy_port)
+        except OSError as exc:
+            logger.error(
+                "[app/main.py] Phase 4: HTTP proxy FAILED to start — port %d is already in use. "
+                "Another process is holding this port. Kill it with: lsof -ti:%d | xargs kill -9  "
+                "Error: %s",
+                settings_sync.get("proxy_port", 22180),
+                settings_sync.get("proxy_port", 22180),
+                exc,
+            )
         except Exception:
-            logger.error("HTTP proxy failed to start", exc_info=True)
+            logger.error("[app/main.py] Phase 4: HTTP proxy FAILED to start", exc_info=True)
 
     # Background heartbeat: updates last_seen and retries failed syncs
     async def _heartbeat_loop() -> None:
@@ -86,8 +116,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start retry queue poller (polls remote server for failed scrapes to retry locally)
     retry_queue.start()
 
+    elapsed = _startup_time.monotonic() - _t0
+    logger.info(
+        "[app/main.py] ── Startup complete in %.1fs — scraper=%s, proxy=%s ──────────────",
+        elapsed,
+        engine.is_ready,
+        get_proxy_server().running,
+    )
+
     yield
 
+    logger.info("[app/main.py] ── Matrx Local shutdown ────────────────────────────────────")
     retry_queue.stop()
     heartbeat_task.cancel()
     try:
@@ -95,17 +134,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except asyncio.CancelledError:
         pass
 
-    # Stop proxy server
     try:
         proxy = get_proxy_server()
         await proxy.stop()
+        logger.info("[app/main.py] HTTP proxy stopped ✓")
     except Exception:
-        logger.error("HTTP proxy failed to stop cleanly", exc_info=True)
+        logger.error("[app/main.py] HTTP proxy failed to stop cleanly", exc_info=True)
 
     try:
         await engine.stop()
+        logger.info("[app/main.py] Scraper engine stopped ✓")
     except Exception:
-        logger.error("Scraper engine failed to stop cleanly", exc_info=True)
+        logger.error("[app/main.py] Scraper engine failed to stop cleanly", exc_info=True)
 
 
 app = FastAPI(

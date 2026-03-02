@@ -44,6 +44,13 @@ def initialize_matrx_ai() -> None:
     db_host = os.getenv("SUPABASE_MATRIX_HOST", "").strip()
 
     if db_host:
+        logger.info(
+            "[app/services/ai/engine.py] matrx-ai: connecting to DB — host=%s port=%s db=%s user=%s",
+            db_host,
+            os.getenv("SUPABASE_MATRIX_PORT", "6543"),
+            os.getenv("SUPABASE_MATRIX_DATABASE_NAME", "postgres"),
+            os.getenv("SUPABASE_MATRIX_USER", "(not set)"),
+        )
         try:
             matrx_ai.initialize(
                 db_name="supabase_automation_matrix",
@@ -51,17 +58,20 @@ def initialize_matrx_ai() -> None:
                 db_additional_schemas=["auth"],
                 db_env_var_overrides={"NAME": "SUPABASE_MATRIX_DATABASE_NAME"},
             )
-            logger.info("matrx-ai: initialized with database persistence")
+            logger.info("[app/services/ai/engine.py] matrx-ai: initialized with database persistence ✓")
         except Exception:
             logger.warning(
-                "matrx-ai: DB initialization failed — AI calls will work but "
-                "conversations won't be persisted",
+                "[app/services/ai/engine.py] matrx-ai: DB initialization FAILED — "
+                "AI calls will work but conversations won't be persisted. "
+                "Attempted: host=%s port=%s. Check SUPABASE_MATRIX_* vars in .env",
+                db_host,
+                os.getenv("SUPABASE_MATRIX_PORT", "6543"),
                 exc_info=True,
             )
     else:
         logger.info(
-            "matrx-ai: SUPABASE_MATRIX_HOST not set — running without DB persistence. "
-            "Set it in .env to enable conversation history."
+            "[app/services/ai/engine.py] matrx-ai: SUPABASE_MATRIX_HOST not set — "
+            "running without DB persistence. Set it in .env to enable conversation history."
         )
 
     _ai_initialized = True
@@ -92,11 +102,15 @@ async def load_tools_and_register() -> None:
         registry = ToolRegistryV2.get_instance()
         if not registry.loaded:
             count = await registry.load_from_database()
-            logger.info("matrx-ai: loaded %d tools from DB into registry", count)
+            logger.info("[app/services/ai/engine.py] matrx-ai: loaded %d tools from DB into registry ✓", count)
         else:
-            logger.debug("matrx-ai: tool registry already loaded")
+            logger.debug("[app/services/ai/engine.py] matrx-ai: tool registry already loaded")
     except Exception:
-        logger.warning("matrx-ai: failed to load tool registry from DB", exc_info=True)
+        logger.warning(
+            "[app/services/ai/engine.py] matrx-ai: FAILED to load tool registry from DB — "
+            "AI agents won't have access to cloud-registered tools",
+            exc_info=True,
+        )
 
     # --- Phase B: register local OS tools into the same registry ---
     try:
@@ -104,10 +118,11 @@ async def load_tools_and_register() -> None:
         from matrx_ai.tools.registry import ToolRegistryV2
         registry = ToolRegistryV2.get_instance()
         n = register_local_tools(registry)
-        logger.info("matrx-ai: registered %d local OS tools into registry", n)
+        logger.info("[app/services/ai/engine.py] matrx-ai: registered %d local OS tools into registry ✓", n)
     except Exception:
         logger.error(
-            "matrx-ai: local tool registration failed — AI won't have OS tool access",
+            "[app/services/ai/engine.py] matrx-ai: local tool registration FAILED — "
+            "AI won't have access to OS tools",
             exc_info=True,
         )
 

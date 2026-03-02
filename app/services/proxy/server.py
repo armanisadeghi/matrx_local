@@ -63,18 +63,34 @@ class ProxyServer:
     async def start(self, port: int = 0) -> int:
         """Start the proxy server. Returns the port it bound to."""
         if self._running:
+            logger.info(
+                "[app/services/proxy/server.py] HTTP proxy already running on port %d", self._port
+            )
             return self._port
 
         chosen_port = port or self._find_available_port()
-        self._server = await asyncio.start_server(
-            self._handle_client,
-            host="127.0.0.1",
-            port=chosen_port,
+        logger.info(
+            "[app/services/proxy/server.py] Binding HTTP proxy to 127.0.0.1:%d...", chosen_port
         )
+        try:
+            self._server = await asyncio.start_server(
+                self._handle_client,
+                host="127.0.0.1",
+                port=chosen_port,
+            )
+        except OSError as exc:
+            logger.error(
+                "[app/services/proxy/server.py] Failed to bind proxy to port %d — %s. "
+                "Kill the process holding this port: lsof -ti:%d | xargs kill -9",
+                chosen_port, exc, chosen_port,
+            )
+            raise
         self._port = chosen_port
         self._running = True
         self._started_at = time.time()
-        logger.info("HTTP proxy server started on 127.0.0.1:%d", chosen_port)
+        logger.info(
+            "[app/services/proxy/server.py] HTTP proxy server started ✓ on 127.0.0.1:%d", chosen_port
+        )
         return chosen_port
 
     async def stop(self) -> None:

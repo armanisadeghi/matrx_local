@@ -33,6 +33,9 @@ export function useEngine() {
   const initRef = useRef(false);
   const statusRef = useRef(state.status);
   statusRef.current = state.status;
+  // Timestamp when the engine was first discovered. Used to suppress false
+  // "disconnected" flips during the engine's slow startup phase (~60s).
+  const connectedAtRef = useRef<number | null>(null);
 
   const update = useCallback((partial: Partial<EngineState>) => {
     if (mountedRef.current) {
@@ -77,6 +80,7 @@ export function useEngine() {
       return;
     }
 
+    connectedAtRef.current = Date.now();
     update({ url, status: "connected", error: null });
 
     // Load tools list
@@ -150,12 +154,21 @@ export function useEngine() {
       update({ wsConnected: false })
     );
 
-    // Periodic health check
+    // Periodic health check — runs every 10s, but suppresses false "disconnected"
+    // flips for 90s after first connection to allow for slow engine startup.
+    const STARTUP_GRACE_MS = 90_000;
     const healthInterval = setInterval(async () => {
       const healthy = await engine.isHealthy();
       if (!healthy && statusRef.current === "connected") {
-        update({ status: "disconnected" });
+        const msSinceConnect = connectedAtRef.current
+          ? Date.now() - connectedAtRef.current
+          : Infinity;
+        if (msSinceConnect > STARTUP_GRACE_MS) {
+          update({ status: "disconnected" });
+        }
+        // Within grace period: engine is still booting, stay "connected"
       } else if (healthy && statusRef.current === "disconnected") {
+        connectedAtRef.current = Date.now();
         update({ status: "connected" });
       }
     }, 10000);

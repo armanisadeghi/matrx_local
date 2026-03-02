@@ -197,20 +197,42 @@ class ScraperEngine:
         try:
             self._settings = settings_cls()  # type: ignore[call-arg]
         except Exception:
-            logger.exception("ScraperEngine: failed to load settings")
+            logger.exception(
+                "[app/services/scraper/engine.py] ScraperEngine: failed to load settings — "
+                "check .env for missing required vars"
+            )
             return
 
         db_pool = None
+        raw_db_url = os.environ.get("DATABASE_URL", "")
         if self._settings.DATABASE_URL:
+            masked = self._settings.DATABASE_URL
+            try:
+                from urllib.parse import urlparse as _urlparse
+                _u = _urlparse(self._settings.DATABASE_URL)
+                masked = f"{_u.scheme}://{_u.username}:***@{_u.hostname}:{_u.port}{_u.path}"
+            except Exception:
+                pass
+            logger.info(
+                "[app/services/scraper/engine.py] ScraperEngine: connecting to database — %s", masked
+            )
             try:
                 conn_mod = _import_scraper("app.db.connection")
                 db_pool = await conn_mod.create_pool(self._settings.DATABASE_URL, min_size=1, max_size=5)
-                logger.info("ScraperEngine: database connected")
-            except Exception:
-                logger.warning("ScraperEngine: database unavailable — running without persistent cache")
+                logger.info("[app/services/scraper/engine.py] ScraperEngine: database connected ✓")
+            except Exception as db_exc:
+                logger.warning(
+                    "[app/services/scraper/engine.py] ScraperEngine: database unavailable — "
+                    "running without persistent cache. URL attempted: %s  Error: %s",
+                    masked,
+                    db_exc,
+                )
                 db_pool = None
         else:
-            logger.info("ScraperEngine: no DATABASE_URL — running without persistent cache")
+            logger.info(
+                "[app/services/scraper/engine.py] ScraperEngine: DATABASE_URL is empty — "
+                "running with in-memory cache only (set DATABASE_URL in .env to enable persistent cache)"
+            )
         self._db_pool = db_pool
 
         try:
@@ -220,9 +242,17 @@ class ScraperEngine:
             )
             await browser_pool.start()
             self._browser_pool = browser_pool
-            logger.info("ScraperEngine: browser pool started (size=%d)", self._settings.PLAYWRIGHT_POOL_SIZE)
-        except Exception:
-            logger.warning("ScraperEngine: Playwright unavailable — browser fetching disabled")
+            logger.info(
+                "[app/services/scraper/engine.py] ScraperEngine: browser pool started ✓ (size=%d)",
+                self._settings.PLAYWRIGHT_POOL_SIZE,
+            )
+        except Exception as pw_exc:
+            logger.warning(
+                "[app/services/scraper/engine.py] ScraperEngine: Playwright unavailable — "
+                "browser fetching disabled. Falling back to curl-cffi.  Error: %s  "
+                "Tip: run 'uv sync --extra browser && uv run playwright install chromium'",
+                pw_exc,
+            )
             self._browser_pool = None
 
         fetcher_mod = _import_scraper("app.core.fetcher.fetcher")
