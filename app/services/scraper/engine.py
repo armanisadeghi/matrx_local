@@ -213,11 +213,11 @@ class ScraperEngine:
             logger.info("ScraperEngine: no DATABASE_URL — running without persistent cache")
         self._db_pool = db_pool
 
-        browser_pool_mod = _import_scraper("app.core.fetcher.browser_pool")
-        browser_pool = browser_pool_mod.PlaywrightBrowserPool(
-            pool_size=self._settings.PLAYWRIGHT_POOL_SIZE,
-        )
         try:
+            browser_pool_mod = _import_scraper("app.core.fetcher.browser_pool")
+            browser_pool = browser_pool_mod.PlaywrightBrowserPool(
+                pool_size=self._settings.PLAYWRIGHT_POOL_SIZE,
+            )
             await browser_pool.start()
             self._browser_pool = browser_pool
             logger.info("ScraperEngine: browser pool started (size=%d)", self._settings.PLAYWRIGHT_POOL_SIZE)
