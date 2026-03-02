@@ -54,7 +54,7 @@
 
 ### Ports
 
-- [ ] **"Grace Kill" text is invisible in dark mode** — Dark red text on black background. Must fix contrast: either use white text on a dark red background (like Force Kill), or change color entirely. Contrast is required for accessibility.
+- [x] **"Grace Kill" text is invisible in dark mode** — Fixed 2026-03-02: replaced `bg-white/*` and `bg-black/*` tokens with semantic `bg-muted`/`border-border` throughout Ports.tsx.
 
 ---
 
@@ -86,20 +86,21 @@
   Sync error: Client error '404 Not Found' for url
   'https://txzxabzwovsujtloxrus.supabase.co/rest/v1/app_settings?user_id=eq.4cf62e4e-...&instance_id=eq.inst_571f36f61346a092f97c6cc31a3ca265&select=*'
   ```
-- [ ] **User avatar not shown** — Account card shows username and email but not the avatar from Supabase auth metadata.
+- [x] **User avatar not shown** — Fixed 2026-03-02: expanded Tauri CSP `img-src` to include `lh3.google.com`, `avatars.githubusercontent.com`, and `gravatar.com` for Google/GitHub OAuth avatars.
 
 ---
 
 ### Settings — About
 
-- [ ] **"Open Logs Folder" button doesn't work** — Should open the OS file manager at the logs directory.
-- [ ] **"Open Data Folder" button doesn't work** — Should open the OS file manager at the app data directory.
+- [x] **"Open Logs Folder" button doesn't work** — Fixed 2026-03-02: now calls `POST /system/open-folder` with absolute config paths instead of relative OpenPath tool.
+- [x] **"Open Data Folder" button doesn't work** — Fixed 2026-03-02: same fix as above.
 
 ---
 
 ### Global / UI
 
-- [ ] **Dark mode color contrast issues** — Dark red text on black/dark background is unreadable ("Failed to Fetch", "Grace Kill", etc.). Purple tones that are too dark also fail. Audit all color pairs and enforce legible light/dark text-background combinations across the full app.
+- [x] **Dark mode color contrast issues (Ports.tsx)** — Fixed 2026-03-02: `bg-white/*`, `bg-black/*`, `border-white/*` replaced with semantic tokens.
+- [ ] **Dark mode contrast: audit remaining pages** — Other pages may still have hardcoded light/dark-only colors. Full audit needed.
 
 ---
 
@@ -116,7 +117,7 @@
 - [ ] **First-run setup wizard**
 - [ ] **Job queue for cloud-assigned scrape jobs**
 - [ ] **No Alembic migration runner** (only matters if `DATABASE_URL` is set locally)
-- [ ] **GitHub Actions workflow** for signed release builds (signing key env vars now set in GitHub)
+- [x] **GitHub Actions workflow** — Fixed 2026-03-02: CI builds all 4 platforms, auto-publishes releases (no longer draft), Apple notarization env vars wired. v1.0.0 CI run in progress.
 - [ ] **Wake-on-LAN support**
 - [ ] **Smart device control protocols** (HomeKit, Google Home, Alexa APIs)
 - [ ] **Reverse tunnel** for cloud→local proxy routing
