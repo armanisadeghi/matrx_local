@@ -9,16 +9,9 @@
 
 > Tasks, notes and bugs listed here must be immediatley analyzed and then added to the AGENT PRIORITY QUEUE.
 
-- [ ] When our react application makes api calls to this system, we're getting 401 unauthorized errors. 
-INFO:     127.0.0.1:33126 - "GET /health HTTP/1.1" 401 Unauthorized
-2026-03-02 13:35:41,694 - system_logger - INFO - Request: GET http://127.0.0.1:22140/version | Body: None
-2026-03-02 13:35:41,695 - system_logger - INFO - Response: 401 for GET http://127.0.0.1:22140/version
-INFO:     127.0.0.1:33138 - "GET /version HTTP/1.1" 401 Unauthorized
-2026-03-02 13:35:41,695 - system_logger - INFO - Request: GET http://127.0.0.1:22140/ports | Body: None
-2026-03-02 13:35:41,696 - system_logger - INFO - Response: 401 for GET http://127.0.0.1:22140/ports
-INFO:     127.0.0.1:33152 - "GET /ports HTTP/1.1" 401 Unauthorized
+- [x] **401 Unauthorized on web→local API calls** — Fixed 2026-03-02: Three changes: (1) Added `/health`, `/version`, `/ports` endpoints to `routes.py` (they didn't exist); (2) Added these + `/cloud/heartbeat` to `_PUBLIC_PATHS` in `auth.py`; (3) Added auth to WebSocket `/ws` endpoint (`main.py`) — `BaseHTTPMiddleware` doesn't intercept WS upgrades so it was completely unprotected. Created `docs/WEB_CLIENT_INTEGRATION.md` for React team. React team's `useMatrxLocal.ts` reviewed and approved.
 
-- [ ] When we try to connect to the devices on the user's machine and things like that in the ui, we're facing errors and in some caes, we are telling the user to "pip install" some package, which is rediculous because end users don't do that!
+- [x] **Tool error messages show raw `pip install` commands** — Fixed 2026-03-02: All 14 occurrences across 5 tool files (`browser_automation.py`, `audio.py`, `media.py`, `network_discovery.py`, `system_monitor.py`) now show user-friendly messages: "Go to Settings → Capabilities to install it". Each includes `fix_capability_id` in metadata for "Fix It" buttons. Dev info (pip commands) preserved after newline.
 
 
 ## 🔴 AGENT PRIORITY QUEUE (updated 2026-03-02)

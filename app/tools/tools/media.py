@@ -31,7 +31,9 @@ async def tool_image_ocr(
     """
     resolved = session.resolve_path(file_path)
     if not os.path.isfile(resolved):
-        return ToolResult(type=ToolResultType.ERROR, output=f"File not found: {resolved}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"File not found: {resolved}"
+        )
 
     try:
         import pytesseract
@@ -53,7 +55,11 @@ async def tool_image_ocr(
         # Try CLI fallback
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tesseract", resolved, "stdout", "-l", language,
+                "tesseract",
+                resolved,
+                "stdout",
+                "-l",
+                language,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -93,7 +99,9 @@ async def tool_image_resize(
     """
     resolved = session.resolve_path(file_path)
     if not os.path.isfile(resolved):
-        return ToolResult(type=ToolResultType.ERROR, output=f"File not found: {resolved}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"File not found: {resolved}"
+        )
 
     try:
         from PIL import Image
@@ -154,7 +162,10 @@ async def tool_image_resize(
     except ImportError:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Pillow not installed. Install: pip install Pillow",
+            output=(
+                "Image processing library (Pillow) is not installed.\n"
+                "Developer info: pip install Pillow"
+            ),
         )
     except Exception as e:
         return ToolResult(type=ToolResultType.ERROR, output=f"Image resize failed: {e}")
@@ -172,7 +183,9 @@ async def tool_pdf_extract(
     """
     resolved = session.resolve_path(file_path)
     if not os.path.isfile(resolved):
-        return ToolResult(type=ToolResultType.ERROR, output=f"File not found: {resolved}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"File not found: {resolved}"
+        )
 
     try:
         import fitz  # PyMuPDF
@@ -204,7 +217,10 @@ async def tool_pdf_extract(
                         base_image = doc.extract_image(xref)
                         img_dir = TEMP_DIR / "pdf_images"
                         img_dir.mkdir(parents=True, exist_ok=True)
-                        img_path = img_dir / f"page{page_num + 1}_img{img_idx}.{base_image['ext']}"
+                        img_path = (
+                            img_dir
+                            / f"page{page_num + 1}_img{img_idx}.{base_image['ext']}"
+                        )
                         img_path.write_bytes(base_image["image"])
                         images_extracted += 1
                     except Exception:
@@ -218,7 +234,9 @@ async def tool_pdf_extract(
 
         output = f"PDF: {resolved} ({total_pages} pages, extracted {len(page_list)} pages)\n\n{full_text}"
         if extract_images and images_extracted > 0:
-            output += f"\n\nExtracted {images_extracted} images to {TEMP_DIR}/pdf_images/"
+            output += (
+                f"\n\nExtracted {images_extracted} images to {TEMP_DIR}/pdf_images/"
+            )
 
         return ToolResult(
             output=output,
@@ -233,10 +251,17 @@ async def tool_pdf_extract(
     except ImportError:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="PyMuPDF not installed. Install: pip install PyMuPDF",
+            output=(
+                "PDF Extraction is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install PyMuPDF"
+            ),
+            metadata={"fix_capability_id": "pdf_extraction"},
         )
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"PDF extraction failed: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"PDF extraction failed: {e}"
+        )
 
 
 def _parse_page_range(pages: str, total: int) -> list[int]:
@@ -276,7 +301,12 @@ async def tool_archive_create(
             return ToolResult(type=ToolResultType.ERROR, output=f"Not found: {src}")
 
     if not output_path:
-        ext = {"zip": ".zip", "tar": ".tar", "tar.gz": ".tar.gz", "tar.bz2": ".tar.bz2"}.get(format, ".zip")
+        ext = {
+            "zip": ".zip",
+            "tar": ".tar",
+            "tar.gz": ".tar.gz",
+            "tar.bz2": ".tar.bz2",
+        }.get(format, ".zip")
         out_dir = TEMP_DIR / "archives"
         out_dir.mkdir(parents=True, exist_ok=True)
         output_path = str(out_dir / f"archive_{uuid.uuid4().hex[:8]}{ext}")
@@ -285,7 +315,9 @@ async def tool_archive_create(
 
     try:
         if format == "zip":
-            comp = zipfile.ZIP_DEFLATED if compression == "deflate" else zipfile.ZIP_STORED
+            comp = (
+                zipfile.ZIP_DEFLATED if compression == "deflate" else zipfile.ZIP_STORED
+            )
             with zipfile.ZipFile(output_path, "w", comp) as zf:
                 for src in resolved_sources:
                     if os.path.isfile(src):
@@ -304,7 +336,9 @@ async def tool_archive_create(
                 for src in resolved_sources:
                     tf.add(src, arcname=os.path.basename(src))
         else:
-            return ToolResult(type=ToolResultType.ERROR, output=f"Unknown format: {format}")
+            return ToolResult(
+                type=ToolResultType.ERROR, output=f"Unknown format: {format}"
+            )
 
         file_size = os.path.getsize(output_path)
         return ToolResult(
@@ -313,7 +347,9 @@ async def tool_archive_create(
         )
 
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Archive creation failed: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Archive creation failed: {e}"
+        )
 
 
 async def tool_archive_extract(
@@ -324,7 +360,9 @@ async def tool_archive_extract(
     """Extract an archive (zip, tar, tar.gz, tar.bz2, 7z)."""
     resolved = session.resolve_path(file_path)
     if not os.path.isfile(resolved):
-        return ToolResult(type=ToolResultType.ERROR, output=f"File not found: {resolved}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"File not found: {resolved}"
+        )
 
     if not output_dir:
         out = TEMP_DIR / "extracted" / uuid.uuid4().hex[:8]
@@ -349,7 +387,11 @@ async def tool_archive_extract(
         else:
             # Try 7z via command line
             proc = await asyncio.create_subprocess_exec(
-                "7z", "x", resolved, f"-o{out}", "-y",
+                "7z",
+                "x",
+                resolved,
+                f"-o{out}",
+                "-y",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

@@ -34,6 +34,7 @@ async def tool_list_audio_devices(
     """List available audio input (microphones) and output (speakers) devices."""
     try:
         import sounddevice as sd
+
         devices = sd.query_devices()
         inputs = []
         outputs = []
@@ -53,11 +54,15 @@ async def tool_list_audio_devices(
 
         lines = ["Input Devices (Microphones):"]
         for d in inputs:
-            lines.append(f"  [{d['index']}] {d['name']} ({d['channels']}ch, {d['sample_rate']:.0f}Hz)")
+            lines.append(
+                f"  [{d['index']}] {d['name']} ({d['channels']}ch, {d['sample_rate']:.0f}Hz)"
+            )
         lines.append("")
         lines.append("Output Devices (Speakers):")
         for d in outputs:
-            lines.append(f"  [{d['index']}] {d['name']} ({d['channels']}ch, {d['sample_rate']:.0f}Hz)")
+            lines.append(
+                f"  [{d['index']}] {d['name']} ({d['channels']}ch, {d['sample_rate']:.0f}Hz)"
+            )
 
         return ToolResult(
             output="\n".join(lines),
@@ -73,7 +78,9 @@ def _list_devices_fallback() -> ToolResult:
         if IS_MACOS:
             result = subprocess.run(
                 ["system_profiler", "SPAudioDataType", "-json"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             return ToolResult(
                 output=f"Audio devices (raw):\n{result.stdout[:3000]}",
@@ -81,19 +88,28 @@ def _list_devices_fallback() -> ToolResult:
             )
         elif IS_WINDOWS:
             result = subprocess.run(
-                ["powershell", "-Command",
-                 "Get-WmiObject Win32_SoundDevice | Select-Object Name, Status | Format-List"],
-                capture_output=True, text=True, timeout=10,
+                [
+                    "powershell",
+                    "-Command",
+                    "Get-WmiObject Win32_SoundDevice | Select-Object Name, Status | Format-List",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             return ToolResult(output=f"Audio devices:\n{result.stdout}")
         else:
             result = subprocess.run(
                 ["arecord", "-l"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             result2 = subprocess.run(
                 ["aplay", "-l"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             return ToolResult(
                 output=f"Input devices:\n{result.stdout}\n\nOutput devices:\n{result2.stdout}",
@@ -101,7 +117,12 @@ def _list_devices_fallback() -> ToolResult:
     except Exception as e:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output=f"Install 'sounddevice' for device listing: pip install sounddevice. Error: {e}",
+            output=(
+                "Audio Recording is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                f"Developer info: pip install sounddevice. Error: {e}"
+            ),
+            metadata={"fix_capability_id": "audio_recording"},
         )
 
 
@@ -115,7 +136,9 @@ async def tool_record_audio(
 ) -> ToolResult:
     """Record audio from microphone for specified duration. Returns path to audio file."""
     if duration_seconds < 1 or duration_seconds > 300:
-        return ToolResult(type=ToolResultType.ERROR, output="Duration must be 1-300 seconds.")
+        return ToolResult(
+            type=ToolResultType.ERROR, output="Duration must be 1-300 seconds."
+        )
 
     _ensure_audio_dir()
     filename = f"recording_{uuid.uuid4().hex[:8]}.{format}"
@@ -125,8 +148,13 @@ async def tool_record_audio(
         import sounddevice as sd
         import numpy as np
 
-        logger.info("Recording %ds of audio (device=%s, rate=%d, ch=%d)",
-                     duration_seconds, device_index, sample_rate, channels)
+        logger.info(
+            "Recording %ds of audio (device=%s, rate=%d, ch=%d)",
+            duration_seconds,
+            device_index,
+            sample_rate,
+            channels,
+        )
 
         recording = sd.rec(
             int(duration_seconds * sample_rate),
@@ -136,12 +164,11 @@ async def tool_record_audio(
             device=device_index,
         )
         # Run in thread to not block event loop
-        await asyncio.get_event_loop().run_in_executor(
-            None, lambda: sd.wait()
-        )
+        await asyncio.get_event_loop().run_in_executor(None, lambda: sd.wait())
 
         # Save as WAV
         import wave
+
         with wave.open(str(filepath), "wb") as wf:
             wf.setnchannels(channels)
             wf.setsampwidth(2)  # int16
@@ -165,7 +192,11 @@ async def tool_record_audio(
         return await _record_fallback(filepath, duration_seconds, sample_rate, channels)
     except Exception as e:
         err_str = str(e)
-        if "No Default Input Device" in err_str or "Invalid device" in err_str or "PortAudio" in err_str:
+        if (
+            "No Default Input Device" in err_str
+            or "Invalid device" in err_str
+            or "PortAudio" in err_str
+        ):
             return ToolResult(
                 type=ToolResultType.ERROR,
                 output=(
@@ -179,14 +210,23 @@ async def tool_record_audio(
         return ToolResult(type=ToolResultType.ERROR, output=f"Recording failed: {e}")
 
 
-async def _record_fallback(filepath: Path, duration: int, rate: int, channels: int) -> ToolResult:
+async def _record_fallback(
+    filepath: Path, duration: int, rate: int, channels: int
+) -> ToolResult:
     """Record using system tools when sounddevice is not available."""
     try:
         if IS_MACOS:
             # Use sox/rec if available
             proc = await asyncio.create_subprocess_exec(
-                "rec", "-r", str(rate), "-c", str(channels), str(filepath),
-                "trim", "0", str(duration),
+                "rec",
+                "-r",
+                str(rate),
+                "-c",
+                str(channels),
+                str(filepath),
+                "trim",
+                "0",
+                str(duration),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -203,15 +243,25 @@ Start-Sleep -Seconds {duration}
 $stream.Close()
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe", "-Command", ps_script,
+                "powershell.exe",
+                "-Command",
+                ps_script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             await asyncio.wait_for(proc.communicate(), timeout=duration + 10)
         else:
             proc = await asyncio.create_subprocess_exec(
-                "arecord", "-d", str(duration), "-r", str(rate),
-                "-c", str(channels), "-f", "S16_LE", str(filepath),
+                "arecord",
+                "-d",
+                str(duration),
+                "-r",
+                str(rate),
+                "-c",
+                str(channels),
+                "-f",
+                "S16_LE",
+                str(filepath),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -222,15 +272,24 @@ $stream.Close()
                 output=f"Recorded {duration}s to {filepath} (system fallback)",
                 metadata={"path": str(filepath), "duration_seconds": duration},
             )
-        return ToolResult(type=ToolResultType.ERROR, output="Recording produced no file.")
+        return ToolResult(
+            type=ToolResultType.ERROR, output="Recording produced no file."
+        )
 
     except FileNotFoundError:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="No audio recording tools available. Install: pip install sounddevice numpy",
+            output=(
+                "Audio Recording is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install sounddevice numpy"
+            ),
+            metadata={"fix_capability_id": "audio_recording"},
         )
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Fallback recording failed: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Fallback recording failed: {e}"
+        )
 
 
 async def tool_play_audio(
@@ -242,7 +301,9 @@ async def tool_play_audio(
     resolved = session.resolve_path(file_path)
 
     if not os.path.isfile(resolved):
-        return ToolResult(type=ToolResultType.ERROR, output=f"File not found: {resolved}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"File not found: {resolved}"
+        )
 
     try:
         import sounddevice as sd
@@ -254,6 +315,7 @@ async def tool_play_audio(
             frames = wf.readframes(wf.getnframes())
 
         import numpy as np
+
         audio_data = np.frombuffer(frames, dtype=np.int16)
         if channels > 1:
             audio_data = audio_data.reshape(-1, channels)
@@ -269,20 +331,23 @@ async def tool_play_audio(
         try:
             if IS_MACOS:
                 proc = await asyncio.create_subprocess_exec(
-                    "afplay", resolved,
+                    "afplay",
+                    resolved,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
             elif IS_WINDOWS:
                 proc = await asyncio.create_subprocess_exec(
-                    "powershell.exe", "-Command",
+                    "powershell.exe",
+                    "-Command",
                     f"(New-Object Media.SoundPlayer '{resolved}').PlaySync()",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
             else:
                 proc = await asyncio.create_subprocess_exec(
-                    "aplay", resolved,
+                    "aplay",
+                    resolved,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
@@ -309,7 +374,9 @@ async def tool_transcribe_audio(
     resolved = session.resolve_path(file_path)
 
     if not os.path.isfile(resolved):
-        return ToolResult(type=ToolResultType.ERROR, output=f"File not found: {resolved}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"File not found: {resolved}"
+        )
 
     try:
         import whisper
@@ -335,11 +402,13 @@ async def tool_transcribe_audio(
 
         segment_data = []
         for seg in segments:
-            segment_data.append({
-                "start": seg["start"],
-                "end": seg["end"],
-                "text": seg["text"].strip(),
-            })
+            segment_data.append(
+                {
+                    "start": seg["start"],
+                    "end": seg["end"],
+                    "text": seg["text"].strip(),
+                }
+            )
 
         return ToolResult(
             output=f"Transcription ({lang}):\n\n{text}",
@@ -369,7 +438,12 @@ async def tool_transcribe_audio(
             if proc.returncode != 0:
                 return ToolResult(
                     type=ToolResultType.ERROR,
-                    output=f"Whisper not installed. Install: pip install openai-whisper\nError: {stderr.decode()}",
+                    output=(
+                        "Speech Transcription (Whisper) is not installed. "
+                        "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                        f"Developer info: pip install openai-whisper\nError: {stderr.decode()}"
+                    ),
+                    metadata={"fix_capability_id": "transcription"},
                 )
 
             text = stdout.decode().strip()
@@ -380,8 +454,15 @@ async def tool_transcribe_audio(
         except FileNotFoundError:
             return ToolResult(
                 type=ToolResultType.ERROR,
-                output="Whisper not installed. Install: pip install openai-whisper",
+                output=(
+                    "Speech Transcription (Whisper) is not installed. "
+                    "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                    "Developer info: pip install openai-whisper"
+                ),
+                metadata={"fix_capability_id": "transcription"},
             )
 
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Transcription failed: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Transcription failed: {e}"
+        )

@@ -82,7 +82,12 @@ async def tool_browser_navigate(
     if context is None:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Playwright not installed. Install: pip install playwright && playwright install chromium",
+            output=(
+                "Browser Automation is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install playwright && playwright install chromium"
+            ),
+            metadata={"fix_capability_id": "browser_automation"},
         )
 
     try:
@@ -116,7 +121,12 @@ async def tool_browser_click(
     if context is None:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Playwright not installed. Install: pip install playwright && playwright install chromium",
+            output=(
+                "Browser Automation is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install playwright && playwright install chromium"
+            ),
+            metadata={"fix_capability_id": "browser_automation"},
         )
 
     try:
@@ -149,7 +159,12 @@ async def tool_browser_type(
     if context is None:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Playwright not installed. Install: pip install playwright && playwright install chromium",
+            output=(
+                "Browser Automation is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install playwright && playwright install chromium"
+            ),
+            metadata={"fix_capability_id": "browser_automation"},
         )
 
     try:
@@ -188,7 +203,12 @@ async def tool_browser_extract(
     if context is None:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Playwright not installed. Install: pip install playwright && playwright install chromium",
+            output=(
+                "Browser Automation is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install playwright && playwright install chromium"
+            ),
+            metadata={"fix_capability_id": "browser_automation"},
         )
 
     try:
@@ -207,7 +227,7 @@ async def tool_browser_extract(
                 """elements => elements.map(el => ({
                     text: el.innerText.trim().substring(0, 100),
                     href: el.href
-                })).filter(l => l.href && !l.href.startsWith('javascript:'))"""
+                })).filter(l => l.href && !l.href.startsWith('javascript:'))""",
             )
             lines = [f"Links on {page.url}:"]
             for link in links[:100]:
@@ -226,7 +246,7 @@ async def tool_browser_extract(
                         const cells = Array.from(row.querySelectorAll('td, th'));
                         return cells.map(cell => cell.innerText.trim());
                     });
-                })"""
+                })""",
             )
             lines = [f"Tables on {page.url}: {len(tables)} found"]
             for i, table in enumerate(tables[:5]):
@@ -239,7 +259,10 @@ async def tool_browser_extract(
             )
 
         if not selector:
-            return ToolResult(type=ToolResultType.ERROR, output="Selector required for this extract_type.")
+            return ToolResult(
+                type=ToolResultType.ERROR,
+                output="Selector required for this extract_type.",
+            )
 
         if all_matches:
             if extract_type == "text":
@@ -267,7 +290,9 @@ async def tool_browser_extract(
         else:
             element = await page.query_selector(selector)
             if not element:
-                return ToolResult(type=ToolResultType.ERROR, output=f"Element not found: {selector}")
+                return ToolResult(
+                    type=ToolResultType.ERROR, output=f"Element not found: {selector}"
+                )
 
             if extract_type == "text":
                 result = await element.inner_text()
@@ -297,7 +322,12 @@ async def tool_browser_screenshot(
     if context is None:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Playwright not installed. Install: pip install playwright && playwright install chromium",
+            output=(
+                "Browser Automation is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install playwright && playwright install chromium"
+            ),
+            metadata={"fix_capability_id": "browser_automation"},
         )
 
     try:
@@ -310,7 +340,9 @@ async def tool_browser_screenshot(
         if selector:
             element = await page.query_selector(selector)
             if not element:
-                return ToolResult(type=ToolResultType.ERROR, output=f"Element not found: {selector}")
+                return ToolResult(
+                    type=ToolResultType.ERROR, output=f"Element not found: {selector}"
+                )
             screenshot_bytes = await element.screenshot()
         else:
             screenshot_bytes = await page.screenshot(full_page=full_page)
@@ -337,7 +369,12 @@ async def tool_browser_eval(
     if context is None:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Playwright not installed. Install: pip install playwright && playwright install chromium",
+            output=(
+                "Browser Automation is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install playwright && playwright install chromium"
+            ),
+            metadata={"fix_capability_id": "browser_automation"},
         )
 
     try:
@@ -350,11 +387,18 @@ async def tool_browser_eval(
 
         return ToolResult(
             output=output,
-            metadata={"url": page.url, "result": result if isinstance(result, (str, int, float, bool, list, dict)) else str(result)},
+            metadata={
+                "url": page.url,
+                "result": result
+                if isinstance(result, (str, int, float, bool, list, dict))
+                else str(result),
+            },
         )
 
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"JS evaluation failed: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"JS evaluation failed: {e}"
+        )
 
 
 async def tool_browser_tabs(
@@ -374,7 +418,12 @@ async def tool_browser_tabs(
     if context is None:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Playwright not installed. Install: pip install playwright && playwright install chromium",
+            output=(
+                "Browser Automation is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install playwright && playwright install chromium"
+            ),
+            metadata={"fix_capability_id": "browser_automation"},
         )
 
     try:
@@ -387,7 +436,9 @@ async def tool_browser_tabs(
                 lines.append(f"  [{i}] {title[:60]} — {page.url}")
             return ToolResult(
                 output="\n".join(lines),
-                metadata={"tabs": [{"index": i, "url": p.url} for i, p in enumerate(pages)]},
+                metadata={
+                    "tabs": [{"index": i, "url": p.url} for i, p in enumerate(pages)]
+                },
             )
 
         elif action == "new":
@@ -399,19 +450,30 @@ async def tool_browser_tabs(
 
         elif action == "close":
             if tab_index is None or tab_index >= len(pages):
-                return ToolResult(type=ToolResultType.ERROR, output=f"Invalid tab index. {len(pages)} tabs open.")
+                return ToolResult(
+                    type=ToolResultType.ERROR,
+                    output=f"Invalid tab index. {len(pages)} tabs open.",
+                )
             await pages[tab_index].close()
             return ToolResult(output=f"Closed tab [{tab_index}]")
 
         elif action == "switch":
             if tab_index is None or tab_index >= len(pages):
-                return ToolResult(type=ToolResultType.ERROR, output=f"Invalid tab index. {len(pages)} tabs open.")
+                return ToolResult(
+                    type=ToolResultType.ERROR,
+                    output=f"Invalid tab index. {len(pages)} tabs open.",
+                )
             await pages[tab_index].bring_to_front()
             title = await pages[tab_index].title()
             return ToolResult(output=f"Switched to tab [{tab_index}]: {title}")
 
         else:
-            return ToolResult(type=ToolResultType.ERROR, output="Action must be: list, new, close, switch")
+            return ToolResult(
+                type=ToolResultType.ERROR,
+                output="Action must be: list, new, close, switch",
+            )
 
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Tab operation failed: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Tab operation failed: {e}"
+        )

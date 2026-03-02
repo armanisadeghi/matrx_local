@@ -14,7 +14,6 @@ from app.api.system_control import get_system_info
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
 from app.config import BASE_DIR, LOG_DIR, TEMP_DIR
-from app.database import get_connection
 from app.services.screenshots.capture import take_screenshot
 from app.utils.directory_utils.generate_directory_structure import (
     get_structure_with_common_configs,
@@ -151,22 +150,6 @@ async def capture_screenshot():
             status_code=500, detail=f"Error capturing screenshot: {str(e)}"
         )
 
-
-# Fetch data from database
-@router.get("/db-data")
-async def get_data():
-    logger.info("Fetching data from database")
-    try:
-        conn = await get_connection()
-        data = await conn.fetch("SELECT * FROM local_data_sample")
-        await conn.close()
-        logger.info("Data fetched successfully from the database")
-        return {"data": data}
-    except Exception as e:
-        logger.error(f"Error fetching data from database: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Error fetching data from database: {str(e)}"
-        )
 
 
 # ── Logging endpoints ────────────────────────────────────────────────────────

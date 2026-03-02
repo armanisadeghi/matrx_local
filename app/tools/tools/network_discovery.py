@@ -31,6 +31,7 @@ async def tool_network_info(
 
     try:
         import psutil
+
         addrs = psutil.net_if_addrs()
         stats = psutil.net_if_stats()
 
@@ -44,20 +45,26 @@ async def tool_network_info(
             }
             for addr in addr_list:
                 if addr.family == socket.AF_INET:
-                    iface_info["addresses"].append({
-                        "type": "IPv4",
-                        "address": addr.address,
-                        "netmask": addr.netmask,
-                        "broadcast": addr.broadcast,
-                    })
+                    iface_info["addresses"].append(
+                        {
+                            "type": "IPv4",
+                            "address": addr.address,
+                            "netmask": addr.netmask,
+                            "broadcast": addr.broadcast,
+                        }
+                    )
                 elif addr.family == socket.AF_INET6:
-                    iface_info["addresses"].append({
-                        "type": "IPv6",
-                        "address": addr.address,
-                    })
+                    iface_info["addresses"].append(
+                        {
+                            "type": "IPv6",
+                            "address": addr.address,
+                        }
+                    )
                 elif hasattr(socket, "AF_LINK") and addr.family == socket.AF_LINK:
                     iface_info["mac"] = addr.address
-                elif addr.family == -1 or (hasattr(psutil, "AF_LINK") and addr.family == psutil.AF_LINK):
+                elif addr.family == -1 or (
+                    hasattr(psutil, "AF_LINK") and addr.family == psutil.AF_LINK
+                ):
                     iface_info["mac"] = addr.address
 
             if iface_info["is_up"] or iface_info["addresses"]:
@@ -74,7 +81,9 @@ async def tool_network_info(
             else:
                 result = subprocess.run(
                     ["ifconfig" if IS_MACOS else "ip", "addr"],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
                 )
                 info["raw"] = result.stdout[:5000]
         except Exception:
@@ -102,7 +111,10 @@ async def tool_network_info(
                     break
         else:
             result = subprocess.run(
-                ["ip", "route", "show", "default"], capture_output=True, text=True, timeout=10
+                ["ip", "route", "show", "default"],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             parts = result.stdout.split()
             if "via" in parts:
@@ -122,11 +134,18 @@ async def tool_network_info(
                 info["dns_servers"] = dns_servers
         else:
             result = subprocess.run(
-                ["powershell", "-Command",
-                 "Get-DnsClientServerAddress | Select-Object -ExpandProperty ServerAddresses | Select-Object -Unique"],
-                capture_output=True, text=True, timeout=10,
+                [
+                    "powershell",
+                    "-Command",
+                    "Get-DnsClientServerAddress | Select-Object -ExpandProperty ServerAddresses | Select-Object -Unique",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
-            info["dns_servers"] = [s.strip() for s in result.stdout.strip().split("\n") if s.strip()]
+            info["dns_servers"] = [
+                s.strip() for s in result.stdout.strip().split("\n") if s.strip()
+            ]
     except Exception:
         pass
 
@@ -169,7 +188,10 @@ async def tool_network_scan(
         try:
             if IS_MACOS:
                 result = subprocess.run(
-                    ["ifconfig"], capture_output=True, text=True, timeout=5,
+                    ["ifconfig"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 # Find first non-loopback IPv4
                 for match in re.finditer(r"inet (\d+\.\d+\.\d+\.\d+)", result.stdout):
@@ -180,9 +202,14 @@ async def tool_network_scan(
                         break
             elif IS_WINDOWS:
                 result = subprocess.run(
-                    ["ipconfig"], capture_output=True, text=True, timeout=5,
+                    ["ipconfig"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
-                for match in re.finditer(r"IPv4.*?:\s*(\d+\.\d+\.\d+\.\d+)", result.stdout):
+                for match in re.finditer(
+                    r"IPv4.*?:\s*(\d+\.\d+\.\d+\.\d+)", result.stdout
+                ):
                     ip = match.group(1)
                     if not ip.startswith("127."):
                         parts = ip.split(".")
@@ -190,9 +217,14 @@ async def tool_network_scan(
                         break
             else:
                 result = subprocess.run(
-                    ["ip", "addr"], capture_output=True, text=True, timeout=5,
+                    ["ip", "addr"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
-                for match in re.finditer(r"inet (\d+\.\d+\.\d+\.\d+)/(\d+)", result.stdout):
+                for match in re.finditer(
+                    r"inet (\d+\.\d+\.\d+\.\d+)/(\d+)", result.stdout
+                ):
                     ip = match.group(1)
                     if not ip.startswith("127."):
                         parts = ip.split(".")
@@ -213,7 +245,7 @@ async def tool_network_scan(
             base = subnet.rsplit(".", 1)[0]
             # Quick parallel ping (Windows)
             proc = await asyncio.create_subprocess_shell(
-                f'for /L %i in (1,1,254) do @start /b ping -n 1 -w 500 {base}.%i >nul 2>&1',
+                f"for /L %i in (1,1,254) do @start /b ping -n 1 -w 500 {base}.%i >nul 2>&1",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 executable="cmd.exe",
@@ -224,7 +256,10 @@ async def tool_network_scan(
                 proc.kill()
 
             result = subprocess.run(
-                ["arp", "-a"], capture_output=True, text=True, timeout=10,
+                ["arp", "-a"],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
         else:
             # Ping sweep (Unix)
@@ -241,23 +276,30 @@ async def tool_network_scan(
                 proc.kill()
 
             result = subprocess.run(
-                ["arp", "-a"], capture_output=True, text=True, timeout=10,
+                ["arp", "-a"],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
 
         # Parse ARP output
         for line in result.stdout.split("\n"):
             # macOS/Linux: hostname (ip) at mac on iface
-            match = re.search(r"[(\s](\d+\.\d+\.\d+\.\d+)[)\s].*?([\da-fA-F:.-]{11,17})", line)
+            match = re.search(
+                r"[(\s](\d+\.\d+\.\d+\.\d+)[)\s].*?([\da-fA-F:.-]{11,17})", line
+            )
             if match:
                 ip = match.group(1)
                 mac = match.group(2)
                 if mac != "ff:ff:ff:ff:ff:ff" and mac != "(incomplete)":
                     hostname = _resolve_hostname(ip)
-                    devices.append({
-                        "ip": ip,
-                        "mac": mac,
-                        "hostname": hostname,
-                    })
+                    devices.append(
+                        {
+                            "ip": ip,
+                            "mac": mac,
+                            "hostname": hostname,
+                        }
+                    )
 
     except Exception as e:
         logger.warning("ARP scan error: %s", e)
@@ -304,15 +346,43 @@ async def tool_port_scan(
     # Parse port list
     if ports == "common":
         port_list = [
-            21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445,
-            993, 995, 1433, 1521, 3306, 3389, 5432, 5900, 6379,
-            8000, 8080, 8443, 8888, 9090, 9200, 27017,
+            21,
+            22,
+            23,
+            25,
+            53,
+            80,
+            110,
+            135,
+            139,
+            143,
+            443,
+            445,
+            993,
+            995,
+            1433,
+            1521,
+            3306,
+            3389,
+            5432,
+            5900,
+            6379,
+            8000,
+            8080,
+            8443,
+            8888,
+            9090,
+            9200,
+            27017,
         ]
     elif "-" in ports:
         start, end = ports.split("-", 1)
         port_list = list(range(int(start), int(end) + 1))
         if len(port_list) > 10000:
-            return ToolResult(type=ToolResultType.ERROR, output="Port range too large. Max 10000 ports.")
+            return ToolResult(
+                type=ToolResultType.ERROR,
+                output="Port range too large. Max 10000 ports.",
+            )
     else:
         port_list = [int(p.strip()) for p in ports.split(",")]
 
@@ -336,7 +406,7 @@ async def tool_port_scan(
     # Scan in batches of 100 to avoid overwhelming
     batch_size = 100
     for i in range(0, len(port_list), batch_size):
-        batch = port_list[i:i + batch_size]
+        batch = port_list[i : i + batch_size]
         results = await asyncio.gather(*[_check_port(p) for p in batch])
         for result in results:
             if result:
@@ -357,13 +427,33 @@ async def tool_port_scan(
 def _get_service_name(port: int) -> str:
     """Get common service name for a port."""
     services = {
-        21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
-        80: "HTTP", 110: "POP3", 135: "MSRPC", 139: "NetBIOS", 143: "IMAP",
-        443: "HTTPS", 445: "SMB", 993: "IMAPS", 995: "POP3S",
-        1433: "MSSQL", 1521: "Oracle", 3306: "MySQL", 3389: "RDP",
-        5432: "PostgreSQL", 5900: "VNC", 6379: "Redis",
-        8000: "HTTP-Alt", 8080: "HTTP-Proxy", 8443: "HTTPS-Alt",
-        8888: "HTTP-Alt", 9090: "HTTP-Alt", 9200: "Elasticsearch",
+        21: "FTP",
+        22: "SSH",
+        23: "Telnet",
+        25: "SMTP",
+        53: "DNS",
+        80: "HTTP",
+        110: "POP3",
+        135: "MSRPC",
+        139: "NetBIOS",
+        143: "IMAP",
+        443: "HTTPS",
+        445: "SMB",
+        993: "IMAPS",
+        995: "POP3S",
+        1433: "MSSQL",
+        1521: "Oracle",
+        3306: "MySQL",
+        3389: "RDP",
+        5432: "PostgreSQL",
+        5900: "VNC",
+        6379: "Redis",
+        8000: "HTTP-Alt",
+        8080: "HTTP-Proxy",
+        8443: "HTTPS-Alt",
+        8888: "HTTP-Alt",
+        9090: "HTTP-Alt",
+        9200: "Elasticsearch",
         27017: "MongoDB",
     }
     return services.get(port, "unknown")
@@ -388,9 +478,11 @@ async def tool_mdns_discover(
 
         if service_type is None:
             # Discover all service types first
-            service_types = list(await asyncio.get_event_loop().run_in_executor(
-                None, lambda: ZeroconfServiceTypes.find(zc, timeout=timeout)
-            ))
+            service_types = list(
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: ZeroconfServiceTypes.find(zc, timeout=timeout)
+                )
+            )
 
             for stype in service_types:
                 found_services.append({"type": stype, "instances": []})
@@ -418,17 +510,24 @@ async def tool_mdns_discover(
                     info = zc.get_service_info(type_, name)
                     if info:
                         addresses = [socket.inet_ntoa(addr) for addr in info.addresses]
-                        discovered.append({
-                            "name": info.name,
-                            "server": info.server,
-                            "addresses": addresses,
-                            "port": info.port,
-                            "properties": {
-                                k.decode() if isinstance(k, bytes) else k:
-                                v.decode() if isinstance(v, bytes) else str(v)
-                                for k, v in info.properties.items()
-                            } if info.properties else {},
-                        })
+                        discovered.append(
+                            {
+                                "name": info.name,
+                                "server": info.server,
+                                "addresses": addresses,
+                                "port": info.port,
+                                "properties": {
+                                    k.decode()
+                                    if isinstance(k, bytes)
+                                    else k: v.decode()
+                                    if isinstance(v, bytes)
+                                    else str(v)
+                                    for k, v in info.properties.items()
+                                }
+                                if info.properties
+                                else {},
+                            }
+                        )
 
             browser = ServiceBrowser(zc, service_type, Listener())
             await asyncio.sleep(timeout)
@@ -438,9 +537,11 @@ async def tool_mdns_discover(
             for svc in discovered:
                 lines.append(f"\n  {svc['name']}")
                 lines.append(f"    Server: {svc['server']}")
-                lines.append(f"    Address: {', '.join(svc['addresses'])}:{svc['port']}")
-                if svc['properties']:
-                    for k, v in svc['properties'].items():
+                lines.append(
+                    f"    Address: {', '.join(svc['addresses'])}:{svc['port']}"
+                )
+                if svc["properties"]:
+                    for k, v in svc["properties"].items():
                         lines.append(f"    {k}: {v}")
 
             return ToolResult(
@@ -453,7 +554,9 @@ async def tool_mdns_discover(
         return await _mdns_fallback(service_type, timeout)
 
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"mDNS discovery failed: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"mDNS discovery failed: {e}"
+        )
 
 
 async def _mdns_fallback(service_type: str | None, timeout: int) -> ToolResult:
@@ -467,26 +570,36 @@ async def _mdns_fallback(service_type: str | None, timeout: int) -> ToolResult:
                 stype = stype[:-1]
 
             proc = await asyncio.create_subprocess_exec(
-                "dns-sd", "-B", stype, "local",
+                "dns-sd",
+                "-B",
+                stype,
+                "local",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 2)
+                stdout, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout + 2
+                )
             except asyncio.TimeoutError:
                 proc.kill()
                 stdout, _ = await proc.communicate()
 
-            return ToolResult(output=f"mDNS browse ({stype}):\n{stdout.decode()[:5000]}")
+            return ToolResult(
+                output=f"mDNS browse ({stype}):\n{stdout.decode()[:5000]}"
+            )
 
         else:
             proc = await asyncio.create_subprocess_exec(
-                "avahi-browse", "-art",
+                "avahi-browse",
+                "-art",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout + 2)
+                stdout, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout + 2
+                )
             except asyncio.TimeoutError:
                 proc.kill()
                 stdout, _ = await proc.communicate()
@@ -496,5 +609,10 @@ async def _mdns_fallback(service_type: str | None, timeout: int) -> ToolResult:
     except FileNotFoundError:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Install 'zeroconf' for mDNS discovery: pip install zeroconf",
+            output=(
+                "Network Discovery (mDNS) is not installed. "
+                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+                "Developer info: pip install zeroconf"
+            ),
+            metadata={"fix_capability_id": "network_discovery"},
         )

@@ -62,8 +62,11 @@ def _sanitize_body_for_log(obj):
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import time as _startup_time
+
     _t0 = _startup_time.monotonic()
-    logger.info("[app/main.py] ── Matrx Local startup ─────────────────────────────────────")
+    logger.info(
+        "[app/main.py] ── Matrx Local startup ─────────────────────────────────────"
+    )
 
     # Phase 1: Initialize matrx-ai (loads env, registers DB if credentials present)
     logger.info("[app/main.py] Phase 1: Initializing matrx-ai engine...")
@@ -102,7 +105,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     restored = await restore_scheduled_tasks()
     if restored:
-        logger.info("[app/main.py] Scheduler: %d task(s) restored from previous session", restored)
+        logger.info(
+            "[app/main.py] Scheduler: %d task(s) restored from previous session",
+            restored,
+        )
 
     # Phase 4: Start HTTP proxy if enabled in settings
     settings_sync = get_settings_sync()
@@ -112,9 +118,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             proxy = get_proxy_server()
             proxy_port = settings_sync.get("proxy_port", 22180)
-            logger.info("[app/main.py] Phase 4: Starting proxy on 127.0.0.1:%d...", proxy_port)
+            logger.info(
+                "[app/main.py] Phase 4: Starting proxy on 127.0.0.1:%d...", proxy_port
+            )
             await proxy.start(port=proxy_port)
-            logger.info("[app/main.py] Phase 4: HTTP proxy started ✓ on port %d", proxy_port)
+            logger.info(
+                "[app/main.py] Phase 4: HTTP proxy started ✓ on port %d", proxy_port
+            )
         except OSError as exc:
             logger.error(
                 "[app/main.py] Phase 4: HTTP proxy FAILED to start — port %d is already in use. "
@@ -125,7 +135,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 exc,
             )
         except Exception:
-            logger.error("[app/main.py] Phase 4: HTTP proxy FAILED to start", exc_info=True)
+            logger.error(
+                "[app/main.py] Phase 4: HTTP proxy FAILED to start", exc_info=True
+            )
 
     # Background heartbeat: updates last_seen and retries failed syncs
     async def _heartbeat_loop() -> None:
@@ -154,7 +166,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    logger.info("[app/main.py] ── Matrx Local shutdown ────────────────────────────────────")
+    logger.info(
+        "[app/main.py] ── Matrx Local shutdown ────────────────────────────────────"
+    )
     retry_queue.stop()
     heartbeat_task.cancel()
     try:
@@ -173,7 +187,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await engine.stop()
         logger.info("[app/main.py] Scraper engine stopped ✓")
     except Exception:
-        logger.error("[app/main.py] Scraper engine failed to stop cleanly", exc_info=True)
+        logger.error(
+            "[app/main.py] Scraper engine failed to stop cleanly", exc_info=True
+        )
 
 
 app = FastAPI(
@@ -217,11 +233,14 @@ app.add_middleware(
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     import time as _time
+
     t0 = _time.monotonic()
 
     # Best-effort body preview for system logger (doesn't consume the stream).
     try:
-        body = await request.json() if request.method in ["POST", "PUT", "PATCH"] else None
+        body = (
+            await request.json() if request.method in ["POST", "PUT", "PATCH"] else None
+        )
         if body is not None:
             body = _sanitize_body_for_log(body)
         logger.info(f"Request: {request.method} {request.url} | Body: {body}")
@@ -249,6 +268,17 @@ async def log_requests(request: Request, call_next):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Auth check — BaseHTTPMiddleware does NOT intercept WebSocket upgrades,
+    # so we validate the token here manually.  Browser WebSocket API cannot
+    # set custom headers, so the token is passed as ?token=<jwt>.
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=1008, reason="Missing auth token")
+        return
+
+    # Store token for downstream forwarding (matches HTTP middleware pattern).
+    websocket.state.user_token = token
+
     conn = await websocket_manager.connect(websocket)
     try:
         while True:

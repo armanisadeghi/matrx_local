@@ -5,8 +5,10 @@ import {
   Bluetooth,
   Chrome,
   Cpu,
+  Download,
   Globe,
   HardDrive,
+  Loader2,
   Mic,
   Monitor,
   Server,
@@ -71,6 +73,8 @@ export function Dashboard({
   const [permissions, setPermissions] = useState<PermissionInfo[]>([]);
   const [resources, setResources] = useState<ResourceMetrics | null>(null);
   const resourceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [installingBrowser, setInstallingBrowser] = useState(false);
+  const [browserInstallMessage, setBrowserInstallMessage] = useState<string | null>(null);
 
   const loadPermissions = useCallback(async () => {
     if (engineStatus !== "connected") return;
@@ -110,6 +114,24 @@ export function Dashboard({
       }
     };
   }, [loadResources, engineStatus]);
+
+  const installBrowser = useCallback(async () => {
+    setInstallingBrowser(true);
+    setBrowserInstallMessage(null);
+    try {
+      const result = await engine.installCapability("browser_automation");
+      if (result.success) {
+        setBrowserInstallMessage("Installed successfully — restart the engine to activate.");
+        onRefresh();
+      } else {
+        setBrowserInstallMessage(`Install failed: ${result.message}`);
+      }
+    } catch (err) {
+      setBrowserInstallMessage(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setInstallingBrowser(false);
+    }
+  }, [onRefresh]);
 
   const grantedCount = permissions.filter((p) => p.status === "granted").length;
   const totalCount = permissions.length;
@@ -197,30 +219,12 @@ export function Dashboard({
               icon={<Wrench className="h-4 w-4" />}
               variant="default"
             />
-            <StatusCard
-              title="Browser (Playwright)"
-              value={
-                browserStatus === null
-                  ? "Checking..."
-                  : browserStatus.chrome_found
-                    ? "Ready"
-                    : "Not Installed"
-              }
-              description={
-                browserStatus?.chrome_version
-                  ? `Chromium ${browserStatus.chrome_version}`
-                  : browserStatus?.chrome_found
-                    ? "Playwright ready"
-                    : "Run: uv sync --extra browser"
-              }
-              icon={<Chrome className="h-4 w-4" />}
-              variant={
-                browserStatus === null
-                  ? "default"
-                  : browserStatus.chrome_found
-                    ? "success"
-                    : "warning"
-              }
+            <BrowserStatusCard
+              browserStatus={browserStatus}
+              engineStatus={engineStatus}
+              installing={installingBrowser}
+              installMessage={browserInstallMessage}
+              onInstall={installBrowser}
             />
             <StatusCard
               title="Device Access"
@@ -567,6 +571,83 @@ function ResourceGauge({
         {detail && <p className="text-[10px] text-muted-foreground">{detail}</p>}
       </div>
     </div>
+  );
+}
+
+function BrowserStatusCard({
+  browserStatus,
+  engineStatus,
+  installing,
+  installMessage,
+  onInstall,
+}: {
+  browserStatus: BrowserStatus | null;
+  engineStatus: EngineStatus;
+  installing: boolean;
+  installMessage: string | null;
+  onInstall: () => void;
+}) {
+  const isReady = browserStatus?.chrome_found === true;
+  const isChecking = browserStatus === null;
+  const canInstall = engineStatus === "connected" && !isReady && !isChecking;
+
+  const variant = isChecking ? "default" : isReady ? "success" : "warning";
+  const indicatorColor =
+    variant === "success"
+      ? "text-emerald-500"
+      : variant === "warning"
+        ? "text-amber-500"
+        : "text-muted-foreground";
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Browser (Playwright)</span>
+          <span className={indicatorColor}><Chrome className="h-4 w-4" /></span>
+        </div>
+        <div className="mt-2">
+          <span className="text-2xl font-bold">
+            {isChecking ? "Checking..." : isReady ? "Ready" : "Not Installed"}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {isReady
+            ? browserStatus?.chrome_version
+              ? `Chromium ${browserStatus.chrome_version}`
+              : "Playwright ready"
+            : isChecking
+              ? "Detecting browser..."
+              : "Required for browser-based scraping"}
+        </p>
+        {canInstall && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-2 h-7 w-full gap-1.5 text-xs"
+            onClick={onInstall}
+            disabled={installing}
+          >
+            {installing ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Installing... (~60s)
+              </>
+            ) : (
+              <>
+                <Download className="h-3 w-3" />
+                Install Chromium
+              </>
+            )}
+          </Button>
+        )}
+        {installMessage && (
+          <p className={`mt-1.5 text-[11px] leading-tight ${installMessage.startsWith("Install failed") || installMessage.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
+            {installMessage}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

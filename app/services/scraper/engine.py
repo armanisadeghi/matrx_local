@@ -217,6 +217,23 @@ class ScraperEngine:
             )
             self._browser_pool = None
 
+            # fetcher.py imports browser_pool at module level. If Playwright is not
+            # installed, browser_pool.py never loaded into sys.modules, so fetcher.py
+            # would fail on its top-level import. Inject a stub module so fetcher.py
+            # can import successfully — the stub class is never instantiated.
+            import types as _types
+            _stub_mod = _types.ModuleType("app.core.fetcher.browser_pool")
+
+            class _StubBrowserPool:
+                def __init__(self, **kwargs: object) -> None: pass
+                async def start(self) -> None: pass
+                async def stop(self) -> None: pass
+
+            _stub_mod.PlaywrightBrowserPool = _StubBrowserPool  # type: ignore[attr-defined]
+            # Register under both the original and aliased names so _import_scraper finds it.
+            sys.modules["app.core.fetcher.browser_pool"] = _stub_mod
+            sys.modules["scraper_app.core.fetcher.browser_pool"] = _stub_mod
+
         fetcher_mod = _import_scraper("app.core.fetcher.fetcher")
         self._fetcher = fetcher_mod.UnifiedFetcher(
             settings=self._settings,
