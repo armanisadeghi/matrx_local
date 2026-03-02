@@ -139,16 +139,15 @@ def _import_scraper(module_path: str) -> Any:
 class ScraperEngine:
     """Manages the scraper-service orchestrator and its dependencies.
 
-    Designed to degrade gracefully: if DATABASE_URL is missing or the DB
-    is unreachable, the engine still starts with in-memory-only caching
-    (no persistent page cache or domain config, but scraping works).
+    No direct database connection. All scrape results are pushed to the
+    server via POST /api/v1/content/save after every successful scrape.
+    In-memory TTLCache is used for deduplication within a session only.
     """
 
     def __init__(self) -> None:
         self._orchestrator: Any = None
         self._fetcher: Any = None
         self._browser_pool: Any = None
-        self._db_pool: Any = None
         self._page_cache: Any = None
         self._domain_config_store: Any = None
         self._search_client: Any = None
@@ -167,73 +166,36 @@ class ScraperEngine:
     def search_client(self) -> Any:
         return self._search_client
 
-    @property
-    def has_database(self) -> bool:
-        return self._db_pool is not None
-
     async def start(self) -> None:
         """Initialize scraper-service components.
 
-        Order: settings → DB pool (optional) → browser pool → fetcher →
-               domain config → page cache → search client → orchestrator.
+        Order: settings → browser pool → fetcher → domain config (stub) →
+               page cache (in-memory) → search client → orchestrator.
+
+        No direct database connection. All persistence goes through the
+        scraper server API (scraper.app.matrxserver.com). Results are pushed
+        via POST /api/v1/content/save after every successful scrape.
         """
         if self._started:
             return
 
-        logger.info("ScraperEngine: starting")
+        logger.info("[app/services/scraper/engine.py] ScraperEngine: starting")
 
         config_mod = _import_scraper("app.config")
         settings_cls = config_mod.Settings
 
-        env_overrides: dict[str, str] = {}
-        if not os.environ.get("API_KEY"):
-            env_overrides["API_KEY"] = "local-scraper"
-        if not os.environ.get("DATABASE_URL"):
-            env_overrides["DATABASE_URL"] = ""
-
-        for k, v in env_overrides.items():
-            os.environ.setdefault(k, v)
+        # The scraper-service Settings requires API_KEY and DATABASE_URL.
+        # We supply stubs — the desktop engine never uses either directly.
+        os.environ.setdefault("API_KEY", "local-scraper")
+        os.environ.setdefault("DATABASE_URL", "postgresql://stub:stub@localhost/stub")
 
         try:
             self._settings = settings_cls()  # type: ignore[call-arg]
         except Exception:
             logger.exception(
-                "[app/services/scraper/engine.py] ScraperEngine: failed to load settings — "
-                "check .env for missing required vars"
+                "[app/services/scraper/engine.py] ScraperEngine: failed to load settings"
             )
             return
-
-        db_pool = None
-        raw_db_url = os.environ.get("DATABASE_URL", "")
-        if self._settings.DATABASE_URL:
-            masked = self._settings.DATABASE_URL
-            try:
-                from urllib.parse import urlparse as _urlparse
-                _u = _urlparse(self._settings.DATABASE_URL)
-                masked = f"{_u.scheme}://{_u.username}:***@{_u.hostname}:{_u.port}{_u.path}"
-            except Exception:
-                pass
-            logger.info(
-                "[app/services/scraper/engine.py] ScraperEngine: connecting to database — %s", masked
-            )
-            try:
-                conn_mod = _import_scraper("app.db.connection")
-                db_pool = await conn_mod.create_pool(self._settings.DATABASE_URL, min_size=1, max_size=5)
-                logger.info("[app/services/scraper/engine.py] ScraperEngine: database connected ✓")
-            except Exception as db_exc:
-                logger.warning(
-                    "[app/services/scraper/engine.py] ScraperEngine: database unavailable — "
-                    "running without persistent cache. URL attempted: %s  Error: %s",
-                    masked,
-                    db_exc,
-                )
-                db_pool = None
-        else:
-            logger.info(
-                "[app/services/scraper/engine.py] ScraperEngine: DATABASE_URL is empty — "
-                "running with in-memory cache only (set DATABASE_URL in .env to enable persistent cache)"
-            )
-        self._db_pool = db_pool
 
         try:
             browser_pool_mod = _import_scraper("app.core.fetcher.browser_pool")
@@ -261,93 +223,60 @@ class ScraperEngine:
             browser_pool=self._browser_pool,
         )
 
+        # Domain config: use no-DB stub — config is loaded from server API separately.
         domain_config_mod = _import_scraper("app.domain_config.config_store")
-        if db_pool:
-            self._domain_config_store = domain_config_mod.DomainConfigStore(db_pool)
-            try:
-                await self._domain_config_store.start()
-                logger.info("ScraperEngine: domain config loaded")
-            except Exception:
-                logger.warning("ScraperEngine: domain config failed to load — using defaults")
-                self._domain_config_store = domain_config_mod.DomainConfigStore.__new__(
-                    domain_config_mod.DomainConfigStore
-                )
-                self._domain_config_store._pool = None
-                self._domain_config_store._domains = {}
-                self._domain_config_store._base_config = []
-                self._domain_config_store._refresh_task = None
-        else:
-            self._domain_config_store = domain_config_mod.DomainConfigStore.__new__(
-                domain_config_mod.DomainConfigStore
-            )
-            self._domain_config_store._pool = None
-            self._domain_config_store._domains = {}
-            self._domain_config_store._base_config = []
-            self._domain_config_store._refresh_task = None
+        self._domain_config_store = domain_config_mod.DomainConfigStore.__new__(
+            domain_config_mod.DomainConfigStore
+        )
+        self._domain_config_store._pool = None
+        self._domain_config_store._domains = {}
+        self._domain_config_store._base_config = []
+        self._domain_config_store._refresh_task = None
 
-        if db_pool:
-            cache_mod = _import_scraper("app.cache.page_cache")
-            self._page_cache = cache_mod.PageCache(
-                pool=db_pool,
-                max_size=self._settings.PAGE_CACHE_MAX_SIZE,
-                ttl_seconds=self._settings.PAGE_CACHE_TTL_SECONDS,
-            )
-        else:
-            self._page_cache = _MemoryOnlyPageCache(
-                max_size=self._settings.PAGE_CACHE_MAX_SIZE,
-                ttl_seconds=self._settings.PAGE_CACHE_TTL_SECONDS,
-            )
+        # Page cache: in-memory only. Persistence is the server's responsibility.
+        self._page_cache = _MemoryOnlyPageCache(
+            max_size=self._settings.PAGE_CACHE_MAX_SIZE,
+            ttl_seconds=self._settings.PAGE_CACHE_TTL_SECONDS,
+        )
 
         search_mod = _import_scraper("app.core.search")
         if self._settings.BRAVE_API_KEY:
             self._search_client = search_mod.BraveSearchClient(self._settings)
-            logger.info("ScraperEngine: Brave Search configured")
+            logger.info("[app/services/scraper/engine.py] ScraperEngine: Brave Search configured ✓")
         else:
-            logger.info("ScraperEngine: no BRAVE_API_KEY — search disabled")
+            logger.info("[app/services/scraper/engine.py] ScraperEngine: no BRAVE_API_KEY — search disabled")
 
         orchestrator_mod = _import_scraper("app.core.orchestrator")
         self._orchestrator = orchestrator_mod.ScrapeOrchestrator(
             fetcher=self._fetcher,
             settings=self._settings,
-            db_pool=db_pool or _NullPool(),
+            db_pool=_NullPool(),
             page_cache=self._page_cache,
             domain_config_store=self._domain_config_store,
             search_client=self._search_client,
         )
 
         self._started = True
-        logger.info("ScraperEngine: ready (db=%s, browser=%s, search=%s)",
-                     db_pool is not None,
-                     self._browser_pool is not None,
-                     self._search_client is not None)
+        logger.info(
+            "[app/services/scraper/engine.py] ScraperEngine: ready ✓ (browser=%s, search=%s)",
+            self._browser_pool is not None,
+            self._search_client is not None,
+        )
 
     async def stop(self) -> None:
         if not self._started:
             return
 
-        logger.info("ScraperEngine: stopping")
-
-        if self._domain_config_store and hasattr(self._domain_config_store, '_pool') and self._domain_config_store._pool:
-            try:
-                await self._domain_config_store.stop()
-            except Exception:
-                logger.exception("ScraperEngine: error stopping domain config store")
+        logger.info("[app/services/scraper/engine.py] ScraperEngine: stopping")
 
         if self._browser_pool:
             try:
                 await self._browser_pool.stop()
             except Exception:
-                logger.exception("ScraperEngine: error stopping browser pool")
-
-        if self._db_pool:
-            try:
-                conn_mod = _import_scraper("app.db.connection")
-                await conn_mod.close_pool(self._db_pool)
-            except Exception:
-                logger.exception("ScraperEngine: error closing database pool")
+                logger.exception("[app/services/scraper/engine.py] ScraperEngine: error stopping browser pool")
 
         self._started = False
-        logger.info("ScraperEngine: stopped")
+        logger.info("[app/services/scraper/engine.py] ScraperEngine: stopped")
 
 
 class _MemoryOnlyPageCache:

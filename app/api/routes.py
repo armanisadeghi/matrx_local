@@ -5,7 +5,7 @@ import uuid
 import zipfile
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.responses import StreamingResponse
 
@@ -16,7 +16,9 @@ import app.common.access_log as access_log
 from app.config import BASE_DIR, LOG_DIR, TEMP_DIR
 from app.database import get_connection
 from app.services.screenshots.capture import take_screenshot
-from app.utils.directory_utils.generate_directory_structure import get_structure_with_common_configs
+from app.utils.directory_utils.generate_directory_structure import (
+    get_structure_with_common_configs,
+)
 
 import platform
 import subprocess
@@ -29,11 +31,40 @@ from app.config import DATA_DIR
 router = APIRouter()
 logger = get_logger()
 
+
 # Root endpoint
 @router.get("/")
 async def root():
     logger.info("Root endpoint accessed")
-    return {"status": "ok", "service": "matrx-local", "version": "1.0.1"}
+    return {"status": "ok", "service": "matrx-local", "version": "1.0.9"}
+
+
+# ── Public discovery / health endpoints ─────────────────────────────────
+
+
+@router.get("/health")
+async def health():
+    """Simple health check — returns OK if the engine is running."""
+    return {"status": "ok", "service": "matrx-local"}
+
+
+@router.get("/version")
+async def version():
+    """Return the engine version."""
+    return {"version": "1.0.9", "service": "matrx-local"}
+
+
+@router.get("/ports")
+async def ports(request: Request):
+    """Return the ports the engine and proxy are listening on."""
+    from app.services.proxy.server import get_proxy_server
+
+    proxy = get_proxy_server()
+    return {
+        "engine": request.url.port,
+        "proxy": proxy.port if proxy.running else None,
+    }
+
 
 # Trigger event
 @router.post("/trigger")
@@ -46,6 +77,7 @@ async def trigger_event(data: dict):
         logger.error(f"Error in trigger_event: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error triggering event: {str(e)}")
 
+
 # System info endpoint
 @router.get("/system/info")
 async def system_info():
@@ -54,7 +86,10 @@ async def system_info():
         return get_system_info()
     except Exception as e:
         logger.error(f"Error fetching system info: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error fetching system info: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error fetching system info: {str(e)}"
+        )
+
 
 @router.post("/system/open-folder")
 async def open_system_folder(data: dict):
@@ -93,6 +128,7 @@ async def list_files(directory: str = "."):
         logger.error(f"Error listing files: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error listing files: {str(e)}")
 
+
 # Capture screenshot
 @router.post("/screenshot")
 async def capture_screenshot():
@@ -111,7 +147,10 @@ async def capture_screenshot():
         return {"screenshot_path": saved_path}
     except Exception as e:
         logger.error(f"Error capturing screenshot: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error capturing screenshot: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error capturing screenshot: {str(e)}"
+        )
+
 
 # Fetch data from database
 @router.get("/db-data")
@@ -125,9 +164,13 @@ async def get_data():
         return {"data": data}
     except Exception as e:
         logger.error(f"Error fetching data from database: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error fetching data from database: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error fetching data from database: {str(e)}"
+        )
+
 
 # ── Logging endpoints ────────────────────────────────────────────────────────
+
 
 @router.get("/logs")
 async def get_logs(n: int = Query(default=100, ge=1, le=2000)):
@@ -189,6 +232,7 @@ async def stream_access_log():
 
     async def _push():
         import json
+
         try:
             while True:
                 try:
@@ -210,6 +254,7 @@ async def stream_access_log():
         },
     )
 
+
 # Generate directory structure and serve files
 @router.post("/generate-directory-structure/text")
 async def generate_directory_structure(
@@ -217,20 +262,27 @@ async def generate_directory_structure(
     project_root: str,
     common_configs: Optional[dict] = None,
 ):
-    logger.info(f"Generate directory structure called with root: {root_directory}, project: {project_root}")
+    logger.info(
+        f"Generate directory structure called with root: {root_directory}, project: {project_root}"
+    )
     try:
-        directory_structure, output_file, text_output_file = get_structure_with_common_configs(
-            root_directory, project_root, common_configs
+        directory_structure, output_file, text_output_file = (
+            get_structure_with_common_configs(
+                root_directory, project_root, common_configs
+            )
         )
         logger.info(f"Files generated: {output_file}, {text_output_file}")
         return FileResponse(
             path=text_output_file,
             media_type="text/plain",
-            filename="directory_structure.txt"
+            filename="directory_structure.txt",
         )
     except Exception as e:
         logger.error(f"Error generating directory structure: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error generating directory structure: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error generating directory structure: {str(e)}"
+        )
+
 
 @router.post("/generate-directory-structure/json")
 async def generate_directory_structure_json(
@@ -238,10 +290,14 @@ async def generate_directory_structure_json(
     project_root: str,
     common_configs: Optional[dict] = None,
 ):
-    logger.info(f"Generate directory structure called with root: {root_directory}, project: {project_root}")
+    logger.info(
+        f"Generate directory structure called with root: {root_directory}, project: {project_root}"
+    )
     try:
-        directory_structure, output_file, text_output_file = get_structure_with_common_configs(
-            root_directory, project_root, common_configs
+        directory_structure, output_file, text_output_file = (
+            get_structure_with_common_configs(
+                root_directory, project_root, common_configs
+            )
         )
         logger.info(f"Files generated: {output_file}, {text_output_file}")
 
@@ -251,23 +307,27 @@ async def generate_directory_structure_json(
         )
     except Exception as e:
         logger.error(f"Error generating directory structure: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error generating directory structure: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Error generating directory structure: {str(e)}"
+        )
 
 
 @router.post("/generate-directory-structure/zip")
 async def generate_directory_structure(
-        root_directory: str,
-        project_root: str,
-        common_configs: Optional[dict] = None,
+    root_directory: str,
+    project_root: str,
+    common_configs: Optional[dict] = None,
 ):
     try:
-        directory_structure, output_file, text_output_file = get_structure_with_common_configs(
-            root_directory, project_root, common_configs
+        directory_structure, output_file, text_output_file = (
+            get_structure_with_common_configs(
+                root_directory, project_root, common_configs
+            )
         )
 
         # Create a zip file in memory
         zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             # Add both files to the zip
             zip_file.write(output_file, "directory_structure.json")
             zip_file.write(text_output_file, "directory_structure.txt")
@@ -280,9 +340,10 @@ async def generate_directory_structure(
             media_type="application/zip",
             headers={
                 "Content-Disposition": f"attachment; filename=directory_structure.zip"
-            }
+            },
         )
     except Exception as e:
         logger.error(f"Error generating directory structure: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error generating directory structure: {str(e)}")
-
+        raise HTTPException(
+            status_code=500, detail=f"Error generating directory structure: {str(e)}"
+        )

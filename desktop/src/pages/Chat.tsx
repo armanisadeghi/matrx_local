@@ -1,16 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { Bot, ChevronDown } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
 import { useChat } from "@/hooks/use-chat";
 import { useAgents } from "@/hooks/use-agents";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ChatMessages } from "@/components/chat/ChatMessages";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatWelcome } from "@/components/chat/ChatWelcome";
-import { AgentPicker } from "@/components/chat/AgentPicker";
 import { GuidedVariableInputs } from "@/components/chat/GuidedVariableInputs";
 import { cn } from "@/lib/utils";
 import type { EngineStatus } from "@/hooks/use-engine";
-import type { ActiveAgent, PromptVariable } from "@/types/agents";
+import type { ActiveAgent, AgentInfo, PromptVariable } from "@/types/agents";
 
 interface ChatPageProps {
   engineStatus: EngineStatus;
@@ -24,12 +22,10 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
   // ---- Agent state ----
   const { builtins, userAgents, sharedAgents, isLoading: agentsLoading } = useAgents({ engineUrl });
   const [activeAgent, setActiveAgent] = useState<ActiveAgent | null>(null);
-  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
 
   // ---- Variable state ----
   const [variableValues, setVariableValues] = useState<Record<string, string>>({});
   const [activeVariables, setActiveVariables] = useState<PromptVariable[]>([]);
-  const agentPickerRef = useRef<HTMLDivElement>(null);
 
   const {
     conversations,
@@ -166,7 +162,7 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
         </header>
 
         {/* Messages or Welcome */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           {showWelcome ? (
             <ChatWelcome
               onSuggestionClick={handleSuggestionClick}
@@ -192,41 +188,6 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
 
         {/* Input Area */}
         <div className={cn("px-4 pb-4", hasVariables ? "pt-0" : "pt-2")}>
-          {/* Agent selector button */}
-          <div className="relative mb-1.5" ref={agentPickerRef}>
-            <button
-              type="button"
-              onClick={() => setAgentPickerOpen((o) => !o)}
-              className={cn(
-                "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
-                "border border-border hover:bg-accent",
-                activeAgent?.id
-                  ? "text-primary border-primary/30 bg-primary/5"
-                  : "text-muted-foreground"
-              )}
-            >
-              <Bot className="w-3.5 h-3.5" />
-              <span className="max-w-[160px] truncate">
-                {activeAgent?.id ? activeAgent.name : "No Agent"}
-              </span>
-              <ChevronDown className="w-3 h-3 opacity-60" />
-            </button>
-
-            <AgentPicker
-              builtins={builtins}
-              userAgents={userAgents}
-              sharedAgents={sharedAgents}
-              isLoading={agentsLoading}
-              selectedAgentId={activeAgent?.id ?? null}
-              isOpen={agentPickerOpen}
-              onSelect={(agent) => {
-                setActiveAgent(agent.id ? agent : null);
-                setAgentPickerOpen(false);
-              }}
-              onClose={() => setAgentPickerOpen(false)}
-            />
-          </div>
-
           <ChatInput
             onSend={handleSend}
             onStop={stopStreaming}
@@ -237,6 +198,18 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
             onModelChange={setModel}
             onModeChange={setMode}
             engineReady={engineStatus === "connected"}
+            agents={[...builtins, ...userAgents, ...sharedAgents]}
+            selectedAgentId={activeAgent?.id ?? null}
+            onAgentChange={(agentId) => {
+              if (!agentId) {
+                setActiveAgent(null);
+                return;
+              }
+              const all: AgentInfo[] = [...builtins, ...userAgents, ...sharedAgents];
+              const found = all.find((a) => a.id === agentId);
+              setActiveAgent(found ?? null);
+            }}
+            agentsLoading={agentsLoading}
           />
         </div>
       </div>

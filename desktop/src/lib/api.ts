@@ -439,6 +439,150 @@ class EngineAPI {
     );
   }
 
+  // ---- Remote search & research ----
+
+  /** Search via Brave Search API on the remote server. */
+  async remoteSearch(
+    keywords: string[],
+    count = 20,
+    country = "US",
+  ): Promise<Record<string, unknown>> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/search`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ keywords, count, country }),
+    });
+    if (!resp.ok) throw new Error(`Remote search failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Search then scrape top results. Results are stored server-side immediately. */
+  async remoteSearchAndScrape(
+    keywords: string[],
+    totalResultsPerKeyword = 10,
+    options?: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/search-and-scrape`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ keywords, total_results_per_keyword: totalResultsPerKeyword, options: options ?? {} }),
+    });
+    if (!resp.ok) throw new Error(`Remote search-and-scrape failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Stream search + scrape results via SSE. */
+  remoteSearchAndScrapeStream(
+    keywords: string[],
+    totalResultsPerKeyword = 10,
+    options: Record<string, unknown> | undefined,
+    onEvent: (event: string, data: unknown) => void,
+    onDone?: () => void,
+    onError?: (err: Error) => void,
+  ): Promise<AbortController> {
+    return this.streamSSE(
+      "/remote-scraper/search-and-scrape/stream",
+      { keywords, total_results_per_keyword: totalResultsPerKeyword, options: options ?? {} },
+      onEvent, onDone, onError,
+    );
+  }
+
+  /** Deep research — iterative search + scrape + compile. */
+  async remoteResearch(
+    query: string,
+    effort = "extreme",
+    country = "US",
+  ): Promise<Record<string, unknown>> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/research`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ query, effort, country }),
+    });
+    if (!resp.ok) throw new Error(`Remote research failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Stream deep research results via SSE. */
+  remoteResearchStream(
+    query: string,
+    effort = "extreme",
+    country = "US",
+    onEvent: (event: string, data: unknown) => void,
+    onDone?: () => void,
+    onError?: (err: Error) => void,
+  ): Promise<AbortController> {
+    return this.streamSSE(
+      "/remote-scraper/research/stream",
+      { query, effort, country },
+      onEvent, onDone, onError,
+    );
+  }
+
+  // ---- Content save-back ----
+
+  /**
+   * Save locally-scraped content to the server database immediately.
+   * Call this after every successful local scrape so the web app and
+   * all other devices see the result instantly.
+   */
+  async saveContent(
+    url: string,
+    content: Record<string, unknown>,
+    contentType = "html",
+    charCount?: number,
+    ttlDays = 30,
+  ): Promise<{ status: string; page_name: string; url: string; domain: string; char_count: number }> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/content/save`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url, content, content_type: contentType, char_count: charCount, ttl_days: ttlDays }),
+    });
+    if (!resp.ok) throw new Error(`Content save failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  // ---- Retry queue ----
+
+  /** Get URLs that failed on the server and need local retry. */
+  async queuePending(
+    tier: "desktop" | "extension" = "desktop",
+    limit = 10,
+  ): Promise<{ items: Array<{ id: string; target_url: string; domain_name: string; failure_reason: string; attempt_count: number }> }> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(
+      `${this.baseUrl}/remote-scraper/queue/pending?tier=${tier}&limit=${limit}`,
+      { headers },
+    );
+    if (!resp.ok) throw new Error(`Queue pending failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Retry queue statistics from the remote server. */
+  async queueStats(): Promise<Record<string, unknown>> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/queue/stats`, { headers });
+    if (!resp.ok) throw new Error(`Queue stats failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Local retry queue poller statistics (this engine's activity). */
+  async queuePollerStats(): Promise<{ polled: number; claimed: number; submitted: number; failed: number; running: boolean; client_id: string }> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/queue/poller-stats`);
+    if (!resp.ok) throw new Error(`Queue poller stats failed: ${resp.status}`);
+    return resp.json();
+  }
+
   /** Subscribe to engine events. */
   on(event: string, callback: (data: unknown) => void): () => void {
     if (!this.eventListeners.has(event)) {
@@ -548,7 +692,7 @@ class EngineAPI {
       method: "POST",
       headers,
       body: JSON.stringify({ jwt, user_id: userId }),
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   /** Get cloud-synced settings. */
@@ -662,7 +806,7 @@ class EngineAPI {
   async cloudHeartbeat(): Promise<void> {
     if (!this.baseUrl) return;
     const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    await fetch(`${this.baseUrl}/cloud/heartbeat`, { method: "POST", headers }).catch(() => {});
+    await fetch(`${this.baseUrl}/cloud/heartbeat`, { method: "POST", headers }).catch(() => { });
   }
 
   // ---- Documents API ----
@@ -1178,6 +1322,10 @@ export interface PermissionInfo {
   status: PermissionStatusValue;
   details: string;
   grant_instructions: string;
+  user_details?: string;
+  user_instructions?: string;
+  fixable?: boolean;
+  fix_capability_id?: string | null;
   devices?: Array<Record<string, unknown>>;
 }
 

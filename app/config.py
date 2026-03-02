@@ -26,9 +26,9 @@ _DEFAULT_ORIGINS = ",".join([
 ])
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-
-# Remote scraper server (dedicated server at scraper.app.matrxserver.com)
+# Remote scraper server — all DB access goes through this API, never directly.
+# Authenticated users' Supabase JWTs are accepted by the server — no API key needed for users.
+# SCRAPER_API_KEY is for server-to-server calls only (your own .env, never shipped to users).
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 SCRAPER_SERVER_URL = os.getenv("SCRAPER_SERVER_URL", "https://scraper.app.matrxserver.com")
 

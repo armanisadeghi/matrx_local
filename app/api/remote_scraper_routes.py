@@ -1,11 +1,12 @@
 """Routes that proxy requests to the remote scraper server.
 
 These let the React frontend call the remote scraper server through the
-local engine, so all external API keys stay server-side and the frontend
-only needs to talk to localhost.
+local engine, so all external credentials stay server-side.
 
-When the user is authenticated (Authorization header present), the JWT is
-forwarded to the scraper server. Otherwise, falls back to SCRAPER_API_KEY.
+Auth: Authenticated users' Supabase JWTs are forwarded directly and accepted
+by the scraper server. SCRAPER_API_KEY is only used as a fallback for
+unauthenticated requests (server-to-server or dev). All routes work for
+authenticated users regardless of whether SCRAPER_API_KEY is set.
 """
 
 from fastapi import APIRouter, HTTPException, Request
@@ -22,6 +23,11 @@ def _get_user_token(request: Request) -> str | None:
     return getattr(request.state, "user_token", None)
 
 
+def _get_client_or_raise():
+    """Return the remote scraper client. Always available — server URL is hardcoded."""
+    return get_remote_scraper()
+
+
 class ScrapeRequest(BaseModel):
     urls: list[str]
     options: dict | None = None
@@ -29,27 +35,34 @@ class ScrapeRequest(BaseModel):
 
 class SearchRequest(BaseModel):
     keywords: list[str]
-    count: int = 10
+    count: int = 20
     country: str = "US"
 
 
 class SearchAndScrapeRequest(BaseModel):
     keywords: list[str]
-    total_results_per_keyword: int = 5
+    total_results_per_keyword: int = 10
     options: dict | None = None
 
 
 class ResearchRequest(BaseModel):
     query: str
-    effort: str = "thorough"
+    effort: str = "extreme"
     country: str = "US"
+
+
+class ContentSaveRequest(BaseModel):
+    url: str
+    content: dict
+    content_type: str = "html"
+    char_count: int | None = None
+    ttl_days: int = 30
 
 
 @router.get("/status")
 async def remote_scraper_status():
+    """Check if the remote scraper server is reachable."""
     client = get_remote_scraper()
-    if not client.is_configured:
-        return {"available": False, "reason": "SCRAPER_API_KEY not configured"}
     try:
         health = await client.health()
         return {"available": True, **health}
@@ -57,73 +70,23 @@ async def remote_scraper_status():
         return {"available": False, "reason": str(e)}
 
 
+# ── Scrape ────────────────────────────────────────────────────────────────────
+
 @router.post("/scrape")
 async def remote_scrape(req: ScrapeRequest, request: Request):
-    client = get_remote_scraper()
-    if not client.is_configured:
-        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
+    """Scrape URLs via the remote server. Results are stored server-side."""
+    client = _get_client_or_raise()
     try:
         return await client.scrape(req.urls, req.options, auth_token=_get_user_token(request))
     except Exception as e:
-        logger.error(f"Remote scrape failed: {e}")
+        logger.error("Remote scrape failed: %s", e)
         raise HTTPException(502, f"Remote scraper error: {e}")
-
-
-@router.post("/search")
-async def remote_search(req: SearchRequest, request: Request):
-    client = get_remote_scraper()
-    if not client.is_configured:
-        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
-    try:
-        return await client.search(
-            req.keywords, req.count, req.country, auth_token=_get_user_token(request),
-        )
-    except Exception as e:
-        logger.error(f"Remote search failed: {e}")
-        raise HTTPException(502, f"Remote scraper error: {e}")
-
-
-@router.post("/search-and-scrape")
-async def remote_search_and_scrape(req: SearchAndScrapeRequest, request: Request):
-    client = get_remote_scraper()
-    if not client.is_configured:
-        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
-    try:
-        return await client.search_and_scrape(
-            req.keywords, req.total_results_per_keyword, req.options,
-            auth_token=_get_user_token(request),
-        )
-    except Exception as e:
-        logger.error(f"Remote search-and-scrape failed: {e}")
-        raise HTTPException(502, f"Remote scraper error: {e}")
-
-
-@router.post("/research")
-async def remote_research(req: ResearchRequest, request: Request):
-    client = get_remote_scraper()
-    if not client.is_configured:
-        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
-    try:
-        return await client.research(
-            req.query, req.effort, req.country, auth_token=_get_user_token(request),
-        )
-    except Exception as e:
-        logger.error(f"Remote research failed: {e}")
-        raise HTTPException(502, f"Remote scraper error: {e}")
-
-
-# ---- SSE streaming proxy endpoints ----
-
-def _ensure_configured():
-    client = get_remote_scraper()
-    if not client.is_configured:
-        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
-    return client
 
 
 @router.post("/scrape/stream")
 async def remote_scrape_stream(req: ScrapeRequest, request: Request):
-    client = _ensure_configured()
+    """Scrape URLs via SSE — results stream back as each URL completes."""
+    client = _get_client_or_raise()
     return StreamingResponse(
         client.stream_sse(
             "/api/v1/scrape/stream",
@@ -135,9 +98,41 @@ async def remote_scrape_stream(req: ScrapeRequest, request: Request):
     )
 
 
+# ── Search ────────────────────────────────────────────────────────────────────
+
+@router.post("/search")
+async def remote_search(req: SearchRequest, request: Request):
+    """Search via Brave Search API on the remote server."""
+    client = _get_client_or_raise()
+    try:
+        return await client.search(
+            req.keywords, req.count, req.country, auth_token=_get_user_token(request),
+        )
+    except Exception as e:
+        logger.error("Remote search failed: %s", e)
+        raise HTTPException(502, f"Remote scraper error: {e}")
+
+
+# ── Search + Scrape ───────────────────────────────────────────────────────────
+
+@router.post("/search-and-scrape")
+async def remote_search_and_scrape(req: SearchAndScrapeRequest, request: Request):
+    """Search then scrape top results. Results stored server-side."""
+    client = _get_client_or_raise()
+    try:
+        return await client.search_and_scrape(
+            req.keywords, req.total_results_per_keyword, req.options,
+            auth_token=_get_user_token(request),
+        )
+    except Exception as e:
+        logger.error("Remote search-and-scrape failed: %s", e)
+        raise HTTPException(502, f"Remote scraper error: {e}")
+
+
 @router.post("/search-and-scrape/stream")
 async def remote_search_and_scrape_stream(req: SearchAndScrapeRequest, request: Request):
-    client = _ensure_configured()
+    """Search + scrape via SSE stream."""
+    client = _get_client_or_raise()
     return StreamingResponse(
         client.stream_sse(
             "/api/v1/search-and-scrape/stream",
@@ -154,9 +149,25 @@ async def remote_search_and_scrape_stream(req: SearchAndScrapeRequest, request: 
     )
 
 
+# ── Research ──────────────────────────────────────────────────────────────────
+
+@router.post("/research")
+async def remote_research(req: ResearchRequest, request: Request):
+    """Deep research — iterative search + scrape + compile."""
+    client = _get_client_or_raise()
+    try:
+        return await client.research(
+            req.query, req.effort, req.country, auth_token=_get_user_token(request),
+        )
+    except Exception as e:
+        logger.error("Remote research failed: %s", e)
+        raise HTTPException(502, f"Remote scraper error: {e}")
+
+
 @router.post("/research/stream")
 async def remote_research_stream(req: ResearchRequest, request: Request):
-    client = _ensure_configured()
+    """Deep research via SSE stream."""
+    client = _get_client_or_raise()
     return StreamingResponse(
         client.stream_sse(
             "/api/v1/research/stream",
@@ -169,14 +180,37 @@ async def remote_research_stream(req: ResearchRequest, request: Request):
     )
 
 
-# ── Retry queue status routes ─────────────────────────────────────────────────
+# ── Content save-back ─────────────────────────────────────────────────────────
+
+@router.post("/content/save")
+async def save_content(req: ContentSaveRequest, request: Request):
+    """Save locally-scraped content to the server database immediately.
+
+    Called after every successful local scrape so the web app and other
+    devices see the result instantly. The server stores it in
+    scrape_parsed_page — the same table used for server-side scrapes.
+    """
+    client = _get_client_or_raise()
+    try:
+        return await client.save_content(
+            url=req.url,
+            content=req.content,
+            content_type=req.content_type,
+            char_count=req.char_count,
+            ttl_days=req.ttl_days,
+            auth_token=_get_user_token(request),
+        )
+    except Exception as e:
+        logger.error("Content save failed for %s: %s", req.url, e)
+        raise HTTPException(502, f"Content save error: {e}")
+
+
+# ── Retry queue ───────────────────────────────────────────────────────────────
 
 @router.get("/queue/pending")
 async def queue_pending(request: Request, tier: str = "desktop", limit: int = 10):
-    """Get URLs in the server's retry queue waiting for local scraping."""
-    client = get_remote_scraper()
-    if not client.is_configured:
-        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
+    """Get URLs the server failed to scrape that need local retry."""
+    client = _get_client_or_raise()
     try:
         return await client.get_pending(tier=tier, limit=limit, auth_token=_get_user_token(request))
     except Exception as e:
@@ -185,10 +219,8 @@ async def queue_pending(request: Request, tier: str = "desktop", limit: int = 10
 
 @router.get("/queue/stats")
 async def queue_stats(request: Request):
-    """Get retry queue statistics from the remote server."""
-    client = get_remote_scraper()
-    if not client.is_configured:
-        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
+    """Retry queue statistics from the remote server."""
+    client = _get_client_or_raise()
     try:
         return await client.queue_stats(auth_token=_get_user_token(request))
     except Exception as e:
@@ -197,17 +229,17 @@ async def queue_stats(request: Request):
 
 @router.get("/queue/poller-stats")
 async def queue_poller_stats():
-    """Get local retry queue poller statistics (this engine's activity)."""
+    """Local retry queue poller statistics (this engine's activity)."""
     from app.services.scraper.retry_queue import get_stats
     return get_stats()
 
 
+# ── Domain config ─────────────────────────────────────────────────────────────
+
 @router.get("/config/domains")
 async def get_domain_configs(request: Request):
-    """Get domain-specific scraping configs from the remote server."""
-    client = get_remote_scraper()
-    if not client.is_configured:
-        raise HTTPException(400, "Remote scraper not configured (SCRAPER_API_KEY missing)")
+    """Domain-specific scraping configs from the remote server."""
+    client = _get_client_or_raise()
     try:
         return await client.get_domain_configs(auth_token=_get_user_token(request))
     except Exception as e:

@@ -39,6 +39,10 @@ class PermissionResult:
     status: PermissionStatus
     details: str = ""
     grant_instructions: str = ""
+    user_details: str = ""
+    user_instructions: str = ""
+    fixable: bool = False
+    fix_capability_id: str | None = None
     devices: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +51,10 @@ class PermissionResult:
             "status": self.status.value,
             "details": self.details,
             "grant_instructions": self.grant_instructions,
+            "user_details": self.user_details,
+            "user_instructions": self.user_instructions,
+            "fixable": self.fixable,
+            "fix_capability_id": self.fix_capability_id,
         }
         if self.devices:
             d["devices"] = self.devices
@@ -56,6 +64,7 @@ class PermissionResult:
 # ---------------------------------------------------------------------------
 # macOS helpers
 # ---------------------------------------------------------------------------
+
 
 async def _run(cmd: list[str], timeout: int = 10) -> tuple[str, str, int]:
     """Run a subprocess and return (stdout, stderr, returncode)."""
@@ -76,6 +85,7 @@ async def _run(cmd: list[str], timeout: int = 10) -> tuple[str, str, int]:
 # Microphone
 # ---------------------------------------------------------------------------
 
+
 async def check_microphone() -> PermissionResult:
     """Check microphone access and list available input devices."""
     devices: list[dict[str, Any]] = []
@@ -83,15 +93,18 @@ async def check_microphone() -> PermissionResult:
     # Try to list audio input devices
     try:
         import sounddevice as sd
+
         all_devs = sd.query_devices()
         for i, dev in enumerate(all_devs):
             if dev["max_input_channels"] > 0:
-                devices.append({
-                    "index": i,
-                    "name": dev["name"],
-                    "channels": dev["max_input_channels"],
-                    "sample_rate": dev["default_samplerate"],
-                })
+                devices.append(
+                    {
+                        "index": i,
+                        "name": dev["name"],
+                        "channels": dev["max_input_channels"],
+                        "sample_rate": dev["default_samplerate"],
+                    }
+                )
     except ImportError:
         # Fallback: system commands
         try:
@@ -120,6 +133,10 @@ async def check_microphone() -> PermissionResult:
             status=PermissionStatus.UNAVAILABLE,
             details="No audio input devices detected",
             grant_instructions=_microphone_instructions(),
+            user_details="Audio recording is not available yet",
+            user_instructions="Click Fix It to enable audio support",
+            fixable=True,
+            fix_capability_id="audio_recording",
         )
 
     # On macOS, try a quick non-blocking permission probe
@@ -131,6 +148,12 @@ async def check_microphone() -> PermissionResult:
             details=f"{len(devices)} input device(s) found",
             devices=devices,
             grant_instructions=_microphone_instructions(),
+            user_details=f"Microphone ready — {len(devices)} device(s) detected"
+            if status == PermissionStatus.GRANTED
+            else "Microphone access needs permission",
+            user_instructions=""
+            if status == PermissionStatus.GRANTED
+            else "Open System Settings to allow microphone access",
         )
 
     # On Linux/Windows, if devices are listed the OS generally allows access
@@ -140,6 +163,8 @@ async def check_microphone() -> PermissionResult:
         details=f"{len(devices)} input device(s) found",
         devices=devices,
         grant_instructions=_microphone_instructions(),
+        user_details=f"Microphone is active — {len(devices)} device(s) detected",
+        user_instructions="",
     )
 
 
@@ -155,6 +180,7 @@ def _microphone_instructions() -> str:
 # Camera
 # ---------------------------------------------------------------------------
 
+
 async def check_camera() -> PermissionResult:
     """Check camera availability."""
     devices: list[dict[str, Any]] = []
@@ -164,48 +190,77 @@ async def check_camera() -> PermissionResult:
             out, _, _ = await _run(["system_profiler", "SPCameraDataType", "-json"])
             data = json.loads(out)
             for item in data.get("SPCameraDataType", []):
-                devices.append({
-                    "name": item.get("_name", "Unknown"),
-                    "model_id": item.get("spcamera_model-id", ""),
-                    "unique_id": item.get("spcamera_unique-id", ""),
-                })
+                devices.append(
+                    {
+                        "name": item.get("_name", "Unknown"),
+                        "model_id": item.get("spcamera_model-id", ""),
+                        "unique_id": item.get("spcamera_unique-id", ""),
+                    }
+                )
         except Exception:
             pass
 
         status = await _macos_check_tcc("kTCCServiceCamera", "Camera")
+        _cam_ok = status == PermissionStatus.GRANTED
         return PermissionResult(
             permission="camera",
             status=status,
-            details=f"{len(devices)} camera(s) found" if devices else "No cameras detected",
+            details=f"{len(devices)} camera(s) found"
+            if devices
+            else "No cameras detected",
             devices=devices,
             grant_instructions="System Settings > Privacy & Security > Camera > Enable for Matrx Local",
+            user_details=f"Camera is active — {len(devices)} camera(s) detected"
+            if _cam_ok
+            else "Camera access needs permission",
+            user_instructions=""
+            if _cam_ok
+            else "Open System Settings to allow camera access",
         )
 
     elif IS_WINDOWS:
         try:
-            out, _, _ = await _run([
-                "powershell.exe", "-NoProfile", "-Command",
-                "Get-PnpDevice -Class Camera -PresentOnly | Select-Object FriendlyName, Status | ConvertTo-Json",
-            ])
+            out, _, _ = await _run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-PnpDevice -Class Camera -PresentOnly | Select-Object FriendlyName, Status | ConvertTo-Json",
+                ]
+            )
             cams = json.loads(out) if out.strip() else []
             if isinstance(cams, dict):
                 cams = [cams]
             for cam in cams:
-                devices.append({"name": cam.get("FriendlyName", ""), "status": cam.get("Status", "")})
+                devices.append(
+                    {
+                        "name": cam.get("FriendlyName", ""),
+                        "status": cam.get("Status", ""),
+                    }
+                )
         except Exception:
             pass
 
         return PermissionResult(
             permission="camera",
-            status=PermissionStatus.GRANTED if devices else PermissionStatus.UNAVAILABLE,
-            details=f"{len(devices)} camera(s) found" if devices else "No cameras detected",
+            status=PermissionStatus.GRANTED
+            if devices
+            else PermissionStatus.UNAVAILABLE,
+            details=f"{len(devices)} camera(s) found"
+            if devices
+            else "No cameras detected",
             devices=devices,
             grant_instructions="Settings > Privacy > Camera > Allow apps to access your camera",
+            user_details=f"Camera is active — {len(devices)} camera(s) detected"
+            if devices
+            else "No camera detected",
+            user_instructions="" if devices else "Connect a camera to get started",
         )
 
     else:  # Linux
         try:
             import glob as _glob
+
             video_devs = _glob.glob("/dev/video*")
             for vd in video_devs:
                 devices.append({"name": vd})
@@ -214,10 +269,18 @@ async def check_camera() -> PermissionResult:
 
         return PermissionResult(
             permission="camera",
-            status=PermissionStatus.GRANTED if devices else PermissionStatus.UNAVAILABLE,
-            details=f"{len(devices)} video device(s) found" if devices else "No cameras detected",
+            status=PermissionStatus.GRANTED
+            if devices
+            else PermissionStatus.UNAVAILABLE,
+            details=f"{len(devices)} video device(s) found"
+            if devices
+            else "No cameras detected",
             devices=devices,
             grant_instructions="Ensure your user is in the 'video' group: sudo usermod -aG video $USER",
+            user_details=f"Camera is active — {len(devices)} device(s) detected"
+            if devices
+            else "No camera detected",
+            user_instructions="" if devices else "Connect a camera to get started",
         )
 
 
@@ -225,29 +288,42 @@ async def check_camera() -> PermissionResult:
 # Screen Recording / Accessibility
 # ---------------------------------------------------------------------------
 
+
 async def check_accessibility() -> PermissionResult:
     """Check accessibility / screen recording permissions (mostly macOS)."""
     if IS_MACOS:
         # Test by trying a harmless AppleScript that requires accessibility
         try:
-            out, err, rc = await _run([
-                "osascript", "-e",
-                'tell application "System Events" to get name of first process whose frontmost is true',
-            ])
+            out, err, rc = await _run(
+                [
+                    "osascript",
+                    "-e",
+                    'tell application "System Events" to get name of first process whose frontmost is true',
+                ]
+            )
             if rc == 0:
                 return PermissionResult(
                     permission="accessibility",
                     status=PermissionStatus.GRANTED,
                     details=f"Accessibility access confirmed (frontmost: {out.strip()})",
                     grant_instructions=_accessibility_instructions(),
+                    user_details="Automation and accessibility features are active",
+                    user_instructions="",
                 )
             # Check for known permission error codes
-            if "-1743" in err or "-25211" in err or "not authorized" in err.lower() or "assistive" in err.lower():
+            if (
+                "-1743" in err
+                or "-25211" in err
+                or "not authorized" in err.lower()
+                or "assistive" in err.lower()
+            ):
                 return PermissionResult(
                     permission="accessibility",
                     status=PermissionStatus.DENIED,
                     details="Accessibility access denied by macOS",
                     grant_instructions=_accessibility_instructions(),
+                    user_details="Automation features need permission",
+                    user_instructions="Open System Settings to allow accessibility access",
                 )
         except Exception:
             pass
@@ -257,6 +333,8 @@ async def check_accessibility() -> PermissionResult:
             status=PermissionStatus.UNKNOWN,
             details="Could not determine accessibility status",
             grant_instructions=_accessibility_instructions(),
+            user_details="Automation features status is unknown",
+            user_instructions="Open System Settings to check accessibility permissions",
         )
 
     elif IS_WINDOWS:
@@ -266,6 +344,8 @@ async def check_accessibility() -> PermissionResult:
             status=PermissionStatus.GRANTED,
             details="Windows does not restrict accessibility for desktop applications",
             grant_instructions="No action needed on Windows",
+            user_details="Automation and accessibility features are active",
+            user_instructions="",
         )
 
     else:
@@ -278,12 +358,16 @@ async def check_accessibility() -> PermissionResult:
                 status=PermissionStatus.GRANTED,
                 details=f"Tools available: {'xdotool' if has_xdotool else ''} {'wmctrl' if has_wmctrl else ''}".strip(),
                 grant_instructions="Install xdotool and wmctrl: sudo apt install xdotool wmctrl",
+                user_details="Automation and accessibility features are active",
+                user_instructions="",
             )
         return PermissionResult(
             permission="accessibility",
             status=PermissionStatus.DENIED,
             details="No accessibility tools found (xdotool / wmctrl)",
             grant_instructions="Install xdotool and wmctrl: sudo apt install xdotool wmctrl",
+            user_details="Automation tools are not set up yet",
+            user_instructions="Additional system tools are needed — see details for setup steps",
         )
 
 
@@ -300,6 +384,7 @@ def _accessibility_instructions() -> str:
 # ---------------------------------------------------------------------------
 # Bluetooth
 # ---------------------------------------------------------------------------
+
 
 async def check_bluetooth() -> PermissionResult:
     """Check Bluetooth availability and permission."""
@@ -321,12 +406,14 @@ async def check_bluetooth() -> PermissionResult:
                     for item in section:
                         if isinstance(item, dict):
                             for name, info in item.items():
-                                devices.append({
-                                    "name": name,
-                                    "address": info.get("device_address", ""),
-                                    "type": info.get("device_minorType", ""),
-                                    "connected": section_key == "device_connected",
-                                })
+                                devices.append(
+                                    {
+                                        "name": name,
+                                        "address": info.get("device_address", ""),
+                                        "type": info.get("device_minorType", ""),
+                                        "connected": section_key == "device_connected",
+                                    }
+                                )
 
             is_on = "attrib_on" in bt_power.lower() if bt_power else len(devices) > 0
             return PermissionResult(
@@ -335,28 +422,46 @@ async def check_bluetooth() -> PermissionResult:
                 details=f"Bluetooth {'on' if is_on else 'off'}, {len(devices)} device(s) paired",
                 devices=devices,
                 grant_instructions="System Settings > Bluetooth > Turn On. Also: Privacy & Security > Bluetooth > Enable for Matrx Local",
+                user_details=f"Bluetooth is active — {len(devices)} device(s) paired"
+                if is_on
+                else "Bluetooth is turned off",
+                user_instructions=""
+                if is_on
+                else "Turn on Bluetooth in System Settings",
             )
         except Exception as e:
             logger.debug("Bluetooth check failed: %s", e)
 
     elif IS_WINDOWS:
         try:
-            out, _, rc = await _run([
-                "powershell.exe", "-NoProfile", "-Command",
-                "Get-PnpDevice -Class Bluetooth | Where-Object {$_.FriendlyName -ne $null} | "
-                "Select-Object FriendlyName, Status | ConvertTo-Json",
-            ])
+            out, _, rc = await _run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-PnpDevice -Class Bluetooth | Where-Object {$_.FriendlyName -ne $null} | "
+                    "Select-Object FriendlyName, Status | ConvertTo-Json",
+                ]
+            )
             bt_devs = json.loads(out) if out.strip() else []
             if isinstance(bt_devs, dict):
                 bt_devs = [bt_devs]
             for d in bt_devs:
-                devices.append({"name": d.get("FriendlyName", ""), "status": d.get("Status", "")})
+                devices.append(
+                    {"name": d.get("FriendlyName", ""), "status": d.get("Status", "")}
+                )
             return PermissionResult(
                 permission="bluetooth",
-                status=PermissionStatus.GRANTED if devices else PermissionStatus.UNAVAILABLE,
+                status=PermissionStatus.GRANTED
+                if devices
+                else PermissionStatus.UNAVAILABLE,
                 details=f"{len(devices)} Bluetooth device(s) found",
                 devices=devices,
                 grant_instructions="Settings > Bluetooth & devices > Turn on Bluetooth",
+                user_details=f"Bluetooth is active — {len(devices)} device(s) found"
+                if devices
+                else "No Bluetooth devices found",
+                user_instructions="" if devices else "Turn on Bluetooth in Settings",
             )
         except Exception:
             pass
@@ -367,16 +472,21 @@ async def check_bluetooth() -> PermissionResult:
                 out, _, rc = await _run(["bluetoothctl", "devices"])
                 if rc == 0:
                     import re
+
                     for line in out.strip().split("\n"):
                         match = re.match(r"Device\s+([\dA-Fa-f:]+)\s+(.+)", line)
                         if match:
-                            devices.append({"name": match.group(2), "address": match.group(1)})
+                            devices.append(
+                                {"name": match.group(2), "address": match.group(1)}
+                            )
                 return PermissionResult(
                     permission="bluetooth",
                     status=PermissionStatus.GRANTED,
                     details=f"{len(devices)} paired device(s)",
                     devices=devices,
                     grant_instructions="Ensure bluetooth service is running: sudo systemctl enable --now bluetooth",
+                    user_details=f"Bluetooth is active — {len(devices)} paired device(s)",
+                    user_instructions="",
                 )
             except Exception:
                 pass
@@ -386,6 +496,8 @@ async def check_bluetooth() -> PermissionResult:
                 status=PermissionStatus.UNAVAILABLE,
                 details="bluetoothctl not found",
                 grant_instructions="Install bluez: sudo apt install bluez",
+                user_details="Bluetooth is not available",
+                user_instructions="Bluetooth support is not installed on this system",
             )
 
     return PermissionResult(
@@ -393,12 +505,15 @@ async def check_bluetooth() -> PermissionResult:
         status=PermissionStatus.UNKNOWN,
         details="Could not determine Bluetooth status",
         grant_instructions="Check your system's Bluetooth settings",
+        user_details="Bluetooth status is unknown",
+        user_instructions="Check your system's Bluetooth settings",
     )
 
 
 # ---------------------------------------------------------------------------
 # WiFi / Network
 # ---------------------------------------------------------------------------
+
 
 async def check_network() -> PermissionResult:
     """Check network interfaces and connectivity."""
@@ -407,6 +522,7 @@ async def check_network() -> PermissionResult:
 
     try:
         import psutil
+
         interfaces = psutil.net_if_addrs()
         stats = psutil.net_if_stats()
 
@@ -416,6 +532,7 @@ async def check_network() -> PermissionResult:
                 continue
             iface_info: dict[str, Any] = {"name": iface_name, "is_up": True}
             import socket
+
             for addr in addrs:
                 if addr.family == socket.AF_INET:
                     iface_info["ipv4"] = addr.address
@@ -456,6 +573,7 @@ async def check_network() -> PermissionResult:
     # Basic internet check
     try:
         import socket
+
         sock = socket.create_connection(("1.1.1.1", 53), timeout=3)
         sock.close()
         details_parts.append("Internet reachable")
@@ -463,12 +581,25 @@ async def check_network() -> PermissionResult:
         details_parts.append("Internet unreachable")
 
     status = PermissionStatus.GRANTED if devices else PermissionStatus.DENIED
+    _net_fixable = "psutil not available" in ", ".join(details_parts)
     return PermissionResult(
         permission="network",
         status=status,
         details=", ".join(details_parts),
         devices=devices,
         grant_instructions=_network_instructions(),
+        user_details=f"Network is active — {len(devices)} interface(s) connected"
+        if devices
+        else "Network monitoring is limited",
+        user_instructions=""
+        if devices
+        else (
+            "Click Fix It to enable full network monitoring"
+            if _net_fixable
+            else "Check your network connection"
+        ),
+        fixable=_net_fixable,
+        fix_capability_id="system_monitoring" if _net_fixable else None,
     )
 
 
@@ -477,18 +608,22 @@ def _network_instructions() -> str:
         return "System Settings > Privacy & Security > Local Network > Enable for Matrx Local"
     elif IS_WINDOWS:
         return "Settings > Network & internet. Ensure WiFi or Ethernet is connected."
-    return "Ensure NetworkManager is running: sudo systemctl enable --now NetworkManager"
+    return (
+        "Ensure NetworkManager is running: sudo systemctl enable --now NetworkManager"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Screen Recording (macOS-specific)
 # ---------------------------------------------------------------------------
 
+
 async def check_screen_recording() -> PermissionResult:
     """Check screen recording / screenshot permission."""
     if IS_MACOS:
         # Try taking a screenshot to temp — if denied, macOS blocks it
         import tempfile, os
+
         tmp = os.path.join(tempfile.gettempdir(), "_matrx_perm_test.png")
         try:
             _, err, rc = await _run(["screencapture", "-x", "-t", "png", tmp])
@@ -502,6 +637,8 @@ async def check_screen_recording() -> PermissionResult:
                         status=PermissionStatus.GRANTED,
                         details="Screen capture works",
                         grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
+                        user_details="Screen capture is active",
+                        user_instructions="",
                     )
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -513,6 +650,8 @@ async def check_screen_recording() -> PermissionResult:
             status=PermissionStatus.UNKNOWN,
             details="Screen recording permission may be required",
             grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
+            user_details="Screen capture may need permission",
+            user_instructions="Open System Settings to allow screen recording",
         )
 
     elif IS_WINDOWS:
@@ -521,6 +660,8 @@ async def check_screen_recording() -> PermissionResult:
             status=PermissionStatus.GRANTED,
             details="Screen capture is available on Windows",
             grant_instructions="No action needed",
+            user_details="Screen capture is active",
+            user_instructions="",
         )
 
     else:
@@ -529,6 +670,8 @@ async def check_screen_recording() -> PermissionResult:
             status=PermissionStatus.GRANTED,
             details="X11/Wayland screen capture available",
             grant_instructions="For Wayland, ensure the portal is configured for screen sharing",
+            user_details="Screen capture is active",
+            user_instructions="",
         )
 
 
@@ -536,16 +679,20 @@ async def check_screen_recording() -> PermissionResult:
 # Location Services
 # ---------------------------------------------------------------------------
 
+
 async def check_location() -> PermissionResult:
     """Check location services availability."""
     if IS_MACOS:
         status = await _macos_check_tcc("kTCCServiceSystemPolicyAllFiles", "Location")
         # Location is a different TCC, just report availability
         try:
-            out, _, rc = await _run([
-                "defaults", "read",
-                "/var/db/locationd/clients.plist",
-            ])
+            out, _, rc = await _run(
+                [
+                    "defaults",
+                    "read",
+                    "/var/db/locationd/clients.plist",
+                ]
+            )
             # This will fail without root — that's fine
         except Exception:
             pass
@@ -555,6 +702,8 @@ async def check_location() -> PermissionResult:
             status=PermissionStatus.UNKNOWN,
             details="Location permission is managed per-app by macOS",
             grant_instructions="System Settings > Privacy & Security > Location Services > Enable for Matrx Local",
+            user_details="Location services may need permission",
+            user_instructions="Open System Settings to allow location access",
         )
 
     return PermissionResult(
@@ -562,12 +711,15 @@ async def check_location() -> PermissionResult:
         status=PermissionStatus.UNKNOWN,
         details="Location services check not yet implemented for this platform",
         grant_instructions="Check your system's location settings",
+        user_details="Location services status unknown",
+        user_instructions="Check your system's location settings",
     )
 
 
 # ---------------------------------------------------------------------------
 # macOS TCC helper
 # ---------------------------------------------------------------------------
+
 
 async def _macos_check_tcc(service: str, label: str) -> PermissionStatus:
     """Try to determine macOS TCC permission status.
@@ -579,6 +731,7 @@ async def _macos_check_tcc(service: str, label: str) -> PermissionStatus:
     if "Microphone" in label:
         try:
             import sounddevice as sd
+
             sd.query_devices()
             # If we can query devices, at minimum the driver is accessible.
             # Actual recording permission may still require a grant, but
@@ -605,6 +758,7 @@ async def _macos_check_tcc(service: str, label: str) -> PermissionStatus:
 # Full scan
 # ---------------------------------------------------------------------------
 
+
 async def check_all_permissions() -> list[dict[str, Any]]:
     """Run all permission checks concurrently and return structured results."""
     results = await asyncio.gather(
@@ -620,17 +774,24 @@ async def check_all_permissions() -> list[dict[str, Any]]:
 
     output: list[dict[str, Any]] = []
     names = [
-        "microphone", "camera", "accessibility", "bluetooth",
-        "network", "screen_recording", "location",
+        "microphone",
+        "camera",
+        "accessibility",
+        "bluetooth",
+        "network",
+        "screen_recording",
+        "location",
     ]
     for i, result in enumerate(results):
         if isinstance(result, Exception):
-            output.append({
-                "permission": names[i],
-                "status": "unknown",
-                "details": f"Check failed: {result}",
-                "grant_instructions": "",
-            })
+            output.append(
+                {
+                    "permission": names[i],
+                    "status": "unknown",
+                    "details": f"Check failed: {result}",
+                    "grant_instructions": "",
+                }
+            )
         else:
             output.append(result.to_dict())
 

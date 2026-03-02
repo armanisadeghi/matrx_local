@@ -86,6 +86,9 @@ jobs:
           # Supabase publishable keys — inlined by Vite at build time
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY }}
+          # Scraper server URL — public, not a secret. All scraper API calls go here.
+          # Authenticated users' Supabase JWTs are forwarded; no user-level API key needed.
+          SCRAPER_SERVER_URL: "https://scraper.app.matrxserver.com"
           # macOS notarization (optional — only active when secrets are set)
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}

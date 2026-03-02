@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { AgentInfo, AgentsResponse } from "@/types/agents";
+import supabase from "@/lib/supabase";
+import type { AgentInfo, AgentsResponse, PromptVariable } from "@/types/agents";
 
 interface UseAgentsOptions {
   engineUrl: string | null;
@@ -20,6 +21,84 @@ interface UseAgentsState {
 const cache = new Map<string, { data: AgentsResponse; ts: number }>();
 const CACHE_TTL_MS = 60_000; // 1 minute
 
+// ---------------------------------------------------------------------------
+// Supabase direct fetch — fills in user prompts + shared prompts using the
+// session JWT so the engine doesn't need to be authenticated per-user.
+// ---------------------------------------------------------------------------
+
+interface RawPromptRow {
+  id: string;
+  name: string;
+  description: string | null;
+  variable_defaults: PromptVariable[] | null;
+  model_id?: string | null;
+  temperature?: number | null;
+  max_tokens?: number | null;
+  is_active?: boolean;
+}
+
+function shapeFromRow(row: RawPromptRow, source: AgentInfo["source"]): AgentInfo {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? "",
+    source,
+    variable_defaults: row.variable_defaults ?? [],
+    settings: {
+      model_id: row.model_id ?? null,
+      temperature: row.temperature ?? null,
+      max_tokens: row.max_tokens ?? null,
+      stream: true,
+      tools: [],
+    },
+  };
+}
+
+async function fetchUserPromptsFromSupabase(): Promise<{
+  user: AgentInfo[];
+  shared: AgentInfo[];
+}> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user) return { user: [], shared: [] };
+
+  const userId = session.user.id;
+
+  const [ownResult, sharedResult] = await Promise.allSettled([
+    supabase
+      .from("prompts")
+      .select("id, name, description, variable_defaults, model_id, temperature, max_tokens")
+      .eq("user_id", userId)
+      .order("name", { ascending: true }),
+
+    supabase
+      .from("prompt_permissions")
+      .select("prompt_id, prompts(id, name, description, variable_defaults, model_id, temperature, max_tokens)")
+      .eq("user_id", userId)
+      .in("permission", ["read", "comment", "edit", "admin"]),
+  ]);
+
+  const user: AgentInfo[] = [];
+  const shared: AgentInfo[] = [];
+
+  if (ownResult.status === "fulfilled" && !ownResult.value.error && ownResult.value.data) {
+    for (const row of ownResult.value.data as RawPromptRow[]) {
+      user.push(shapeFromRow(row, "user"));
+    }
+  }
+
+  if (sharedResult.status === "fulfilled" && !sharedResult.value.error && sharedResult.value.data) {
+    for (const row of sharedResult.value.data as { prompt_id: string; prompts: RawPromptRow | null }[]) {
+      if (row.prompts) {
+        shared.push(shapeFromRow(row.prompts, "shared"));
+      }
+    }
+  }
+
+  return { user, shared };
+}
+
+// ---------------------------------------------------------------------------
+
 export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
   const [builtins, setBuiltins] = useState<AgentInfo[]>([]);
   const [userAgents, setUserAgents] = useState<AgentInfo[]>([]);
@@ -29,13 +108,23 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
   const [source, setSource] = useState<AgentsResponse["source"] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const applyResponse = (data: AgentsResponse) => {
+  const applyResponse = useCallback((data: AgentsResponse, directUser?: AgentInfo[], directShared?: AgentInfo[]) => {
     setBuiltins(data.builtins);
-    setUserAgents(data.user);
-    setSharedAgents(data.shared);
+
+    // Merge engine user agents with direct Supabase user agents (dedupe by id)
+    const mergedUser = directUser
+      ? mergeById(data.user, directUser)
+      : data.user;
+    setUserAgents(mergedUser);
+
+    const mergedShared = directShared
+      ? mergeById(data.shared, directShared)
+      : data.shared;
+    setSharedAgents(mergedShared);
+
     setSource(data.source);
     setError(null);
-  };
+  }, []);
 
   const load = useCallback(
     async (force = false) => {
@@ -43,7 +132,10 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
 
       const cached = cache.get(engineUrl);
       if (!force && cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-        applyResponse(cached.data);
+        // Still fetch Supabase user prompts in the background so shared agents
+        // are populated even from cache.
+        const { user, shared } = await fetchUserPromptsFromSupabase().catch(() => ({ user: [], shared: [] }));
+        applyResponse(cached.data, user, shared);
         return;
       }
 
@@ -55,13 +147,26 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
       setError(null);
 
       try {
-        const resp = await fetch(`${engineUrl}/chat/agents`, {
-          signal: abort.signal,
-        });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data: AgentsResponse = await resp.json();
+        const [engineResult, supabaseResult] = await Promise.allSettled([
+          fetch(`${engineUrl}/chat/agents`, { signal: abort.signal }).then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json() as Promise<AgentsResponse>;
+          }),
+          fetchUserPromptsFromSupabase(),
+        ]);
+
+        if (engineResult.status === "rejected") {
+          if ((engineResult.reason as Error).name === "AbortError") return;
+          throw engineResult.reason;
+        }
+
+        const data = engineResult.value;
         cache.set(engineUrl, { data, ts: Date.now() });
-        applyResponse(data);
+
+        const { user: directUser, shared: directShared } =
+          supabaseResult.status === "fulfilled" ? supabaseResult.value : { user: [], shared: [] };
+
+        applyResponse(data, directUser, directShared);
       } catch (err: unknown) {
         if ((err as Error).name === "AbortError") return;
         setError((err as Error).message || "Failed to load agents");
@@ -69,7 +174,7 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
         setIsLoading(false);
       }
     },
-    [engineUrl]
+    [engineUrl, applyResponse]
   );
 
   useEffect(() => {
@@ -91,4 +196,14 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
     source,
     refresh: () => load(true),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function mergeById(primary: AgentInfo[], secondary: AgentInfo[]): AgentInfo[] {
+  const seen = new Set(primary.map((a) => a.id));
+  const extras = secondary.filter((a) => !seen.has(a.id));
+  return [...primary, ...extras];
 }

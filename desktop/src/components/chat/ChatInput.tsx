@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatMode } from "@/hooks/use-chat";
+import type { AgentInfo } from "@/types/agents";
 
 interface ChatInputProps {
   onSend: (message: string) => void | Promise<void>;
@@ -19,6 +20,11 @@ interface ChatInputProps {
   onModeChange: (mode: ChatMode) => void;
   /** When true, the send button is disabled but the textarea remains typeable. */
   engineReady?: boolean;
+  // Agent props
+  agents?: AgentInfo[];
+  selectedAgentId?: string | null;
+  onAgentChange?: (agentId: string | null) => void;
+  agentsLoading?: boolean;
 }
 
 const modeLabels: Record<ChatMode, string> = {
@@ -37,11 +43,17 @@ export function ChatInput({
   onModelChange,
   onModeChange,
   engineReady = true,
+  agents = [],
+  selectedAgentId = null,
+  onAgentChange,
+  agentsLoading = false,
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showAgentDropdown, setShowAgentDropdown] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const agentDropdownRef = useRef<HTMLDivElement>(null);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -51,14 +63,14 @@ export function ChatInput({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value]);
 
-  // Close dropdown on outside click
+  // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node)
-      ) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowModelDropdown(false);
+      }
+      if (agentDropdownRef.current && !agentDropdownRef.current.contains(e.target as Node)) {
+        setShowAgentDropdown(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -131,7 +143,7 @@ export function ChatInput({
 
         {/* Bottom bar */}
         <div className="flex items-center justify-between px-3 pb-2.5">
-          {/* Left: Attach + Model */}
+          {/* Left: Attach + Agent + Model */}
           <div className="flex items-center gap-1">
             {/* Attach / plus button */}
             <button
@@ -140,6 +152,75 @@ export function ChatInput({
             >
               <Plus className="h-4 w-4" />
             </button>
+
+            {/* Agent selector */}
+            {onAgentChange && (
+              <div className="relative" ref={agentDropdownRef}>
+                <button
+                  onClick={() => setShowAgentDropdown(!showAgentDropdown)}
+                  className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <span className="max-w-[120px] truncate">
+                    {selectedAgentId
+                      ? (agents.find((a) => a.id === selectedAgentId)?.name ?? "Agent")
+                      : "No Agent"}
+                  </span>
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+
+                {showAgentDropdown && (
+                  <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[220px] max-h-72 overflow-y-auto rounded-lg p-1.5">
+                    {agentsLoading ? (
+                      <div className="px-3 py-4 text-xs text-muted-foreground text-center">
+                        Loading…
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => { onAgentChange(null); setShowAgentDropdown(false); }}
+                          className={cn(
+                            "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
+                            !selectedAgentId
+                              ? "bg-accent text-accent-foreground"
+                              : "text-foreground hover:bg-accent/50"
+                          )}
+                        >
+                          <span className="font-medium">No Agent</span>
+                          <span className="ml-1.5 text-muted-foreground">— plain chat</span>
+                        </button>
+                        {agents.length > 0 && (
+                          <div className="my-1 border-t border-border/50" />
+                        )}
+                        {agents.map((agent) => (
+                          <button
+                            key={agent.id}
+                            onClick={() => { onAgentChange(agent.id); setShowAgentDropdown(false); }}
+                            className={cn(
+                              "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
+                              selectedAgentId === agent.id
+                                ? "bg-accent text-accent-foreground"
+                                : "text-foreground hover:bg-accent/50"
+                            )}
+                          >
+                            <div className="flex-1 min-w-0">
+                              <span className="font-medium block truncate">{agent.name}</span>
+                              {agent.description && (
+                                <span className="text-muted-foreground truncate block mt-0.5">
+                                  {agent.description}
+                                </span>
+                              )}
+                            </div>
+                            {agent.source === "user" && (
+                              <span className="ml-auto text-[10px] text-muted-foreground shrink-0">mine</span>
+                            )}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Model selector */}
             <div className="relative" ref={dropdownRef}>

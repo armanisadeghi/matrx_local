@@ -214,7 +214,7 @@ export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
   }
 
   return (
-    <ScrollArea className="flex-1" ref={scrollRef}>
+    <ScrollArea className="h-full" ref={scrollRef}>
       <div className="py-2">
         {messages.map((msg) =>
           msg.role === "user" ? (

@@ -15,13 +15,26 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Routes that don't require auth (health checks, discovery, read-only metadata).
-_PUBLIC_PATHS = frozenset({
-    "/", "/tools/list", "/remote-scraper/status",
-    "/proxy/status",
-    "/chat/tools", "/chat/tools/by-category", "/chat/tools/anthropic",
-    "/remote-scraper/queue/poller-stats",
-    "/docs", "/openapi.json", "/redoc",
-})
+_PUBLIC_PATHS = frozenset(
+    {
+        "/",
+        "/tools/list",
+        "/remote-scraper/status",
+        "/proxy/status",
+        "/chat/tools",
+        "/chat/tools/by-category",
+        "/chat/tools/anthropic",
+        "/remote-scraper/queue/poller-stats",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        # Discovery & health — the web app needs these before it can send auth.
+        "/health",
+        "/version",
+        "/ports",
+        "/cloud/heartbeat",
+    }
+)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -29,7 +42,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path.rstrip("/") or "/"
 
         # Skip auth for public routes, device status, and OPTIONS (CORS preflight).
-        if path in _PUBLIC_PATHS or path.startswith("/devices/") or request.method == "OPTIONS":
+        if (
+            path in _PUBLIC_PATHS
+            or path.startswith("/devices/")
+            or request.method == "OPTIONS"
+        ):
             return await call_next(request)
 
         # Extract Bearer token — prefer Authorization header, fall back to

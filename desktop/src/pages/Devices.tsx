@@ -18,6 +18,8 @@ import {
   Loader2,
   Cpu,
   Eye,
+  Wrench,
+  Code2,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -167,6 +169,8 @@ export function Devices({ engineStatus }: DevicesProps) {
     new Set()
   );
   const [probing, setProbing] = useState<Set<string>>(new Set());
+  const [fixing, setFixing] = useState<Set<string>>(new Set());
+  const [showDevInfo, setShowDevInfo] = useState<Set<string>>(new Set());
   const [platform, setPlatform] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -218,6 +222,40 @@ export function Devices({ engineStatus }: DevicesProps) {
         return next;
       });
     }
+  };
+
+  const handleFix = async (section: DeviceSection) => {
+    const perm = getPermission(section.permissionKey);
+    const capId = perm?.fix_capability_id;
+    if (!capId) return;
+    setFixing((prev) => new Set([...prev, section.key]));
+    try {
+      const result = await engine.installCapability(capId);
+      if (result.success) {
+        // Re-check permissions after successful install
+        await loadPermissions();
+      }
+    } catch (err) {
+      console.error("Fix failed:", err);
+    } finally {
+      setFixing((prev) => {
+        const next = new Set(prev);
+        next.delete(section.key);
+        return next;
+      });
+    }
+  };
+
+  const toggleDevInfo = (key: string) => {
+    setShowDevInfo((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   };
 
   const toggleExpand = (key: string) => {
@@ -321,13 +359,12 @@ export function Devices({ engineStatus }: DevicesProps) {
                 return (
                   <Card
                     key={section.key}
-                    className={`transition-all ${
-                      status === "denied"
+                    className={`transition-all ${status === "denied"
                         ? "border-red-500/20"
                         : status === "granted"
                           ? "border-emerald-500/10"
                           : ""
-                    }`}
+                      }`}
                   >
                     <CardContent className="p-0">
                       {/* Main row */}
@@ -353,12 +390,39 @@ export function Devices({ engineStatus }: DevicesProps) {
                             </Badge>
                           </div>
                           <p className="mt-0.5 text-xs text-muted-foreground">
-                            {perm?.details || section.description}
+                            {perm?.user_details || section.description}
                           </p>
                         </div>
 
                         {/* Actions */}
                         <div className="flex items-center gap-1.5">
+                          {/* Fix It button for fixable issues */}
+                          {perm?.fixable && perm.fix_capability_id && status !== "granted" && (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="h-8 text-xs bg-amber-500 hover:bg-amber-600 text-white"
+                              onClick={() => handleFix(section)}
+                              disabled={fixing.has(section.key)}
+                            >
+                              {fixing.has(section.key) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Wrench className="h-3.5 w-3.5" />
+                              )}
+                              Fix It
+                            </Button>
+                          )}
+                          {/* Active indicator for granted */}
+                          {status === "granted" && (
+                            <Badge
+                              variant="outline"
+                              className="h-8 gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-500 text-xs"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              Active
+                            </Badge>
+                          )}
                           {section.probeEndpoint && (
                             <Button
                               variant="outline"
@@ -390,20 +454,19 @@ export function Devices({ engineStatus }: DevicesProps) {
                         </div>
                       </div>
 
-                      {/* Expanded details */}
                       {isExpanded && (
                         <div className="border-t bg-muted/30 px-4 py-3 space-y-3">
-                          {/* Grant instructions */}
-                          {perm?.grant_instructions &&
+                          {/* User-friendly instructions */}
+                          {perm?.user_instructions &&
                             status !== "granted" && (
                               <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
                                 <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
                                 <div>
                                   <p className="text-xs font-medium text-amber-500">
-                                    How to grant access
+                                    What to do
                                   </p>
                                   <p className="mt-0.5 text-xs text-muted-foreground">
-                                    {perm.grant_instructions}
+                                    {perm.user_instructions}
                                   </p>
                                 </div>
                               </div>
@@ -443,27 +506,70 @@ export function Devices({ engineStatus }: DevicesProps) {
                             </div>
                           )}
 
-                          {/* Live probe results */}
+                          {/* Live probe results — summarized */}
                           {probeResult && (
                             <div>
                               <p className="mb-2 text-xs font-medium text-muted-foreground">
-                                Live Scan Results
+                                Scan Results
                               </p>
-                              <pre className="max-h-48 overflow-auto rounded-md bg-background p-3 text-xs font-mono leading-relaxed">
-                                {probeResult.output}
-                              </pre>
+                              <div className="rounded-md bg-background p-3 text-xs">
+                                <p className="text-muted-foreground">
+                                  {probeResult.type === "error"
+                                    ? "Scan encountered an issue. Expand developer info for details."
+                                    : probeResult.metadata
+                                      ? `Found ${Object.keys(probeResult.metadata).length} result(s)`
+                                      : "Scan complete"}
+                                </p>
+                              </div>
                             </div>
                           )}
 
                           {/* If nothing to show */}
                           {!perm?.devices?.length &&
                             !probeResult &&
-                            !perm?.grant_instructions && (
+                            !perm?.user_instructions && (
                               <p className="text-xs text-muted-foreground">
                                 No additional details available. Click "Scan" to
                                 probe this capability.
                               </p>
                             )}
+
+                          {/* Developer details toggle  */}
+                          <div className="border-t border-border/50 pt-2">
+                            <button
+                              className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+                              onClick={() => toggleDevInfo(section.key)}
+                            >
+                              <Code2 className="h-3 w-3" />
+                              {showDevInfo.has(section.key)
+                                ? "Hide Developer Info"
+                                : "Show Developer Info"}
+                            </button>
+                            {showDevInfo.has(section.key) && (
+                              <div className="mt-2 space-y-2 rounded-md border border-border/30 bg-background/50 p-3">
+                                {perm?.details && (
+                                  <div>
+                                    <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider">Status Details</p>
+                                    <p className="mt-0.5 text-xs text-muted-foreground font-mono">{perm.details}</p>
+                                  </div>
+                                )}
+                                {perm?.grant_instructions && (
+                                  <div>
+                                    <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider">Technical Instructions</p>
+                                    <p className="mt-0.5 text-xs text-muted-foreground font-mono">{perm.grant_instructions}</p>
+                                  </div>
+                                )}
+                                {probeResult && (
+                                  <div>
+                                    <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider">Raw Scan Output</p>
+                                    <pre className="mt-0.5 max-h-48 overflow-auto text-xs font-mono leading-relaxed text-muted-foreground">
+                                      {probeResult.output}
+                                    </pre>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </CardContent>
