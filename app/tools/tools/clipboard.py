@@ -9,6 +9,13 @@ from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
 
+_CLIPBOARD_HELP = (
+    "Cannot access clipboard. Possible fixes:\n"
+    "  • WSL: install xclip ('sudo apt install xclip') or use clip.exe directly\n"
+    "  • Headless Linux: install xclip or xsel ('sudo apt install xclip')\n"
+    "  • Ensure a display server (X11/Wayland) is running"
+)
+
 
 async def tool_clipboard_read(
     session: ToolSession,
@@ -24,7 +31,9 @@ async def tool_clipboard_read(
     try:
         content = pyperclip.paste()
     except pyperclip.PyperclipException as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Cannot access clipboard: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"{_CLIPBOARD_HELP}\n\nDetail: {e}"
+        )
 
     if not content:
         return ToolResult(output="(clipboard is empty)")
@@ -50,7 +59,9 @@ async def tool_clipboard_write(
     try:
         pyperclip.copy(content)
     except pyperclip.PyperclipException as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Cannot write to clipboard: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"{_CLIPBOARD_HELP}\n\nDetail: {e}"
+        )
 
     return ToolResult(
         output=f"Copied {len(content)} characters to clipboard.",

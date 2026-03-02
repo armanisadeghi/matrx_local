@@ -71,9 +71,12 @@ class SupabaseDocClient:
             resp = await client.request(
                 method, url, params=params, json=json_body, headers=headers
             )
-            resp.raise_for_status()
+            # A 404 on a GET simply means no rows matched — treat as empty.
+            if resp.status_code == 404 and method.upper() == "GET":
+                return []
             if resp.status_code == 204:
                 return []
+            resp.raise_for_status()
             return resp.json() if resp.text else []
 
     # ── Folders ──────────────────────────────────────────────────────────────
@@ -138,7 +141,7 @@ class SupabaseDocClient:
             "user_id": f"eq.{user_id}",
             "order": "updated_at.desc",
             "select": "id,label,folder_name,folder_id,tags,file_path,content_hash,"
-                      "sync_version,position,is_deleted,created_at,updated_at,metadata",
+            "sync_version,position,is_deleted,created_at,updated_at,metadata",
         }
         if not include_deleted:
             params["is_deleted"] = "eq.false"
@@ -149,10 +152,12 @@ class SupabaseDocClient:
         return await self._request("GET", "notes", params=params)
 
     async def get_note(self, note_id: str) -> dict[str, Any] | None:
-        rows = await self._request(
-            "GET", "notes", params={"id": f"eq.{note_id}"}
-        )
-        return rows[0] if rows else None
+        try:
+            rows = await self._request("GET", "notes", params={"id": f"eq.{note_id}"})
+            return rows[0] if rows else None
+        except Exception:
+            logger.debug("get_note(%s) returned no result", note_id, exc_info=True)
+            return None
 
     async def create_note(
         self,
@@ -307,9 +312,7 @@ class SupabaseDocClient:
         return rows[0] if rows else {}
 
     async def delete_share(self, share_id: str) -> None:
-        await self._request(
-            "DELETE", "note_shares", params={"id": f"eq.{share_id}"}
-        )
+        await self._request("DELETE", "note_shares", params={"id": f"eq.{share_id}"})
 
     # ── Devices ──────────────────────────────────────────────────────────────
 
@@ -335,7 +338,9 @@ class SupabaseDocClient:
             "POST",
             "note_devices",
             json_body=body,
-            extra_headers={"Prefer": "return=representation,resolution=merge-duplicates"},
+            extra_headers={
+                "Prefer": "return=representation,resolution=merge-duplicates"
+            },
         )
         return rows[0] if rows else body
 
@@ -363,9 +368,7 @@ class SupabaseDocClient:
 
     # ── Directory Mappings ───────────────────────────────────────────────────
 
-    async def list_mappings(
-        self, user_id: str, device_id: str
-    ) -> list[dict[str, Any]]:
+    async def list_mappings(self, user_id: str, device_id: str) -> list[dict[str, Any]]:
         return await self._request(
             "GET",
             "note_directory_mappings",
@@ -390,9 +393,7 @@ class SupabaseDocClient:
             "folder_id": folder_id,
             "local_path": local_path,
         }
-        rows = await self._request(
-            "POST", "note_directory_mappings", json_body=body
-        )
+        rows = await self._request("POST", "note_directory_mappings", json_body=body)
         return rows[0] if rows else body
 
     async def delete_mapping(self, mapping_id: str) -> None:
@@ -451,9 +452,7 @@ class SupabaseDocClient:
             },
         )
 
-    async def get_all_notes_with_hashes(
-        self, user_id: str
-    ) -> list[dict[str, Any]]:
+    async def get_all_notes_with_hashes(self, user_id: str) -> list[dict[str, Any]]:
         """Get id, file_path, content_hash, sync_version for all notes."""
         return await self._request(
             "GET",
@@ -462,7 +461,7 @@ class SupabaseDocClient:
                 "user_id": f"eq.{user_id}",
                 "is_deleted": "eq.false",
                 "select": "id,file_path,content_hash,sync_version,label,"
-                          "folder_name,folder_id,updated_at",
+                "folder_name,folder_id,updated_at",
             },
         )
 

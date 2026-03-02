@@ -120,11 +120,13 @@ class ScheduledTask:
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def add_execution(self, success: bool, output: str) -> None:
-        self.history.append(TaskExecution(
-            timestamp=time.time(),
-            success=success,
-            output=output,
-        ))
+        self.history.append(
+            TaskExecution(
+                timestamp=time.time(),
+                success=success,
+                output=output,
+            )
+        )
         # Keep last 50 executions
         if len(self.history) > 50:
             self.history = self.history[-50:]
@@ -151,10 +153,13 @@ async def tool_schedule_task(
     - System health check: tool_name='SystemResources', interval=120
     """
     if interval_seconds < 10:
-        return ToolResult(type=ToolResultType.ERROR, output="Minimum interval is 10 seconds.")
+        return ToolResult(
+            type=ToolResultType.ERROR, output="Minimum interval is 10 seconds."
+        )
 
     # Validate that we know about this tool
     from app.tools.dispatcher import TOOL_HANDLERS
+
     if tool_name not in TOOL_HANDLERS:
         return ToolResult(
             type=ToolResultType.ERROR,
@@ -195,7 +200,9 @@ async def tool_schedule_task(
 
                 # Execute the tool
                 try:
-                    result = await dispatch(scheduled.tool_name, scheduled.tool_input, task_session)
+                    result = await dispatch(
+                        scheduled.tool_name, scheduled.tool_input, task_session
+                    )
                     scheduled.add_execution(
                         success=result.type.value == "success",
                         output=result.output,
@@ -249,7 +256,11 @@ async def tool_list_scheduled(
     lines = [f"Scheduled tasks ({len(_scheduled_tasks)}):"]
     for task in _scheduled_tasks.values():
         status = "ACTIVE" if task.is_active else "STOPPED"
-        last = time.strftime("%H:%M:%S", time.localtime(task.last_run)) if task.last_run else "never"
+        last = (
+            time.strftime("%H:%M:%S", time.localtime(task.last_run))
+            if task.last_run
+            else "never"
+        )
         next_in = max(0, task.next_run - time.time()) if task.is_active else 0
 
         lines.append(f"\n  [{task.task_id}] {task.name} — {status}")
@@ -288,7 +299,9 @@ async def tool_cancel_scheduled(
     """Cancel a scheduled task."""
     task = _scheduled_tasks.get(task_id)
     if task is None:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Task not found: {task_id}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Task not found: {task_id}"
+        )
 
     task._stop_event.set()
     if task._task and not task._task.done():
@@ -317,7 +330,9 @@ async def tool_heartbeat_status(
     active_tasks = [t for t in _scheduled_tasks.values() if t.is_active]
     stopped_tasks = [t for t in _scheduled_tasks.values() if not t.is_active]
 
-    sleep_prevented = _prevent_sleep_process is not None and _prevent_sleep_process.returncode is None
+    sleep_prevented = (
+        _prevent_sleep_process is not None and _prevent_sleep_process.returncode is None
+    )
 
     info = {
         "active_tasks": len(active_tasks),
@@ -338,7 +353,9 @@ async def tool_heartbeat_status(
         lines.append("\nActive tasks:")
         for t in active_tasks:
             next_in = max(0, t.next_run - time.time())
-            lines.append(f"  - {t.name} (every {t.interval_seconds}s, next in {next_in:.0f}s)")
+            lines.append(
+                f"  - {t.name} (every {t.interval_seconds}s, next in {next_in:.0f}s)"
+            )
 
     return ToolResult(output="\n".join(lines), metadata=info)
 
@@ -369,7 +386,9 @@ async def tool_prevent_sleep(
             except (ProcessLookupError, OSError):
                 pass
             _prevent_sleep_process = None
-            return ToolResult(output="Sleep prevention disabled. System can now sleep normally.")
+            return ToolResult(
+                output="Sleep prevention disabled. System can now sleep normally."
+            )
         return ToolResult(output="Sleep prevention was not active.")
 
     # Kill existing prevention if any
@@ -392,7 +411,11 @@ async def tool_prevent_sleep(
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            dur_str = f" for {duration_minutes} minutes" if duration_minutes else " (indefinite)"
+            dur_str = (
+                f" for {duration_minutes} minutes"
+                if duration_minutes
+                else " (indefinite)"
+            )
             return ToolResult(
                 output=f"Sleep prevention enabled{dur_str}. System will stay awake.\nReason: {reason}",
                 metadata={"pid": _prevent_sleep_process.pid},
@@ -420,7 +443,10 @@ public class SleepPrevention {
 while ($true) { Start-Sleep -Seconds 60 }
 """
             _prevent_sleep_process = await asyncio.create_subprocess_exec(
-                "powershell.exe", "-NoProfile", "-Command", ps_script,
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                ps_script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -431,19 +457,41 @@ while ($true) { Start-Sleep -Seconds 60 }
             )
 
         else:
-            # Linux: systemd-inhibit
-            cmd = ["systemd-inhibit", "--what=idle:sleep", f"--why={reason}", "sleep", "infinity"]
+            # Linux: try systemd-inhibit (not available on WSL without systemd)
+            import shutil
 
-            _prevent_sleep_process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            from app.tools.tools import is_wsl
 
-            return ToolResult(
-                output=f"Sleep prevention enabled via systemd-inhibit.\nReason: {reason}",
-                metadata={"pid": _prevent_sleep_process.pid},
-            )
+            if is_wsl():
+                return ToolResult(
+                    output=(
+                        "Sleep prevention is managed by the Windows host on WSL.\n"
+                        "Use Windows Settings → Power & Sleep to configure sleep behavior."
+                    ),
+                )
+
+            if shutil.which("systemd-inhibit"):
+                cmd = [
+                    "systemd-inhibit",
+                    "--what=idle:sleep",
+                    f"--why={reason}",
+                    "sleep",
+                    "infinity",
+                ]
+                _prevent_sleep_process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                return ToolResult(
+                    output=f"Sleep prevention enabled via systemd-inhibit.\nReason: {reason}",
+                    metadata={"pid": _prevent_sleep_process.pid},
+                )
+            else:
+                return ToolResult(
+                    type=ToolResultType.ERROR,
+                    output="Sleep prevention requires systemd-inhibit (part of systemd). Not available on this system.",
+                )
 
     except FileNotFoundError as e:
         return ToolResult(
@@ -451,4 +499,6 @@ while ($true) { Start-Sleep -Seconds 60 }
             output=f"Sleep prevention tool not found: {e}",
         )
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Failed to prevent sleep: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Failed to prevent sleep: {e}"
+        )
