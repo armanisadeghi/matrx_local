@@ -42,10 +42,24 @@ def _truncate_jwt(val: str) -> str:
         return val
     parts = val.split(".")
     if len(parts) != 3:
+        # Check if it's a long string that looks like a token even if not 3 parts
+        if len(val) > 100:
+            return f"{val[:_JWT_HEAD]}...{val[-_JWT_TAIL:]}"
         return val
     if not all(re.match(r"^[A-Za-z0-9_-]+$", p) for p in parts):
         return val
     return f"{val[:_JWT_HEAD]}...{val[-_JWT_TAIL:]}"
+
+
+def _sanitize_url(url: str | object) -> str:
+    """Hide sensitive query params like 'token' in URLs for logging."""
+    url_str = str(url)
+    # Simple regex to find token=... and truncate it
+    return re.sub(
+        r"([?&]token=)([^&]+)",
+        lambda m: m.group(1) + _truncate_jwt(m.group(2)),
+        url_str,
+    )
 
 
 def _sanitize_body_for_log(obj):
@@ -57,6 +71,21 @@ def _sanitize_body_for_log(obj):
     if isinstance(obj, str):
         return _truncate_jwt(obj)
     return obj
+
+
+def _format_request_details(request: Request, body=None) -> str:
+    """Format request headers and other metadata for detailed error logging."""
+    headers = dict(request.headers)
+    # Sanitize Authorization header
+    if "authorization" in headers:
+        auth = headers["authorization"]
+        if auth.lower().startswith("bearer "):
+            headers["authorization"] = f"Bearer {_truncate_jwt(auth[7:])}"
+        else:
+            headers["authorization"] = _truncate_jwt(auth)
+
+    # Filter out other sensitive headers if any (already handled standard ones)
+    return f"Method: {request.method} | URL: {_sanitize_url(request.url)} | Headers: {headers} | Body: {body}"
 
 
 @asynccontextmanager
@@ -237,26 +266,34 @@ async def log_requests(request: Request, call_next):
     t0 = _time.monotonic()
 
     # Best-effort body preview for system logger (doesn't consume the stream).
+    body = None
     try:
-        body = (
-            await request.json() if request.method in ["POST", "PUT", "PATCH"] else None
+        if request.method in ["POST", "PUT", "PATCH"]:
+            body = await request.json()
+            if body is not None:
+                body = _sanitize_body_for_log(body)
+        logger.info(
+            f"Request: {request.method} {_sanitize_url(request.url)} | Body: {body}"
         )
-        if body is not None:
-            body = _sanitize_body_for_log(body)
-        logger.info(f"Request: {request.method} {request.url} | Body: {body}")
     except Exception:
-        logger.info(f"Request: {request.method} {request.url}")
+        logger.info(f"Request: {request.method} {_sanitize_url(request.url)}")
 
     response = await call_next(request)
     duration_ms = (_time.monotonic() - t0) * 1000
 
-    logger.info(f"Response: {response.status_code} for {request.method} {request.url}")
+    if response.status_code >= 400:
+        details = _format_request_details(request, body)
+        logger.error(f"Response Error {response.status_code}: {details}")
+    else:
+        logger.info(
+            f"Response: {response.status_code} for {request.method} {_sanitize_url(request.url)}"
+        )
 
     # Write structured access-log entry.
     access_log.record(
         method=request.method,
         path=request.url.path,
-        query=str(request.url.query or ""),
+        query=_sanitize_url(str(request.url.query or "")),
         origin=request.headers.get("origin", ""),
         user_agent=request.headers.get("user-agent", ""),
         status=response.status_code,
@@ -268,15 +305,20 @@ async def log_requests(request: Request, call_next):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    # Auth check — BaseHTTPMiddleware does NOT intercept WebSocket upgrades,
-    # so we validate the token here manually.  Browser WebSocket API cannot
-    # set custom headers, so the token is passed as ?token=<jwt>.
+    # Auth check — BaseHTTPMiddleware does NOT intercept WebSocket upgrades.
+    # We validate the token here manually.
+    url = _sanitize_url(websocket.url)
+    logger.info(f"WebSocket connecting: {url}")
+
     token = websocket.query_params.get("token")
     if not token:
+        logger.warning(
+            f"WebSocket rejected - missing token: {url} | Headers: {dict(websocket.headers)}"
+        )
         await websocket.close(code=1008, reason="Missing auth token")
         return
 
-    # Store token for downstream forwarding (matches HTTP middleware pattern).
+    # Store token for downstream forwarding.
     websocket.state.user_token = token
 
     conn = await websocket_manager.connect(websocket)
@@ -285,6 +327,8 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             await websocket_manager.handle_tool_message(conn, data)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(
+            f"WebSocket error: {e} | {url} | Headers: {dict(websocket.headers)}"
+        )
     finally:
         await websocket_manager.disconnect(websocket)

@@ -15,7 +15,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.services.documents.file_manager import file_manager
 from app.services.documents.supabase_client import supabase_docs
@@ -26,6 +26,7 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _get_user_id(request: Request) -> str:
     """Extract user_id from the JWT (set by auth middleware)."""
@@ -48,6 +49,7 @@ def _configure_sync(request: Request) -> None:
 
 # ── Request models ───────────────────────────────────────────────────────────
 
+
 class CreateFolderRequest(BaseModel):
     name: str
     parent_id: str | None = None
@@ -62,7 +64,13 @@ class UpdateFolderRequest(BaseModel):
 
 
 class CreateNoteRequest(BaseModel):
-    label: str = "New Note"
+    """Accepts both ``label`` (canonical) and ``title`` (legacy frontend name)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+    label: str = Field(
+        "New Note",
+        validation_alias=AliasChoices("label", "title"),
+    )
     content: str = ""
     folder_name: str = "General"
     folder_id: str | None = None
@@ -111,6 +119,7 @@ class PullRemoteChangeRequest(BaseModel):
 
 
 # ── Folder endpoints ─────────────────────────────────────────────────────────
+
 
 @router.get("/tree")
 async def get_folder_tree(request: Request) -> dict[str, Any]:
@@ -208,6 +217,7 @@ async def delete_folder(folder_id: str, request: Request) -> dict[str, str]:
 
 # ── Note endpoints ───────────────────────────────────────────────────────────
 
+
 @router.get("/notes")
 async def list_notes(
     request: Request,
@@ -216,9 +226,7 @@ async def list_notes(
 ) -> list[dict[str, Any]]:
     _configure_sync(request)
     user_id = _get_user_id(request)
-    return await supabase_docs.list_notes(
-        user_id, folder_id=folder_id, search=search
-    )
+    return await supabase_docs.list_notes(user_id, folder_id=folder_id, search=search)
 
 
 @router.get("/notes/{note_id}")
@@ -233,9 +241,12 @@ async def get_note(note_id: str, request: Request) -> dict[str, Any]:
 @router.post("/notes")
 async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any]:
     _configure_sync(request)
-    user_id = _get_user_id(request)
+    _get_user_id(
+        request
+    )  # validates X-User-Id header; sync engine uses user_id internally
 
     import uuid
+
     note_id = str(uuid.uuid4())
 
     result = await sync_engine.push_note(
@@ -246,6 +257,7 @@ async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any
         folder_id=req.folder_id,
         tags=req.tags,
         metadata=req.metadata,
+        is_new_note=True,  # Fresh UUID — skip existence check, use atomic upsert
     )
 
     return result
@@ -264,10 +276,18 @@ async def update_note(
 
     label = req.label if req.label is not None else existing.get("label", "")
     content = req.content if req.content is not None else existing.get("content", "")
-    folder_name = req.folder_name if req.folder_name is not None else existing.get("folder_name", "General")
-    folder_id = req.folder_id if req.folder_id is not None else existing.get("folder_id")
+    folder_name = (
+        req.folder_name
+        if req.folder_name is not None
+        else existing.get("folder_name", "General")
+    )
+    folder_id = (
+        req.folder_id if req.folder_id is not None else existing.get("folder_id")
+    )
     tags = req.tags if req.tags is not None else existing.get("tags", [])
-    metadata = req.metadata if req.metadata is not None else existing.get("metadata", {})
+    metadata = (
+        req.metadata if req.metadata is not None else existing.get("metadata", {})
+    )
 
     # Handle non-content updates (position, etc.)
     if req.position is not None:
@@ -301,6 +321,7 @@ async def delete_note(note_id: str, request: Request) -> dict[str, str]:
 
 # ── Version endpoints ────────────────────────────────────────────────────────
 
+
 @router.get("/notes/{note_id}/versions")
 async def list_versions(note_id: str, request: Request) -> list[dict[str, Any]]:
     _configure_sync(request)
@@ -312,7 +333,7 @@ async def revert_note(
     note_id: str, req: RevertRequest, request: Request
 ) -> dict[str, Any]:
     _configure_sync(request)
-    user_id = _get_user_id(request)
+    _get_user_id(request)  # validates X-User-Id header
 
     version = await supabase_docs.get_version(note_id, req.version_number)
     if not version:
@@ -340,6 +361,7 @@ async def revert_note(
 
 
 # ── Sync endpoints ───────────────────────────────────────────────────────────
+
 
 @router.get("/sync/status")
 async def sync_status(request: Request) -> dict[str, Any]:
@@ -402,6 +424,7 @@ async def stop_watcher(request: Request) -> dict[str, str]:
 
 # ── Conflict endpoints ───────────────────────────────────────────────────────
 
+
 @router.get("/conflicts")
 async def list_conflicts(request: Request) -> dict[str, Any]:
     conflicts = file_manager.list_conflicts()
@@ -421,6 +444,7 @@ async def resolve_conflict(
 
 # ── Share endpoints ──────────────────────────────────────────────────────────
 
+
 @router.get("/shares")
 async def list_shares(request: Request) -> list[dict[str, Any]]:
     _configure_sync(request)
@@ -434,9 +458,7 @@ async def list_shares(request: Request) -> list[dict[str, Any]]:
 
 
 @router.post("/shares")
-async def create_share(
-    req: ShareRequest, request: Request
-) -> dict[str, Any]:
+async def create_share(req: ShareRequest, request: Request) -> dict[str, Any]:
     _configure_sync(request)
     user_id = _get_user_id(request)
 
@@ -474,6 +496,7 @@ async def delete_share(share_id: str, request: Request) -> dict[str, str]:
 
 # ── Directory mapping endpoints ──────────────────────────────────────────────
 
+
 @router.get("/mappings")
 async def list_mappings(request: Request) -> dict[str, Any]:
     _configure_sync(request)
@@ -497,9 +520,7 @@ async def list_mappings(request: Request) -> dict[str, Any]:
 
 
 @router.post("/mappings")
-async def create_mapping(
-    req: MappingRequest, request: Request
-) -> dict[str, Any]:
+async def create_mapping(req: MappingRequest, request: Request) -> dict[str, Any]:
     _configure_sync(request)
     user_id = _get_user_id(request)
 
@@ -526,7 +547,8 @@ async def create_mapping(
 
 @router.delete("/mappings/{mapping_id}")
 async def delete_mapping(
-    mapping_id: str, request: Request,
+    mapping_id: str,
+    request: Request,
     folder_id: str | None = None,
     local_path: str | None = None,
 ) -> dict[str, str]:
@@ -551,6 +573,7 @@ async def delete_mapping(
 
 
 # ── Local file operations (for tools / AI integration) ───────────────────────
+
 
 @router.get("/local/folders")
 async def list_local_folders() -> list[str]:

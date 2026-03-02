@@ -189,6 +189,47 @@ class SupabaseDocClient:
         rows = await self._request("POST", "notes", json_body=body)
         return rows[0] if rows else body
 
+    async def upsert_note(
+        self,
+        note_id: str,
+        user_id: str,
+        label: str,
+        content: str = "",
+        folder_name: str = "General",
+        folder_id: str | None = None,
+        file_path: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        device_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomic insert-or-update (upsert ON CONFLICT DO UPDATE on primary key).
+
+        Use this instead of get_note → create_note/update_note when you know
+        the full desired state and do NOT need the old content for versioning.
+        """
+        body: dict[str, Any] = {
+            "id": note_id,
+            "user_id": user_id,
+            "label": label,
+            "content": content,
+            "folder_name": folder_name,
+            "folder_id": folder_id,
+            "file_path": file_path,
+            "tags": tags or [],
+            "metadata": metadata or {},
+            "content_hash": _content_hash(content),
+            "last_device_id": device_id,
+        }
+        rows = await self._request(
+            "POST",
+            "notes",
+            json_body=body,
+            extra_headers={
+                "Prefer": "return=representation,resolution=merge-duplicates"
+            },
+        )
+        return rows[0] if rows else body
+
     async def update_note(
         self,
         note_id: str,
