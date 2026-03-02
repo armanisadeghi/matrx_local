@@ -40,7 +40,13 @@ jobs:
       - name: Build Python sidecar binary
         run: |
           chmod +x scripts/build-sidecar.sh
-          ./scripts/build-sidecar.sh
+          if [[ "${{ matrix.args }}" == *"x86_64-apple-darwin"* ]]; then
+            ./scripts/build-sidecar.sh --target x86_64-apple-darwin
+          elif [[ "${{ matrix.args }}" == *"aarch64-apple-darwin"* ]]; then
+            ./scripts/build-sidecar.sh --target aarch64-apple-darwin
+          else
+            ./scripts/build-sidecar.sh
+          fi
         shell: bash
 
       # ---- Frontend + Tauri build ----

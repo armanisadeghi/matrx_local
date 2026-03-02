@@ -48,7 +48,16 @@ detect_target() {
     esac
 }
 
-TARGET="$(detect_target)"
+# Parse arguments — allow CI to override the auto-detected target triple
+OVERRIDE_TARGET=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --target) OVERRIDE_TARGET="$2"; shift 2 ;;
+        *)        shift ;;
+    esac
+done
+
+TARGET="${OVERRIDE_TARGET:-$(detect_target)}"
 BINARY_NAME="aimatrx-engine-$TARGET"
 
 # On Windows, add .exe extension
