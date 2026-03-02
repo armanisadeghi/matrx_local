@@ -11,6 +11,10 @@
 
 ### P0 — Fix broken core features (ship blockers)
 
+0. [x] **Production build: blank screen on all platforms** — Fixed 2026-03-02: Three root causes: (1) `BrowserRouter` doesn't work in Tauri production (switched to `HashRouter`); (2) `.env` is gitignored so CI build had undefined Supabase env vars (added `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` as CI env vars from secrets); (3) OAuth redirect URL used path-based route incompatible with Tauri (fixed to use `/#/auth/callback` for HashRouter). **ARMAN ACTION**: Must add two GitHub Actions secrets: `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` with the values from `desktop/.env`.
+0b. [ ] **App icon is default purple box** — Need to generate/use the AI Matrx logo for all platforms. Replace placeholder icons in `desktop/src-tauri/icons/`.
+0c. [ ] **Windows MSI installer looks outdated** — Investigate switching from WiX (.msi) to NSIS (.exe) for a modern installer experience. Tauri v2 supports both.
+
 1. [x] **Dashboard: User profile "Not Found"** — Fixed 2026-03-02: Added user profile card to Dashboard.tsx with avatar, name, email, provider. `auth.user` and `auth.signOut` now passed from App.tsx.
 2. [x] **Dashboard: Browser Engine "standby"** — Fixed 2026-03-02: Label now shows "Not Installed" (not "Not Found") and install instruction `uv sync --extra browser`. Status uses `playwright_available` from SystemInfo tool.
 3. **Documents: New Folder / New Note do nothing** — Code trace complete: handlers are correctly wired. Silence suggests Supabase `note_folders` table RLS issue or table missing. Arman must verify in Supabase dashboard (see ARMAN_TASKS). SyncStatusBar now shows even when status is null.

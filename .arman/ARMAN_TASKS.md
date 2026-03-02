@@ -131,3 +131,8 @@ _Last updated: 2026-03-02_
 - [x] Supabase env vars added to root `.env`
 - [x] Device registration implemented
 - [x] Smoke-tested individual tool categories
+
+
+## To be organized
+
+- [ ] add a right-click to the little icon in the tray to allow closing, including ensuring it will force close.

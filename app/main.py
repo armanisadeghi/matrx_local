@@ -1,4 +1,5 @@
 import asyncio
+import re
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -29,6 +30,33 @@ from app.websocket_manager import WebSocketManager
 
 logger = get_logger()
 websocket_manager = WebSocketManager()
+
+# JWT truncation for verbose request logging (show first/last parts only)
+_JWT_HEAD = 20
+_JWT_TAIL = 12
+
+
+def _truncate_jwt(val: str) -> str:
+    """Truncate JWT-like strings for logging: first N + ... + last M chars."""
+    if len(val) < 60:
+        return val
+    parts = val.split(".")
+    if len(parts) != 3:
+        return val
+    if not all(re.match(r"^[A-Za-z0-9_-]+$", p) for p in parts):
+        return val
+    return f"{val[:_JWT_HEAD]}...{val[-_JWT_TAIL:]}"
+
+
+def _sanitize_body_for_log(obj):
+    """Recursively sanitize body for logging: truncate JWTs only."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_body_for_log(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_body_for_log(v) for v in obj]
+    if isinstance(obj, str):
+        return _truncate_jwt(obj)
+    return obj
 
 
 @asynccontextmanager
@@ -194,6 +222,8 @@ async def log_requests(request: Request, call_next):
     # Best-effort body preview for system logger (doesn't consume the stream).
     try:
         body = await request.json() if request.method in ["POST", "PUT", "PATCH"] else None
+        if body is not None:
+            body = _sanitize_body_for_log(body)
         logger.info(f"Request: {request.method} {request.url} | Body: {body}")
     except Exception:
         logger.info(f"Request: {request.method} {request.url}")

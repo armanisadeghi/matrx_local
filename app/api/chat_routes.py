@@ -153,9 +153,12 @@ async def list_models() -> dict[str, Any]:
 
     try:
         from matrx_ai.db.custom.ai_model_manager import AiModelManager
+        from matrx_utils import vcprint
 
         mgr = AiModelManager()
         all_models = await mgr.load_all_models()
+        
+        vcprint(all_models, "[CHAT ROUTES API] list_models All Models", color="yellow")
 
         models_out: list[dict[str, Any]] = []
         for m in all_models:

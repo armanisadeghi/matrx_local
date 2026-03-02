@@ -62,7 +62,8 @@ export function useAuth() {
     async (provider: Provider) => {
       update({ loading: true, error: null });
 
-      const redirectTo = `${window.location.origin}/auth/callback`;
+      // HashRouter: callback must use hash fragment so the route resolves
+      const redirectTo = `${window.location.origin}/#/auth/callback`;
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider,

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Dashboard } from "@/pages/Dashboard";
@@ -42,7 +42,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <TooltipProvider>
-        <BrowserRouter>
+        <HashRouter>
           <Routes>
             <Route path="/auth/callback" element={<AuthCallback />} />
 
@@ -136,7 +136,7 @@ export default function App() {
               </Route>
             )}
           </Routes>
-        </BrowserRouter>
+        </HashRouter>
       </TooltipProvider>
     </ErrorBoundary>
   );
