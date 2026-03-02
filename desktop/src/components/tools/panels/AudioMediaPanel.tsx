@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Mic, Square, Play, Volume2, RefreshCw, Image, FileText, Archive, Camera, Type } from "lucide-react";
+import { Mic, Square, Play, Volume2, RefreshCw, Image, FileText, Archive, Camera, Type, Upload, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ToolSection } from "@/components/tools/shared/ToolSection";
@@ -14,10 +14,11 @@ interface AudioMediaPanelProps {
   tools?: ToolUISchema[];
 }
 
-function parseOutput(result: unknown): { text?: string; image?: string; file_path?: string } | null {
+function parseOutput(result: unknown): { text?: string; image?: string; file_path?: string; type?: string } | null {
   try {
     const d = result as { output?: string; type?: string; metadata?: Record<string, unknown> };
-    if (!d || d.type === "error") return null;
+    if (!d) return null;
+    if (d.type === "error") return { text: d.output, type: "error" };
     if (d.output) {
       try {
         const j = JSON.parse(d.output);
@@ -33,36 +34,57 @@ function parseOutput(result: unknown): { text?: string; image?: string; file_pat
 
 export function AudioMediaPanel({ onInvoke, loading, result }: AudioMediaPanelProps) {
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [duration, setDuration]       = useState(0);
+  const [recordDuration, setRecordDuration] = useState(30);
   const [filePath, setFilePath]       = useState("");
+  const [audioMode, setAudioMode]     = useState<"live" | "file">("live");
+  const [transcribeFilePath, setTranscribeFilePath] = useState("");
+  const [whisperModel, setWhisperModel] = useState<"tiny" | "base" | "small">("base");
   const [view, setView]               = useState<"audio" | "images" | "documents" | "archives">("audio");
   const [mediaPath, setMediaPath]     = useState("");
   const [transcription, setTranscription] = useState<string | null>(null);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const [imagePreview, setImagePreview]   = useState<string | null>(null);
-  const [ocrText]                     = useState<string | null>(null);
+  const [deviceOutput, setDeviceOutput]   = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastToolRef = useRef<string>("");
 
   const output = parseOutput(result);
 
-  // Check for image data in results
+  // Route results to the right state based on which tool was last invoked
   useEffect(() => {
-    if (output?.image) setImagePreview(output.image);
-    if (output?.text && view === "images" && ocrText === null) {
-      // might be OCR result
+    if (!output) return;
+    const tool = lastToolRef.current;
+    if (tool === "TranscribeAudio") {
+      if (output.type === "error") {
+        setTranscriptionError(output.text ?? "Transcription failed");
+        setTranscription(null);
+      } else if (output.text) {
+        setTranscription(output.text);
+        setTranscriptionError(null);
+      }
+      setIsTranscribing(false);
+    } else if (tool === "ListAudioDevices") {
+      setDeviceOutput(output.text ?? null);
+    } else if (output?.image) {
+      setImagePreview(output.image);
     }
-  }, [output, view, ocrText]);
+  }, [output]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startRecording = useCallback(async () => {
     setIsRecording(true);
     setDuration(0);
     setTranscription(null);
+    setTranscriptionError(null);
     timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
     const path = `/tmp/matrx-recording-${Date.now()}.wav`;
     setFilePath(path);
-    await onInvoke("RecordAudio", { duration_seconds: 60, file_path: path });
+    lastToolRef.current = "RecordAudio";
+    await onInvoke("RecordAudio", { duration_seconds: recordDuration, file_path: path });
     setIsRecording(false);
     if (timerRef.current) clearInterval(timerRef.current);
-  }, [onInvoke]);
+  }, [onInvoke, recordDuration]);
 
   const stopRecording = useCallback(() => {
     setIsRecording(false);
@@ -71,27 +93,50 @@ export function AudioMediaPanel({ onInvoke, loading, result }: AudioMediaPanelPr
 
   const playback = useCallback(() => {
     if (!filePath) return;
+    lastToolRef.current = "PlayAudio";
     onInvoke("PlayAudio", { file_path: filePath });
   }, [onInvoke, filePath]);
 
-  const transcribe = useCallback(() => {
+  const transcribeRecorded = useCallback(async () => {
     if (!filePath) return;
-    onInvoke("TranscribeAudio", { file_path: filePath }).then(() => {
-      // Result will come via output
-      if (output?.text) setTranscription(output.text);
-    });
-  }, [onInvoke, filePath, output]);
+    setIsTranscribing(true);
+    setTranscription(null);
+    setTranscriptionError(null);
+    lastToolRef.current = "TranscribeAudio";
+    await onInvoke("TranscribeAudio", { file_path: filePath, model: whisperModel });
+  }, [onInvoke, filePath, whisperModel]);
+
+  const transcribeFile = useCallback(async () => {
+    if (!transcribeFilePath) return;
+    setIsTranscribing(true);
+    setTranscription(null);
+    setTranscriptionError(null);
+    lastToolRef.current = "TranscribeAudio";
+    await onInvoke("TranscribeAudio", { file_path: transcribeFilePath, model: whisperModel });
+  }, [onInvoke, transcribeFilePath, whisperModel]);
+
+  const recordAndTranscribe = useCallback(async () => {
+    setIsRecording(true);
+    setDuration(0);
+    setTranscription(null);
+    setTranscriptionError(null);
+    timerRef.current = setInterval(() => setDuration((d) => d + 1), 1000);
+    const path = `/tmp/matrx-recording-${Date.now()}.wav`;
+    setFilePath(path);
+    lastToolRef.current = "RecordAudio";
+    await onInvoke("RecordAudio", { duration_seconds: recordDuration, file_path: path });
+    setIsRecording(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+    // Auto-transcribe after recording
+    setIsTranscribing(true);
+    lastToolRef.current = "TranscribeAudio";
+    await onInvoke("TranscribeAudio", { file_path: path, model: whisperModel });
+  }, [onInvoke, recordDuration, whisperModel]);
 
   const listDevices = useCallback(() => {
+    lastToolRef.current = "ListAudioDevices";
     onInvoke("ListAudioDevices", {});
   }, [onInvoke]);
-
-  // Update transcription from result
-  useEffect(() => {
-    if (output?.text && filePath && !isRecording) {
-      setTranscription(output.text);
-    }
-  }, [output, filePath, isRecording]);
 
   const formatDuration = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -122,64 +167,172 @@ export function AudioMediaPanel({ onInvoke, loading, result }: AudioMediaPanelPr
       {/* ── AUDIO ── */}
       {view === "audio" && (
         <>
-          <ToolSection title="Audio Recorder" icon={Mic} iconColor="text-rose-400">
-            {/* Waveform */}
-            <div className="flex items-center justify-center gap-[2px] h-16 rounded-xl bg-muted/30 mb-4">
-              {bars.map((b) => (
-                <div
-                  key={b}
-                  className={cn(
-                    "w-1 rounded-full bg-rose-400 transition-all",
-                    isRecording ? "animate-waveform" : "h-1.5 opacity-20"
-                  )}
-                  style={isRecording ? {
-                    animationDelay: `${b * 50}ms`,
-                    animationDuration: `${500 + (b % 5) * 100}ms`,
-                  } : {}}
+          {/* Audio mode tabs */}
+          <div className="flex gap-1 rounded-lg border bg-muted/10 p-0.5 self-start">
+            {([
+              { key: "live", label: "Live Mic", icon: Mic },
+              { key: "file", label: "From File", icon: Upload },
+            ] as const).map((m) => (
+              <button key={m.key} onClick={() => setAudioMode(m.key)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all",
+                  audioMode === m.key ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"
+                )}>
+                <m.icon className="h-3 w-3" />
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── LIVE MIC ── */}
+          {audioMode === "live" && (
+            <ToolSection title="Live Microphone" icon={Mic} iconColor="text-rose-400">
+              {/* Waveform */}
+              <div className="flex items-center justify-center gap-[2px] h-14 rounded-xl bg-muted/30 mb-3">
+                {bars.map((b) => (
+                  <div
+                    key={b}
+                    className={cn(
+                      "w-1 rounded-full bg-rose-400 transition-all",
+                      isRecording ? "animate-waveform" : "h-1.5 opacity-20"
+                    )}
+                    style={isRecording ? {
+                      animationDelay: `${b * 50}ms`,
+                      animationDuration: `${500 + (b % 5) * 100}ms`,
+                    } : {}}
+                  />
+                ))}
+              </div>
+
+              {/* Timer */}
+              <div className="text-center mb-3">
+                <span className={cn(
+                  "text-3xl font-mono font-bold tabular-nums",
+                  isRecording ? "text-rose-400" : isTranscribing ? "text-amber-400" : "text-muted-foreground/30"
+                )}>
+                  {formatDuration(duration)}
+                </span>
+                {isTranscribing && (
+                  <p className="text-xs text-amber-400 animate-pulse mt-1">Transcribing...</p>
+                )}
+              </div>
+
+              {/* Duration + model settings */}
+              {!isRecording && !isTranscribing && (
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="flex items-center gap-1.5 flex-1">
+                    <span className="text-xs text-muted-foreground shrink-0">Duration:</span>
+                    <div className="flex gap-1">
+                      {[15, 30, 60, 120].map((d) => (
+                        <button key={d} onClick={() => setRecordDuration(d)}
+                          className={cn(
+                            "rounded-md px-2 py-0.5 text-[11px] font-medium border transition-colors",
+                            recordDuration === d
+                              ? "border-rose-500/60 bg-rose-500/10 text-rose-400"
+                              : "border-border text-muted-foreground hover:text-foreground"
+                          )}>
+                          {d < 60 ? `${d}s` : `${d / 60}m`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted-foreground shrink-0">Model:</span>
+                    <select
+                      value={whisperModel}
+                      onChange={(e) => setWhisperModel(e.target.value as typeof whisperModel)}
+                      className="rounded-md border bg-background px-2 py-0.5 text-xs text-foreground"
+                    >
+                      <option value="tiny">Tiny (fast)</option>
+                      <option value="base">Base</option>
+                      <option value="small">Small (accurate)</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* Transport controls */}
+              <div className="flex gap-2 justify-center mb-1 flex-wrap">
+                {!isRecording && !isTranscribing ? (
+                  <>
+                    <Button onClick={startRecording} disabled={loading} size="sm"
+                      className="gap-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-full px-5">
+                      <Mic className="h-4 w-4" /> Record Only
+                    </Button>
+                    <Button onClick={recordAndTranscribe} disabled={loading} size="sm"
+                      className="gap-1.5 bg-violet-600 hover:bg-violet-700 text-white rounded-full px-5">
+                      <Wand2 className="h-4 w-4" /> Record & Transcribe
+                    </Button>
+                  </>
+                ) : isRecording ? (
+                  <Button onClick={stopRecording} size="sm" variant="destructive" className="gap-1.5 rounded-full px-5">
+                    <Square className="h-4 w-4" /> Stop
+                  </Button>
+                ) : null}
+                {filePath && !isRecording && !isTranscribing && (
+                  <>
+                    <Button onClick={playback} disabled={loading} size="sm" variant="outline" className="gap-1.5 rounded-full">
+                      <Play className="h-4 w-4" /> Play
+                    </Button>
+                    <Button onClick={transcribeRecorded} disabled={loading} size="sm" variant="outline" className="gap-1.5 rounded-full">
+                      <Type className="h-4 w-4" /> Transcribe
+                    </Button>
+                  </>
+                )}
+              </div>
+
+              {isRecording && (
+                <p className="text-center text-xs text-rose-400 animate-pulse mt-1">Recording... {formatDuration(recordDuration - duration)} remaining</p>
+              )}
+            </ToolSection>
+          )}
+
+          {/* ── FROM FILE ── */}
+          {audioMode === "file" && (
+            <ToolSection title="Transcribe Audio File" icon={Upload} iconColor="text-violet-400">
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Transcribe any audio file (WAV, MP3, M4A, FLAC) using Whisper.
+                </p>
+                <Input
+                  value={transcribeFilePath}
+                  onChange={(e) => setTranscribeFilePath(e.target.value)}
+                  placeholder="/path/to/audio.wav"
+                  className="text-xs font-mono"
                 />
-              ))}
-            </div>
-
-            {/* Timer */}
-            <div className="text-center mb-4">
-              <span className={cn(
-                "text-4xl font-mono font-bold tabular-nums",
-                isRecording ? "text-rose-400" : "text-muted-foreground/30"
-              )}>
-                {formatDuration(duration)}
-              </span>
-            </div>
-
-            {/* Transport controls */}
-            <div className="flex gap-3 justify-center mb-2">
-              {!isRecording ? (
-                <Button onClick={startRecording} disabled={loading} size="lg"
-                  className="gap-2 bg-rose-500 hover:bg-rose-600 text-white rounded-full px-8">
-                  <Mic className="h-5 w-5" /> Record
-                </Button>
-              ) : (
-                <Button onClick={stopRecording} size="lg" variant="destructive" className="gap-2 rounded-full px-8">
-                  <Square className="h-5 w-5" /> Stop
-                </Button>
-              )}
-              {filePath && !isRecording && (
-                <>
-                  <Button onClick={playback} disabled={loading} size="lg" variant="outline" className="gap-2 rounded-full">
-                    <Play className="h-5 w-5" /> Play
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted-foreground shrink-0">Model:</span>
+                    <select
+                      value={whisperModel}
+                      onChange={(e) => setWhisperModel(e.target.value as typeof whisperModel)}
+                      className="rounded-md border bg-background px-2 py-0.5 text-xs text-foreground"
+                    >
+                      <option value="tiny">Tiny (fast)</option>
+                      <option value="base">Base</option>
+                      <option value="small">Small (accurate)</option>
+                    </select>
+                  </div>
+                  <Button onClick={transcribeFile} disabled={loading || !transcribeFilePath || isTranscribing}
+                    size="sm" className="gap-1.5">
+                    {isTranscribing ? (
+                      <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Transcribing...</>
+                    ) : (
+                      <><Type className="h-3.5 w-3.5" /> Transcribe</>
+                    )}
                   </Button>
-                  <Button onClick={transcribe} disabled={loading} size="lg" variant="outline" className="gap-2 rounded-full">
-                    <Type className="h-5 w-5" /> Transcribe
-                  </Button>
-                </>
-              )}
-            </div>
-
-            {isRecording && (
-              <p className="text-center text-xs text-rose-400 animate-pulse mt-1">Recording in progress...</p>
-            )}
-          </ToolSection>
+                </div>
+              </div>
+            </ToolSection>
+          )}
 
           {/* Transcription output */}
+          {transcriptionError && (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3">
+              <p className="text-xs text-red-400 font-medium mb-1">Transcription failed</p>
+              <p className="text-xs text-muted-foreground font-mono">{transcriptionError}</p>
+            </div>
+          )}
           {transcription && (
             <OutputCard title="Transcription" content={transcription} status="success" />
           )}
@@ -191,8 +344,8 @@ export function AudioMediaPanel({ onInvoke, loading, result }: AudioMediaPanelPr
                 <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
               </Button>
             }>
-            {output?.text && !isRecording && !transcription ? (
-              <pre className="text-xs font-mono text-foreground whitespace-pre-wrap max-h-40 overflow-auto">{output.text}</pre>
+            {deviceOutput ? (
+              <pre className="text-xs font-mono text-foreground whitespace-pre-wrap max-h-40 overflow-auto">{deviceOutput}</pre>
             ) : (
               <p className="text-xs text-muted-foreground">Click refresh to list audio devices</p>
             )}

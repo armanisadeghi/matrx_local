@@ -8,14 +8,20 @@ _Last updated: 2026-03-02_
 
 ---
 
-### 1. Re-trigger CI Build After Agent Fixes
+### 1. Push & Tag to Trigger CI
 
-Agent fixed both root causes (pyaudio build failure + Windows venv path). Now commit + push + re-tag:
+Agent already committed the fixes locally. Just push and tag:
 
-- [ ] **Commit & push** — `git add -A && git commit -m "fix: CI failures (pyaudio + Windows venv path)" && git push`
-- [ ] **Delete old tag & re-tag** — `git tag -d v1.0.1 2>/dev/null; git push origin :refs/tags/v1.0.1 2>/dev/null; git tag v1.0.1 && git push origin v1.0.1` (or use `v1.0.2` if you prefer)
+- [ ] **Push & tag** — `git push origin main && git tag v1.0.1 && git push origin v1.0.1`
 - [ ] **Monitor GitHub Actions** — https://github.com/armanisadeghi/matrx-local/actions
-- [ ] **Confirm release** — https://github.com/armanisadeghi/matrx-local/releases (`.dmg`, `.msi`, `.deb`, `.AppImage`, `latest.json`)
+- [ ] **Confirm release** — https://github.com/armanisadeghi/matrx-local/releases
+
+**For future releases**, use the new release script:
+```bash
+./scripts/release.sh          # uses version from pyproject.toml
+./scripts/release.sh 1.2.3    # set a specific version
+```
+The script syncs versions across `pyproject.toml`, `tauri.conf.json`, `package.json`, commits, tags, and pushes.
 
 ---
 
@@ -69,10 +75,10 @@ These require purchases and external accounts — only you can do this.
 
 ### 4. Cloud Sync Verification
 
-- [ ] **app_settings table** — In Supabase SQL Editor at https://app.supabase.com, run: `SELECT * FROM app_settings LIMIT 1;`. If error "table does not exist": migration 002 didn't run correctly. Re-run `migrations/002_app_instances_settings.sql`.
-  - **CURRENT STATUS**: NONE
-- [ ] **Confirm Proxy "Test Connection" server URL** — What is the correct URL for our main server that would receive the proxy roundtrip test? (e.g. `https://server.app.matrxserver.com`). Tell the agent so it can implement the real test.
-  - **CURRENT STATUS**: NONE
+- [ ] **app_settings table** — In Supabase SQL Editor at https://app.supabase.com, run: `SELECT * FROM app_settings LIMIT 1;`. If error "table does not exist": re-run `migrations/002_app_instances_settings.sql`.
+- [ ] **note_folders table (Documents "New Folder" broken)** — Run in Supabase SQL Editor: `SELECT * FROM note_folders LIMIT 1;`. Then check RLS: `SELECT * FROM pg_policies WHERE tablename = 'note_folders';`. Policy must allow INSERT for `auth.uid() = user_id`. If missing, re-run `migrations/001_documents_schema.sql`.
+- [ ] **BRAVE_API_KEY for web search** — Get a key at https://api.search.brave.com, then add to root `.env`: `BRAVE_API_KEY=<your-key>`. Restart engine to enable web search in Tools page.
+- [ ] **Confirm Proxy "Test Connection" server URL** — What is the correct URL for our main server for the proxy roundtrip test? Tell the agent so it can implement the real test.
 
 ---
 
@@ -112,17 +118,22 @@ bash scripts/stop.sh --force  # immediate kill
 
 ---
 
-### 6. Bugs (agent will fix — full details in AGENT_TASKS.md)
+### 6. Agent Fix Verification (confirm fixes worked)
 
-You only need to confirm the fix worked after each one:
-- [ ] Dashboard: User profile "Not Found" + Engine shows "standby"
-- [ ] Documents: New Folder / New Note broken; sync bar is cosmetic
-- [ ] Scraping: No persistence; UX overhaul needed
-- [ ] Tools: Multiple broken tools (audio, notify, scheduler, web search)
-- [ ] Settings → Proxy: "Test Connection" is fake (confirm server URL above first)
-- [ ] Settings → Scraping: Add forbidden URL list
-- [ ] Dark mode contrast audit remaining pages
-- [ ] System Info UI (CPU, RAM, disk, battery widgets for normal users)
+- [x] Dashboard: User profile card added (shows name, email, avatar, sign-out)
+- [x] Dashboard: Browser Engine label fixed ("Not Installed" + install hint)
+- [ ] Documents: New Folder / New Note — still need Supabase table verification (see section 4)
+- [x] Documents: Sync bar now always shows + sync button triggers real sync
+- [x] Scraping: UX overhauled — flat URL list, scroll, https:// auto-prefix
+- [ ] Scraping: Persistence to Supabase still needed
+- [x] Notify tool: now dispatches via osascript/PowerShell/notify-send
+- [x] Record Audio: better error messages for device-not-found
+- [x] Web search: argument mapping confirmed correct — just needs BRAVE_API_KEY (see section 4)
+- [x] System Info UI: Dashboard now shows live CPU/RAM/Disk/Battery gauges (10s refresh)
+- [x] Dark mode contrast: pages are clean
+- [ ] Settings → Proxy: "Test Connection" still fake (confirm server URL first)
+- [ ] Settings → Scraping: Forbidden URL list still needed
+- [ ] Installed Apps: persistent list with refresh still needed
 
 ---
 

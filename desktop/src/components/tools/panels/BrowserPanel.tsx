@@ -1,5 +1,9 @@
-import { useState, useCallback, useEffect } from "react";
-import { Globe, ArrowRight, Camera, Code2, RefreshCw, ExternalLink, MousePointer, Type, Layers, Play } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  Globe, ArrowRight, Camera, Code2, RefreshCw, ExternalLink,
+  MousePointer, Type, Layers, Play, Plus, Trash2, GripVertical,
+  CheckCircle2, XCircle, Loader2, MonitorPlay, Circle,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,15 +47,62 @@ function tryParseTabs(result: unknown): TabEntry[] | null {
   } catch { return null; }
 }
 
+type StepType = "navigate" | "click" | "type" | "extract" | "screenshot" | "eval";
+type StepStatus = "pending" | "running" | "done" | "error";
+
+interface AutoStep {
+  id: string;
+  type: StepType;
+  params: Record<string, string>;
+  status: StepStatus;
+  output?: string;
+  screenshot?: string;
+}
+
+const STEP_DEFAULTS: Record<StepType, Record<string, string>> = {
+  navigate:   { url: "https://" },
+  click:      { selector: "" },
+  type:       { selector: "", text: "" },
+  extract:    { selector: "" },
+  screenshot: {},
+  eval:       { script: "document.title" },
+};
+
+const STEP_META: Record<StepType, { label: string; icon: React.ElementType; color: string }> = {
+  navigate:   { label: "Navigate",   icon: Globe,        color: "text-cyan-400" },
+  click:      { label: "Click",      icon: MousePointer, color: "text-violet-400" },
+  type:       { label: "Type",       icon: Type,         color: "text-emerald-400" },
+  extract:    { label: "Extract",    icon: ExternalLink,  color: "text-amber-400" },
+  screenshot: { label: "Screenshot", icon: Camera,       color: "text-pink-400" },
+  eval:       { label: "JavaScript", icon: Code2,        color: "text-orange-400" },
+};
+
+function stepToInvoke(step: AutoStep): { toolName: string; params: Record<string, unknown> } {
+  switch (step.type) {
+    case "navigate":   return { toolName: "BrowserNavigate",  params: { url: step.params.url } };
+    case "click":      return { toolName: "BrowserClick",     params: { selector: step.params.selector } };
+    case "type":       return { toolName: "BrowserType",      params: { selector: step.params.selector, text: step.params.text } };
+    case "extract":    return { toolName: "BrowserExtract",   params: step.params.selector ? { selector: step.params.selector } : {} };
+    case "screenshot": return { toolName: "BrowserScreenshot", params: {} };
+    case "eval":       return { toolName: "BrowserEval",      params: { script: step.params.script } };
+  }
+}
+
 export function BrowserPanel({ onInvoke, loading, result }: BrowserPanelProps) {
-  const [view, setView] = useState<"navigate" | "interact" | "console">("navigate");
+  const [view, setView] = useState<"automation" | "navigate" | "console">("automation");
   const [url, setUrl]           = useState("https://");
-  const [selector, setSelector] = useState("");
-  const [typeText, setTypeText] = useState("");
-  const [extractSel, setExtractSel] = useState("");
-  const [evalCode, setEvalCode] = useState("document.title");
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [tabs, setTabs] = useState<TabEntry[]>([]);
+  const [sessionActive, setSessionActive] = useState(false);
+  const [steps, setSteps] = useState<AutoStep[]>([
+    { id: "1", type: "navigate", params: { url: "https://" }, status: "pending" },
+    { id: "2", type: "screenshot", params: {}, status: "pending" },
+  ]);
+  const [runningStepId, setRunningStepId] = useState<string | null>(null);
+  const [autoScreenshot, setAutoScreenshot] = useState(true);
+  const [evalCode, setEvalCode] = useState("document.title");
+  const resultRef = useRef<unknown>(null);
+  const resolveRef = useRef<((r: unknown) => void) | null>(null);
 
   const parsed = parseOutput(result);
   const parsedTabs = tryParseTabs(result);
@@ -60,10 +111,28 @@ export function BrowserPanel({ onInvoke, loading, result }: BrowserPanelProps) {
     if (parsedTabs && parsedTabs.length > 0) setTabs(parsedTabs);
   }, [parsedTabs]);
 
+  // Route result to the current waiting step resolver
+  useEffect(() => {
+    resultRef.current = result;
+    if (resolveRef.current) {
+      resolveRef.current(result);
+      resolveRef.current = null;
+    }
+    if (parsed?.image) setScreenshot(parsed.image);
+  }, [result, parsed?.image]);
+
+  const invokeAndWait = useCallback((toolName: string, params: Record<string, unknown>): Promise<unknown> => {
+    return new Promise((resolve) => {
+      resolveRef.current = resolve;
+      onInvoke(toolName, params);
+    });
+  }, [onInvoke]);
+
   const navigate = useCallback(() => {
     let target = url.trim();
     if (!target.startsWith("http")) target = "https://" + target;
     setUrl(target);
+    setSessionActive(true);
     onInvoke("BrowserNavigate", { url: target });
   }, [onInvoke, url]);
 
@@ -71,23 +140,72 @@ export function BrowserPanel({ onInvoke, loading, result }: BrowserPanelProps) {
     await onInvoke("BrowserScreenshot", {});
   }, [onInvoke]);
 
-  // Check if result contains screenshot data
-  const imgData = parsed?.image ?? screenshot;
-  const textOut = parsed?.text;
+  // Run all steps in sequence
+  const runAllSteps = useCallback(async () => {
+    setSessionActive(true);
+    for (const step of steps) {
+      if (step.status === "done") continue;
+      setRunningStepId(step.id);
+      setSteps((prev) => prev.map((s) => s.id === step.id ? { ...s, status: "running" } : s));
 
-  // Persist screenshot from results
-  useEffect(() => {
-    if (parsed?.image) setScreenshot(parsed.image);
-  }, [parsed?.image]);
+      const { toolName, params } = stepToInvoke(step);
+      const res = await invokeAndWait(toolName, params) as { output?: string; type?: string };
+
+      const isError = res?.type === "error";
+      let output = res?.output ?? "";
+      let stepScreenshot: string | undefined;
+
+      // Try to extract image from result
+      try {
+        const j = JSON.parse(output);
+        if (j?.image) { stepScreenshot = j.image; output = "Screenshot captured"; }
+      } catch { /* not JSON */ }
+
+      setSteps((prev) => prev.map((s) =>
+        s.id === step.id ? { ...s, status: isError ? "error" : "done", output, screenshot: stepScreenshot } : s
+      ));
+
+      if (isError) break;
+
+      // Auto-screenshot after each non-screenshot step
+      if (autoScreenshot && step.type !== "screenshot") {
+        const ssRes = await invokeAndWait("BrowserScreenshot", {}) as { output?: string; type?: string };
+        try {
+          const j = JSON.parse(ssRes?.output ?? "");
+          if (j?.image) setScreenshot(j.image);
+        } catch { /* ignore */ }
+      }
+    }
+    setRunningStepId(null);
+  }, [steps, invokeAndWait, autoScreenshot]);
+
+  const addStep = useCallback((type: StepType) => {
+    const id = String(Date.now());
+    setSteps((prev) => [...prev, { id, type, params: { ...STEP_DEFAULTS[type] }, status: "pending" }]);
+  }, []);
+
+  const removeStep = useCallback((id: string) => {
+    setSteps((prev) => prev.filter((s) => s.id !== id));
+  }, []);
+
+  const updateStepParam = useCallback((id: string, key: string, value: string) => {
+    setSteps((prev) => prev.map((s) => s.id === id ? { ...s, params: { ...s.params, [key]: value } } : s));
+  }, []);
+
+  const resetSteps = useCallback(() => {
+    setSteps((prev) => prev.map((s) => ({ ...s, status: "pending", output: undefined, screenshot: undefined })));
+  }, []);
+
+  const textOut = parsed?.text;
 
   return (
     <div className="flex h-full flex-col gap-4 p-5 overflow-auto">
       {/* View switcher */}
       <div className="flex gap-1 rounded-xl border bg-muted/20 p-1">
         {([
-          { key: "navigate", label: "Navigate", icon: Globe },
-          { key: "interact", label: "Interact", icon: MousePointer },
-          { key: "console",  label: "Console",  icon: Code2 },
+          { key: "automation", label: "Automation", icon: MonitorPlay },
+          { key: "navigate",   label: "Quick Nav",  icon: Globe },
+          { key: "console",    label: "Console",    icon: Code2 },
         ] as const).map((v) => (
           <button key={v.key} onClick={() => setView(v.key)}
             className={cn(
@@ -100,12 +218,181 @@ export function BrowserPanel({ onInvoke, loading, result }: BrowserPanelProps) {
         ))}
       </div>
 
-      {/* ── NAVIGATE ── */}
+      {/* Session indicator */}
+      <div className="flex items-center gap-2">
+        <div className={cn(
+          "flex items-center gap-1.5 rounded-full px-2.5 py-1 border text-[11px] font-medium",
+          sessionActive
+            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
+            : "border-border text-muted-foreground"
+        )}>
+          <Circle className={cn("h-2 w-2 fill-current", sessionActive ? "text-emerald-400" : "text-muted-foreground/40")} />
+          {sessionActive ? "Session Active" : "No Session"}
+        </div>
+        {tabs.length > 0 && (
+          <span className="text-[11px] text-muted-foreground">{tabs.length} tab{tabs.length !== 1 ? "s" : ""} open</span>
+        )}
+      </div>
+
+      {/* ── AUTOMATION ── */}
+      {view === "automation" && (
+        <>
+          {/* Step builder */}
+          <ToolSection title="Automation Steps" icon={MonitorPlay} iconColor="text-cyan-400"
+            actions={
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setAutoScreenshot((v) => !v)}
+                  className={cn(
+                    "text-[10px] px-2 py-0.5 rounded-full border font-medium transition-colors",
+                    autoScreenshot
+                      ? "border-pink-500/40 bg-pink-500/10 text-pink-400"
+                      : "border-border text-muted-foreground"
+                  )}
+                  title="Auto-capture screenshot after each step"
+                >
+                  <Camera className="h-2.5 w-2.5 inline mr-1" />
+                  Auto-SS
+                </button>
+                <button onClick={resetSteps}
+                  className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:text-foreground transition-colors">
+                  Reset
+                </button>
+              </div>
+            } noPadding>
+            <div className="space-y-1 p-2">
+              {steps.map((step, idx) => {
+                const meta = STEP_META[step.type];
+                const Icon = meta.icon;
+                const isRunning = step.id === runningStepId;
+                return (
+                  <div key={step.id} className={cn(
+                    "rounded-xl border transition-all",
+                    isRunning ? "border-cyan-500/50 bg-cyan-500/5" : "border-border/60 bg-card/30",
+                    step.status === "done" ? "border-emerald-500/30" : "",
+                    step.status === "error" ? "border-red-500/30" : "",
+                  )}>
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      {/* Step number + drag handle */}
+                      <GripVertical className="h-3.5 w-3.5 text-muted-foreground/30 shrink-0 cursor-grab" />
+                      <span className="text-[10px] font-mono text-muted-foreground/50 w-4 shrink-0">{idx + 1}</span>
+                      {/* Status icon */}
+                      {isRunning ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-400 shrink-0" />
+                      ) : step.status === "done" ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                      ) : step.status === "error" ? (
+                        <XCircle className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                      ) : (
+                        <Icon className={cn("h-3.5 w-3.5 shrink-0", meta.color)} />
+                      )}
+                      {/* Step type label */}
+                      <span className={cn("text-xs font-medium w-20 shrink-0", meta.color)}>{meta.label}</span>
+                      {/* Params */}
+                      <div className="flex-1 flex gap-2 min-w-0">
+                        {step.type === "navigate" && (
+                          <Input value={step.params.url} onChange={(e) => updateStepParam(step.id, "url", e.target.value)}
+                            placeholder="https://" className="h-7 text-[11px] font-mono" />
+                        )}
+                        {(step.type === "click" || step.type === "extract") && (
+                          <Input value={step.params.selector} onChange={(e) => updateStepParam(step.id, "selector", e.target.value)}
+                            placeholder="CSS selector" className="h-7 text-[11px] font-mono" />
+                        )}
+                        {step.type === "type" && (
+                          <>
+                            <Input value={step.params.selector} onChange={(e) => updateStepParam(step.id, "selector", e.target.value)}
+                              placeholder="CSS selector" className="h-7 text-[11px] font-mono w-36 shrink-0" />
+                            <Input value={step.params.text} onChange={(e) => updateStepParam(step.id, "text", e.target.value)}
+                              placeholder="Text to type" className="h-7 text-[11px] flex-1" />
+                          </>
+                        )}
+                        {step.type === "eval" && (
+                          <Input value={step.params.script} onChange={(e) => updateStepParam(step.id, "script", e.target.value)}
+                            placeholder="JavaScript expression" className="h-7 text-[11px] font-mono" />
+                        )}
+                        {step.type === "screenshot" && (
+                          <span className="text-[11px] text-muted-foreground italic self-center">Capture page screenshot</span>
+                        )}
+                      </div>
+                      <button onClick={() => removeStep(step.id)}
+                        className="text-muted-foreground/40 hover:text-destructive transition-colors shrink-0 ml-1">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {/* Step output */}
+                    {(step.output || step.screenshot) && step.status !== "pending" && (
+                      <div className={cn(
+                        "mx-2 mb-2 rounded-lg px-3 py-1.5 text-[11px] font-mono",
+                        step.status === "error" ? "bg-red-500/10 text-red-400" : "bg-muted/30 text-muted-foreground"
+                      )}>
+                        {step.screenshot ? (
+                          <div className="rounded overflow-hidden">
+                            <img src={`data:image/png;base64,${step.screenshot}`} alt="step screenshot" className="w-full max-h-40 object-cover" />
+                          </div>
+                        ) : (
+                          <span className="line-clamp-2">{step.output}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Add step buttons */}
+              <div className="pt-2 flex flex-wrap gap-1.5">
+                {(Object.keys(STEP_META) as StepType[]).map((t) => {
+                  const meta = STEP_META[t];
+                  const Icon = meta.icon;
+                  return (
+                    <button key={t} onClick={() => addStep(t)}
+                      className={cn(
+                        "flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors",
+                        "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground hover:bg-muted/30"
+                      )}>
+                      <Plus className="h-3 w-3" />
+                      <Icon className="h-3 w-3" />
+                      {meta.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </ToolSection>
+
+          {/* Run button */}
+          <Button
+            onClick={runAllSteps}
+            disabled={loading || runningStepId !== null || steps.length === 0}
+            className="gap-2 w-full"
+          >
+            {runningStepId ? (
+              <><Loader2 className="h-4 w-4 animate-spin" /> Running...</>
+            ) : (
+              <><Play className="h-4 w-4" /> Run All Steps</>
+            )}
+          </Button>
+
+          {/* Live screenshot */}
+          {screenshot && (
+            <ToolSection title="Live Page View" icon={Camera} iconColor="text-pink-400"
+              actions={
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={takeScreenshot} disabled={loading}>
+                  <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                </Button>
+              }>
+              <div className="rounded-lg overflow-hidden border">
+                <img src={`data:image/png;base64,${screenshot}`} alt="Browser screenshot" className="w-full" />
+              </div>
+            </ToolSection>
+          )}
+        </>
+      )}
+
+      {/* ── QUICK NAV ── */}
       {view === "navigate" && (
         <>
           <ToolSection title="Browser Navigation" icon={Globe} iconColor="text-cyan-400">
             <div className="space-y-3">
-              {/* URL bar */}
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Globe className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -121,7 +408,6 @@ export function BrowserPanel({ onInvoke, loading, result }: BrowserPanelProps) {
                 </Button>
               </div>
 
-              {/* Quick actions */}
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={takeScreenshot} disabled={loading} className="gap-1.5 flex-1">
                   <Camera className="h-3.5 w-3.5" /> Screenshot
@@ -134,16 +420,14 @@ export function BrowserPanel({ onInvoke, loading, result }: BrowserPanelProps) {
             </div>
           </ToolSection>
 
-          {/* Screenshot preview */}
-          {imgData && (
+          {screenshot && (
             <ToolSection title="Screenshot" icon={Camera} iconColor="text-cyan-400">
               <div className="rounded-lg overflow-hidden border">
-                <img src={`data:image/png;base64,${imgData}`} alt="Browser screenshot" className="w-full" />
+                <img src={`data:image/png;base64,${screenshot}`} alt="Browser screenshot" className="w-full" />
               </div>
             </ToolSection>
           )}
 
-          {/* Tabs list */}
           {tabs.length > 0 && (
             <ToolSection title="Open Tabs" icon={Layers} iconColor="text-cyan-400" noPadding>
               <div className="divide-y divide-border/30 max-h-48 overflow-auto">
@@ -163,51 +447,7 @@ export function BrowserPanel({ onInvoke, loading, result }: BrowserPanelProps) {
             </ToolSection>
           )}
 
-          {textOut && !imgData && !parsedTabs && <OutputCard title="Result" content={textOut} />}
-        </>
-      )}
-
-      {/* ── INTERACT ── */}
-      {view === "interact" && (
-        <>
-          <ToolSection title="Click Element" icon={MousePointer} iconColor="text-cyan-400">
-            <div className="space-y-3">
-              <Input value={selector} onChange={(e) => setSelector(e.target.value)}
-                placeholder="CSS selector (e.g., #submit-btn, .nav-link)" className="text-xs font-mono" />
-              <Button size="sm" className="w-full gap-1.5"
-                onClick={() => onInvoke("BrowserClick", { selector })} disabled={loading || !selector}>
-                <MousePointer className="h-3.5 w-3.5" /> Click
-              </Button>
-            </div>
-          </ToolSection>
-
-          <ToolSection title="Type into Element" icon={Type} iconColor="text-cyan-400">
-            <div className="space-y-3">
-              <Input value={selector} onChange={(e) => setSelector(e.target.value)}
-                placeholder="CSS selector" className="text-xs font-mono" />
-              <Input value={typeText} onChange={(e) => setTypeText(e.target.value)}
-                placeholder="Text to type..." className="text-xs" />
-              <Button size="sm" className="w-full gap-1.5"
-                onClick={() => onInvoke("BrowserType", { selector, text: typeText })}
-                disabled={loading || !selector || !typeText}>
-                <Type className="h-3.5 w-3.5" /> Type
-              </Button>
-            </div>
-          </ToolSection>
-
-          <ToolSection title="Extract Content" icon={ExternalLink} iconColor="text-cyan-400">
-            <div className="space-y-3">
-              <Input value={extractSel} onChange={(e) => setExtractSel(e.target.value)}
-                placeholder="CSS selector (optional, extracts full page if empty)" className="text-xs font-mono" />
-              <Button size="sm" className="w-full gap-1.5"
-                onClick={() => onInvoke("BrowserExtract", extractSel ? { selector: extractSel } : {})}
-                disabled={loading}>
-                <ExternalLink className="h-3.5 w-3.5" /> Extract
-              </Button>
-            </div>
-          </ToolSection>
-
-          {textOut && <OutputCard title="Result" content={textOut} maxHeight={300} />}
+          {textOut && !screenshot && !parsedTabs && <OutputCard title="Result" content={textOut} />}
         </>
       )}
 
