@@ -33,7 +33,7 @@ logger = get_logger()
 @router.get("/")
 async def root():
     logger.info("Root endpoint accessed")
-    return {"status": "ok", "service": "matrx-local", "version": "1.0.0"}
+    return {"status": "ok", "service": "matrx-local", "version": "1.0.1"}
 
 # Trigger event
 @router.post("/trigger")
