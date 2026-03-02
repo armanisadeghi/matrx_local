@@ -18,7 +18,7 @@ jobs:
           - platform: macos-15
             args: --target x86_64-apple-darwin --bundles app,updater
           - platform: ubuntu-22.04
-            args: ""
+            args: --bundles deb,rpm,updater
           - platform: windows-latest
             args: ""
 
