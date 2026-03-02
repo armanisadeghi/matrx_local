@@ -91,7 +91,7 @@ def write_discovery_file(port: int) -> None:
             "url": f"http://127.0.0.1:{port}",
             "ws": f"ws://127.0.0.1:{port}/ws",
             "pid": os.getpid(),
-            "version": "1.0.4",
+            "version": "1.0.5",
         }
         DISCOVERY_FILE.write_text(json.dumps(payload, indent=2))
         logger.info("Discovery file written: %s", DISCOVERY_FILE)
