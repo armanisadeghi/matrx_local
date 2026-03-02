@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 #
-# Release a new version of matrx-local.
+# Fully automated release script for matrx-local.
 #
 # Usage:
-#   ./scripts/release.sh [version]
+#   ./scripts/release.sh              # auto-bump patch (1.0.1 → 1.0.2)
+#   ./scripts/release.sh minor        # bump minor      (1.0.1 → 1.1.0)
+#   ./scripts/release.sh major        # bump major      (1.0.1 → 2.0.0)
+#   ./scripts/release.sh 2.3.4        # set exact version
 #
-# If version is omitted, it reads from pyproject.toml.
-# This script:
-#   1. Reads (or accepts) the version
-#   2. Syncs version across pyproject.toml, tauri.conf.json, package.json
-#   3. Commits all changes
-#   4. Creates a git tag (vX.Y.Z)
-#   5. Pushes commit + tag to origin (triggers GitHub Actions CI)
+# What it does:
+#   1. Reads current version from pyproject.toml
+#   2. Bumps it (patch by default, or as specified)
+#   3. Updates pyproject.toml, tauri.conf.json, package.json, run.py
+#   4. Commits the version bump
+#   5. Tags vX.Y.Z
+#   6. Pushes commit + tag to origin (triggers GitHub Actions CI)
 #
-# Examples:
-#   ./scripts/release.sh          # use version from pyproject.toml
-#   ./scripts/release.sh 1.2.3    # set and release version 1.2.3
+# Workflow:
+#   git add . && git commit -m "your changes"
+#   ./scripts/release.sh
 #
 set -euo pipefail
 
@@ -24,63 +27,94 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
 
-# ---- Determine version ----
-if [[ -n "${1:-}" ]]; then
-    VERSION="$1"
-else
-    VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
-fi
-
-if [[ -z "$VERSION" ]]; then
-    echo "ERROR: Could not determine version. Pass it as an argument or set it in pyproject.toml."
+# ---- Read current version from pyproject.toml ----
+CURRENT=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
+if [[ -z "$CURRENT" ]]; then
+    echo "ERROR: Could not read version from pyproject.toml"
     exit 1
 fi
 
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+# ---- Determine new version ----
+ARG="${1:-patch}"
+
+case "$ARG" in
+    patch)
+        PATCH=$((PATCH + 1))
+        VERSION="$MAJOR.$MINOR.$PATCH"
+        ;;
+    minor)
+        MINOR=$((MINOR + 1))
+        PATCH=0
+        VERSION="$MAJOR.$MINOR.$PATCH"
+        ;;
+    major)
+        MAJOR=$((MAJOR + 1))
+        MINOR=0
+        PATCH=0
+        VERSION="$MAJOR.$MINOR.$PATCH"
+        ;;
+    [0-9]*)
+        # Exact version specified
+        VERSION="$ARG"
+        ;;
+    *)
+        echo "Usage: $0 [patch|minor|major|X.Y.Z]"
+        exit 1
+        ;;
+esac
+
 TAG="v$VERSION"
-echo "=== Releasing $TAG ==="
+echo "=== Releasing $TAG (was $CURRENT) ==="
+
+# ---- Check for uncommitted changes ----
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "ERROR: You have uncommitted changes. Commit them first:"
+    echo "  git add . && git commit -m \"your changes\""
+    exit 1
+fi
 
 # ---- Sync version across all config files ----
-echo "  → Syncing version to $VERSION..."
+echo "  → Updating version to $VERSION..."
 
 # pyproject.toml
 sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
-# tauri.conf.json
+# tauri.conf.json (top-level "version" field)
 sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
 
-# package.json (only the top-level version field)
+# package.json
 cd desktop
 npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null
 cd "$PROJECT_ROOT"
 
-echo "  ✓ Versions synced"
+# run.py (engine root endpoint version)
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" run.py
 
-# ---- Stage, commit, tag, push ----
-echo "  → Staging changes..."
-git add -A
+echo "  ✓ Versions synced across pyproject.toml, tauri.conf.json, package.json, run.py"
 
-if git diff --cached --quiet; then
-    echo "  (no changes to commit — version files already up to date)"
-else
-    echo "  → Committing..."
-    git commit -m "release: $TAG"
-fi
+# ---- Commit the version bump ----
+git add pyproject.toml desktop/src-tauri/tauri.conf.json desktop/package.json run.py
+git commit -m "release: $TAG"
 
-# Delete existing tag locally and remotely if it exists
+# ---- Tag ----
 if git tag -l "$TAG" | grep -q "$TAG"; then
-    echo "  → Removing existing tag $TAG..."
+    echo "  → Tag $TAG already exists, removing..."
     git tag -d "$TAG"
     git push origin ":refs/tags/$TAG" 2>/dev/null || true
 fi
 
-echo "  → Tagging $TAG..."
 git tag "$TAG"
 
+# ---- Push ----
 echo "  → Pushing to origin..."
-git push
+git push origin main
 git push origin "$TAG"
 
 echo ""
-echo "=== Release $TAG triggered ==="
+echo "=== Released $TAG ==="
+echo "  $CURRENT → $VERSION"
+echo ""
 echo "Monitor CI: https://github.com/armanisadeghi/matrx-local/actions"
 echo "Releases:   https://github.com/armanisadeghi/matrx-local/releases"

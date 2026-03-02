@@ -8,20 +8,20 @@ _Last updated: 2026-03-02_
 
 ---
 
-### 1. Push & Tag to Trigger CI
+### 1. How to Release
 
-Agent already committed the fixes locally. Just push and tag:
+v1.0.1 is already pushed and CI is running. For future releases:
 
-- [ ] **Push & tag** — `git push origin main && git tag v1.0.1 && git push origin v1.0.1`
-- [ ] **Monitor GitHub Actions** — https://github.com/armanisadeghi/matrx-local/actions
-- [ ] **Confirm release** — https://github.com/armanisadeghi/matrx-local/releases
-
-**For future releases**, use the new release script:
 ```bash
-./scripts/release.sh          # uses version from pyproject.toml
-./scripts/release.sh 1.2.3    # set a specific version
+git add . && git commit -m "your changes"
+./scripts/release.sh              # auto-bumps patch (1.0.1 → 1.0.2)
+./scripts/release.sh minor        # bump minor      (1.0.1 → 1.1.0)
+./scripts/release.sh major        # bump major      (1.0.1 → 2.0.0)
+./scripts/release.sh 2.3.4        # set exact version
 ```
-The script syncs versions across `pyproject.toml`, `tauri.conf.json`, `package.json`, commits, tags, and pushes.
+The script auto-bumps the version, syncs it across `pyproject.toml`, `tauri.conf.json`, `package.json`, and `run.py`, commits, tags, and pushes — triggering GitHub Actions CI.
+
+- [x] **v1.0.1 CI triggered** — https://github.com/armanisadeghi/matrx-local/actions
 
 ---
 
