@@ -12,14 +12,18 @@ interface ClipboardPanelProps {
   result: unknown;
 }
 
-function parseOutput(result: unknown): string | null {
+function parseOutput(result: unknown): { text: string; isError: boolean } | null {
   try {
     if (!result) return null;
     const d = result as { output?: string; type?: string };
-    if (d.type === "error") return null;
     if (d.output) {
-      try { const j = JSON.parse(d.output); return typeof j === "string" ? j : JSON.stringify(j, null, 2); }
-      catch { return d.output; }
+      if (d.type === "error") return { text: d.output, isError: true };
+      try {
+        const j = JSON.parse(d.output);
+        return { text: typeof j === "string" ? j : JSON.stringify(j, null, 2), isError: false };
+      } catch {
+        return { text: d.output, isError: false };
+      }
     }
     return null;
   } catch { return null; }
@@ -34,7 +38,9 @@ export function ClipboardPanel({ onInvoke, loading, result }: ClipboardPanelProp
   const [notifyBody, setNotifyBody]   = useState("");
   const [notifySent, setNotifySent]   = useState(false);
 
-  const content = parseOutput(result);
+  const parsed = parseOutput(result);
+  const content = parsed?.text ?? null;
+  const contentIsError = parsed?.isError ?? false;
 
   const handleRead = useCallback(() => {
     onInvoke("ClipboardRead", {});
@@ -91,17 +97,21 @@ export function ClipboardPanel({ onInvoke, loading, result }: ClipboardPanelProp
               </Button>
             }>
             {content ? (
-              <div className="rounded-xl border bg-muted/40">
+              <div className={cn("rounded-xl border", contentIsError ? "border-red-500/30 bg-red-500/5" : "bg-muted/40")}>
                 <div className="flex items-center justify-between border-b px-3 py-1.5">
-                  <span className="text-[11px] text-muted-foreground">{content.length.toLocaleString()} characters</span>
-                  <button onClick={() => handleCopy(content)}
-                    className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
-                    {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <ClipboardCopy className="h-3 w-3" />}
-                    {copied ? "Copied!" : "Copy"}
-                  </button>
+                  <span className={cn("text-[11px]", contentIsError ? "text-red-400 font-medium" : "text-muted-foreground")}>
+                    {contentIsError ? "Error" : `${content.length.toLocaleString()} characters`}
+                  </span>
+                  {!contentIsError && (
+                    <button onClick={() => handleCopy(content)}
+                      className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                      {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <ClipboardCopy className="h-3 w-3" />}
+                      {copied ? "Copied!" : "Copy"}
+                    </button>
+                  )}
                 </div>
                 <div className="max-h-48 overflow-auto p-3">
-                  <pre className="whitespace-pre-wrap break-words text-xs text-foreground font-mono">{content}</pre>
+                  <pre className={cn("whitespace-pre-wrap break-words text-xs font-mono", contentIsError ? "text-red-400" : "text-foreground")}>{content}</pre>
                 </div>
               </div>
             ) : (

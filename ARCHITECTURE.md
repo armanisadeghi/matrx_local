@@ -22,7 +22,7 @@ graph TB
 
   subgraph PythonEngine [Python/FastAPI Engine]
     FastAPI["FastAPI Server<br/>run.py :22140"]
-    ToolDispatcher["Tool Dispatcher<br/>68 tools"]
+    ToolDispatcher["Tool Dispatcher<br/>79 tools"]
     ScraperEngine["Scraper Engine<br/>scraper-service subtree"]
     WSManager["WebSocket Manager<br/>Concurrent sessions"]
     FastAPI --> ToolDispatcher
@@ -70,7 +70,7 @@ matrx_local/
 │   │   ├── tool_routes.py          # /tools/invoke, /tools/list
 │   │   └── remote_scraper_routes.py # /remote-scraper/* proxy to scraper server
 │   ├── tools/
-│   │   ├── dispatcher.py           # Tool routing (68 tools registered)
+│   │   ├── dispatcher.py           # Tool routing (79 tools registered)
 │   │   ├── session.py              # Per-connection state (cwd, bg processes)
 │   │   ├── types.py                # ToolResult, ToolResultType
 │   │   └── tools/                  # Individual tool implementations
@@ -113,7 +113,7 @@ matrx_local/
 │   │   ├── pages/
 │   │   │   ├── Dashboard.tsx       # Engine status, system info, browser detection
 │   │   │   ├── Scraping.tsx        # URL input, batch scrape, dual-mode results
-│   │   │   ├── Tools.tsx           # Browse and invoke all 68 tools
+│   │   │   ├── Tools.tsx           # Browse and invoke all 79 tools
 │   │   │   ├── Activity.tsx        # Real-time WebSocket event log
 │   │   │   ├── Settings.tsx        # Engine, scraping, theme, account
 │   │   │   ├── Login.tsx           # OAuth (Google/GitHub/Apple) + email

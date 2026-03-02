@@ -60,6 +60,8 @@ export default function App() {
                       systemInfo={systemInfo}
                       browserStatus={browserStatus}
                       onRefresh={refresh}
+                      user={auth.user}
+                      onSignOut={auth.signOut}
                     />
                   }
                 />

@@ -164,6 +164,18 @@ async def tool_record_audio(
         # Fallback to system tools
         return await _record_fallback(filepath, duration_seconds, sample_rate, channels)
     except Exception as e:
+        err_str = str(e)
+        if "No Default Input Device" in err_str or "Invalid device" in err_str or "PortAudio" in err_str:
+            return ToolResult(
+                type=ToolResultType.ERROR,
+                output=(
+                    f"No audio input device found: {e}\n\n"
+                    "Troubleshooting:\n"
+                    "  • macOS: Grant Microphone access in System Settings → Privacy & Security\n"
+                    "  • Linux/WSL: Connect a microphone or enable PulseAudio/PipeWire\n"
+                    "  • Check available devices with ListAudioDevices tool first"
+                ),
+            )
         return ToolResult(type=ToolResultType.ERROR, output=f"Recording failed: {e}")
 
 

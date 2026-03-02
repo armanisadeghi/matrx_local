@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Python/FastAPI backend engine** that runs as a sidecar. It exposes 23 tools (filesystem, shell, scraping, etc.) via REST and WebSocket for the AI Matrx cloud platform.
+Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Python/FastAPI backend engine** that runs as a sidecar. It exposes 79 tools (filesystem, shell, scraping, documents, etc.) via REST and WebSocket for the AI Matrx cloud platform.
 
 **This is NOT a Next.js project.** The global CLAUDE.md's Next.js/Vercel rules do not apply here. This project uses:
 - **Desktop:** Tauri v2 (Rust) + React 19 + TypeScript 5.7 + Vite 6
@@ -33,7 +33,7 @@ Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Pytho
 
 **Two tracking files:**
 
-1. **`TASKS.md`** (project root) -- All bugs, issues, and improvement ideas. Update immediately when:
+1. **`AGENT_TASKS.md`** (project root) -- All bugs, issues, and improvement ideas. Update immediately when:
    - A new bug or issue is discovered
    - An existing task is resolved (check it off)
    - Investigation reveals new details about an existing task
@@ -44,10 +44,10 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 
 ---
 
-## Current State (as of 2026-02-20)
+## Current State (as of 2026-03-02)
 
 ### What Works
-- Python FastAPI engine with 73 tools (REST + WebSocket)
+- Python FastAPI engine with 79 tools (REST + WebSocket)
 - Engine auto-discovery from React UI
 - Tool browser and invocation (Tools page)
 - Scraping interface (Scraping page)
@@ -62,7 +62,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **`supabase.ts` created** -- Auth client singleton with publishable key
 - **Theme switching** -- `use-theme.ts` hook, `.dark` class, localStorage, system detection
 - **Settings persisted** -- `lib/settings.ts` with localStorage backend
-- **Button handlers wired** -- Open Logs/Data via `OpenPath` tool, Restart via sidecar
+- **Button handlers wired** -- Open Logs/Data via `POST /system/open-folder` endpoint, Restart via sidecar
 - **`database.py` fixed** -- Uses `DATABASE_URL` from config, no hardcoded credentials
 - **Health endpoint mismatch** -- `sidecar.ts` uses `/tools/list` consistently
 - **Stale closure** -- `use-engine.ts` health check uses ref pattern
@@ -106,7 +106,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Sharing** -- Per-user permissions (read/comment/edit/admin) + public link sharing
 - **Directory mappings** -- Map folders to additional local paths (e.g., repo docs directories)
 - **Device tracking** -- Multi-device registration, last-seen timestamps
-- **5 new document tools** -- ListDocuments, ReadDocument, WriteDocument, SearchDocuments, ListDocumentFolders (73 total)
+- **5 new document tools** -- ListDocuments, ReadDocument, WriteDocument, SearchDocuments, ListDocumentFolders (79 total)
 - **Migration script** -- `migrations/001_documents_schema.sql` ready to run
 
 ### Local Proxy & Cloud Settings Sync (Latest)
@@ -120,16 +120,12 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Cloud sync UI** -- Save to Cloud / Pull from Cloud buttons, registered devices list
 - **Instance heartbeat** -- 5-minute interval updates `last_seen` in cloud
 - **Settings persistence** -- Local JSON at `~/.matrx/settings.json` + localStorage + cloud
-- **Migration script** -- `migrations/002_app_instances_settings.sql` ready to run
+- **Migration script** -- `migrations/002_app_instances_settings.sql` run in Supabase ✓ (per ARMAN_TASKS)
 - **Integration guides** -- `docs/proxy-integration-guide.md` + `docs/proxy-testing-guide.md`
 
 ### Still Needs Work
 - **Rate limiting** -- No per-user rate limiting on scraper server
-- **GitHub Actions** -- Need CI/CD workflow for signed release builds (`tauri-action` + signing key env var)
-- **Run documents migration** -- SQL migration needs to be run in Supabase SQL Editor
-- **Run app instances migration** -- `migrations/002_app_instances_settings.sql` needs to be run in Supabase SQL Editor
-- **Engine Supabase env vars** -- `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` need to be set in root `.env`
-- **Enable Realtime** -- Supabase Realtime publication needs to include notes, note_folders, note_shares tables
+- **Cloud sync 404** -- If `app_settings` returns 404 despite migration 002 run, verify table exists and RLS in Supabase (see AGENT_TASKS Investigation section)
 
 ---
 
@@ -201,7 +197,7 @@ npm run tauri:dev
 | Local settings file | `~/.matrx/settings.json` |
 | Instance ID file | `~/.matrx/instance.json` |
 | Architecture docs | `ARCHITECTURE.md` |
-| Task tracker | `TASKS.md` |
+| Task tracker | `AGENT_TASKS.md` |
 | Backlog | `BACKLOG.md` |
 | Scraper service (source) | `/Users/armanisadeghi/Code/aidream-current/scraper-service` |
 
@@ -257,7 +253,7 @@ When editing `.env` files: comment out values instead of deleting them, with a n
 ## Arman's Preferences
 
 - Prefers working through issues systematically, one at a time
-- Wants all discovered issues tracked immediately in TASKS.md, even mid-conversation
+- Wants all discovered issues tracked immediately in AGENT_TASKS.md, even mid-conversation
 - Values architecture docs staying accurate -- update docs when code changes
 - Production-grade only -- no stubs, no TODOs, no placeholder logic
 - Keep solutions simple; avoid over-engineering

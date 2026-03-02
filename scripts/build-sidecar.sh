@@ -71,13 +71,30 @@ cd "$PROJECT_ROOT"
 # (uv run would re-sync before running, which reinstalls the bogus `fitz`
 # package pulled in by matrx-utils, which drags in pathlib — incompatible
 # with PyInstaller on Python 3.13+.)
-PYTHON="$PROJECT_ROOT/.venv/bin/python"
-if [[ ! -f "$PYTHON" ]]; then
+# Detect venv Python — differs between Unix (.venv/bin/python) and
+# Windows/MSYS (.venv/Scripts/python.exe).
+detect_venv_python() {
+    if [[ -f "$PROJECT_ROOT/.venv/bin/python" ]]; then
+        echo "$PROJECT_ROOT/.venv/bin/python"
+    elif [[ -f "$PROJECT_ROOT/.venv/Scripts/python.exe" ]]; then
+        echo "$PROJECT_ROOT/.venv/Scripts/python.exe"
+    else
+        echo ""
+    fi
+}
+
+PYTHON="$(detect_venv_python)"
+if [[ -z "$PYTHON" ]]; then
     if command -v uv &>/dev/null; then
-        echo "  → .venv not found — running 'uv sync --all-extras' first..."
-        uv sync --all-extras
+        echo "  → .venv not found — running 'uv sync --extra all' first..."
+        uv sync --extra all
     else
         echo "ERROR: .venv not found. Run 'uv sync' first."
+        exit 1
+    fi
+    PYTHON="$(detect_venv_python)"
+    if [[ -z "$PYTHON" ]]; then
+        echo "ERROR: .venv Python not found after uv sync."
         exit 1
     fi
 fi

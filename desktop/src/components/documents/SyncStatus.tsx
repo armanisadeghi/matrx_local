@@ -17,7 +17,29 @@ interface SyncStatusProps {
 }
 
 export function SyncStatusBar({ status, syncing, onSync }: SyncStatusProps) {
-  if (!status) return null;
+  if (!status) {
+    return (
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <button
+          onClick={onSync}
+          disabled={syncing}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors hover:bg-accent hover:text-foreground disabled:opacity-60"
+          title="Sync now"
+        >
+          {syncing ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
+          <span>{syncing ? "Syncing..." : "Sync"}</span>
+        </button>
+        <span className="flex items-center gap-1">
+          <CloudOff className="h-3 w-3 text-muted-foreground/60" />
+          Not configured
+        </span>
+      </div>
+    );
+  }
 
   const lastSync = status.last_full_sync
     ? new Date(status.last_full_sync * 1000).toLocaleTimeString()

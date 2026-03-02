@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
@@ -18,6 +18,11 @@ import {
   XCircle,
   HelpCircle,
   ArrowRight,
+  User,
+  Mail,
+  LogOut,
+  Battery,
+  MemoryStick,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { engine } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { SystemInfo, BrowserStatus, PermissionInfo } from "@/lib/api";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 interface DashboardProps {
   engineStatus: EngineStatus;
@@ -35,6 +41,21 @@ interface DashboardProps {
   systemInfo: SystemInfo | null;
   browserStatus: BrowserStatus | null;
   onRefresh: () => void;
+  user: SupabaseUser | null;
+  onSignOut?: () => void;
+}
+
+interface ResourceMetrics {
+  cpu_percent?: number;
+  memory_percent?: number;
+  memory_used_gb?: number;
+  memory_total_gb?: number;
+  disk_percent?: number;
+  disk_used_gb?: number;
+  disk_total_gb?: number;
+  battery_percent?: number;
+  battery_plugged?: boolean;
+  uptime_seconds?: number;
 }
 
 export function Dashboard({
@@ -44,8 +65,12 @@ export function Dashboard({
   systemInfo,
   browserStatus,
   onRefresh,
+  user,
+  onSignOut,
 }: DashboardProps) {
   const [permissions, setPermissions] = useState<PermissionInfo[]>([]);
+  const [resources, setResources] = useState<ResourceMetrics | null>(null);
+  const resourceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadPermissions = useCallback(async () => {
     if (engineStatus !== "connected") return;
@@ -57,9 +82,34 @@ export function Dashboard({
     }
   }, [engineStatus]);
 
+  const loadResources = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const result = await engine.invokeTool("SystemResources", {});
+      if (result.type !== "error" && result.metadata) {
+        setResources(result.metadata as ResourceMetrics);
+      }
+    } catch {
+      // non-critical
+    }
+  }, [engineStatus]);
+
   useEffect(() => {
     loadPermissions();
   }, [loadPermissions]);
+
+  useEffect(() => {
+    loadResources();
+    if (engineStatus === "connected") {
+      resourceIntervalRef.current = setInterval(loadResources, 10000);
+    }
+    return () => {
+      if (resourceIntervalRef.current) {
+        clearInterval(resourceIntervalRef.current);
+        resourceIntervalRef.current = null;
+      }
+    };
+  }, [loadResources, engineStatus]);
 
   const grantedCount = permissions.filter((p) => p.status === "granted").length;
   const totalCount = permissions.length;
@@ -78,6 +128,59 @@ export function Dashboard({
 
       <div className="flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-6xl space-y-6">
+          {/* User Profile Card */}
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-4">
+                {/* Avatar */}
+                <div className="relative shrink-0">
+                  {user?.user_metadata?.avatar_url ? (
+                    <img
+                      src={user.user_metadata.avatar_url}
+                      alt="Profile"
+                      className="h-12 w-12 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                      <User className="h-6 w-6" />
+                    </div>
+                  )}
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-background bg-emerald-500" />
+                </div>
+
+                {/* User info */}
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold truncate">
+                    {user?.user_metadata?.full_name ??
+                      user?.user_metadata?.name ??
+                      user?.user_metadata?.user_name ??
+                      "Signed In"}
+                  </p>
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                    <Mail className="h-3 w-3 shrink-0" />
+                    {user?.email ?? "—"}
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground capitalize">
+                    {user?.app_metadata?.provider ?? "email"}
+                  </p>
+                </div>
+
+                {/* Sign out */}
+                {onSignOut && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={onSignOut}
+                    title="Sign out"
+                  >
+                    <LogOut className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Status Cards Row */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <StatusCard
@@ -95,15 +198,29 @@ export function Dashboard({
               variant="default"
             />
             <StatusCard
-              title="Browser"
-              value={browserStatus?.chrome_found ? "Ready" : "Not Found"}
+              title="Browser (Playwright)"
+              value={
+                browserStatus === null
+                  ? "Checking..."
+                  : browserStatus.chrome_found
+                    ? "Ready"
+                    : "Not Installed"
+              }
               description={
                 browserStatus?.chrome_version
-                  ? `Chrome ${browserStatus.chrome_version}`
-                  : "Install Chrome for local scraping"
+                  ? `Chromium ${browserStatus.chrome_version}`
+                  : browserStatus?.chrome_found
+                    ? "Playwright ready"
+                    : "Run: uv sync --extra browser"
               }
               icon={<Chrome className="h-4 w-4" />}
-              variant={browserStatus?.chrome_found ? "success" : "warning"}
+              variant={
+                browserStatus === null
+                  ? "default"
+                  : browserStatus.chrome_found
+                    ? "success"
+                    : "warning"
+              }
             />
             <StatusCard
               title="Device Access"
@@ -123,6 +240,84 @@ export function Dashboard({
               }
             />
           </div>
+
+          {/* Live System Resources */}
+          {(resources || engineStatus === "connected") && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center justify-between text-base">
+                  <span className="flex items-center gap-2">
+                    <Activity className="h-4 w-4 text-primary" />
+                    System Resources
+                  </span>
+                  <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={loadResources}>
+                    <Activity className="h-3 w-3" />
+                    Refresh
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {resources ? (
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <ResourceGauge
+                      label="CPU"
+                      value={resources.cpu_percent}
+                      icon={<Cpu className="h-4 w-4" />}
+                      color="text-blue-400"
+                    />
+                    <ResourceGauge
+                      label="Memory"
+                      value={resources.memory_percent}
+                      detail={
+                        resources.memory_used_gb != null && resources.memory_total_gb != null
+                          ? `${resources.memory_used_gb.toFixed(1)} / ${resources.memory_total_gb.toFixed(1)} GB`
+                          : undefined
+                      }
+                      icon={<MemoryStick className="h-4 w-4" />}
+                      color="text-violet-400"
+                    />
+                    <ResourceGauge
+                      label="Disk"
+                      value={resources.disk_percent}
+                      detail={
+                        resources.disk_used_gb != null && resources.disk_total_gb != null
+                          ? `${resources.disk_used_gb.toFixed(0)} / ${resources.disk_total_gb.toFixed(0)} GB`
+                          : undefined
+                      }
+                      icon={<HardDrive className="h-4 w-4" />}
+                      color="text-amber-400"
+                    />
+                    {resources.battery_percent != null ? (
+                      <ResourceGauge
+                        label="Battery"
+                        value={resources.battery_percent}
+                        detail={resources.battery_plugged ? "Charging" : undefined}
+                        icon={<Battery className="h-4 w-4" />}
+                        color={
+                          resources.battery_percent > 50
+                            ? "text-emerald-400"
+                            : resources.battery_percent > 20
+                              ? "text-amber-400"
+                              : "text-red-400"
+                        }
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-1">
+                        <Battery className="h-4 w-4 text-muted-foreground/30" />
+                        <span className="text-xs text-muted-foreground">AC Power</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {engineStatus === "connected"
+                      ? "Loading system resources..."
+                      : "Connect to engine to view live resources"}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <div className="grid gap-6 lg:grid-cols-2">
             {/* System Information */}
@@ -326,6 +521,51 @@ function InfoRow({
       >
         {value}
       </span>
+    </div>
+  );
+}
+
+function ResourceGauge({
+  label,
+  value,
+  detail,
+  icon,
+  color,
+}: {
+  label: string;
+  value?: number;
+  detail?: string;
+  icon: React.ReactNode;
+  color: string;
+}) {
+  const pct = value ?? 0;
+  const radius = 22;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (pct / 100) * circumference;
+
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div className="relative h-16 w-16">
+        <svg className="h-16 w-16 -rotate-90" viewBox="0 0 56 56">
+          <circle cx="28" cy="28" r={radius} fill="none" stroke="currentColor"
+            className="text-muted/30" strokeWidth="4" />
+          <circle cx="28" cy="28" r={radius} fill="none" stroke="currentColor"
+            className={color} strokeWidth="4"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round" />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className={`text-xs font-bold tabular-nums ${value == null ? "text-muted-foreground" : color}`}>
+            {value != null ? `${Math.round(value)}%` : "—"}
+          </span>
+        </div>
+      </div>
+      <div className="text-center">
+        <div className={`flex items-center justify-center gap-1 ${color}`}>{icon}</div>
+        <p className="text-[11px] font-medium mt-0.5">{label}</p>
+        {detail && <p className="text-[10px] text-muted-foreground">{detail}</p>}
+      </div>
     </div>
   );
 }

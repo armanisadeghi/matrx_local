@@ -69,12 +69,12 @@ export function ToolForm({ schema, onSubmit, loading }: ToolFormProps) {
   });
 
   const handleSubmit = methods.handleSubmit((data) => {
-    // Strip out undefined/empty values
+    // Strip out undefined/empty/null scalar values but keep arrays (even if empty)
     const cleaned: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
-      if (value !== undefined && value !== "" && value !== null) {
-        cleaned[key] = value;
-      }
+      if (value === undefined || value === null) continue;
+      if (typeof value === "string" && value === "") continue;
+      cleaned[key] = value;
     }
     onSubmit(cleaned);
   });

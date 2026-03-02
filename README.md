@@ -46,7 +46,7 @@ Cloud-hosted AI platforms hit a wall when the task requires the user's real file
 | **Packaging** | PyInstaller `.spec` | macOS `.app` / Windows `.exe` / Linux binary |
 | **Auto-Update** | tufup | Checks on startup, applies, restarts |
 
-**73 tools total** — all available via both WebSocket and REST.
+**79 tools total** — all available via both WebSocket and REST.
 
 ### Scraper Engine (v0.3 — New)
 
@@ -132,7 +132,7 @@ With the server running, open: **http://127.0.0.1:22140/docs**
 
 ## Python Engine — Advanced
 
-The engine is a FastAPI server exposing all 73 tools over REST and WebSocket. You can run it standalone without the desktop app for quick CLI testing.
+The engine is a FastAPI server exposing all 79 tools over REST and WebSocket. You can run it standalone without the desktop app for quick CLI testing.
 
 ### Test a tool via curl
 

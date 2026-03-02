@@ -8,10 +8,14 @@ _Last updated: 2026-03-02_
 
 ---
 
-### 1. Watch the v1.0.0 CI Build
+### 1. Re-trigger CI Build After Agent Fixes
 
-- [ ] **Monitor GitHub Actions** — Go to https://github.com/armanisadeghi/matrx-local/actions and watch the v1.0.0 run. Four jobs run in parallel (macOS arm64, macOS x86_64, Ubuntu, Windows). If any fail, note the error — agent will fix.
-- [ ] **Confirm the release published** — Once all 4 jobs pass, go to https://github.com/armanisadeghi/matrx-local/releases and confirm a `v1.0.0` release appears with `.dmg`, `.msi`, `.deb`, `.AppImage`, and `latest.json` artifacts.
+Agent fixed both root causes (pyaudio build failure + Windows venv path). Now commit + push + re-tag:
+
+- [ ] **Commit & push** — `git add -A && git commit -m "fix: CI failures (pyaudio + Windows venv path)" && git push`
+- [ ] **Delete old tag & re-tag** — `git tag -d v1.0.1 2>/dev/null; git push origin :refs/tags/v1.0.1 2>/dev/null; git tag v1.0.1 && git push origin v1.0.1` (or use `v1.0.2` if you prefer)
+- [ ] **Monitor GitHub Actions** — https://github.com/armanisadeghi/matrx-local/actions
+- [ ] **Confirm release** — https://github.com/armanisadeghi/matrx-local/releases (`.dmg`, `.msi`, `.deb`, `.AppImage`, `latest.json`)
 
 ---
 
@@ -25,7 +29,10 @@ These require purchases and external accounts — only you can do this.
   - Find your `APPLE_TEAM_ID` in Xcode → Settings → Accounts → your team (10-character code)
   - Add all three to GitHub Actions secrets: Settings → Secrets → Actions → New repository secret
 
+  - **CURRENT STATUS**: NONE
+
 - [ ] **Windows EV code signing cert** (optional for first release, ~$200–500/yr) — DigiCert or Sectigo. Without it, SmartScreen shows "Windows protected your PC" warning. Users can click "More info → Run anyway" but it's scary. Skip for beta; add before public launch.
+  - **CURRENT STATUS**: Cert purchased, but shippig takes a few days.
 
 ---
 
@@ -33,8 +40,11 @@ These require purchases and external accounts — only you can do this.
 
 #### macOS
 - [ ] **Test DMG install** — Download `.dmg` from the GitHub Release, open it, drag to Applications, launch. Confirm Gatekeeper reaction (expected: warning without notarization). Confirm app opens and connects to engine.
+  - **CURRENT STATUS**: NONE
 - [ ] **Launch on Startup** — In Settings → General, toggle on "Launch on Startup". Quit the app. Log out and back in. Confirm AI Matrx launches automatically.
+  - **CURRENT STATUS**: NONE
 - [ ] **Minimize to Tray** — In Settings → General, toggle on "Minimize to Tray". Click the window close button (red X). Confirm app goes to menu bar (not quits). Click tray icon to reopen.
+  - **CURRENT STATUS**: NONE
 - [ ] **macOS Permissions** — First time a tool requiring them runs, macOS will prompt. Or grant manually in System Settings → Privacy & Security:
   - Accessibility → AI Matrx (for TypeText, MouseClick, Hotkey, FocusWindow)
   - Screen Recording → AI Matrx (for Screenshot tool)
@@ -42,19 +52,27 @@ These require purchases and external accounts — only you can do this.
 - [ ] **User avatar** — Sign in with Google or GitHub. Go to Settings → Cloud & Account. Confirm your profile photo appears.
 - [ ] **Headless mode** — In Settings → Scraping, toggle headless off. Run a scrape. Confirm a real Chromium window opens.
 
+  - **CURRENT STATUS**: NONE
+
+
 #### Windows
 - [ ] **Test MSI install** — Download `.msi` from GitHub Release, install it. Confirm SmartScreen reaction. Confirm app launches.
+  - **CURRENT STATUS**: NONE
 - [ ] **Launch on Startup** — Same test as macOS above.
+  - **CURRENT STATUS**: NONE
 
 #### Linux
 - [ ] **Test .deb or .AppImage** — Download from GitHub Release, install/run. Confirm launch.
+  - **CURRENT STATUS**: NONE
 
 ---
 
 ### 4. Cloud Sync Verification
 
 - [ ] **app_settings table** — In Supabase SQL Editor at https://app.supabase.com, run: `SELECT * FROM app_settings LIMIT 1;`. If error "table does not exist": migration 002 didn't run correctly. Re-run `migrations/002_app_instances_settings.sql`.
+  - **CURRENT STATUS**: NONE
 - [ ] **Confirm Proxy "Test Connection" server URL** — What is the correct URL for our main server that would receive the proxy roundtrip test? (e.g. `https://server.app.matrxserver.com`). Tell the agent so it can implement the real test.
+  - **CURRENT STATUS**: NONE
 
 ---
 

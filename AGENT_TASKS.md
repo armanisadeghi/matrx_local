@@ -157,7 +157,7 @@
 - [ ] **First-run setup wizard**
 - [ ] **Job queue for cloud-assigned scrape jobs**
 - [ ] **No Alembic migration runner** (only matters if `DATABASE_URL` is set locally)
-- [x] **GitHub Actions workflow** — Fixed 2026-03-02: CI builds all 4 platforms, auto-publishes releases (no longer draft), Apple notarization env vars wired. v1.0.0 CI run in progress.
+- [x] **GitHub Actions workflow** — Fixed 2026-03-02: CI builds all 4 platforms, auto-publishes releases (no longer draft), Apple notarization env vars wired. v1.0.0 CI run failed; v1.0.1 fix: changed `--all-extras` → `--extra all` (avoids pyaudio/portaudio.h), added Windows venv path detection in `build-sidecar.sh`.
 - [ ] **Wake-on-LAN support**
 - [ ] **Smart device control protocols** (HomeKit, Google Home, Alexa APIs)
 - [ ] **Reverse tunnel** for cloud→local proxy routing
