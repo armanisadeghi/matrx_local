@@ -13,6 +13,7 @@ import {
   Cpu,
   PanelLeftClose,
   PanelLeft,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -20,10 +21,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import type { EngineStatus } from "@/hooks/use-engine";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 interface AppSidebarProps {
   engineStatus: EngineStatus;
+  user: SupabaseUser | null;
+  onSignOut: () => void;
 }
 
 const navItems = [
@@ -54,12 +60,13 @@ const statusLabels: Record<EngineStatus, string> = {
   error: "Engine error",
 };
 
-export function AppSidebar({ engineStatus }: AppSidebarProps) {
+export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(() => {
     const saved = localStorage.getItem("sidebar-collapsed");
     return saved === "true";
   });
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const toggleCollapsed = () => {
     const next = !collapsed;
@@ -70,20 +77,37 @@ export function AppSidebar({ engineStatus }: AppSidebarProps) {
   const isActive = (to: string) =>
     to === "/" ? location.pathname === "/" : location.pathname.startsWith(to);
 
+  const displayName =
+    user?.user_metadata?.full_name ??
+    user?.user_metadata?.name ??
+    user?.user_metadata?.user_name ??
+    user?.email?.split("@")[0] ??
+    "User";
+
+  const avatarUrl = user?.user_metadata?.avatar_url;
+  const initials = (displayName[0] ?? "U").toUpperCase();
+
   return (
     <aside
       className={cn(
-        "no-select flex h-full flex-col border-r bg-sidebar transition-[width] duration-200 ease-in-out overflow-hidden backdrop-blur-xl",
+        "no-select flex h-full flex-col border-r bg-sidebar transition-[width] duration-200 ease-in-out backdrop-blur-xl",
         collapsed
           ? "w-[var(--sidebar-width-collapsed)]"
           : "w-[var(--sidebar-width)]",
       )}
     >
       {/* Top: Logo + Toggle */}
-      <div className="flex items-center border-b h-14 px-3 gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
-          <Zap className="h-4 w-4 text-primary" />
-        </div>
+      <div
+        className={cn(
+          "flex items-center border-b h-14 shrink-0",
+          collapsed ? "justify-center px-0" : "px-3 gap-2",
+        )}
+      >
+        {!collapsed && (
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+            <Zap className="h-4 w-4 text-primary" />
+          </div>
+        )}
         {!collapsed && (
           <span className="text-sm font-semibold text-sidebar-foreground flex-1 whitespace-nowrap overflow-hidden">
             Matrx Local
@@ -103,7 +127,7 @@ export function AppSidebar({ engineStatus }: AppSidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex flex-1 flex-col gap-1 p-2">
+      <nav className="flex flex-1 flex-col gap-1 p-2 overflow-y-auto overflow-x-hidden">
         {navItems.map(({ to, icon: Icon, label }) => {
           const active = isActive(to);
           return (
@@ -129,8 +153,65 @@ export function AppSidebar({ engineStatus }: AppSidebarProps) {
         })}
       </nav>
 
+      {/* User profile */}
+      {user && (
+        <div className={cn("border-t p-2", collapsed && "flex justify-center")}>
+          <Popover open={profileOpen} onOpenChange={setProfileOpen}>
+            <PopoverTrigger>
+              <Tooltip delayDuration={collapsed ? 0 : 700}>
+                <TooltipTrigger asChild>
+                  <div
+                    className={cn(
+                      "flex items-center gap-2 rounded-lg px-2 py-2 cursor-pointer transition-colors hover:bg-sidebar-accent/50 whitespace-nowrap overflow-hidden",
+                      collapsed && "justify-center px-0",
+                    )}
+                  >
+                    <Avatar className="h-7 w-7 flex-shrink-0">
+                      {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
+                      <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+                    </Avatar>
+                    {!collapsed && (
+                      <span className="text-xs text-sidebar-foreground/80 truncate flex-1">
+                        {displayName}
+                      </span>
+                    )}
+                  </div>
+                </TooltipTrigger>
+                {collapsed && <TooltipContent side="right">{displayName}</TooltipContent>}
+              </Tooltip>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="start" className="w-56">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Avatar className="h-8 w-8">
+                    {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
+                    <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium truncate">{displayName}</p>
+                    <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                  </div>
+                </div>
+                <div className="border-t pt-2">
+                  <button
+                    onClick={() => {
+                      setProfileOpen(false);
+                      onSignOut();
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    Sign out
+                  </button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+      )}
+
       {/* Engine Status (bottom) */}
-      <div className="border-t p-2">
+      <div className="border-t p-2 shrink-0">
         <Tooltip delayDuration={0}>
           <TooltipTrigger asChild>
             <div

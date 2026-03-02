@@ -18,45 +18,110 @@ logger = logging.getLogger(__name__)
 
 def _detect_chrome() -> tuple[bool, str | None, str | None]:
     """Return (playwright_available, chrome_path, chrome_version)."""
+    import shutil
+    import subprocess as _sp
+
     try:
         import playwright  # noqa: F401
+
         pw_available = True
     except ImportError:
         return False, None, None
 
-    # Look for real Chrome first (user-visible, has cookies/profiles)
-    chrome_locations = [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-    ]
     chrome_path: str | None = None
-    for loc in chrome_locations:
-        if Path(loc).exists():
-            chrome_path = loc
-            break
-
-    # Fall back to playwright's bundled headless shell
-    if chrome_path is None:
-        headless_base = Path.home() / "Library" / "Caches" / "ms-playwright"
-        if headless_base.exists():
-            shells = sorted(headless_base.glob("chromium_headless_shell-*/chrome-mac/headless_shell"))
-            if shells:
-                chrome_path = str(shells[-1])
-
-    # Try to read Chrome version
     chrome_version: str | None = None
-    if chrome_path:
-        # Info.plist is at <App>.app/Contents/Info.plist
-        ver_file = Path(chrome_path).parent.parent / "Info.plist"
-        if ver_file.exists():
-            try:
-                import plistlib
-                with open(ver_file, "rb") as f:
-                    plist = plistlib.load(f)
-                chrome_version = plist.get("CFBundleShortVersionString")
-            except Exception:
-                pass
+    system = platform.system()
+
+    if system == "Darwin":
+        # macOS: check known .app bundle locations
+        for loc in [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        ]:
+            if Path(loc).exists():
+                chrome_path = loc
+                break
+
+        # Playwright headless shell (macOS cache)
+        if chrome_path is None:
+            headless_base = Path.home() / "Library" / "Caches" / "ms-playwright"
+            if headless_base.exists():
+                shells = sorted(
+                    headless_base.glob(
+                        "chromium_headless_shell-*/chrome-mac/headless_shell"
+                    )
+                )
+                if shells:
+                    chrome_path = str(shells[-1])
+
+        # Version from Info.plist
+        if chrome_path:
+            ver_file = Path(chrome_path).parent.parent / "Info.plist"
+            if ver_file.exists():
+                try:
+                    import plistlib
+
+                    with open(ver_file, "rb") as f:
+                        plist = plistlib.load(f)
+                    chrome_version = plist.get("CFBundleShortVersionString")
+                except Exception:
+                    pass
+
+    elif system == "Windows":
+        # Windows: check common install paths
+        for env_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            base = os.getenv(env_var)
+            if base:
+                loc = os.path.join(
+                    base, "Google", "Chrome", "Application", "chrome.exe"
+                )
+                if Path(loc).exists():
+                    chrome_path = loc
+                    break
+
+    else:
+        # Linux / WSL: use `which` to find Chrome
+        for binary in (
+            "google-chrome",
+            "google-chrome-stable",
+            "chromium-browser",
+            "chromium",
+        ):
+            found = shutil.which(binary)
+            if found:
+                chrome_path = found
+                break
+
+        # Playwright headless shell (Linux cache)
+        if chrome_path is None:
+            headless_base = Path.home() / ".cache" / "ms-playwright"
+            if headless_base.exists():
+                shells = sorted(
+                    headless_base.glob(
+                        "chromium_headless_shell-*/chrome-linux/headless_shell"
+                    )
+                )
+                if shells:
+                    chrome_path = str(shells[-1])
+
+    # Version via --version flag (works on Windows and Linux)
+    if chrome_path and chrome_version is None:
+        try:
+            result = _sp.run(
+                [chrome_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split()
+                for part in reversed(parts):
+                    if part and part[0].isdigit():
+                        chrome_version = part
+                        break
+        except Exception:
+            pass
 
     return pw_available, chrome_path, chrome_version
 
@@ -123,12 +188,16 @@ async def tool_list_directory(
     target = session.resolve_path(path or ".")
 
     if not os.path.isdir(target):
-        return ToolResult(type=ToolResultType.ERROR, output=f"Not a directory: {target}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Not a directory: {target}"
+        )
 
     try:
         entries = sorted(os.listdir(target))
     except OSError as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Cannot list directory: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Cannot list directory: {e}"
+        )
 
     if not show_hidden:
         entries = [e for e in entries if not e.startswith(".")]
@@ -140,7 +209,10 @@ async def tool_list_directory(
         items.append(f"  {entry}{suffix}")
 
     header = f"{target}/ ({len(items)} items)"
-    return ToolResult(output=header + "\n" + "\n".join(items), metadata={"path": target, "count": len(items)})
+    return ToolResult(
+        output=header + "\n" + "\n".join(items),
+        metadata={"path": target, "count": len(items)},
+    )
 
 
 async def tool_open_url(
@@ -163,22 +235,16 @@ async def tool_open_path(
     path: str,
 ) -> ToolResult:
     """Open a file or directory using the OS default handler (Finder, Explorer, etc.)."""
-    import subprocess
+    from app.tools.tools import open_path_cross_platform
 
     resolved = session.resolve_path(path)
 
     if not os.path.exists(resolved):
-        return ToolResult(type=ToolResultType.ERROR, output=f"Path not found: {resolved}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Path not found: {resolved}"
+        )
 
-    system = platform.system()
-    try:
-        if system == "Darwin":
-            subprocess.Popen(["open", resolved])
-        elif system == "Windows":
-            os.startfile(resolved)
-        else:
-            subprocess.Popen(["xdg-open", resolved])
-    except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Failed to open path: {e}")
-
-    return ToolResult(output=f"Opened {resolved}")
+    success, message = open_path_cross_platform(resolved)
+    if not success:
+        return ToolResult(type=ToolResultType.ERROR, output=message)
+    return ToolResult(output=message)

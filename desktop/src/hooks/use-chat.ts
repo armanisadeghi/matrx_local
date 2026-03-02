@@ -351,9 +351,9 @@ export function useChat({ engineUrl }: UseChatOptions) {
       let accumulated = "";
 
       try {
-        // Get current Supabase JWT
+        // Get current Supabase JWT; fall back to local API key for pre-login use
         const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token ?? "";
+        const token = session?.access_token ?? import.meta.env.VITE_ENGINE_API_KEY ?? "";
 
         // Build message history including the new user message
         const apiMessages = toApiMessages([...existingMessages, userMsg]);

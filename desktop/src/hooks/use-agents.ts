@@ -147,8 +147,17 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
       setError(null);
 
       try {
+        // Fetch session token to authenticate engine requests.
+        // Fall back to the local API key so agents load even before login.
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token ?? import.meta.env.VITE_ENGINE_API_KEY ?? "";
+        const authHeader: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
         const [engineResult, supabaseResult] = await Promise.allSettled([
-          fetch(`${engineUrl}/chat/agents`, { signal: abort.signal }).then((r) => {
+          fetch(`${engineUrl}/chat/agents`, {
+            signal: abort.signal,
+            headers: authHeader,
+          }).then((r) => {
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             return r.json() as Promise<AgentsResponse>;
           }),

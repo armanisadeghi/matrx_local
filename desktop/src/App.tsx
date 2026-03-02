@@ -49,7 +49,7 @@ export default function App() {
             {!auth.isAuthenticated ? (
               <Route path="*" element={<Login auth={auth} />} />
             ) : (
-              <Route element={<AppLayout engineStatus={status} engineUrl={url} engineVersion={engineVersion} />}>
+              <Route element={<AppLayout engineStatus={status} engineUrl={url} engineVersion={engineVersion} user={auth.user} onSignOut={auth.signOut} />}>
                 <Route
                   index
                   element={

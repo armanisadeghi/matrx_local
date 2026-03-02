@@ -19,10 +19,15 @@ Avatar.displayName = "Avatar";
 const AvatarImage = React.forwardRef<
   HTMLImageElement,
   React.ImgHTMLAttributes<HTMLImageElement>
->(({ className, ...props }, ref) => (
+>(({ className, onError, ...props }, ref) => (
   <img
     ref={ref}
     className={cn("aspect-square h-full w-full", className)}
+    onError={(e) => {
+      // Hide the broken image so AvatarFallback shows through
+      (e.currentTarget as HTMLImageElement).style.display = "none";
+      onError?.(e);
+    }}
     {...props}
   />
 ));

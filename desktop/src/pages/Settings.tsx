@@ -112,12 +112,17 @@ export function Settings({
 
   useEffect(() => {
     loadSettings().then(setSettings);
-    loadProxyStatus();
-    loadInstanceInfo();
-    loadCapabilities();
     loadForbiddenUrls();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (engineStatus !== "connected") return;
+    loadProxyStatus();
+    loadInstanceInfo();
+    loadCapabilities();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engineStatus]);
 
   const loadProxyStatus = useCallback(async () => {
     if (engineStatus !== "connected") return;
@@ -225,8 +230,8 @@ export function Settings({
     try {
       const result = await engine.getCapabilities();
       setCapabilities(result.capabilities);
-    } catch {
-      // Non-critical
+    } catch (err) {
+      console.error("[Settings] Failed to load capabilities:", err);
     }
   }, [engineStatus]);
 

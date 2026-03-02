@@ -19,9 +19,6 @@ from app.utils.directory_utils.generate_directory_structure import (
     get_structure_with_common_configs,
 )
 
-import platform
-import subprocess
-import time
 from pathlib import Path
 
 from app.config import DATA_DIR
@@ -93,6 +90,8 @@ async def system_info():
 @router.post("/system/open-folder")
 async def open_system_folder(data: dict):
     """Open the logs or data folder in the OS file manager."""
+    from app.tools.tools import open_path_cross_platform
+
     folder = data.get("folder", "logs")
     if folder == "logs":
         target = Path(LOG_DIR)
@@ -102,19 +101,13 @@ async def open_system_folder(data: dict):
         raise HTTPException(status_code=400, detail=f"Unknown folder: {folder}")
 
     target.mkdir(parents=True, exist_ok=True)
-    target_str = str(target)
+    target_str = str(target.resolve())
 
-    try:
-        system = platform.system()
-        if system == "Darwin":
-            subprocess.Popen(["open", target_str])
-        elif system == "Windows":
-            os.startfile(target_str)
-        else:
-            subprocess.Popen(["xdg-open", target_str])
-        return {"opened": target_str}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    success, message = open_path_cross_platform(target_str)
+    if not success:
+        logger.error("Failed to open folder '%s': %s", target_str, message)
+        raise HTTPException(status_code=500, detail=message)
+    return {"opened": target_str}
 
 
 # List files
@@ -149,7 +142,6 @@ async def capture_screenshot():
         raise HTTPException(
             status_code=500, detail=f"Error capturing screenshot: {str(e)}"
         )
-
 
 
 # ── Logging endpoints ────────────────────────────────────────────────────────

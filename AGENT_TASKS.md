@@ -14,6 +14,14 @@
 - [x] **Tool error messages show raw `pip install` commands** — Fixed 2026-03-02: All 14 occurrences across 5 tool files (`browser_automation.py`, `audio.py`, `media.py`, `network_discovery.py`, `system_monitor.py`) now show user-friendly messages: "Go to Settings → Capabilities to install it". Each includes `fix_capability_id` in metadata for "Fix It" buttons. Dev info (pip commands) preserved after newline.
 
 
+- From the ui, when you click "Open Logs folder' or "Open data folder" this is what you get:
+INFO:     127.0.0.1:40248 - "POST /system/open-folder HTTP/1.1" 500 Internal Server Error
+2026-03-02 14:28:57,548 - system_logger - INFO - Request: POST http://127.0.0.1:22141/system/open-folder | Body: {'folder': 'logs'}
+2026-03-02 14:28:57,653 - system_logger - INFO - Response: 500 for POST http://127.0.0.1:22141/system/open-folder
+INFO:     127.0.0.1:40248 - "POST /system/open-folder HTTP/1.1" 500 Internal Server Error
+2026-03-02 14:28:58,472 - system_logger - INFO - Request: GET http://127.0.0.1:22141/tools/list | Body: None
+
+
 ## 🔴 AGENT PRIORITY QUEUE (updated 2026-03-02)
 
 > Pick tasks from top to bottom. Each is self-contained. Do not start a task that depends on an unresolved one above it.

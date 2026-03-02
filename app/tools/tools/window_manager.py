@@ -8,6 +8,7 @@ import logging
 import platform
 
 from app.tools.session import ToolSession
+from app.tools.tools import NO_GUI_MSG, has_display
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,12 @@ _ACCESSIBILITY_HINT = (
 def _check_applescript_error(stderr: bytes) -> str | None:
     """Return a friendly permission hint or None if error is not permission-related."""
     text = stderr.decode(errors="replace")
-    if "-1743" in text or "-25211" in text or "not authorized" in text.lower() or "assistive" in text.lower():
+    if (
+        "-1743" in text
+        or "-25211" in text
+        or "not authorized" in text.lower()
+        or "assistive" in text.lower()
+    ):
         return _ACCESSIBILITY_HINT
     return None
 
@@ -40,10 +46,14 @@ async def tool_list_windows(
             return await _list_windows_macos(app_filter)
         elif IS_WINDOWS:
             return await _list_windows_windows(app_filter)
+        elif not has_display():
+            return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
         else:
             return await _list_windows_linux(app_filter)
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Failed to list windows: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Failed to list windows: {e}"
+        )
 
 
 async def _list_windows_macos(app_filter: str | None) -> ToolResult:
@@ -66,7 +76,9 @@ tell application "System Events"
 end tell
 """
     proc = await asyncio.create_subprocess_exec(
-        "osascript", "-e", script,
+        "osascript",
+        "-e",
+        script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -74,7 +86,9 @@ end tell
 
     if proc.returncode != 0:
         friendly = _check_applescript_error(stderr)
-        msg = friendly or f"AppleScript error: {stderr.decode(errors='replace').strip()}"
+        msg = (
+            friendly or f"AppleScript error: {stderr.decode(errors='replace').strip()}"
+        )
         return ToolResult(type=ToolResultType.ERROR, output=msg)
 
     windows = []
@@ -88,14 +102,16 @@ end tell
                 continue
             pos = parts[2].strip().split(",")
             size = parts[3].strip().split(",")
-            windows.append({
-                "app": app_name,
-                "title": parts[1].strip(),
-                "x": int(pos[0]) if pos[0].strip().lstrip("-").isdigit() else 0,
-                "y": int(pos[1]) if pos[1].strip().lstrip("-").isdigit() else 0,
-                "width": int(size[0]) if size[0].strip().isdigit() else 0,
-                "height": int(size[1]) if size[1].strip().isdigit() else 0,
-            })
+            windows.append(
+                {
+                    "app": app_name,
+                    "title": parts[1].strip(),
+                    "x": int(pos[0]) if pos[0].strip().lstrip("-").isdigit() else 0,
+                    "y": int(pos[1]) if pos[1].strip().lstrip("-").isdigit() else 0,
+                    "width": int(size[0]) if size[0].strip().isdigit() else 0,
+                    "height": int(size[1]) if size[1].strip().isdigit() else 0,
+                }
+            )
 
     lines = [f"{'APP':<25} {'TITLE':<35} {'POS':>12} {'SIZE':>12}"]
     lines.append("-" * 90)
@@ -145,7 +161,9 @@ public class WindowLister {
 [WindowLister]::GetWindows()
 """
     proc = await asyncio.create_subprocess_exec(
-        "powershell.exe", "-Command", ps_script,
+        "powershell.exe",
+        "-Command",
+        ps_script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -160,14 +178,16 @@ public class WindowLister {
                 continue
             pos = parts[2].split(",")
             size = parts[3].split(",")
-            windows.append({
-                "app": app_name,
-                "title": parts[1].strip(),
-                "x": int(pos[0]) if pos[0].strip().lstrip("-").isdigit() else 0,
-                "y": int(pos[1]) if pos[1].strip().lstrip("-").isdigit() else 0,
-                "width": int(size[0]) if size[0].strip().isdigit() else 0,
-                "height": int(size[1]) if size[1].strip().isdigit() else 0,
-            })
+            windows.append(
+                {
+                    "app": app_name,
+                    "title": parts[1].strip(),
+                    "x": int(pos[0]) if pos[0].strip().lstrip("-").isdigit() else 0,
+                    "y": int(pos[1]) if pos[1].strip().lstrip("-").isdigit() else 0,
+                    "width": int(size[0]) if size[0].strip().isdigit() else 0,
+                    "height": int(size[1]) if size[1].strip().isdigit() else 0,
+                }
+            )
 
     lines = [f"{'APP':<25} {'TITLE':<35} {'POS':>12} {'SIZE':>12}"]
     lines.append("-" * 90)
@@ -184,7 +204,9 @@ public class WindowLister {
 
 async def _list_windows_linux(app_filter: str | None) -> ToolResult:
     proc = await asyncio.create_subprocess_exec(
-        "wmctrl", "-l", "-G",
+        "wmctrl",
+        "-l",
+        "-G",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -203,19 +225,23 @@ async def _list_windows_linux(app_filter: str | None) -> ToolResult:
             title = parts[7]
             if app_filter and app_filter.lower() not in title.lower():
                 continue
-            windows.append({
-                "app": title,
-                "title": title,
-                "x": int(parts[2]),
-                "y": int(parts[3]),
-                "width": int(parts[4]),
-                "height": int(parts[5]),
-            })
+            windows.append(
+                {
+                    "app": title,
+                    "title": title,
+                    "x": int(parts[2]),
+                    "y": int(parts[3]),
+                    "width": int(parts[4]),
+                    "height": int(parts[5]),
+                }
+            )
 
     lines = [f"{'TITLE':<50} {'POS':>12} {'SIZE':>12}"]
     lines.append("-" * 80)
     for w in windows:
-        lines.append(f"{w['title'][:49]:<50} {w['x']:>5},{w['y']:<6} {w['width']:>5}x{w['height']:<5}")
+        lines.append(
+            f"{w['title'][:49]:<50} {w['x']:>5},{w['y']:<6} {w['width']:>5}x{w['height']:<5}"
+        )
 
     return ToolResult(
         output=f"Windows ({len(windows)}):\n" + "\n".join(lines),
@@ -230,6 +256,8 @@ async def tool_focus_window(
 ) -> ToolResult:
     """Focus/activate a specific window by app name and optional title."""
     try:
+        if not IS_MACOS and not IS_WINDOWS and not has_display():
+            return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
         if IS_MACOS:
             if window_title:
                 script = f"""
@@ -250,7 +278,9 @@ end tell
                 script = f'tell application "{app_name}" to activate'
 
             proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
+                "osascript",
+                "-e",
+                script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -279,7 +309,9 @@ if ($proc) {{
 }} else {{ "Window not found: {target}" }}
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe", "-Command", ps_script,
+                "powershell.exe",
+                "-Command",
+                ps_script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -289,7 +321,9 @@ if ($proc) {{
         else:
             target = window_title or app_name
             proc = await asyncio.create_subprocess_exec(
-                "wmctrl", "-a", target,
+                "wmctrl",
+                "-a",
+                target,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -297,7 +331,9 @@ if ($proc) {{
             return ToolResult(output=f"Focused: {target}")
 
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Failed to focus window: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Failed to focus window: {e}"
+        )
 
 
 async def tool_move_window(
@@ -310,6 +346,8 @@ async def tool_move_window(
 ) -> ToolResult:
     """Move and/or resize a window by app name."""
     try:
+        if not IS_MACOS and not IS_WINDOWS and not has_display():
+            return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
         if IS_MACOS:
             parts = []
             if x is not None and y is not None:
@@ -317,7 +355,10 @@ async def tool_move_window(
             if width is not None and height is not None:
                 parts.append(f"set size of window 1 to {{{width}, {height}}}")
             if not parts:
-                return ToolResult(type=ToolResultType.ERROR, output="Provide x,y for position and/or width,height for size.")
+                return ToolResult(
+                    type=ToolResultType.ERROR,
+                    output="Provide x,y for position and/or width,height for size.",
+                )
 
             script = f"""
 tell application "System Events"
@@ -327,7 +368,9 @@ tell application "System Events"
 end tell
 """
             proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
+                "osascript",
+                "-e",
+                script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -362,16 +405,18 @@ $proc = Get-Process -Name '{app_name}' -ErrorAction SilentlyContinue | Where-Obj
 if ($proc) {{
     $rect = New-Object WinMove+RECT
     [WinMove]::GetWindowRect($proc.MainWindowHandle, [ref]$rect)
-    $x = {x if x is not None else '$rect.Left'}
-    $y = {y if y is not None else '$rect.Top'}
-    $w = {width if width is not None else '($rect.Right - $rect.Left)'}
-    $h = {height if height is not None else '($rect.Bottom - $rect.Top)'}
+    $x = {x if x is not None else "$rect.Left"}
+    $y = {y if y is not None else "$rect.Top"}
+    $w = {width if width is not None else "($rect.Right - $rect.Left)"}
+    $h = {height if height is not None else "($rect.Bottom - $rect.Top)"}
     [WinMove]::MoveWindow($proc.MainWindowHandle, $x, $y, $w, $h, $true)
     "Moved: $($proc.ProcessName)"
 }} else {{ "Process not found: {app_name}" }}
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe", "-Command", ps_script,
+                "powershell.exe",
+                "-Command",
+                ps_script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -382,7 +427,11 @@ if ($proc) {{
             # Linux with wmctrl
             mvarg = f"0,{x or -1},{y or -1},{width or -1},{height or -1}"
             proc = await asyncio.create_subprocess_exec(
-                "wmctrl", "-r", app_name, "-e", mvarg,
+                "wmctrl",
+                "-r",
+                app_name,
+                "-e",
+                mvarg,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -394,7 +443,9 @@ if ($proc) {{
             return ToolResult(output=f"Moved/resized: {app_name}")
 
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Failed to move window: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Failed to move window: {e}"
+        )
 
 
 async def tool_minimize_window(
@@ -404,9 +455,14 @@ async def tool_minimize_window(
 ) -> ToolResult:
     """Minimize, maximize, or restore a window. Action: minimize, maximize, restore."""
     if action not in ("minimize", "maximize", "restore"):
-        return ToolResult(type=ToolResultType.ERROR, output="Action must be 'minimize', 'maximize', or 'restore'.")
+        return ToolResult(
+            type=ToolResultType.ERROR,
+            output="Action must be 'minimize', 'maximize', or 'restore'.",
+        )
 
     try:
+        if not IS_MACOS and not IS_WINDOWS and not has_display():
+            return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
         if IS_MACOS:
             if action == "minimize":
                 script = f"""
@@ -432,7 +488,9 @@ end tell
                 script = f'tell application "{app_name}" to activate'
 
             proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
+                "osascript",
+                "-e",
+                script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -455,7 +513,9 @@ if ($proc) {{
 }} else {{ "Process not found: {app_name}" }}
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe", "-Command", ps_script,
+                "powershell.exe",
+                "-Command",
+                ps_script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -472,7 +532,10 @@ if ($proc) {{
 
             parts = flag.split()
             proc = await asyncio.create_subprocess_exec(
-                "wmctrl", "-r", app_name, *parts,
+                "wmctrl",
+                "-r",
+                app_name,
+                *parts,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -480,4 +543,6 @@ if ($proc) {{
             return ToolResult(output=f"{action.capitalize()}d: {app_name}")
 
     except Exception as e:
-        return ToolResult(type=ToolResultType.ERROR, output=f"Failed to {action} window: {e}")
+        return ToolResult(
+            type=ToolResultType.ERROR, output=f"Failed to {action} window: {e}"
+        )
