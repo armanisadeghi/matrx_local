@@ -21,7 +21,7 @@ import app.common.access_log as access_log
 from app.services.scraper.engine import get_scraper_engine
 from app.services.proxy.server import get_proxy_server
 from app.services.cloud_sync.settings_sync import get_settings_sync
-from app.services.ai.engine import initialize_matrx_ai
+from app.services.ai.engine import initialize_matrx_ai, load_tools_and_register
 from app.tools.tools.scheduler import restore_scheduled_tasks
 import app.services.scraper.retry_queue as retry_queue
 from app.websocket_manager import WebSocketManager
@@ -32,11 +32,21 @@ websocket_manager = WebSocketManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # Initialize matrx-ai (loads env, registers DB if credentials present)
+    # Phase 1: Initialize matrx-ai (loads env, registers DB if credentials present)
     try:
         initialize_matrx_ai()
     except Exception:
         logger.error("matrx-ai initialization failed — AI endpoints may not work", exc_info=True)
+
+    # Phase 2: Load tool registry from DB and register all local OS tools.
+    # Done async here so DB queries can run without blocking the event loop.
+    try:
+        await load_tools_and_register()
+    except Exception:
+        logger.error(
+            "matrx-ai tool registration failed — AI may not have tool access",
+            exc_info=True,
+        )
 
     engine = get_scraper_engine()
     try:

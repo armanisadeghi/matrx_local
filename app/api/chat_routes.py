@@ -6,6 +6,7 @@ Provides:
   GET  /chat/tools/anthropic         — Anthropic Messages API format
   GET  /chat/models                  — live AI models from Supabase DB
   GET  /chat/agents                  — live agents/prompts from Supabase DB
+  GET  /chat/local-tools             — local OS tools registered in matrx-ai registry
 
   POST /chat/ai/chat                 — streaming chat completions (matrx-ai)
   POST /chat/ai/agents/{agent_id}    — start agent conversation (matrx-ai)
@@ -87,6 +88,49 @@ async def list_anthropic_tool_schemas() -> dict:
     """Return tool schemas in Anthropic Messages API format."""
     tools = get_anthropic_tools()
     return {"tools": tools, "total": len(tools)}
+
+
+@router.get("/local-tools")
+async def list_local_tools() -> dict[str, Any]:
+    """Return all local OS tools registered in the matrx-ai ToolRegistry.
+
+    These are the tools AI models can call to interact with the local system —
+    read/write files, run shell commands, manage processes, control the browser, etc.
+
+    Each entry includes name, description, category, parameters, and version.
+    """
+    try:
+        from app.tools.local_tool_manifest import LOCAL_TOOL_MANIFEST
+        from matrx_ai.tools.registry import ToolRegistryV2
+        from app.services.ai.engine import tools_loaded
+
+        registry = ToolRegistryV2.get_instance()
+        tools_out = []
+
+        for entry in LOCAL_TOOL_MANIFEST:
+            tool_def = registry.get(entry.name)
+            tools_out.append({
+                "name": entry.name,
+                "description": entry.description,
+                "category": entry.category,
+                "tags": entry.tags,
+                "parameters": entry.parameters,
+                "version": entry.version,
+                "function_path": entry.function_path,
+                "registered": tool_def is not None,
+                "timeout_seconds": entry.timeout_seconds,
+            })
+
+        registered_count = sum(1 for t in tools_out if t["registered"])
+        return {
+            "tools": tools_out,
+            "total": len(tools_out),
+            "registered": registered_count,
+            "registry_loaded": tools_loaded(),
+        }
+    except Exception:
+        logger.warning("Failed to list local tools", exc_info=True)
+        return {"tools": [], "total": 0, "registered": 0, "registry_loaded": False}
 
 
 # ---------------------------------------------------------------------------
