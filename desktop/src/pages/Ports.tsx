@@ -225,7 +225,7 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
 
       <div className="flex-1 p-6 overflow-hidden">
         <Tabs defaultValue="user" className="h-full flex flex-col">
-          <TabsList className="w-full max-w-[400px] grid grid-cols-2 bg-background/40 backdrop-blur-xl border border-white/10 shadow-sm">
+          <TabsList className="w-full max-w-[400px] grid grid-cols-2 bg-background/40 backdrop-blur-xl border border-border shadow-sm">
             <TabsTrigger
               value="user"
               className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary"
@@ -281,7 +281,7 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
       </div>
 
       <Dialog open={killDialogOpen} onOpenChange={setKillDialogOpen}>
-        <DialogContent className="sm:max-w-[425px] bg-background/80 backdrop-blur-2xl border-white/10">
+        <DialogContent className="sm:max-w-[425px] bg-background/80 backdrop-blur-2xl border-border">
           <DialogHeader>
             <DialogTitle asChild>
               <h2 className="flex items-center gap-2 text-destructive font-semibold">
@@ -350,7 +350,7 @@ function PortTable({
 
   if (ports.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-muted-foreground bg-card/30 backdrop-blur-md rounded-xl border border-white/5">
+      <div className="h-full flex flex-col items-center justify-center text-muted-foreground bg-card/30 backdrop-blur-md rounded-xl border border-border">
         <Network className="h-12 w-12 opacity-20 mb-4" />
         <p>No listening ports found matching the criteria.</p>
       </div>
@@ -358,8 +358,8 @@ function PortTable({
   }
 
   return (
-    <div className="h-full rounded-xl border border-white/10 bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
-      <div className="grid grid-cols-12 gap-4 border-b border-white/5 bg-muted/30 px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider select-none">
+    <div className="h-full rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
+      <div className="grid grid-cols-12 gap-4 border-b border-border bg-muted/30 px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider select-none">
         <div className="col-span-2 flex items-center cursor-pointer hover:text-foreground transition-colors" onClick={() => onSort("port")}>
           Port <SortIcon col="port" sortCol={sortCol} sortDir={sortDir} />
         </div>
@@ -386,7 +386,7 @@ function PortTable({
             return (
             <div key={rowKey}>
               <div
-                className={`grid grid-cols-12 gap-4 items-center px-4 py-3 hover:bg-white/5 transition-colors group cursor-pointer ${isExpanded ? "bg-white/5" : ""}`}
+                className={`grid grid-cols-12 gap-4 items-center px-4 py-3 hover:bg-muted/40 transition-colors group cursor-pointer ${isExpanded ? "bg-muted/40" : ""}`}
                 onClick={() => setExpandedPort(isExpanded ? null : rowKey)}
               >
                 <div className="col-span-2">
@@ -395,7 +395,7 @@ function PortTable({
                 </span>
               </div>
               <div className="col-span-3 flex items-center gap-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/5 border border-white/10 shadow-sm">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted border border-border shadow-sm">
                   {getProcessIcon(port.name)}
                 </div>
                 <div className="flex flex-col min-w-0">
@@ -403,7 +403,7 @@ function PortTable({
                 </div>
               </div>
               <div className="col-span-3 flex items-center">
-                <span className="text-sm font-mono text-muted-foreground bg-white/5 px-2 py-0.5 rounded border border-white/10 truncate">
+                <span className="text-sm font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded border border-border truncate">
                   {port.address || "*"}
                 </span>
               </div>
@@ -413,7 +413,7 @@ function PortTable({
               <div className="col-span-1">
                 <Badge
                   variant="outline"
-                  className="text-[10px] bg-white/5 border-white/10 text-muted-foreground font-medium"
+                  className="text-[10px] bg-muted border-border text-muted-foreground font-medium"
                 >
                   {port.protocol}
                 </Badge>
@@ -424,9 +424,9 @@ function PortTable({
             </div>
             
             {isExpanded && (
-              <div className="bg-black/20 border-t border-white/5 p-4 mx-4 mb-2 mt-[-2px] rounded-b-md shadow-inner">
+              <div className="bg-muted/30 border-t border-border p-4 mx-4 mb-2 mt-[-2px] rounded-b-md shadow-inner">
                 <div className="flex justify-between items-start gap-4">
-                  <pre className="text-xs text-muted-foreground bg-black/40 p-3 rounded-md overflow-x-auto w-full font-mono border border-white/5">
+                  <pre className="text-xs text-muted-foreground bg-muted p-3 rounded-md overflow-x-auto w-full font-mono border border-border">
                     {JSON.stringify(port, null, 2)}
                   </pre>
                   <div className="flex flex-col gap-2 min-w-[140px] shrink-0">

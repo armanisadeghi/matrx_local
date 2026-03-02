@@ -67,17 +67,30 @@ mkdir -p "$SIDECAR_DIR"
 # Build with PyInstaller
 cd "$PROJECT_ROOT"
 
-# Prefer uv run (CI), fall back to .venv/bin/python (local dev)
-if command -v uv &>/dev/null; then
-    PYTHON_CMD="uv run python"
-else
-    PYTHON="$PROJECT_ROOT/.venv/bin/python"
-    if [[ ! -f "$PYTHON" ]]; then
+# Resolve the venv Python — always use it directly so we control the env.
+# (uv run would re-sync before running, which reinstalls the bogus `fitz`
+# package pulled in by matrx-utils, which drags in pathlib — incompatible
+# with PyInstaller on Python 3.13+.)
+PYTHON="$PROJECT_ROOT/.venv/bin/python"
+if [[ ! -f "$PYTHON" ]]; then
+    if command -v uv &>/dev/null; then
+        echo "  → .venv not found — running 'uv sync --all-extras' first..."
+        uv sync --all-extras
+    else
         echo "ERROR: .venv not found. Run 'uv sync' first."
         exit 1
     fi
-    PYTHON_CMD="$PYTHON"
 fi
+
+# Remove the obsolete 'pathlib' backport that matrx-utils pulls in via fitz →
+# nipype → pyxnat. Python 3.13 ships pathlib as stdlib; the backport breaks
+# PyInstaller. Safe to remove: nothing in this project actually imports it.
+if "$PYTHON" -c "import importlib.metadata; importlib.metadata.version('pathlib')" &>/dev/null 2>&1; then
+    echo "  → Removing incompatible 'pathlib' backport (replaced by stdlib)..."
+    "$PYTHON" -m pip uninstall pathlib -y --quiet
+fi
+
+PYTHON_CMD="$PYTHON"
 
 echo "Running PyInstaller (using $PYTHON_CMD)..."
 $PYTHON_CMD -m PyInstaller \
@@ -85,6 +98,26 @@ $PYTHON_CMD -m PyInstaller \
     --onefile \
     --clean \
     --noconfirm \
+    --exclude-module torch \
+    --exclude-module torchvision \
+    --exclude-module torchaudio \
+    --exclude-module tensorflow \
+    --exclude-module tensorboard \
+    --exclude-module triton \
+    --exclude-module scipy \
+    --exclude-module nipype \
+    --exclude-module nibabel \
+    --exclude-module pyxnat \
+    --exclude-module openai_whisper \
+    --exclude-module whisper \
+    --exclude-module matplotlib \
+    --exclude-module sklearn \
+    --exclude-module skimage \
+    --exclude-module cv2 \
+    --exclude-module IPython \
+    --exclude-module ipykernel \
+    --exclude-module jupyter \
+    --exclude-module ipywidgets \
     --hidden-import uvicorn \
     --hidden-import uvicorn.logging \
     --hidden-import uvicorn.loops \

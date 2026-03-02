@@ -35,7 +35,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Python dependencies
-        run: uv sync
+        run: uv sync --all-extras
 
       - name: Build Python sidecar binary
         run: |
@@ -77,12 +77,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS notarization (optional — only active when secrets are set)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: desktop
           tagName: v__VERSION__
           releaseName: "AI Matrx v__VERSION__"
-          releaseBody: "See the assets below to download and install."
-          releaseDraft: true
+          releaseBody: "See the assets below to download and install this version."
+          releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}

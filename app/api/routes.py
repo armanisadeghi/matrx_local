@@ -18,8 +18,12 @@ from app.database import get_connection
 from app.services.screenshots.capture import take_screenshot
 from app.utils.directory_utils.generate_directory_structure import get_structure_with_common_configs
 
+import platform
+import subprocess
 import time
 from pathlib import Path
+
+from app.config import DATA_DIR
 
 # Initialize the APIRouter
 router = APIRouter()
@@ -29,7 +33,7 @@ logger = get_logger()
 @router.get("/")
 async def root():
     logger.info("Root endpoint accessed")
-    return {"status": "ok", "service": "matrx-local", "version": "0.2.0"}
+    return {"status": "ok", "service": "matrx-local", "version": "1.0.0"}
 
 # Trigger event
 @router.post("/trigger")
@@ -51,6 +55,33 @@ async def system_info():
     except Exception as e:
         logger.error(f"Error fetching system info: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error fetching system info: {str(e)}")
+
+@router.post("/system/open-folder")
+async def open_system_folder(data: dict):
+    """Open the logs or data folder in the OS file manager."""
+    folder = data.get("folder", "logs")
+    if folder == "logs":
+        target = Path(LOG_DIR)
+    elif folder == "data":
+        target = Path(DATA_DIR)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown folder: {folder}")
+
+    target.mkdir(parents=True, exist_ok=True)
+    target_str = str(target)
+
+    try:
+        system = platform.system()
+        if system == "Darwin":
+            subprocess.Popen(["open", target_str])
+        elif system == "Windows":
+            os.startfile(target_str)
+        else:
+            subprocess.Popen(["xdg-open", target_str])
+        return {"opened": target_str}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
 
 # List files
 @router.get("/files")

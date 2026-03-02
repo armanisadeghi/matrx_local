@@ -14,6 +14,7 @@ from app.api.proxy_routes import router as proxy_router
 from app.api.cloud_sync_routes import router as cloud_sync_router
 from app.api.chat_routes import router as chat_router, build_ai_sub_app
 from app.api.permissions_routes import router as permissions_router
+from app.api.capabilities_routes import router as capabilities_router
 from app.api.auth import AuthMiddleware
 from app.config import ALLOWED_ORIGINS
 from app.common.system_logger import get_logger
@@ -123,6 +124,7 @@ app.include_router(proxy_router)
 app.include_router(cloud_sync_router)
 app.include_router(chat_router)
 app.include_router(permissions_router)
+app.include_router(capabilities_router)
 
 # Mount the matrx-ai engine as a sub-application.
 # It has its own AuthMiddleware (sets AppContext + StreamEmitter per request).

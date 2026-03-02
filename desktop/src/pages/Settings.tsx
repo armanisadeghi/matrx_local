@@ -20,6 +20,10 @@ import {
   AlertCircle,
   Copy,
   CheckCheck,
+  Cpu,
+  CircleCheck,
+  CircleDashed,
+  ExternalLink,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
@@ -41,7 +45,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { EngineStatus } from "@/hooks/use-engine";
 import { engine } from "@/lib/api";
-import type { ProxyStatus, InstanceInfo } from "@/lib/api";
+import type { ProxyStatus, InstanceInfo, Capability } from "@/lib/api";
 import type { useAuth } from "@/hooks/use-auth";
 import type { Theme } from "@/hooks/use-theme";
 
@@ -93,10 +97,16 @@ export function Settings({
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
   const [copied, setCopied] = useState(false);
 
+  // Capabilities state
+  const [capabilities, setCapabilities] = useState<Capability[]>([]);
+  const [installingId, setInstallingId] = useState<string | null>(null);
+  const [installResult, setInstallResult] = useState<Record<string, { success: boolean; message: string }>>({});
+
   useEffect(() => {
     loadSettings().then(setSettings);
     loadProxyStatus();
     loadInstanceInfo();
+    loadCapabilities();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -166,11 +176,44 @@ export function Settings({
 
   const handleOpenFolder = async (folder: "logs" | "data") => {
     if (engineStatus !== "connected") return;
-    const subpath = folder === "logs" ? "system/logs" : "system/data";
     try {
-      await engine.invokeTool("OpenPath", { path: subpath });
+      await engine.openSystemFolder(folder);
     } catch {
       // Engine may not be reachable
+    }
+  };
+
+  const loadCapabilities = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const result = await engine.getCapabilities();
+      setCapabilities(result.capabilities);
+    } catch {
+      // Non-critical
+    }
+  }, [engineStatus]);
+
+  const handleInstallCapability = async (capabilityId: string) => {
+    setInstallingId(capabilityId);
+    setInstallResult((prev) => {
+      const next = { ...prev };
+      delete next[capabilityId];
+      return next;
+    });
+    try {
+      const result = await engine.installCapability(capabilityId);
+      setInstallResult((prev) => ({ ...prev, [capabilityId]: result }));
+      if (result.success) {
+        // Refresh capability status after successful install
+        await loadCapabilities();
+      }
+    } catch (err) {
+      setInstallResult((prev) => ({
+        ...prev,
+        [capabilityId]: { success: false, message: String(err) },
+      }));
+    } finally {
+      setInstallingId(null);
     }
   };
 
@@ -258,6 +301,7 @@ export function Settings({
     { value: "general", label: "General" },
     { value: "proxy", label: "Proxy" },
     { value: "scraping", label: "Scraping" },
+    { value: "capabilities", label: "Capabilities" },
     { value: "cloud", label: "Cloud & Account" },
     { value: "about", label: "About" },
   ];
@@ -533,6 +577,130 @@ export function Settings({
                     <span className="text-xs text-muted-foreground">sec</span>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ── Capabilities Tab ─────────────────────────────── */}
+          {activeTab === "capabilities" && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Cpu className="h-4 w-4 text-primary" /> Optional Capabilities
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  These features are not bundled by default to keep the core app lean. Install only what you need.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-1 p-0">
+                {capabilities.length === 0 && engineStatus !== "connected" && (
+                  <div className="px-6 py-8 text-center text-sm text-muted-foreground">
+                    Engine not connected — capability status unavailable.
+                  </div>
+                )}
+                {capabilities.length === 0 && engineStatus === "connected" && (
+                  <div className="flex items-center justify-center gap-2 px-6 py-8 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading...
+                  </div>
+                )}
+                {capabilities.map((cap, idx) => {
+                  const isInstalled = cap.status === "installed";
+                  const isInstalling = installingId === cap.id;
+                  const result = installResult[cap.id];
+                  return (
+                    <div key={cap.id}>
+                      {idx > 0 && <Separator />}
+                      <div className="px-6 py-4 space-y-2">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-3 min-w-0">
+                            <div className="mt-0.5 shrink-0">
+                              {isInstalled ? (
+                                <CircleCheck className="h-4 w-4 text-emerald-500" />
+                              ) : (
+                                <CircleDashed className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium">{cap.name}</span>
+                                <Badge variant={isInstalled ? "success" : "secondary"} className="text-xs">
+                                  {isInstalled ? "Installed" : "Not installed"}
+                                </Badge>
+                                {cap.size_warning && !isInstalled && (
+                                  <Badge variant="outline" className="text-xs text-amber-500 border-amber-500/40">
+                                    {cap.size_warning}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                                {cap.description}
+                              </p>
+                              <div className="flex items-center gap-1 mt-1 flex-wrap">
+                                {cap.packages.map((pkg) => (
+                                  <code key={pkg} className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
+                                    {pkg}
+                                  </code>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="shrink-0 flex items-center gap-2">
+                            {cap.docs_url && (
+                              <a
+                                href={cap.docs_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </a>
+                            )}
+                            {!isInstalled && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleInstallCapability(cap.id)}
+                                disabled={isInstalling || engineStatus !== "connected"}
+                              >
+                                {isInstalling ? (
+                                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Installing...</>
+                                ) : (
+                                  <><Download className="h-3.5 w-3.5" /> Install</>
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        {result && (
+                          <div className={`rounded-md border px-3 py-2 text-xs ${
+                            result.success
+                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+                              : "border-red-500/30 bg-red-500/5 text-red-400"
+                          }`}>
+                            {result.success ? (
+                              <CheckCircle2 className="mr-1.5 inline h-3.5 w-3.5" />
+                            ) : (
+                              <AlertCircle className="mr-1.5 inline h-3.5 w-3.5" />
+                            )}
+                            {result.message}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {capabilities.length > 0 && (
+                  <div className="px-6 py-3 border-t">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs text-muted-foreground"
+                      onClick={loadCapabilities}
+                    >
+                      <RefreshCw className="h-3 w-3" /> Refresh Status
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

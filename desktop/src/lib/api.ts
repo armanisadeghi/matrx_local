@@ -931,6 +931,26 @@ class EngineAPI {
   }
 
   /** Get system resource usage. */
+  async openSystemFolder(folder: "logs" | "data"): Promise<{ opened: string }> {
+    return this.request<{ opened: string }>("/system/open-folder", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder }),
+    });
+  }
+
+  async getCapabilities(): Promise<CapabilitiesResponse> {
+    return this.request<CapabilitiesResponse>("/capabilities");
+  }
+
+  async installCapability(capabilityId: string): Promise<InstallCapabilityResult> {
+    return this.request<InstallCapabilityResult>("/capabilities/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ capability_id: capabilityId }),
+    });
+  }
+
   async getSystemResources(): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const resp = await fetch(`${this.baseUrl}/devices/system`, {
@@ -1141,6 +1161,30 @@ export interface DeviceProbeResult {
   output: string;
   metadata: Record<string, unknown> | null;
   type: string;
+}
+
+// ---- Capabilities types ----
+
+export type CapabilityStatus = "installed" | "not_installed" | "checking";
+
+export interface Capability {
+  id: string;
+  name: string;
+  description: string;
+  status: CapabilityStatus;
+  packages: string[];
+  install_extra: string | null;
+  size_warning: string | null;
+  docs_url: string | null;
+}
+
+export interface CapabilitiesResponse {
+  capabilities: Capability[];
+}
+
+export interface InstallCapabilityResult {
+  success: boolean;
+  message: string;
 }
 
 // Singleton instance
