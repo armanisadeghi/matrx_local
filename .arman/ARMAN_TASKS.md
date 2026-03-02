@@ -79,6 +79,7 @@ These require purchases and external accounts — only you can do this.
 - [ ] **note_folders table (Documents "New Folder" broken)** — Run in Supabase SQL Editor: `SELECT * FROM note_folders LIMIT 1;`. Then check RLS: `SELECT * FROM pg_policies WHERE tablename = 'note_folders';`. Policy must allow INSERT for `auth.uid() = user_id`. If missing, re-run `migrations/001_documents_schema.sql`.
 - [ ] **BRAVE_API_KEY for web search** — Get a key at https://api.search.brave.com, then add to root `.env`: `BRAVE_API_KEY=<your-key>`. Restart engine to enable web search in Tools page.
 - [ ] **Confirm Proxy "Test Connection" server URL** — What is the correct URL for our main server for the proxy roundtrip test? Tell the agent so it can implement the real test.
+- [ ] **Run migration 003** — In Supabase SQL Editor, run `migrations/003_forbidden_urls.sql` to create the `forbidden_urls` table for cloud sync.
 
 ---
 
@@ -132,8 +133,9 @@ bash scripts/stop.sh --force  # immediate kill
 - [x] System Info UI: Dashboard now shows live CPU/RAM/Disk/Battery gauges (10s refresh)
 - [x] Dark mode contrast: pages are clean
 - [ ] Settings → Proxy: "Test Connection" still fake (confirm server URL first)
-- [ ] Settings → Scraping: Forbidden URL list still needed
-- [ ] Installed Apps: persistent list with refresh still needed
+- [x] Settings → Scraping: Forbidden URL list — implemented (add/remove UI + backend enforcement)
+- [ ] **Run migration 003** — In Supabase SQL Editor, run `migrations/003_forbidden_urls.sql` to enable cloud sync for forbidden URLs
+- [x] Installed Apps: persistent list with refresh — already implemented with localStorage cache
 
 ---
 

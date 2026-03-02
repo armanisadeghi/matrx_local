@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Globe,
   Play,
@@ -10,6 +10,7 @@ import {
   Trash2,
   StopCircle,
   Plus,
+  History,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,35 @@ import { engine, type ScrapeResultData } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
 import { formatDuration, truncateUrl } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+
+const HISTORY_KEY = "matrx:scrape-history";
+const MAX_HISTORY = 100;
+
+interface ScrapeHistoryEntry {
+  url: string;
+  success: boolean;
+  title: string;
+  elapsed_ms: number;
+  savedAt: string;
+  content?: string;
+}
+
+function loadHistory(): ScrapeHistoryEntry[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? (JSON.parse(raw) as ScrapeHistoryEntry[]) : [];
+  } catch { return []; }
+}
+
+function saveToHistory(entries: ScrapeHistoryEntry[]) {
+  try {
+    const existing = loadHistory();
+    const existingUrls = new Set(existing.map((e) => e.url + e.savedAt));
+    const newEntries = entries.filter((e) => !existingUrls.has(e.url + e.savedAt));
+    const merged = [...newEntries, ...existing].slice(0, MAX_HISTORY);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
+  } catch { /* quota exceeded — ignore */ }
+}
 
 interface ScrapingProps {
   engineStatus: EngineStatus;
@@ -53,6 +83,31 @@ export function Scraping({ engineStatus, engineUrl: _engineUrl }: ScrapingProps)
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [running, setRunning] = useState(false);
+  const [history, setHistory] = useState<ScrapeHistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Load history from localStorage on mount
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
+
+  // Persist successful entries to history when they complete
+  useEffect(() => {
+    const completed = entries.filter(
+      (e) => (e.status === "success" || e.status === "error") && e.result
+    );
+    if (completed.length === 0) return;
+    const toSave: ScrapeHistoryEntry[] = completed.map((e) => ({
+      url: e.url,
+      success: e.status === "success",
+      title: e.result?.title ?? "",
+      elapsed_ms: e.result?.elapsed_ms ?? 0,
+      savedAt: (e.completedAt ?? new Date()).toISOString(),
+      content: e.result?.content?.slice(0, 2000),
+    }));
+    saveToHistory(toSave);
+    setHistory(loadHistory());
+  }, [entries]);
 
   const selectedEntry = entries.find((e) => e.url === selectedUrl) ?? null;
 
@@ -344,21 +399,52 @@ export function Scraping({ engineStatus, engineUrl: _engineUrl }: ScrapingProps)
 
           {/* URL list header */}
           <div className="flex items-center justify-between px-3 py-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              URLs ({entries.length})
-            </span>
-            {entries.length > 0 && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowHistory(false)}
+                className={cn(
+                  "text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                  !showHistory ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                Queue ({entries.length})
+              </button>
+              <span className="text-muted-foreground/30 text-[10px]">|</span>
+              <button
+                onClick={() => setShowHistory(true)}
+                className={cn(
+                  "flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                  showHistory ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                <History className="h-3 w-3" />
+                History ({history.length})
+              </button>
+            </div>
+            {!showHistory && entries.length > 0 && (
               <button
                 onClick={clearAll}
                 className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
               >
                 <Trash2 className="h-3 w-3" />
-                Clear all
+                Clear
+              </button>
+            )}
+            {showHistory && history.length > 0 && (
+              <button
+                onClick={() => {
+                  localStorage.removeItem(HISTORY_KEY);
+                  setHistory([]);
+                }}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                <Trash2 className="h-3 w-3" />
+                Clear
               </button>
             )}
           </div>
 
-          {/* Flat URL list */}
+          {/* Flat URL list or History */}
           <ScrollArea className="flex-1">
             <div className="space-y-0.5 px-2 pb-3">
               {entries.map((entry) => (

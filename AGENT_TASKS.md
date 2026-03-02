@@ -34,7 +34,7 @@
 15. **Scraping persistence** — Still needed. Save completed scrapes to Supabase `scrapes` table.
 16. [x] **Scheduler real persistence** — Already implemented: `scheduler.py` persists to `~/.matrx/scheduled_tasks.json` and restores on startup via `restore_scheduled_tasks()` in `main.py`.
 17. **Proxy Test Connection** — Waiting on Arman to confirm `MAIN_SERVER` URL.
-18. **Forbidden URL list** — Still needed. UI + Supabase `forbidden_urls` table.
+18. [x] **Forbidden URL list** — Fixed 2026-03-02: (1) Backend: `settings_routes.py` has `GET/POST/DELETE/PUT /settings/forbidden-urls` endpoints, normalized pattern storage via `settings_sync`, and `is_url_forbidden()` helper; (2) `network.py` `tool_fetch_url`, `tool_fetch_with_browser`, `tool_scrape` all call `_check_forbidden()` before proceeding; (3) Frontend: Settings → Scraping tab has add/remove UI with wildcard hint; (4) `api.ts` has generic `get/post/delete` helpers; (5) `migrations/003_forbidden_urls.sql` for future Supabase cloud sync. Arman must run migration 003 to enable cloud sync.
 19. [x] **Transcribe Audio: live mode** — Fixed 2026-03-02: `AudioMediaPanel.tsx` now has two sub-tabs: "Live Mic" (record → auto-transcribe, or record-only + manual transcribe) and "From File" (path input + transcribe). Duration selector (15s/30s/1m/2m), Whisper model selector (tiny/base/small), error display. Result routing via `lastToolRef` prevents cross-tool contamination.
 20. [x] **Browser control UI** — Fixed 2026-03-02: Complete rewrite of `BrowserPanel.tsx`. Now has: (1) Automation tab with ordered step builder (navigate/click/type/extract/screenshot/eval) with add/remove/reorder, run-all with per-step status icons (pending/running/done/error), and inline output; (2) Auto-screenshot toggle captures page after each step; (3) Session indicator (green dot when active, tab count); (4) Live Page View shows latest screenshot with manual refresh; (5) Quick Nav and Console tabs preserved.
 
@@ -115,7 +115,7 @@
 ### Settings — Scraping
 
 - [ ] **Verify headless mode actually does something** — The toggle must be confirmed to switch Playwright to `headless=True/False` at runtime.
-- [ ] **Add forbidden URL list** — A UI-managed list of URLs that are forbidden from being scraped, even if requested. List must sync to Supabase (per user).
+- [x] **Add forbidden URL list** — Done: UI in Settings → Scraping, backend endpoints, tool-level enforcement, migration 003 ready.
 
 ---
 
