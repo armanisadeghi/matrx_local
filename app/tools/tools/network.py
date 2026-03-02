@@ -20,6 +20,20 @@ from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
 
+
+def _check_forbidden(url: str) -> ToolResult | None:
+    """Return an error ToolResult if ``url`` is on the forbidden list, else None."""
+    try:
+        from app.api.settings_routes import is_url_forbidden
+        if is_url_forbidden(url):
+            return ToolResult(
+                type=ToolResultType.ERROR,
+                output=f"URL is blocked by the forbidden URL list: {url}",
+            )
+    except Exception:
+        pass
+    return None
+
 MAX_RESPONSE_SIZE = 500_000
 DEFAULT_TIMEOUT = 30
 
@@ -37,6 +51,8 @@ async def tool_fetch_url(
     follow_redirects: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> ToolResult:
+    if blocked := _check_forbidden(url):
+        return blocked
     try:
         import httpx
     except ImportError:
@@ -110,6 +126,8 @@ async def tool_fetch_with_browser(
     wait_timeout: int = 30000,
     extract_text: bool = False,
 ) -> ToolResult:
+    if blocked := _check_forbidden(url):
+        return blocked
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -277,6 +295,13 @@ async def tool_scrape(
     Cloudflare detection, proxy rotation, content extraction (HTML, PDF, images),
     domain-specific parsing rules, and two-tier caching.
     """
+    blocked_urls = [u for u in urls if _check_forbidden(u)]
+    if blocked_urls:
+        return ToolResult(
+            type=ToolResultType.ERROR,
+            output=f"The following URLs are blocked by the forbidden URL list: {', '.join(blocked_urls)}",
+        )
+
     engine = _get_engine()
     if not engine.is_ready:
         return ToolResult(

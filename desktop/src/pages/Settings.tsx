@@ -24,6 +24,9 @@ import {
   CircleCheck,
   CircleDashed,
   ExternalLink,
+  Ban,
+  Plus,
+  X,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
@@ -102,11 +105,17 @@ export function Settings({
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [installResult, setInstallResult] = useState<Record<string, { success: boolean; message: string }>>({});
 
+  // Forbidden URLs state
+  const [forbiddenUrls, setForbiddenUrls] = useState<string[]>([]);
+  const [newForbiddenUrl, setNewForbiddenUrl] = useState("");
+  const [forbiddenSaving, setForbiddenSaving] = useState(false);
+
   useEffect(() => {
     loadSettings().then(setSettings);
     loadProxyStatus();
     loadInstanceInfo();
     loadCapabilities();
+    loadForbiddenUrls();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -135,6 +144,34 @@ export function Settings({
       // Non-critical
     }
   }, [engineStatus]);
+
+  const loadForbiddenUrls = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const data = await engine.get("/settings/forbidden-urls") as { urls?: string[] };
+      setForbiddenUrls(data?.urls ?? []);
+    } catch { /* non-critical */ }
+  }, [engineStatus]);
+
+  const addForbiddenUrl = useCallback(async () => {
+    const url = newForbiddenUrl.trim();
+    if (!url) return;
+    setForbiddenSaving(true);
+    try {
+      const data = await engine.post("/settings/forbidden-urls", { url }) as { urls?: string[] };
+      setForbiddenUrls(data?.urls ?? []);
+      setNewForbiddenUrl("");
+    } catch { /* ignore */ }
+    finally { setForbiddenSaving(false); }
+  }, [newForbiddenUrl]);
+
+  const removeForbiddenUrl = useCallback(async (url: string) => {
+    try {
+      const encoded = encodeURIComponent(url);
+      const data = await engine.delete(`/settings/forbidden-urls/${encoded}`) as { urls?: string[] };
+      setForbiddenUrls(data?.urls ?? []);
+    } catch { /* ignore */ }
+  }, []);
 
   const handleCheckUpdate = async (install = false) => {
     setChecking(true);
@@ -534,6 +571,7 @@ export function Settings({
 
           {/* ── Scraping Tab ─────────────────────────────────── */}
           {activeTab === "scraping" && (
+            <>
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -579,6 +617,72 @@ export function Settings({
                 </div>
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Ban className="h-4 w-4 text-destructive" /> Forbidden URLs
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  These domains or patterns are blocked from scraping, even if requested by an AI.
+                  Use <code className="font-mono bg-muted px-1 rounded">*.example.com</code> to block all subdomains.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex gap-2">
+                  <Input
+                    value={newForbiddenUrl}
+                    onChange={(e) => setNewForbiddenUrl(e.target.value)}
+                    placeholder="example.com or *.ads-tracker.io"
+                    className="font-mono text-xs flex-1"
+                    onKeyDown={(e) => { if (e.key === "Enter") addForbiddenUrl(); }}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={addForbiddenUrl}
+                    disabled={forbiddenSaving || !newForbiddenUrl.trim() || engineStatus !== "connected"}
+                    className="gap-1.5 shrink-0"
+                  >
+                    {forbiddenSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    Add
+                  </Button>
+                </div>
+
+                {forbiddenUrls.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic py-2">
+                    No forbidden URLs configured. All domains are allowed.
+                  </p>
+                ) : (
+                  <ScrollArea className="max-h-48">
+                    <div className="space-y-1">
+                      {forbiddenUrls.map((url) => (
+                        <div
+                          key={url}
+                          className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+                        >
+                          <Ban className="h-3 w-3 text-destructive/60 shrink-0" />
+                          <code className="flex-1 text-xs font-mono text-foreground/80 truncate">{url}</code>
+                          <button
+                            onClick={() => removeForbiddenUrl(url)}
+                            className="text-muted-foreground/40 hover:text-destructive transition-colors shrink-0"
+                            title="Remove"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+
+                {engineStatus !== "connected" && (
+                  <p className="text-xs text-muted-foreground">
+                    Connect to the engine to manage forbidden URLs.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+            </>
           )}
 
           {/* ── Capabilities Tab ─────────────────────────────── */}

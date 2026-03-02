@@ -618,6 +618,35 @@ class EngineAPI {
     return resp.json();
   }
 
+  // ---- Generic HTTP helpers ----
+
+  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const authHdrs = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: { ...authHdrs, ...(init?.headers as Record<string, string> | undefined) },
+    });
+    if (!resp.ok) throw new Error(`${init?.method ?? "GET"} ${path} failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  async get(path: string): Promise<unknown> {
+    return this.request(path);
+  }
+
+  async post(path: string, body: unknown): Promise<unknown> {
+    return this.request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async delete(path: string): Promise<unknown> {
+    return this.request(path, { method: "DELETE" });
+  }
+
   /** Update instance display name. */
   async updateInstanceName(name: string): Promise<void> {
     if (!this.baseUrl) return;

@@ -87,7 +87,7 @@
 - [x] **Record Audio: broken, gives errors** — Improved 2026-03-02: Better error messages. Core issue: no audio device in WSL/headless. Works on macOS/Windows with sounddevice installed.
 - [x] **Transcribe Audio: needs live transcription mode** — Done: two tabs (Live Mic + From File), auto-transcribe on stop, model selector, duration selector.
 - [x] **Notify tool: does nothing** — Fixed 2026-03-02: platform-specific fallbacks (osascript/PowerShell/notify-send/log).
-- [x] **Installed Apps: needs persistent list with refresh** — Already done: localStorage cache + Refresh button in `InstalledAppsPanel.tsx`.
+- [x] **Installed Apps: needs persistent list with refresh** — Already done: `InstalledAppsPanel.tsx` uses `CACHE_KEY = "matrx:installed-apps"`, loads from localStorage on mount, shows stale banner, explicit Refresh button.
 - [x] **Path-required tools (ImageOCR, etc.) need a file picker** — Already implemented: `FilePathField.tsx` uses Tauri dialog with browser fallback.
 
 ---
@@ -140,13 +140,13 @@
 ### Global / UI
 
 - [x] **Dark mode color contrast issues (Ports.tsx)** — Fixed 2026-03-02: `bg-white/*`, `bg-black/*`, `border-white/*` replaced with semantic tokens.
-- [ ] **Dark mode contrast: audit remaining pages** — Other pages may still have hardcoded light/dark-only colors. Full audit needed.
+- [x] **Dark mode contrast: audit remaining pages** — Audited 2026-03-02: no hardcoded `bg-white`/`bg-black` in pages/. Dialog overlays use intentional `bg-black/50` semi-transparent. Clean.
 
 ---
 
 ### Missing Features — System Info
 
-- [x] **No system info UI for end users** — Done: Dashboard `ResourceGauge` cards (10s refresh), Tools `MonitoringPanel` has `GaugeRing` + `Sparkline` + process table (3s live refresh).
+- [x] **No system info UI for end users** — Done 2026-03-02: Dashboard has `ResourceGauge` cards (CPU/RAM/Disk/Battery, 10s refresh). Tools MonitoringPanel has `GaugeRing` + `Sparkline` with 3s live refresh and process table.
 
 ---
 
@@ -172,8 +172,8 @@
 - [ ] **Launch on Startup** — ARMAN: Toggle on, quit app, log in to OS again. Confirm app auto-starts.
 - [ ] **Minimize to Tray** — ARMAN: Toggle on, click window close. Confirm window minimizes to tray (not quits). Reopen from tray.
 - [ ] **Proxy Test Connection** — ARMAN: Confirm correct `MAIN_SERVER` URL before implementing real roundtrip test.
-- [ ] **Dashboard "User profile Not Found"** — AGENT: Trace where profile data is fetched; identify why it returns Not Found.
-- [ ] **Documents New Folder / New Note** — AGENT: Trace button handlers; identify why they have no effect.
+- [x] **Dashboard "User profile Not Found"** — Fixed 2026-03-02: User profile card added to Dashboard (avatar, name, email, sign-out).
+- [ ] **Documents New Folder / New Note** — AGENT: Trace complete — handlers are wired. Waiting on Arman to verify `note_folders` table + RLS in Supabase (see ARMAN_TASKS).
 
 ---
 
