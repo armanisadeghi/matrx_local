@@ -17,8 +17,10 @@ Graceful degradation:
 from __future__ import annotations
 
 import os
-
+from dotenv import load_dotenv
 from app.common.system_logger import get_logger
+
+load_dotenv()
 
 logger = get_logger()
 
@@ -30,8 +32,8 @@ def initialize_matrx_ai() -> None:
     """Initialize the matrx_ai library once at startup (synchronous phase).
 
     Reads DB credentials from env. If SUPABASE_MATRIX_HOST is not set,
-    skips DB registration — AI provider calls still work, but conversations
-    won't be persisted to the cloud database.
+    initializes matrx_ai without DB — AI provider calls still work, but
+    conversations won't be persisted to the cloud database.
 
     Call this from the FastAPI lifespan handler BEFORE the async phase.
     """
@@ -68,11 +70,16 @@ def initialize_matrx_ai() -> None:
                 os.getenv("SUPABASE_MATRIX_PORT", "6543"),
                 exc_info=True,
             )
+            # Even if DB setup fails, mark matrx_ai as initialized so the tool
+            # registry load proceeds. AI provider calls work without a DB connection.
+            matrx_ai._initialized = True
     else:
         logger.info(
             "[app/services/ai/engine.py] matrx-ai: SUPABASE_MATRIX_HOST not set — "
             "running without DB persistence. Set it in .env to enable conversation history."
         )
+        # Initialize without DB so matrx_ai._initialized is True and tool registry loads.
+        matrx_ai._initialized = True
 
     _ai_initialized = True
 

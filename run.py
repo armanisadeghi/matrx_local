@@ -273,16 +273,15 @@ def _has_system_tray() -> bool:
 
 
 def _wait_forever() -> None:
-    """Block the main thread indefinitely (used when no tray icon is shown)."""
-    try:
-        import signal as _signal
+    """Block the main thread indefinitely (used when no tray icon is shown).
 
-        _signal.pause()
-    except (AttributeError, KeyboardInterrupt):
-        import time
+    Sleeps in short intervals so KeyboardInterrupt (Ctrl-C) and SIGTERM
+    are processed promptly rather than being delayed by a multi-hour sleep.
+    """
+    import time
 
-        while True:
-            time.sleep(3600)
+    while True:
+        time.sleep(1)
 
 
 def setup_tray(port: int) -> None:
@@ -317,9 +316,13 @@ def setup_tray(port: int) -> None:
 
 
 def _handle_exit(signum: int, frame: object) -> None:  # noqa: ARG001
-    """Graceful shutdown: clean up the discovery file then exit."""
+    """Graceful shutdown: clean up the discovery file then exit.
+
+    Uses os._exit() to guarantee the process terminates immediately — sys.exit()
+    raises SystemExit which can be swallowed by loops or background threads.
+    """
     remove_discovery_file()
-    sys.exit(0)
+    os._exit(0)
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ import sys
 import traceback
 import re
 from concurrent_log_handler import ConcurrentRotatingFileHandler
-from app.config import LOG_LEVEL, LOG_DIR, MAX_LOG_FILE_SIZE, BACKUP_COUNT
+from app.config import LOG_LEVEL, LOG_DIR, MAX_LOG_FILE_SIZE, BACKUP_COUNT, LOCAL_DEV
 
 # Ensure the log directory exists
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -76,26 +76,29 @@ class SystemLogger:
             logging.getLogger(u_logger_name).addFilter(sensitive_filter)
 
         # Console Handler
+        # LOCAL_DEV=True: clean output without timestamp or logger name
+        # LOCAL_DEV=False: full timestamp for server/production logs
         self.console_handler = logging.StreamHandler(sys.stdout)
         self.console_handler.setLevel(level)
-        console_formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        console_fmt = (
+            "%(levelname)s - %(message)s"
+            if LOCAL_DEV
+            else "%(asctime)s - %(levelname)s - %(message)s"
         )
-        self.console_handler.setFormatter(console_formatter)
+        self.console_handler.setFormatter(logging.Formatter(console_fmt))
         self.logger.addHandler(self.console_handler)
 
-        # File Handler with Concurrent Rotation
+        # File Handler with Concurrent Rotation — always full timestamp, no logger name
         file_handler = ConcurrentRotatingFileHandler(
             os.path.join(LOG_DIR, "system.log"),
-            maxBytes=MAX_LOG_FILE_SIZE,  # Use dynamic file size
-            backupCount=BACKUP_COUNT,  # Use dynamic backup count
+            maxBytes=MAX_LOG_FILE_SIZE,
+            backupCount=BACKUP_COUNT,
             encoding="utf-8",
         )
         file_handler.setLevel(level)
-        file_formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
-        file_handler.setFormatter(file_formatter)
         self.logger.addHandler(file_handler)
 
     def disable_console_logging(self):

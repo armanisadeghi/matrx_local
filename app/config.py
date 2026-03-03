@@ -53,3 +53,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG")
 LOG_DIR = os.getenv("LOG_DIR", LOCAL_LOG_DIR)
 MAX_LOG_FILE_SIZE = int(os.getenv("MAX_LOG_FILE_SIZE", 10 * 1024 * 1024))
 BACKUP_COUNT = int(os.getenv("BACKUP_COUNT", 5))
+
+# When True: console logs omit timestamp and logger name (clean terminal output).
+# File logs always include full timestamp for server diagnostics.
+# Set LOCAL_DEV=False in production/Coolify to get full timestamps everywhere.
+LOCAL_DEV = os.getenv("LOCAL_DEV", "True").lower() in ("true", "1")
