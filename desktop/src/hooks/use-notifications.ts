@@ -13,10 +13,6 @@ export interface AppNotification {
   read: boolean;
 }
 
-const SOUND_URLS: Record<string, string> = {
-  chime:  "data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAA...", // placeholder, replaced below
-};
-
 // Programmatically generated tones via Web Audio API — no asset files needed
 function playTone(type: "chime" | "alert" | "error" | "success"): void {
   try {
@@ -34,7 +30,7 @@ function playTone(type: "chime" | "alert" | "error" | "success"): void {
     const cfg = configs[type] ?? configs.chime;
     let start = ctx.currentTime;
 
-    cfg.freq.forEach((freq, i) => {
+    cfg.freq.forEach((freq) => {
       const osc = ctx.createOscillator();
       osc.type = cfg.type;
       osc.frequency.setValueAtTime(freq, start);
