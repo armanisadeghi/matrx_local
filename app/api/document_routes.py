@@ -29,13 +29,33 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 def _get_user_id(request: Request) -> str:
-    """Extract user_id from the JWT (set by auth middleware)."""
-    # The JWT payload includes sub (subject) = user_id
-    # For now, we need the frontend to pass it; auth middleware stores the token
-    user_id = request.headers.get("X-User-Id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="X-User-Id header required")
-    return user_id
+    """Extract user_id from the request.
+
+    Preference order:
+    1. X-User-Id header (explicit, zero overhead)
+    2. JWT sub claim decoded from the Bearer token (no extra header needed)
+    """
+    explicit = request.headers.get("X-User-Id")
+    if explicit:
+        return explicit
+
+    # Decode the JWT that AuthMiddleware already validated and stored on state.
+    token = getattr(request.state, "user_token", None)
+    if token:
+        try:
+            import base64, json as _json
+            # JWT is three base64url segments: header.payload.signature
+            payload_b64 = token.split(".")[1]
+            # Pad to a multiple of 4 for base64 decoding
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            payload = _json.loads(base64.urlsafe_b64decode(payload_b64))
+            sub = payload.get("sub")
+            if sub:
+                return sub
+        except Exception:
+            pass
+
+    raise HTTPException(status_code=401, detail="Could not determine user identity — provide Authorization header or X-User-Id")
 
 
 def _configure_sync(request: Request) -> None:
