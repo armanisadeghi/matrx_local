@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "AI Matrx",
-        "width": 1280,
-        "height": 800,
+        "width": 1400,
+        "height": 900,
         "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
@@ -25,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* https://*.supabase.co wss://*.supabase.co; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.googleusercontent.com https://lh3.google.com https://*.githubusercontent.com https://avatars.githubusercontent.com https://*.supabase.co https://*.gravatar.com"
+      "csp": "default-src 'self' blob:; connect-src 'self' blob: http://127.0.0.1:* ws://127.0.0.1:* https://*.supabase.co wss://*.supabase.co https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' blob: http://127.0.0.1:* https:"
     }
   },
   "bundle": {

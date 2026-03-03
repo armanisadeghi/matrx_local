@@ -11,6 +11,15 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
+// ── proxy_fetch types ────────────────────────────────────────────────────────
+#[derive(Serialize)]
+struct FetchResponse {
+    status: u16,
+    content_type: String,
+    body_b64: String,  // base64-encoded body
+    final_url: String,
+}
+
 /// Holds the sidecar child process handle for lifecycle management.
 struct SidecarState {
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
@@ -114,6 +123,43 @@ async fn set_close_to_tray(
 #[tauri::command]
 async fn get_close_to_tray(state: tauri::State<'_, CloseToTray>) -> Result<bool, String> {
     Ok(state.0.load(Ordering::Relaxed))
+}
+
+/// Fetch a URL from Rust (bypasses all browser security restrictions).
+/// Returns base64-encoded body + headers so the frontend can display it.
+#[tauri::command]
+async fn proxy_fetch(url: String) -> Result<FetchResponse, String> {
+    use base64::Engine;
+
+    let client = reqwest::Client::builder()
+        .user_agent(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        )
+        .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let final_url = resp.url().to_string();
+    let status = resp.status().as_u16();
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("text/html")
+        .to_string();
+
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    let body_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    Ok(FetchResponse {
+        status,
+        content_type,
+        body_b64,
+        final_url,
+    })
 }
 
 #[derive(Clone, Serialize)]
@@ -291,6 +337,7 @@ pub fn run() {
             set_close_to_tray,
             get_close_to_tray,
             check_for_updates,
+            proxy_fetch,
         ])
         .setup(|app| {
             // Register the deep-link listener for OAuth callbacks.
