@@ -1,8 +1,8 @@
 """PyInstaller runtime hook — set environment variables for bundled tools.
 
 This runs before any application code when the frozen binary starts.
-It points Playwright, Tesseract, and ffmpeg to their bundled locations
-inside sys._MEIPASS (the PyInstaller extraction directory).
+It points Playwright, Tesseract, and ffmpeg to their bundled/user locations
+inside sys._MEIPASS (the PyInstaller extraction directory) or the user's home.
 """
 
 import os
@@ -12,11 +12,13 @@ import sys
 if hasattr(sys, "_MEIPASS"):
     base = sys._MEIPASS
 
-    # Playwright: tell the driver where to find the bundled browsers.
-    # The browsers are bundled at playwright_browsers/ inside the archive.
+    # Playwright: browsers are NOT bundled inside the binary (bundling causes
+    # codesign failures on macOS with Chrome's nested framework structure).
+    # Point to a persistent user-writable directory instead; the engine will
+    # auto-install browsers there on first startup if they are missing.
     os.environ.setdefault(
         "PLAYWRIGHT_BROWSERS_PATH",
-        os.path.join(base, "playwright_browsers"),
+        os.path.join(os.path.expanduser("~"), ".matrx", "playwright-browsers"),
     )
 
     # Tesseract: point to the bundled tessdata language files.

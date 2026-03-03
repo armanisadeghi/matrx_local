@@ -121,41 +121,6 @@ fi
 PYTHON_CMD="$PYTHON"
 
 # ---------------------------------------------------------------------------
-# Step 1: Install Playwright browsers (Chromium, Firefox, WebKit)
-# These get installed into $PLAYWRIGHT_BROWSERS_PATH or the default cache.
-# We'll bundle the entire browser cache directory into the binary.
-# ---------------------------------------------------------------------------
-echo ""
-echo "=== Installing Playwright Browsers ==="
-"$PYTHON_CMD" -m playwright install chromium firefox webkit
-echo "  → All browsers installed"
-
-# Locate the Playwright browser cache directory
-PLAYWRIGHT_BROWSERS_PATH="$("$PYTHON_CMD" -c "
-import subprocess, sys, os
-result = subprocess.run(
-    [sys.executable, '-m', 'playwright', 'install', '--dry-run', '--help'],
-    capture_output=True, text=True
-)
-# Fallback: use the known default paths
-import platform
-if platform.system() == 'Linux':
-    path = os.path.expanduser('~/.cache/ms-playwright')
-elif platform.system() == 'Darwin':
-    path = os.path.expanduser('~/Library/Caches/ms-playwright')
-else:
-    path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'ms-playwright')
-print(path)
-" 2>/dev/null || echo "")"
-
-# If env var is set, use that
-if [[ -n "${PLAYWRIGHT_BROWSERS_PATH_OVERRIDE:-}" ]]; then
-    PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH_OVERRIDE"
-fi
-
-echo "  → Playwright browsers path: $PLAYWRIGHT_BROWSERS_PATH"
-
-# ---------------------------------------------------------------------------
 # Step 2: Gather tessdata (Tesseract language data files)
 # ---------------------------------------------------------------------------
 echo ""
@@ -206,15 +171,7 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "Running PyInstaller (using $PYTHON_CMD)..."
-
-# Build the --add-data args for Playwright browsers
-PLAYWRIGHT_ADD_DATA=""
-if [[ -n "$PLAYWRIGHT_BROWSERS_PATH" && -d "$PLAYWRIGHT_BROWSERS_PATH" ]]; then
-    PLAYWRIGHT_ADD_DATA="--add-data \"$PLAYWRIGHT_BROWSERS_PATH:playwright_browsers\""
-    echo "  → Bundling Playwright browsers from: $PLAYWRIGHT_BROWSERS_PATH"
-else
-    echo "  → WARNING: Playwright browser directory not found — browsers will not be bundled"
-fi
+echo "  → Playwright browsers will be auto-installed at runtime (not bundled)"
 
 # Write the PyInstaller command to a temp file to avoid arg-quoting issues
 PYINSTALLER_CMD_FILE="$(mktemp)"
@@ -325,11 +282,6 @@ args = [
     "--add-data", "scraper-service/app:scraper-service/app",
 ]
 
-# Playwright browsers
-playwright_browsers = os.environ.get("PLAYWRIGHT_BROWSERS_PATH_ARG", "")
-if playwright_browsers:
-    args += ["--add-data", playwright_browsers]
-
 # Tesseract data
 tessdata = os.environ.get("TESSDATA_PATH_ARG", "")
 if tessdata:
@@ -344,9 +296,6 @@ PYINSTALLER_EOF
 
 # Set env vars for the Python script
 export BINARY_NAME="aimatrx-engine-$TARGET"
-if [[ -n "$PLAYWRIGHT_BROWSERS_PATH" && -d "$PLAYWRIGHT_BROWSERS_PATH" ]]; then
-    export PLAYWRIGHT_BROWSERS_PATH_ARG="$PLAYWRIGHT_BROWSERS_PATH:playwright_browsers"
-fi
 if [[ -n "${TESSDATA_PATH:-}" && -d "$TESSDATA_PATH" ]]; then
     export TESSDATA_PATH_ARG="$TESSDATA_PATH:tessdata"
 fi

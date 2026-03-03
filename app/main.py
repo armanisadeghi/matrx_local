@@ -32,6 +32,87 @@ from app.websocket_manager import WebSocketManager
 logger = get_logger()
 websocket_manager = WebSocketManager()
 
+
+async def _ensure_playwright_browsers() -> None:
+    """Install Playwright browsers if they are not already present.
+
+    Browsers are NOT bundled inside the PyInstaller sidecar binary to avoid
+    macOS codesign failures with Chrome's nested framework structure.
+    This function auto-installs them to PLAYWRIGHT_BROWSERS_PATH on first
+    startup (runs in the background so it does not block the server).
+    """
+    import os
+
+    # The default path here must match the one set by hooks/runtime_hook.py
+    # for the frozen binary. When running in development the env var is
+    # typically unset and Playwright uses its own default cache location.
+    browsers_path = os.environ.get(
+        "PLAYWRIGHT_BROWSERS_PATH",
+        os.path.join(os.path.expanduser("~"), ".matrx", "playwright-browsers"),
+    )
+
+    # Quick check: skip install if at least one versioned browser directory exists.
+    browser_markers = ("chromium-", "firefox-", "webkit-", "chromium_headless_shell-")
+    if os.path.isdir(browsers_path) and any(
+        e.startswith(m)
+        for m in browser_markers
+        for e in os.listdir(browsers_path)
+    ):
+        logger.debug(
+            "[app/main.py] Playwright browsers already present at %s", browsers_path
+        )
+        return
+
+    logger.info(
+        "[app/main.py] Playwright browsers not found — installing to %s (this may take a minute)...",
+        browsers_path,
+    )
+    os.makedirs(browsers_path, exist_ok=True)
+
+    try:
+        from playwright._impl._driver import compute_driver_executable  # type: ignore[import]
+
+        driver_exe = str(compute_driver_executable())
+    except Exception:
+        logger.warning(
+            "[app/main.py] Could not locate Playwright driver — skipping browser install"
+        )
+        return
+
+    env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": browsers_path}
+
+    async def _install() -> None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                driver_exe,
+                "install",
+                "chromium",
+                "firefox",
+                "webkit",
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0:
+                logger.info("[app/main.py] Playwright browsers installed ✓")
+            else:
+                logger.warning(
+                    "[app/main.py] Playwright browser install exited %d: %s",
+                    proc.returncode,
+                    (stdout or b"").decode("utf-8", errors="replace")[:500],
+                )
+        except Exception:
+            logger.warning(
+                "[app/main.py] Playwright browser install task failed", exc_info=True
+            )
+
+    # Run in background so the server starts immediately; keep a reference to
+    # prevent the task from being garbage-collected before it finishes.
+    _browser_install_task = asyncio.create_task(_install())
+    _browser_install_task.add_done_callback(lambda _: None)  # suppress GC warning
+
+
 # JWT truncation for verbose request logging (show first/last parts only)
 _JWT_HEAD = 20
 _JWT_TAIL = 12
@@ -97,6 +178,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(
         "[app/main.py] ── Matrx Local startup ─────────────────────────────────────"
     )
+
+    # Phase 0: Ensure Playwright browsers are installed (auto-installs if missing).
+    # Browsers are NOT bundled in the PyInstaller binary (bundling causes macOS
+    # codesign failures with Chrome's nested framework structure). They are
+    # downloaded on first startup to PLAYWRIGHT_BROWSERS_PATH (~/.matrx/playwright-browsers
+    # when running as a frozen binary, or the default Playwright cache in development).
+    logger.info("[app/main.py] Phase 0: Checking Playwright browsers...")
+    try:
+        await _ensure_playwright_browsers()
+        logger.info("[app/main.py] Phase 0: Playwright browsers ready ✓")
+    except Exception:
+        logger.warning(
+            "[app/main.py] Phase 0: Playwright browser check failed — browser automation may not work",
+            exc_info=True,
+        )
 
     # Phase 1: Initialize matrx-ai (loads env, registers DB if credentials present)
     logger.info("[app/main.py] Phase 1: Initializing matrx-ai engine...")
