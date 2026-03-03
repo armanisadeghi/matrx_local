@@ -9,6 +9,23 @@ has newer data, and uses that as the source of truth.
 
 Offline mode: if cloud is unreachable, local settings are used and
 sync is retried on next startup or manual trigger.
+
+ERROR VISIBILITY POLICY
+-----------------------
+Cloud operations MUST NOT silently swallow errors. Every HTTP call
+captures the full error (status code + response body) into `_last_error`
+and logs it at WARNING level so it appears in the activity log. Callers
+receive a structured dict with status="error" and a reason string so the
+frontend can surface the problem to the user.
+
+ORPHAN INSTANCE POLICY
+-----------------------
+An "orphan instance" is one whose instance_id is not present in the cloud
+`app_instances` table after a successful configure() call. This is treated
+as a P0 state. The engine logs at ERROR level, sets `_is_orphan = True`,
+and the frontend must surface a prominent warning. The app continues to
+work locally — we never block the user — but cloud features are degraded
+until registration succeeds.
 """
 
 from __future__ import annotations
@@ -54,6 +71,14 @@ class SettingsSync:
         self._user_id: Optional[str] = None
         self._instance_id: Optional[str] = None
         self._configured = False
+
+        # Visibility state — surfaces to /cloud/debug endpoint
+        self._is_orphan: bool = False
+        self._last_error: Optional[str] = None
+        self._last_registration_at: Optional[str] = None
+        self._last_registration_result: Optional[str] = None  # "ok" | "error:<msg>"
+        self._configure_called_at: Optional[str] = None
+
         self._load_local()
 
     # ── configuration ───────────────────────────────────────────────────
@@ -73,10 +98,45 @@ class SettingsSync:
         self._user_id = user_id
         self._instance_id = instance_id
         self._configured = bool(supabase_url and supabase_key and jwt and user_id)
+        self._configure_called_at = datetime.now(timezone.utc).isoformat()
+        if self._configured:
+            logger.info(
+                "Cloud sync configured: user_id=%s instance_id=%s url=%s",
+                user_id,
+                instance_id,
+                supabase_url,
+            )
+        else:
+            logger.warning(
+                "Cloud sync configure() called but missing required fields: "
+                "url=%r key=%r jwt_present=%s user_id=%r",
+                bool(supabase_url),
+                bool(supabase_key),
+                bool(jwt),
+                bool(user_id),
+            )
 
     @property
     def is_configured(self) -> bool:
         return self._configured
+
+    @property
+    def is_orphan(self) -> bool:
+        return self._is_orphan
+
+    def get_debug_state(self) -> dict[str, Any]:
+        """Return full diagnostic state for /cloud/debug endpoint."""
+        return {
+            "is_configured": self._configured,
+            "is_orphan": self._is_orphan,
+            "user_id": self._user_id,
+            "instance_id": self._instance_id,
+            "supabase_url": self._supabase_url or None,
+            "configure_called_at": self._configure_called_at,
+            "last_registration_at": self._last_registration_at,
+            "last_registration_result": self._last_registration_result,
+            "last_error": self._last_error,
+        }
 
     # ── local settings ──────────────────────────────────────────────────
 
@@ -132,10 +192,7 @@ class SettingsSync:
     # ── cloud sync ──────────────────────────────────────────────────────
 
     async def sync(self) -> dict:
-        """Perform a full sync: compare timestamps, merge, push/pull.
-
-        Returns a dict describing what happened.
-        """
+        """Perform a full sync: compare timestamps, merge, push/pull."""
         if not self._configured:
             return {"status": "skipped", "reason": "not_configured"}
 
@@ -143,40 +200,37 @@ class SettingsSync:
             cloud = await self._fetch_cloud_settings()
 
             if cloud is None:
-                # No cloud record yet — push local to cloud
                 await self._push_to_cloud()
                 await self._update_sync_status("push", "success")
                 return {"status": "pushed", "reason": "no_cloud_record"}
 
             cloud_settings = cloud.get("settings_json", {})
             cloud_updated = cloud.get("updated_at", "")
-
             local_updated = self._local_updated_at or ""
 
             if cloud_updated > local_updated:
-                # Cloud is newer — pull
                 self._settings = {**DEFAULT_SETTINGS, **cloud_settings}
                 self._local_updated_at = cloud_updated
                 self._save_local()
                 await self._update_sync_status("pull", "success")
                 return {"status": "pulled", "reason": "cloud_newer"}
             elif local_updated > cloud_updated:
-                # Local is newer — push
                 await self._push_to_cloud()
                 await self._update_sync_status("push", "success")
                 return {"status": "pushed", "reason": "local_newer"}
             else:
-                # Same timestamp — no action needed
                 await self._update_sync_status("full", "success")
                 return {"status": "in_sync", "reason": "timestamps_match"}
 
         except Exception as exc:
-            logger.warning("Cloud sync failed: %s", exc)
+            msg = str(exc)
+            self._last_error = msg
+            logger.warning("Cloud sync failed: %s", msg)
             try:
-                await self._update_sync_status("full", "error", str(exc))
+                await self._update_sync_status("full", "error", msg)
             except Exception:
                 pass
-            return {"status": "error", "reason": str(exc)}
+            return {"status": "error", "reason": msg}
 
     async def push_to_cloud(self) -> dict:
         """Force push local settings to cloud."""
@@ -187,7 +241,9 @@ class SettingsSync:
             await self._update_sync_status("push", "success")
             return {"status": "pushed"}
         except Exception as exc:
-            return {"status": "error", "reason": str(exc)}
+            msg = str(exc)
+            self._last_error = msg
+            return {"status": "error", "reason": msg}
 
     async def pull_from_cloud(self) -> dict:
         """Force pull cloud settings to local."""
@@ -203,7 +259,9 @@ class SettingsSync:
             await self._update_sync_status("pull", "success")
             return {"status": "pulled", "settings": self.get_all()}
         except Exception as exc:
-            return {"status": "error", "reason": str(exc)}
+            msg = str(exc)
+            self._last_error = msg
+            return {"status": "error", "reason": msg}
 
     # ── Supabase REST helpers ───────────────────────────────────────────
 
@@ -214,6 +272,17 @@ class SettingsSync:
             "Content-Type": "application/json",
             "Prefer": "return=representation",
         }
+
+    def _log_http_error(self, operation: str, resp: Any) -> str:
+        """Log and return a descriptive error string from a non-2xx response."""
+        try:
+            body = resp.text[:500]
+        except Exception:
+            body = "<unreadable>"
+        msg = f"{operation} failed: HTTP {resp.status_code} — {body}"
+        self._last_error = msg
+        logger.warning(msg)
+        return msg
 
     async def _fetch_cloud_settings(self) -> Optional[dict]:
         """Fetch this instance's settings from Supabase."""
@@ -227,7 +296,8 @@ class SettingsSync:
         )
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, headers=self._headers())
-            resp.raise_for_status()
+            if not resp.is_success:
+                raise RuntimeError(self._log_http_error("fetch_cloud_settings", resp))
             rows = resp.json()
             return rows[0] if rows else None
 
@@ -247,7 +317,8 @@ class SettingsSync:
         }
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
+            if not resp.is_success:
+                raise RuntimeError(self._log_http_error("push_to_cloud", resp))
 
     async def _update_sync_status(
         self, direction: str, result: str, error: str = ""
@@ -270,13 +341,28 @@ class SettingsSync:
         }
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(url, json=payload, headers=headers)
-        except Exception:
-            logger.debug("Failed to update sync status", exc_info=True)
+                resp = await client.post(url, json=payload, headers=headers)
+                if not resp.is_success:
+                    # Non-fatal but we want to see it
+                    logger.debug(
+                        "update_sync_status returned HTTP %s: %s",
+                        resp.status_code,
+                        resp.text[:200],
+                    )
+        except Exception as exc:
+            logger.debug("Failed to update sync status: %s", exc)
 
     async def register_instance(self, registration: dict) -> Optional[dict]:
-        """Register or update this instance in the cloud."""
+        """Register or update this instance in the cloud.
+
+        Sets _is_orphan=True and logs at ERROR level if registration fails,
+        because an unregistered instance cannot be managed from the cloud.
+        """
         if not self._configured:
+            logger.warning(
+                "register_instance called before configure() — instance will be orphaned"
+            )
+            self._is_orphan = True
             return None
 
         import httpx
@@ -292,14 +378,56 @@ class SettingsSync:
             **self._headers(),
             "Prefer": "resolution=merge-duplicates,return=representation",
         }
+        self._last_registration_at = datetime.now(timezone.utc).isoformat()
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
+                if not resp.is_success:
+                    err = self._log_http_error("register_instance", resp)
+                    self._last_registration_result = f"error:{err}"
+                    self._is_orphan = True
+                    logger.error(
+                        "ORPHAN INSTANCE — instance_id=%s could not be registered with Supabase. "
+                        "Cloud features (sync, remote control, multi-device) are unavailable. "
+                        "Error: %s",
+                        self._instance_id,
+                        err,
+                    )
+                    return None
                 rows = resp.json()
-                return rows[0] if rows else None
+                row = rows[0] if rows else None
+                if row:
+                    self._is_orphan = False
+                    self._last_registration_result = "ok"
+                    logger.info(
+                        "Instance registered successfully: instance_id=%s user_id=%s",
+                        self._instance_id,
+                        self._user_id,
+                    )
+                else:
+                    # Supabase returned 2xx but empty body — should not happen with upsert
+                    self._last_registration_result = "error:empty_response"
+                    self._is_orphan = True
+                    logger.error(
+                        "ORPHAN INSTANCE — register_instance returned 2xx but empty body. "
+                        "This usually means an RLS policy is blocking the upsert. "
+                        "instance_id=%s user_id=%s",
+                        self._instance_id,
+                        self._user_id,
+                    )
+                return row
         except Exception as exc:
-            logger.warning("Instance registration failed: %s", exc)
+            msg = str(exc)
+            self._last_error = msg
+            self._last_registration_result = f"error:{msg}"
+            self._is_orphan = True
+            logger.error(
+                "ORPHAN INSTANCE — register_instance raised exception: %s. "
+                "instance_id=%s user_id=%s",
+                msg,
+                self._instance_id,
+                self._user_id,
+            )
             return None
 
     async def list_instances(self) -> list[dict]:
@@ -319,9 +447,30 @@ class SettingsSync:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(url, headers=self._headers())
-                resp.raise_for_status()
-                return resp.json()
-        except Exception:
+                if not resp.is_success:
+                    self._log_http_error("list_instances", resp)
+                    return []
+                instances = resp.json()
+                # Orphan check: if we're configured but this instance isn't in the list
+                if self._instance_id and not any(
+                    i.get("instance_id") == self._instance_id for i in instances
+                ):
+                    self._is_orphan = True
+                    logger.error(
+                        "ORPHAN INSTANCE — instance_id=%s is not present in cloud app_instances "
+                        "for user_id=%s. %d other instance(s) found. "
+                        "Cloud sync and remote control unavailable until re-registration succeeds.",
+                        self._instance_id,
+                        self._user_id,
+                        len(instances),
+                    )
+                elif self._instance_id:
+                    self._is_orphan = False
+                return instances
+        except Exception as exc:
+            msg = str(exc)
+            self._last_error = msg
+            logger.warning("list_instances failed: %s", msg)
             return []
 
     async def heartbeat(self) -> None:
@@ -340,9 +489,20 @@ class SettingsSync:
         payload = {"last_seen": datetime.now(timezone.utc).isoformat()}
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                await client.patch(url, json=payload, headers=headers)
-        except Exception:
-            pass
+                resp = await client.patch(url, json=payload, headers=headers)
+                if not resp.is_success:
+                    # Heartbeat failure may indicate orphan state
+                    self._log_http_error("heartbeat", resp)
+                    if resp.status_code in (401, 403):
+                        self._is_orphan = True
+                        logger.error(
+                            "ORPHAN INSTANCE — heartbeat returned HTTP %s. "
+                            "JWT may be expired or RLS is blocking. instance_id=%s",
+                            resp.status_code,
+                            self._instance_id,
+                        )
+        except Exception as exc:
+            logger.debug("Heartbeat failed (non-critical): %s", exc)
 
 
 # Module-level singleton

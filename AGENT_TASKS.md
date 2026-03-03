@@ -16,11 +16,37 @@ _Last updated: 2026-03-03_
 - [ ] **Windows MSI installer looks outdated** — Investigate switching from WiX (.msi) to NSIS (.exe) for a modern installer experience.
 - [ ] **Proxy `POST /system/open-folder` 500 Error** — Investigation needed into why this endpoint fails with 500 Internal Server Error when clicking "Open Logs/Data Folder".
 
+### P0 — Cloud Instance Registration (completely broken, blocks cloud features)
+
+- [ ] **ORPHAN INSTANCES: `app_instances` table is empty — zero registrations ever succeeded.**
+  - After this fix, the engine now logs the real HTTP error at ERROR level on every failure.
+  - **To diagnose:** Start engine, log in, then hit `GET /cloud/debug`. It shows `is_orphan`, `last_error`, `last_registration_result`, `configure_called_at`.
+  - **Most likely cause: RLS policy mismatch.** The app uses Supabase OAuth (the desktop OAuth flow), which issues a JWT for the user. However, `auth.uid()` in Supabase RLS only resolves correctly when the JWT `sub` claim matches the `auth.users` table. If the OAuth app is registered as a separate provider or the JWT `aud` claim doesn't match the Supabase project, RLS returns 0 rows silently or a 401/403.
+  - **Investigation steps:**
+    1. Hit `GET /cloud/debug` after login — copy `last_error` verbatim from the response.
+    2. If error is `HTTP 401` → JWT is being rejected outright (wrong key, expired, or wrong `aud`).
+    3. If error is `HTTP 403` or empty 2xx body → RLS is blocking. Go to Supabase SQL Editor and run: `SELECT auth.uid()` with the user's JWT to confirm it resolves. Also check that the `app_instances` INSERT policy uses `auth.uid() = user_id` and that the JWT `sub` equals the `user_id` being sent.
+    4. If error is `HTTP 200` but empty → RLS is silently filtering the upsert result. The `Prefer: resolution=merge-duplicates` upsert may need `auth.uid()` to match the row being written.
+  - **Workaround if RLS can't be fixed:** Add a service-role API route on the engine that writes to `app_instances` server-side using the service key (never exposed to the client). This bypasses RLS entirely and is safe because the engine already authenticates the user via JWT.
+  - **Frontend impact:** `GET /cloud/instances` now returns `is_orphan: true` and `this_instance_id` when the instance isn't registered. The frontend must surface a prominent (non-blocking) warning when `is_orphan` is true.
+
+- [ ] **Frontend: Surface orphan instance warning in the UI.**
+  - When `GET /cloud/instances` returns `is_orphan: true`, show a persistent banner on the Settings page (and ideally the Dashboard) saying the device is not registered with the cloud.
+  - Include a "Retry Registration" button that calls `POST /cloud/configure` again with the current session JWT.
+  - Must be non-blocking — the app works fully locally even when orphaned.
+
+- [ ] **`forbidden_urls` Supabase table (migration 003) is dead code.**
+  - The table exists in Supabase but nothing reads from or writes to it.
+  - Currently forbidden URLs are stored in the local settings JSON blob via `settings_routes.py`.
+  - This means a user's blocked URLs do NOT sync across devices.
+  - This table is for the scraper — it blocks certain domains from being scraped.
+  - Decision needed: wire it up to Supabase (so it syncs) or leave it local-only.
+  - If wiring up: `settings_routes.py` should read/write `forbidden_urls` table when `sync.is_configured`, fall back to local blob otherwise.
+
 ### P1 — UX & Settings (needed before public beta)
 - [ ] **Tools UI is not user-friendly** — PR #1 (`codex/create-user-friendly-ui-for-tools-tab`) exists. Pull and review.
 - [ ] **Verify "Launch on Startup" & "Minimize to Tray"** — Confirm OS-level behavior actually matches the toggles in Settings.
 - [ ] **Proxy Test Connection** — Waiting on Arman to confirm `MAIN_SERVER` URL for real round-trip test.
-- [ ] **Cloud sync broken: 404 on `app_settings`** — Likely Supabase RLS or missing table. Arman to verify.
 
 ### P2 — Features & Polish
 - [ ] **First-run setup wizard** — Sign in → Engine health → optional capabilities install → done.

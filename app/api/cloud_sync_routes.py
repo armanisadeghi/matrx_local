@@ -76,8 +76,10 @@ async def configure_sync(req: ConfigureRequest) -> dict:
 
     return {
         "configured": True,
+        "is_orphan": sync.is_orphan,
         "instance_id": mgr.instance_id,
         "sync_result": result,
+        "last_error": sync.get_debug_state().get("last_error"),
     }
 
 
@@ -95,7 +97,11 @@ async def reconfigure_sync(req: ConfigureRequest) -> dict:
         instance_id=mgr.instance_id,
     )
 
-    return {"configured": True, "instance_id": mgr.instance_id}
+    return {
+        "configured": True,
+        "is_orphan": sync.is_orphan,
+        "instance_id": mgr.instance_id,
+    }
 
 
 # ── Settings CRUD ───────────────────────────────────────────────────────
@@ -187,7 +193,11 @@ async def list_instances() -> dict:
     """List all registered instances for the current user."""
     sync = get_settings_sync()
     instances = await sync.list_instances()
-    return {"instances": instances}
+    return {
+        "instances": instances,
+        "is_orphan": sync.is_orphan,
+        "this_instance_id": sync._instance_id,
+    }
 
 
 @router.put("/instance/name")
@@ -214,4 +224,22 @@ async def heartbeat() -> dict:
     """Update the last_seen timestamp for this instance."""
     sync = get_settings_sync()
     await sync.heartbeat()
-    return {"status": "ok"}
+    return {"status": "ok", "is_orphan": sync.is_orphan}
+
+
+@router.get("/debug")
+async def cloud_debug() -> dict:
+    """Full diagnostic state for the cloud sync engine.
+
+    Use this to diagnose why instance registration or settings sync is failing.
+    Returns is_configured, is_orphan, last HTTP error, last registration result, etc.
+    This endpoint never requires cloud connectivity — it reads in-memory state only.
+    """
+    sync = get_settings_sync()
+    mgr = get_instance_manager()
+    return {
+        **sync.get_debug_state(),
+        "instance_name": mgr.instance_name,
+        "supabase_url_configured": bool(SUPABASE_URL),
+        "supabase_key_configured": bool(SUPABASE_PUBLISHABLE_KEY),
+    }
