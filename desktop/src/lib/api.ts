@@ -832,7 +832,7 @@ class EngineAPI {
     };
     if (userId) headers["X-User-Id"] = userId;
 
-    const resp = await fetch(`${this.baseUrl}/documents${path}`, {
+    const resp = await fetch(`${this.baseUrl}/notes${path}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -1411,28 +1411,51 @@ export interface InstallCapabilityResult {
  * Named path aliases and resolved absolute paths on the user's machine.
  * Returned by GET /system/paths.  React and microservices should fetch this
  * once on startup and never construct OS paths themselves.
+ *
+ * All aliases can be used in tool calls:
+ *   @notes  → ~/Documents/Matrx/Notes/
+ *   @files  → ~/Documents/Matrx/Files/
+ *   @code   → ~/Documents/Matrx/Code/
+ *   @matrx  → ~/.matrx/   (engine internals)
+ *   @home   → user home directory
+ *   @temp   → OS temp/cache dir
  */
 export interface EnginePaths {
-  /** Logical alias → absolute directory path (e.g. "@matrx" → "C:\Users\arman\.matrx") */
+  /** Logical alias → absolute directory path */
   aliases: {
-    "@matrx": string;
-    "@docs": string;
+    "@matrx": string;       // ~/.matrx/ — engine internals
+    "@notes": string;       // ~/Documents/Matrx/Notes/
+    "@files": string;       // ~/Documents/Matrx/Files/
+    "@code": string;        // ~/Documents/Matrx/Code/
+    "@workspaces": string;  // ~/.matrx/workspaces/
+    "@agentdata": string;   // ~/.matrx/data/
+    "@user": string;        // ~/Documents/Matrx/
     "@temp": string;
     "@data": string;
     "@logs": string;
     "@home": string;
+    "@docs": string;        // deprecated alias for @notes
+    [key: string]: string;  // allow future aliases without TS errors
   };
   /** Named locations with their full absolute paths. */
   resolved: {
-    discovery: string;    // local.json — engine discovery
-    settings: string;     // settings.json
-    instance: string;     // instance.json
-    documents: string;    // user documents root
-    temp: string;         // temp / cache root
-    screenshots: string;  // screenshot output dir
-    data: string;         // persistent app data root
-    logs: string;         // log file dir
-    config: string;       // app config dir
+    // Engine internals
+    discovery: string;      // local.json — engine discovery
+    settings: string;       // settings.json
+    instance: string;       // instance.json
+    agent_data: string;     // ~/.matrx/data/
+    workspaces: string;     // ~/.matrx/workspaces/
+    // User-visible
+    user_root: string;      // ~/Documents/Matrx/
+    notes: string;          // ~/Documents/Matrx/Notes/
+    files: string;          // ~/Documents/Matrx/Files/
+    code: string;           // ~/Documents/Matrx/Code/
+    // Platform cache
+    temp: string;
+    screenshots: string;
+    data: string;
+    logs: string;
+    config: string;
   };
 }
 

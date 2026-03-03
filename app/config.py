@@ -156,7 +156,7 @@ LOCAL_LOG_DIR  = Path(os.getenv("MATRX_LOG_DIR",    str(_log_root)))
 CODE_SAVES_DIR = TEMP_DIR / "code_saves"
 
 # ---------------------------------------------------------------------------
-# ~/.matrx  — discovery file, settings, instance ID, scheduled tasks
+# ~/.matrx  — discovery file, settings, instance ID, engine internals
 #
 # This is intentionally always in the user's home regardless of platform.
 # It is a small, well-known location that lets multiple tools (web, mobile,
@@ -164,10 +164,54 @@ CODE_SAVES_DIR = TEMP_DIR / "code_saves"
 # ---------------------------------------------------------------------------
 MATRX_HOME_DIR = Path(os.getenv("MATRX_HOME_DIR", str(Path.home() / ".matrx")))
 
-# Documents — user's note store (user-configurable, defaults to ~/.matrx/documents)
-DOCUMENTS_BASE_DIR = Path(
-    os.getenv("DOCUMENTS_BASE_DIR", str(MATRX_HOME_DIR / "documents"))
-)
+# ---------------------------------------------------------------------------
+# User-visible storage — lives inside the OS-native Documents folder
+#
+# All platforms use "Documents" as the standard folder name, so this is safe
+# cross-platform.  Subfolders follow the architecture in docs/local-storage-architecture.md.
+#
+#   Windows:  C:\Users\<user>\Documents\Matrx\
+#   macOS:    /Users/<user>/Documents/Matrx/
+#   Linux:    ~/Documents/Matrx/   (XDG_DOCUMENTS_DIR or ~/Documents fallback)
+#
+# Every path can be overridden via environment variable for power users / CI.
+# ---------------------------------------------------------------------------
+
+def _os_documents_dir() -> Path:
+    """Return the OS-native Documents folder."""
+    if _system == "Windows":
+        # USERPROFILE\Documents is the Windows standard
+        return Path(os.getenv("USERPROFILE", str(Path.home()))) / "Documents"
+    if _system == "Darwin":
+        return Path.home() / "Documents"
+    # Linux: respect XDG_DOCUMENTS_DIR if set, otherwise ~/Documents
+    xdg_docs = os.getenv("XDG_DOCUMENTS_DIR")
+    if xdg_docs:
+        return Path(xdg_docs)
+    return Path.home() / "Documents"
+
+
+# Root of all user-visible Matrx content
+MATRX_USER_DIR = Path(os.getenv("MATRX_USER_DIR", str(_os_documents_dir() / "Matrx")))
+
+# Notes: .md and .txt files — local is source of truth, Supabase is sync target
+MATRX_NOTES_DIR = Path(os.getenv("MATRX_NOTES_DIR", str(MATRX_USER_DIR / "Notes")))
+
+# Files: binary files (PDF, DOCX, XLSX, images, audio, video) — S3 sync on demand
+MATRX_FILES_DIR = Path(os.getenv("MATRX_FILES_DIR", str(MATRX_USER_DIR / "Files")))
+
+# Code: user's git repos (visible to user — agent uses these for their projects)
+MATRX_CODE_DIR = Path(os.getenv("MATRX_CODE_DIR", str(MATRX_USER_DIR / "Code")))
+
+# Workspaces: agent working copies of repos — hidden from user, under ~/.matrx
+MATRX_WORKSPACES_DIR = Path(os.getenv("MATRX_WORKSPACES_DIR", str(MATRX_HOME_DIR / "workspaces")))
+
+# Internal structured data: prompts, agent defs, tool configs (hidden from user)
+MATRX_DATA_DIR = Path(os.getenv("MATRX_AGENT_DATA_DIR", str(MATRX_HOME_DIR / "data")))
+
+# Deprecated alias — kept temporarily so existing code doesn't break during migration
+# TODO: remove after all references are updated to MATRX_NOTES_DIR
+DOCUMENTS_BASE_DIR = MATRX_NOTES_DIR
 
 LOG_VCPRINT = True
 

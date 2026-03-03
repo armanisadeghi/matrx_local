@@ -1,7 +1,9 @@
-"""Document management tools — CRUD for local .md documents.
+"""Notes management tools — CRUD for local .md notes (local-first).
 
-These tools allow AI agents to interact with the user's document store:
-reading, creating, updating, searching, and listing documents.
+All operations read/write the local filesystem directly.
+Supabase sync is handled separately and never called from here.
+
+Default location: ~/Documents/Matrx/Notes/ (MATRX_NOTES_DIR in config).
 """
 
 from __future__ import annotations

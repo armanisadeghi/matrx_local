@@ -1,7 +1,13 @@
-"""Local file manager — reads/writes .md files in the documents directory.
+"""Local notes file manager — reads/writes .md/.txt files on the user's machine.
 
-Canonical location: ~/.matrx/documents/<folder>/<note>.md
+Canonical location: ~/Documents/Matrx/Notes/<folder>/<note>.md
+  (resolved from MATRX_NOTES_DIR — see config.py)
+
 Additional mapped directories are synced copies of the canonical files.
+
+Architecture: local-first. This manager never touches Supabase or any network.
+Sync with Supabase is handled separately by sync_engine.py and is always
+optional, best-effort, and never blocks a local operation.
 """
 
 from __future__ import annotations
@@ -15,20 +21,30 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from app.config import DOCUMENTS_BASE_DIR
+from app.config import MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR, MATRX_WORKSPACES_DIR, MATRX_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-# Sync metadata lives inside the documents dir
-SYNC_DIR = DOCUMENTS_BASE_DIR / ".sync"
+# Backward-compat alias used by sync_engine and supabase_client imports
+DOCUMENTS_BASE_DIR = MATRX_NOTES_DIR
+
+# Sync metadata lives inside a hidden .sync subfolder of the notes dir
+SYNC_DIR = MATRX_NOTES_DIR / ".sync"
 STATE_FILE = SYNC_DIR / "state.json"
 MAPPINGS_FILE = SYNC_DIR / "mappings.json"
 CONFLICTS_DIR = SYNC_DIR / "conflicts"
 
 
 def _ensure_dirs() -> None:
-    """Create base directory structure if it doesn't exist."""
-    DOCUMENTS_BASE_DIR.mkdir(parents=True, exist_ok=True)
+    """Create all required directory structures on first run."""
+    # User-visible dirs
+    MATRX_NOTES_DIR.mkdir(parents=True, exist_ok=True)
+    MATRX_FILES_DIR.mkdir(parents=True, exist_ok=True)
+    MATRX_CODE_DIR.mkdir(parents=True, exist_ok=True)
+    # Hidden dirs
+    MATRX_WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
+    MATRX_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Sync metadata
     SYNC_DIR.mkdir(parents=True, exist_ok=True)
     CONFLICTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -46,10 +62,15 @@ def content_hash(content: str) -> str:
 
 
 class DocumentFileManager:
-    """Manages .md files on the local filesystem."""
+    """Manages .md/.txt notes on the local filesystem.
+
+    base_dir defaults to MATRX_NOTES_DIR (~/Documents/Matrx/Notes/).
+    All paths returned are relative to base_dir so they are portable across
+    machines and OS installs.
+    """
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self.base_dir = base_dir or DOCUMENTS_BASE_DIR
+        self.base_dir = base_dir or MATRX_NOTES_DIR
         _ensure_dirs()
 
     # ── Path helpers ─────────────────────────────────────────────────────────

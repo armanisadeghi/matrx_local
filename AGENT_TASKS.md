@@ -1,6 +1,6 @@
 # Matrx Local -- Task Tracker
 
-_Last updated: 2026-03-02_
+_Last updated: 2026-03-03_
 
 > Living document. Every discovered bug, missing feature, or architectural issue gets logged here immediately.
 > Check items off as they're resolved. Move completed items to the History section at the bottom.
@@ -14,7 +14,6 @@ _Last updated: 2026-03-02_
 ### P0 — Fix broken core features (ship blockers)
 - [ ] **App icon is default purple box** — Replace placeholder icons in `desktop/src-tauri/icons/` with the AI Matrx logo.
 - [ ] **Windows MSI installer looks outdated** — Investigate switching from WiX (.msi) to NSIS (.exe) for a modern installer experience.
-- [ ] **Documents: New Folder / New Note do nothing** — Silence suggests Supabase `note_folders` table RLS issue or table missing. Arman must verify.
 - [ ] **Proxy `POST /system/open-folder` 500 Error** — Investigation needed into why this endpoint fails with 500 Internal Server Error when clicking "Open Logs/Data Folder".
 
 ### P1 — UX & Settings (needed before public beta)
@@ -36,9 +35,10 @@ _Last updated: 2026-03-02_
 ### Dashboard
 - [ ] Status indicators can sometimes lag behind actual engine state.
 
-### Documents
-- [ ] **New Folder / Note** — Broken (likely Supabase RLS).
-- [ ] Conflict resolution UI needs testing with real simultaneous edits.
+### Notes / Documents
+- [ ] **Notes page:** UI still calls `/documents/*` — may need to be updated to `/notes/*` if React code is not using the `engine.docRequest` helper in `api.ts`.
+- [ ] Conflict resolution UI needs testing with real simultaneous edits after local-first rewrite.
+- [ ] Run `migrations/001_documents_schema.sql` on Supabase if cloud sync is desired (not required for local-first operation).
 
 ### Tools Page
 - [ ] PR #1 for user-friendly UI needs review.
@@ -54,6 +54,18 @@ _Last updated: 2026-03-02_
 ---
 
 ## ✅ HISTORY OF COMPLETED TASKS
+
+### Local-First Architecture Implementation (2026-03-03)
+- [x] **config.py:** Added `MATRX_USER_DIR`, `MATRX_NOTES_DIR`, `MATRX_FILES_DIR`, `MATRX_CODE_DIR`, `MATRX_WORKSPACES_DIR`, `MATRX_DATA_DIR`. All user-visible content now lives under `~/Documents/Matrx/` (OS-native Documents folder). Engine internals stay in `~/.matrx/`.
+- [x] **file_manager.py:** Updated to use `MATRX_NOTES_DIR`. Startup now creates all required directories (Notes, Files, Code, workspaces, data) in one pass.
+- [x] **document_routes.py:** Fully rewritten. Every CRUD operation reads/writes local filesystem first. Supabase is only touched in background fire-and-forget tasks — a failed network never blocks or errors a request. Folder tree is now built from local filesystem scan (no Supabase needed).
+- [x] **sync_engine.py:** Architecture already correct (local write before Supabase). Updated docstring to clarify local-first contract.
+- [x] **session.py / `_build_alias_map()`:** Added `@notes`, `@files`, `@code`, `@workspaces`, `@agentdata`, `@user` aliases. Old `@docs` kept as deprecated alias.
+- [x] **main.py:** Router registered under `/notes` (canonical) and `/documents` (backward-compat alias, hidden from schema).
+- [x] **api.ts:** `docRequest` updated to call `/notes`. `EnginePaths` interface updated with all new path fields.
+- [x] **routes.py / GET /system/paths:** Returns all new paths so React can discover them.
+- [x] **docs/local-storage-architecture.md:** Authored, documenting the golden rules and directory structure.
+- [x] **docs/path-resolution-guide.md:** Authored, explaining aliases for the React team.
 
 ### Recently Fixed (2026-03-02)
 - [x] Fixed 401 Unauthorized on web→local API calls.

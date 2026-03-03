@@ -14,7 +14,12 @@ from app.api.browser_events import handle_browser_event
 from app.api.system_control import get_system_info
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
-from app.config import BASE_DIR, LOG_DIR, TEMP_DIR, MATRX_HOME_DIR, DOCUMENTS_BASE_DIR, DATA_DIR, CONFIG_DIR
+from app.config import (
+    BASE_DIR, LOG_DIR, TEMP_DIR, DATA_DIR, CONFIG_DIR,
+    MATRX_HOME_DIR, MATRX_USER_DIR,
+    MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR,
+    MATRX_WORKSPACES_DIR, MATRX_DATA_DIR,
+)
 from app.services.screenshots.capture import take_screenshot
 from app.utils.directory_utils.generate_directory_structure import (
     get_structure_with_common_configs,
@@ -121,10 +126,18 @@ async def system_paths():
     return {
         "aliases": aliases,
         "resolved": {
+            # Engine internals
             "discovery":   str(MATRX_HOME_DIR / "local.json"),
             "settings":    str(MATRX_HOME_DIR / "settings.json"),
             "instance":    str(MATRX_HOME_DIR / "instance.json"),
-            "documents":   str(DOCUMENTS_BASE_DIR),
+            "agent_data":  str(MATRX_DATA_DIR),
+            "workspaces":  str(MATRX_WORKSPACES_DIR),
+            # User-visible
+            "user_root":   str(MATRX_USER_DIR),
+            "notes":       str(MATRX_NOTES_DIR),
+            "files":       str(MATRX_FILES_DIR),
+            "code":        str(MATRX_CODE_DIR),
+            # Platform cache
             "temp":        str(TEMP_DIR),
             "screenshots": str(TEMP_DIR / "screenshots"),
             "data":        str(DATA_DIR),

@@ -1,10 +1,17 @@
-"""Document sync engine — bidirectional sync between local .md files and Supabase.
+"""Notes sync engine — bidirectional sync between local .md files and Supabase.
+
+Architecture: LOCAL FIRST. Always.
+
+- Local file is always written first and is the source of truth.
+- Supabase sync is best-effort — a failed network never blocks or fails a request.
+- The watcher detects external edits (e.g., VS Code) and schedules async push.
+- Full sync is user-triggered only — never automatic on startup.
 
 Handles:
-- Push: local changes → Supabase
-- Pull: Supabase changes → local files
-- Full reconciliation on startup
-- Conflict detection and flagging
+- Push: local changes → Supabase (best-effort)
+- Pull: Supabase changes → local files (user-triggered or Realtime-triggered)
+- Full reconciliation (explicit user action)
+- Conflict detection and flagging (saves both copies — user resolves manually)
 - File watcher integration for external edits
 - Directory mapping sync (canonical → additional targets)
 """

@@ -31,14 +31,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _build_alias_map() -> dict[str, Path]:
-    from app.config import MATRX_HOME_DIR, DOCUMENTS_BASE_DIR, TEMP_DIR, DATA_DIR, LOG_DIR
+    from app.config import (
+        MATRX_HOME_DIR, MATRX_USER_DIR,
+        MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR,
+        MATRX_WORKSPACES_DIR, MATRX_DATA_DIR,
+        TEMP_DIR, DATA_DIR, LOG_DIR,
+    )
     return {
-        "@matrx":  MATRX_HOME_DIR,
-        "@docs":   DOCUMENTS_BASE_DIR,
-        "@temp":   TEMP_DIR,
-        "@data":   DATA_DIR,
-        "@logs":   Path(str(LOG_DIR)),
-        "@home":   Path.home(),
+        "@matrx":      MATRX_HOME_DIR,       # ~/.matrx/  — engine internals
+        "@notes":      MATRX_NOTES_DIR,       # ~/Documents/Matrx/Notes/
+        "@files":      MATRX_FILES_DIR,       # ~/Documents/Matrx/Files/
+        "@code":       MATRX_CODE_DIR,        # ~/Documents/Matrx/Code/
+        "@workspaces": MATRX_WORKSPACES_DIR,  # ~/.matrx/workspaces/
+        "@agentdata":  MATRX_DATA_DIR,        # ~/.matrx/data/
+        "@user":       MATRX_USER_DIR,        # ~/Documents/Matrx/
+        "@temp":       TEMP_DIR,
+        "@data":       DATA_DIR,
+        "@logs":       Path(str(LOG_DIR)),
+        "@home":       Path.home(),
+        # Deprecated alias — keep for backward compat
+        "@docs":       MATRX_NOTES_DIR,
     }
 
 

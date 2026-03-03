@@ -10,7 +10,7 @@ from app.api.routes import router as api_router
 from app.api.tool_routes import router as tool_router
 from app.api.remote_scraper_routes import router as remote_scraper_router
 from app.api.settings_routes import router as settings_router
-from app.api.document_routes import router as document_router
+from app.api.document_routes import router as document_router  # notes — local-first
 from app.api.proxy_routes import router as proxy_router
 from app.api.cloud_sync_routes import router as cloud_sync_router
 from app.api.chat_routes import router as chat_router, build_ai_sub_app
@@ -232,7 +232,11 @@ app.include_router(api_router)
 app.include_router(tool_router, prefix="/tools", tags=["tools"])
 app.include_router(remote_scraper_router)
 app.include_router(settings_router)
-app.include_router(document_router)
+# Register under /notes (canonical) and /documents (backward-compat alias).
+# Both prefixes hit the same local-first handlers. Old frontends keep working
+# while new code migrates to /notes.
+app.include_router(document_router, prefix="/notes")
+app.include_router(document_router, prefix="/documents", include_in_schema=False)
 app.include_router(proxy_router)
 app.include_router(cloud_sync_router)
 app.include_router(chat_router)
