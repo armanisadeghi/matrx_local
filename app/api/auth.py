@@ -24,6 +24,7 @@ _PUBLIC_PATHS = frozenset(
         "/chat/tools",
         "/chat/tools/by-category",
         "/chat/tools/anthropic",
+        "/chat/models",   # read-only model list, no user data
         "/remote-scraper/queue/poller-stats",
         "/docs",
         "/openapi.json",

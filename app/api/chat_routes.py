@@ -152,13 +152,13 @@ async def list_models() -> dict[str, Any]:
         return {"models": [], "total": 0, "source": "fallback"}
 
     try:
-        from matrx_ai.db.custom.ai_model_manager import AiModelManager
-        from matrx_utils import vcprint
+        from matrx_ai.db.custom.ai_models.ai_model_manager import AiModelManager
+        # from matrx_utils import vcprint
 
         mgr = AiModelManager()
         all_models = await mgr.load_all_models()
         
-        vcprint(all_models, "[CHAT ROUTES API] list_models All Models", color="yellow")
+        # vcprint(all_models, "[CHAT ROUTES API] list_models All Models", color="yellow")
 
         models_out: list[dict[str, Any]] = []
         for m in all_models:
@@ -325,6 +325,7 @@ def build_ai_sub_app() -> "FastAPI":  # noqa: F821  (imported inside to avoid ci
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Conversation-ID", "X-Request-ID"],
     )
 
     # The matrx-ai routers use /api/ai/* prefixes internally.

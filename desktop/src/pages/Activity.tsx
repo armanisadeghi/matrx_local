@@ -18,6 +18,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import type { EngineStatus } from "@/hooks/use-engine";
+import supabase from "@/lib/supabase";
+
+/** Get the current Supabase access token, or null if not signed in. */
+async function getToken(): Promise<string | null> {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? null;
+}
 
 interface ActivityProps {
   engineStatus: EngineStatus;
@@ -85,57 +92,50 @@ function AccessLogTab({
   // Load recent entries on mount
   useEffect(() => {
     if (!engineUrl) return;
-    fetch(`${engineUrl}/logs/access?n=200`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem("session") ?? ""}` },
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data?.entries)) {
-          setEntries(data.entries.slice(-200));
-        }
+    getToken().then((token) => {
+      if (!token) return;
+      fetch(`${engineUrl}/logs/access?n=200`, {
+        headers: { Authorization: `Bearer ${token}` },
       })
-      .catch(() => {/* silent */});
+        .then((r) => r.json())
+        .then((data) => {
+          if (Array.isArray(data?.entries)) {
+            setEntries(data.entries.slice(-200));
+          }
+        })
+        .catch(() => {/* silent */});
+    });
   }, [engineUrl]);
 
   // SSE live-push stream
   useEffect(() => {
     if (!engineUrl) return;
-    // EventSource doesn't support custom headers; we pass the token as a
-    // query param. The backend reads it from `?token=` if present.
-    const token = localStorage.getItem("session") ?? "";
-    const url = `${engineUrl}/logs/access/stream${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-    const es = new EventSource(url);
-    esRef.current = es;
-
-    es.onmessage = (evt) => {
-      if (paused) return;
-      try {
-        const entry: AccessEntry = JSON.parse(evt.data);
-        setEntries((prev) => [...prev.slice(-999), entry]);
-      } catch {/* ignore parse errors */}
-    };
+    // EventSource doesn't support custom headers; pass token as query param.
+    // The backend reads it from `?token=` if present.
+    getToken().then((token) => {
+      if (!token) return;
+      const url = `${engineUrl}/logs/access/stream?token=${encodeURIComponent(token)}`;
+      const es = new EventSource(url);
+      esRef.current = es;
+      es.onmessage = (evt: MessageEvent<string>) => {
+        if (pausedRef.current) return;
+        try {
+          const entry: AccessEntry = JSON.parse(evt.data);
+          setEntries((prev) => [...prev.slice(-999), entry]);
+        } catch {/* ignore parse errors */}
+      };
+    });
 
     return () => {
-      es.close();
+      esRef.current?.close();
       esRef.current = null;
     };
-  }, [engineUrl]); // Note: paused is intentionally excluded — handled inside the callback
+  }, [engineUrl]);
 
-  // Re-attach paused state inside the message handler without reconnecting
+  // Keep pausedRef in sync so the message handler sees the latest value
+  // without needing to reconnect the EventSource.
   const pausedRef = useRef(paused);
   useEffect(() => { pausedRef.current = paused; }, [paused]);
-
-  useEffect(() => {
-    if (!esRef.current) return;
-    const es = esRef.current;
-    es.onmessage = (evt) => {
-      if (pausedRef.current) return;
-      try {
-        const entry: AccessEntry = JSON.parse(evt.data);
-        setEntries((prev) => [...prev.slice(-999), entry]);
-      } catch {/* ignore */}
-    };
-  }, [paused]);
 
   // Auto-scroll
   useEffect(() => {
@@ -279,16 +279,17 @@ function SystemLogTab({
 
   useEffect(() => {
     if (!engineUrl) return;
-    const token = localStorage.getItem("session") ?? "";
-    const url = `${engineUrl}/logs/stream${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-    const es = new EventSource(url);
-
-    es.onmessage = (evt) => {
-      if (pausedRef.current) return;
-      setLines((prev) => [...prev.slice(-2000), evt.data]);
-    };
-
-    return () => es.close();
+    let es: EventSource | null = null;
+    getToken().then((token) => {
+      if (!token) return;
+      const url = `${engineUrl}/logs/stream?token=${encodeURIComponent(token)}`;
+      es = new EventSource(url);
+      es.onmessage = (evt) => {
+        if (pausedRef.current) return;
+        setLines((prev) => [...prev.slice(-2000), evt.data]);
+      };
+    });
+    return () => { es?.close(); };
   }, [engineUrl]);
 
   useEffect(() => {

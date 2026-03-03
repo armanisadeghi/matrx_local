@@ -77,7 +77,8 @@ export function ChatInput({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const canSend = value.trim().length > 0 && !isStreaming && engineReady;
+  const hasText = value.trim().length > 0;
+  const canSend = (hasText || !!selectedAgentId) && !isStreaming && engineReady;
 
   const handleSend = useCallback(() => {
     if (!canSend) return;

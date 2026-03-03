@@ -1,8 +1,20 @@
 /**
  * Chat state management hook.
  *
- * Manages conversations, messages, and streaming AI responses via the
- * matrx-ai engine (NDJSON streaming over /chat/ai/api/ai/chat).
+ * Manages conversations, messages, and streaming AI responses via three
+ * matrx-ai endpoints, chosen automatically based on context:
+ *
+ *   1. Agent   — POST /chat/ai/api/ai/agents/{agent_id}
+ *      First message when an agent is selected. Sends variables + optional user_input.
+ *      Server returns a conversation_id for follow-ups.
+ *
+ *   2. Conversation — POST /chat/ai/api/ai/conversations/{conversation_id}
+ *      Any follow-up after the server has given us a conversation_id.
+ *      Only sends user_input — the server manages history and config.
+ *
+ *   3. Chat   — POST /chat/ai/api/ai/chat
+ *      No agent selected. Client manages full message history and config.
+ *
  * Conversations are persisted to localStorage.
  */
 
@@ -38,6 +50,14 @@ export interface ChatMessage {
   error?: string;
 }
 
+/**
+ * Conversation routing mode:
+ *   - "chat":         no agent, client manages full message history
+ *   - "agent":        first message with a selected agent (hasn't hit the server yet)
+ *   - "conversation": server has a conversation_id, all follow-ups go to conversation endpoint
+ */
+export type ConversationRouteMode = "chat" | "agent" | "conversation";
+
 export interface Conversation {
   id: string;
   title: string;
@@ -46,6 +66,9 @@ export interface Conversation {
   messages: ChatMessage[];
   created_at: string;
   updated_at: string;
+  serverConversationId?: string;
+  routeMode?: ConversationRouteMode;
+  agentId?: string;
 }
 
 export interface ToolSchema {
@@ -139,7 +162,7 @@ function groupByDate(conversations: Conversation[]): Record<string, Conversation
   return groups;
 }
 
-/** Convert our ChatMessage history to the wire format matrx-ai expects. */
+/** Convert our ChatMessage history to the wire format matrx-ai expects (chat endpoint only). */
 function toApiMessages(messages: ChatMessage[]): Array<{role: string; content: Array<{type: string; text: string}>}> {
   return messages
     .filter((m) => m.role === "user" || m.role === "assistant")
@@ -147,6 +170,65 @@ function toApiMessages(messages: ChatMessage[]): Array<{role: string; content: A
       role: m.role,
       content: [{ type: "text", text: m.content }],
     }));
+}
+
+/**
+ * Determine the API endpoint and request body based on routing mode.
+ *
+ * Three modes:
+ *   1. Agent — first message with a selected agent. Hits /agents/{agent_id}.
+ *      Body: { user_input, variables, stream }
+ *   2. Conversation — server gave us a conversation_id. Hits /conversations/{id}.
+ *      Body: { user_input, stream }
+ *   3. Chat — no agent, client manages full history. Hits /chat.
+ *      Body: { ai_model_id, messages, stream, ... }
+ */
+function buildRequest(
+  baseUrl: string,
+  conv: Conversation,
+  userContent: string,
+  currentModel: string,
+  options?: { agentId?: string; variables?: Record<string, string> },
+  allMessages?: ChatMessage[],
+): { url: string; body: Record<string, unknown> } {
+  const serverConvId = conv.serverConversationId;
+  const hasAgent = !!options?.agentId;
+
+  if (serverConvId) {
+    return {
+      url: `${baseUrl}/chat/ai/api/ai/conversations/${serverConvId}`,
+      body: {
+        user_input: userContent,
+        stream: true,
+      },
+    };
+  }
+
+  if (hasAgent) {
+    const body: Record<string, unknown> = {
+      stream: true,
+    };
+    if (userContent) {
+      body.user_input = userContent;
+    }
+    if (options?.variables && Object.keys(options.variables).length > 0) {
+      body.variables = options.variables;
+    }
+    return {
+      url: `${baseUrl}/chat/ai/api/ai/agents/${options!.agentId}`,
+      body,
+    };
+  }
+
+  return {
+    url: `${baseUrl}/chat/ai/api/ai/chat`,
+    body: {
+      ai_model_id: currentModel,
+      messages: toApiMessages(allMessages ?? []),
+      stream: true,
+      max_iterations: 20,
+    },
+  };
 }
 
 // ---- Hook ----
@@ -263,10 +345,16 @@ export function useChat({ engineUrl }: UseChatOptions) {
         variables?: Record<string, string>;
       }
     ) => {
-      if (!content.trim() || isStreaming) return;
+      const trimmed = content.trim();
+      const hasAgent = !!options?.agentId;
+      const hasVars = options?.variables && Object.keys(options.variables).length > 0;
+
+      // Agent mode allows empty text when variables are provided
+      if (!hasAgent && !trimmed) return;
+      if (hasAgent && !trimmed && !hasVars) return;
+      if (isStreaming) return;
       if (!engineUrl) return;
 
-      // Abort any previous stream
       abortRef.current?.abort();
       const abort = new AbortController();
       abortRef.current = abort;
@@ -274,45 +362,75 @@ export function useChat({ engineUrl }: UseChatOptions) {
       // Ensure we have a conversation
       let convId = activeConversationId;
       let existingMessages: ChatMessage[] = [];
+      let currentConv: Conversation | undefined;
 
       setConversations((prev) => {
         if (!convId) return prev;
-        const c = prev.find((x) => x.id === convId);
-        if (c) existingMessages = c.messages;
+        currentConv = prev.find((x) => x.id === convId);
+        if (currentConv) existingMessages = currentConv.messages;
         return prev;
       });
 
       if (!convId) {
         const conv = createConversation();
         convId = conv.id;
+        currentConv = conv;
         existingMessages = [];
-      } else {
-        const conv = loadConversations().find((c) => c.id === convId);
-        existingMessages = conv?.messages ?? [];
+      } else if (!currentConv) {
+        currentConv = loadConversations().find((c) => c.id === convId);
+        existingMessages = currentConv?.messages ?? [];
       }
 
-      const userMsg: ChatMessage = {
-        id: generateId(),
-        role: "user",
-        content: content.trim(),
-        timestamp: new Date().toISOString(),
+      // If the user selected an agent and this is the first message, set routeMode + agentId
+      if (hasAgent && !currentConv?.serverConversationId && existingMessages.length === 0) {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === convId ? { ...c, routeMode: "agent" as ConversationRouteMode, agentId: options!.agentId } : c
+          )
+        );
+      }
+
+      // Re-read current conv state after potential update
+      const convSnapshot: Conversation = {
+        ...(currentConv ?? {
+          id: convId!,
+          title: "New conversation",
+          mode: mode,
+          model,
+          messages: existingMessages,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }),
+        ...(hasAgent && !currentConv?.serverConversationId && existingMessages.length === 0
+          ? { routeMode: "agent" as ConversationRouteMode, agentId: options!.agentId }
+          : {}),
       };
 
-      // Add user message; set conversation title on first message
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id !== convId) return c;
-          const isFirst = c.messages.length === 0;
-          return {
-            ...c,
-            title: isFirst ? generateTitle(content) : c.title,
-            messages: [...c.messages, userMsg],
-            updated_at: new Date().toISOString(),
-          };
-        })
-      );
+      // Only add a user message bubble if there's actual text
+      const userMsg: ChatMessage | null = trimmed
+        ? {
+            id: generateId(),
+            role: "user",
+            content: trimmed,
+            timestamp: new Date().toISOString(),
+          }
+        : null;
 
-      // Add placeholder assistant message
+      if (userMsg) {
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== convId) return c;
+            const isFirst = c.messages.length === 0;
+            return {
+              ...c,
+              title: isFirst ? generateTitle(content) : c.title,
+              messages: [...c.messages, userMsg],
+              updated_at: new Date().toISOString(),
+            };
+          })
+        );
+      }
+
       const assistantMsgId = generateId();
       const assistantMsg: ChatMessage = {
         id: assistantMsgId,
@@ -348,38 +466,36 @@ export function useChat({ engineUrl }: UseChatOptions) {
         );
       };
 
+      const updateConversationMeta = (patch: Partial<Conversation>) => {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === convId ? { ...c, ...patch } : c))
+        );
+      };
+
       let accumulated = "";
 
       try {
-        // Get current Supabase JWT; fall back to local API key for pre-login use
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token ?? import.meta.env.VITE_ENGINE_API_KEY ?? "";
 
-        // Build message history including the new user message
-        const apiMessages = toApiMessages([...existingMessages, userMsg]);
+        const allMessages = userMsg ? [...existingMessages, userMsg] : existingMessages;
 
-        // Build request body — use agent endpoint when an agent is selected
-        const hasAgent = !!options?.agentId;
-        const requestBody: Record<string, unknown> = {
-          ai_model_id: model,
-          messages: apiMessages,
-          stream: true,
-          max_iterations: 20,
-        };
-        if (hasAgent) {
-          requestBody.prompt_id = options!.agentId;
-        }
-        if (options?.variables && Object.keys(options.variables).length > 0) {
-          requestBody.variables = options.variables;
-        }
+        const { url, body } = buildRequest(
+          engineUrl,
+          convSnapshot,
+          trimmed,
+          model,
+          options,
+          allMessages,
+        );
 
-        const resp = await fetch(`${engineUrl}/chat/ai/api/ai/chat`, {
+        const resp = await fetch(url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify(body),
           signal: abort.signal,
         });
 
@@ -390,7 +506,15 @@ export function useChat({ engineUrl }: UseChatOptions) {
           return;
         }
 
-        // Read NDJSON stream
+        // Capture server conversation_id from response header as immediate fallback
+        const headerConvId = resp.headers.get("X-Conversation-ID");
+        if (headerConvId && !convSnapshot.serverConversationId) {
+          updateConversationMeta({
+            serverConversationId: headerConvId,
+            routeMode: "conversation",
+          });
+        }
+
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -404,16 +528,26 @@ export function useChat({ engineUrl }: UseChatOptions) {
           buffer = lines.pop() ?? "";
 
           for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
+            const raw = line.trim();
+            if (!raw) continue;
 
             try {
-              const event = JSON.parse(trimmed) as {
+              const event = JSON.parse(raw) as {
                 event: string;
                 data?: Record<string, unknown>;
               };
 
               switch (event.event) {
+                case "data": {
+                  const inner = event.data as { event?: string; conversation_id?: string } | undefined;
+                  if (inner?.event === "conversation_id" && inner.conversation_id) {
+                    updateConversationMeta({
+                      serverConversationId: inner.conversation_id,
+                      routeMode: "conversation",
+                    });
+                  }
+                  break;
+                }
                 case "chunk": {
                   const text = (event.data as { text?: string })?.text ?? "";
                   accumulated += text;
@@ -421,7 +555,6 @@ export function useChat({ engineUrl }: UseChatOptions) {
                   break;
                 }
                 case "completion": {
-                  // Final output from completion payload
                   const output = (event.data as { output?: string })?.output;
                   if (output && !accumulated) accumulated = output;
                   break;
@@ -456,7 +589,7 @@ export function useChat({ engineUrl }: UseChatOptions) {
         setIsStreaming(false);
       }
     },
-    [activeConversationId, createConversation, engineUrl, isStreaming, model] // options excluded — stable ref via useCallback
+    [activeConversationId, createConversation, engineUrl, isStreaming, model]
   );
 
   const stopStreaming = useCallback(() => {

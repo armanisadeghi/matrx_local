@@ -271,6 +271,11 @@ class SettingsSync:
             "Authorization": f"Bearer {self._jwt}",
             "Content-Type": "application/json",
             "Prefer": "return=representation",
+            # Explicitly target the public schema — required when the Supabase
+            # project exposes multiple schemas (e.g. api + public) and public
+            # is not the default exposed schema in PostgREST config.
+            "Accept-Profile": "public",
+            "Content-Profile": "public",
         }
 
     def _log_http_error(self, operation: str, resp: Any) -> str:
