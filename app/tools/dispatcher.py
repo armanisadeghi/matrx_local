@@ -109,6 +109,16 @@ from app.tools.tools.documents import (
     tool_search_documents,
     tool_write_document,
 )
+from app.tools.tools.powershell_tools import (
+    tool_ps_get_env,
+    tool_ps_set_env,
+    tool_registry_read,
+    tool_registry_write,
+    tool_service_list,
+    tool_service_control,
+    tool_event_log,
+    tool_windows_features,
+)
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
@@ -215,6 +225,15 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "ReadDocument": tool_read_document,
     "WriteDocument": tool_write_document,
     "SearchDocuments": tool_search_documents,
+    # ── PowerShell / System Integration ────────────────────────────────────
+    "PSGetEnv": tool_ps_get_env,
+    "PSSetEnv": tool_ps_set_env,
+    "RegistryRead": tool_registry_read,
+    "RegistryWrite": tool_registry_write,
+    "ServiceList": tool_service_list,
+    "ServiceControl": tool_service_control,
+    "EventLog": tool_event_log,
+    "WindowsFeatures": tool_windows_features,
 }
 
 TOOL_NAMES: list[str] = sorted(TOOL_HANDLERS.keys())

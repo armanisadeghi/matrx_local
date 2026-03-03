@@ -72,23 +72,41 @@ async def tool_powershell_script(
     script: str,
     timeout: int = 30,
 ) -> ToolResult:
-    """Run a PowerShell script (Windows only). Enables deep OS integration:
-    controlling apps, registry access, COM automation, WMI queries.
+    """Run a PowerShell script. Works on Windows (powershell.exe / pwsh) and on
+    macOS/Linux when PowerShell Core (pwsh) is installed.
+
+    Enables deep OS integration: registry access, COM automation, WMI queries,
+    service management, and any PowerShell cmdlet.
 
     Examples:
     - 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 10'
-    - '(New-Object -ComObject Shell.Application).Windows() | ForEach-Object { $_.LocationURL }'
     - 'Get-ChildItem HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall | Get-ItemProperty | Select-Object DisplayName'
+    - '$PSVersionTable'
+    - 'Get-Date'
+
+    macOS/Linux install: brew install --cask powershell
     """
-    if not IS_WINDOWS:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output="PowerShellScript is only available on Windows. Use AppleScript on macOS.",
-        )
+    import shutil
+
+    # Determine the best PowerShell executable
+    if IS_WINDOWS:
+        exe = "pwsh" if shutil.which("pwsh") else "powershell.exe"
+    else:
+        exe = shutil.which("pwsh")
+        if not exe:
+            return ToolResult(
+                type=ToolResultType.ERROR,
+                output=(
+                    "PowerShell Core (pwsh) is not installed.\n"
+                    "• macOS:  brew install --cask powershell\n"
+                    "• Linux:  https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-linux\n\n"
+                    "On macOS you can also use AppleScript for OS integration."
+                ),
+            )
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script,
+            exe, "-NoProfile", "-NonInteractive", "-Command", script,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -103,18 +121,19 @@ async def tool_powershell_script(
                 output=f"PowerShell error:\n{error or output}",
             )
 
-        # Combine output and error if both present
         combined = output
         if error and proc.returncode != 0:
             combined += f"\n\nWarnings:\n{error}"
 
         return ToolResult(
             output=combined or "(no output)",
-            metadata={"exit_code": proc.returncode},
+            metadata={"exit_code": proc.returncode, "shell": exe},
         )
 
     except asyncio.TimeoutError:
         return ToolResult(type=ToolResultType.ERROR, output=f"PowerShell timed out after {timeout}s")
+    except FileNotFoundError:
+        return ToolResult(type=ToolResultType.ERROR, output=f"PowerShell executable '{exe}' not found.")
     except Exception as e:
         return ToolResult(type=ToolResultType.ERROR, output=f"PowerShell failed: {e}")
 

@@ -49,6 +49,12 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "Media Processing": ["ImageOCR", "ImageResize", "PdfExtract", "ArchiveCreate", "ArchiveExtract"],
     "WiFi & Bluetooth": ["WifiNetworks", "BluetoothDevices", "ConnectedDevices"],
     "Documents": ["ListDocuments", "ListDocumentFolders", "ReadDocument", "WriteDocument", "SearchDocuments"],
+    "PowerShell": [
+        "PSGetEnv", "PSSetEnv",
+        "RegistryRead", "RegistryWrite",
+        "ServiceList", "ServiceControl",
+        "EventLog", "WindowsFeatures",
+    ],
 }
 
 # Reverse lookup: tool name → category

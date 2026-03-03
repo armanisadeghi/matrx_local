@@ -49,6 +49,7 @@ const categoryMapping: Record<string, string> = {
 
   "Execution":         "terminal",
   "OS Integration":    "terminal",
+  "PowerShell":        "powershell",
 };
 
 export function mapCategory(backendCategory: string): string {
@@ -65,6 +66,7 @@ export const toolCategories: CategoryMeta[] = [
   { id: "automation",     label: "Automation",  description: "Window management, keyboard & mouse",       icon: "mouse-pointer",  color: "indigo",  panelType: "automation" },
   { id: "scheduler",      label: "Scheduler",   description: "Scheduled tasks, heartbeat & sleep",        icon: "clock",          color: "orange",  panelType: "scheduler" },
   { id: "terminal",       label: "Terminal",    description: "Shell commands, scripts & OS integration",   icon: "terminal",       color: "zinc",    panelType: "terminal" },
+  { id: "powershell",     label: "PowerShell",  description: "Environment, registry, services & event log", icon: "square-terminal", color: "blue",    panelType: "generic" },
 ];
 
 export const categoryColorMap: Record<string, { bg: string; text: string; border: string; glow: string }> = {

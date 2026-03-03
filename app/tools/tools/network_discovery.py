@@ -243,12 +243,13 @@ async def tool_network_scan(
         if IS_WINDOWS:
             # Ping sweep then check ARP
             base = subnet.rsplit(".", 1)[0]
-            # Quick parallel ping (Windows)
-            proc = await asyncio.create_subprocess_shell(
+            # Use cmd.exe via create_subprocess_exec to avoid the asyncio
+            # Windows executable= bug that breaks create_subprocess_shell.
+            proc = await asyncio.create_subprocess_exec(
+                "cmd.exe", "/C",
                 f"for /L %i in (1,1,254) do @start /b ping -n 1 -w 500 {base}.%i >nul 2>&1",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                executable="cmd.exe",
             )
             try:
                 await asyncio.wait_for(proc.communicate(), timeout=timeout)
