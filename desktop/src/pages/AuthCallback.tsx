@@ -3,6 +3,17 @@ import { useNavigate } from "react-router-dom";
 import supabase from "@/lib/supabase";
 import { Loader2 } from "lucide-react";
 
+/**
+ * AuthCallback — Web browser fallback only.
+ *
+ * In the **Tauri desktop app**, OAuth callbacks are handled entirely inside
+ * OAuthPending.tsx (which listens for the `oauth-callback` event emitted by
+ * the Rust deep-link plugin). This component is never reached in Tauri.
+ *
+ * In the **web browser**, HashRouter produces:
+ *   /#/auth/callback#access_token=XXX&refresh_token=YYY
+ * Supabase can't parse the double-hash, so we do it manually here.
+ */
 export function AuthCallback() {
   const navigate = useNavigate();
   const handled = useRef(false);
@@ -11,13 +22,11 @@ export function AuthCallback() {
     if (handled.current) return;
     handled.current = true;
 
-    async function handleCallback() {
+    async function handleWebCallback() {
       try {
-        // HashRouter creates: /#/auth/callback#access_token=...&refresh_token=...
-        // The browser sees one big fragment: "/auth/callback#access_token=..."
-        // Supabase's detectSessionInUrl can't parse this, so we do it manually.
-        const fullHash = window.location.hash; // e.g. "#/auth/callback#access_token=XYZ&refresh_token=ABC..."
-        const tokenFragment = fullHash.split("#").pop() ?? ""; // last fragment after final #
+        // Full hash looks like: "#/auth/callback#access_token=XYZ&refresh_token=ABC..."
+        const fullHash = window.location.hash;
+        const tokenFragment = fullHash.split("#").pop() ?? "";
         const params = new URLSearchParams(tokenFragment);
 
         const access_token = params.get("access_token");
@@ -39,7 +48,6 @@ export function AuthCallback() {
           return;
         }
 
-        // No tokens in URL — maybe a direct visit. Redirect to login after a short wait.
         console.warn("[AuthCallback] No tokens found in URL hash");
         setTimeout(() => navigate("/login", { replace: true }), 3000);
       } catch (err) {
@@ -48,16 +56,15 @@ export function AuthCallback() {
       }
     }
 
-    handleCallback();
+    handleWebCallback();
   }, [navigate]);
 
   return (
     <div className="flex h-screen items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-4">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-sm text-muted-foreground">Completing sign in...</p>
+        <p className="text-sm text-muted-foreground">Completing sign in…</p>
       </div>
     </div>
   );
 }
-

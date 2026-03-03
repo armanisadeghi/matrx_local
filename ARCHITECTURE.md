@@ -581,6 +581,13 @@ In production, the Rust core spawns the Python engine as a child process:
 
 ### System Tray
 
+Exactly **one** tray icon is shown, owned by the Tauri/Rust layer.
+
+- The `trayIcon` declaration in `tauri.conf.json` has been intentionally **removed** — it produced a second blank icon.
+- `setup_tray()` in `lib.rs` creates the single icon programmatically via `TrayIconBuilder`, using `app.default_window_icon()` so the tray icon always matches the dock/taskbar icon.
+- When the Python engine is spawned as a Tauri sidecar, Rust sets `TAURI_SIDECAR=1` in the child process environment. `run.py` detects this and **skips** the `pystray` tray icon. Without this, pystray would add a third icon.
+- In standalone mode (dev without Tauri), `run.py` still creates a pystray icon as before.
+
 The app persists in the system tray for receiving background scrape jobs from the cloud. Menu items: Show, Status, Quit.
 
 ### Content Security Policy

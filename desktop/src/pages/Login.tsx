@@ -5,9 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent } from "@/components/ui/card";
+import { OAuthPending } from "@/pages/OAuthPending";
 import type { useAuth } from "@/hooks/use-auth";
 
 type AuthActions = ReturnType<typeof useAuth>;
+type Provider = "google" | "github" | "apple";
 
 interface LoginProps {
   auth: Pick<
@@ -24,6 +26,18 @@ interface LoginProps {
 export function Login({ auth }: LoginProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [pendingProvider, setPendingProvider] = useState<Provider | null>(null);
+
+  const handleOAuth = async (provider: Provider) => {
+    setPendingProvider(provider);
+    if (provider === "google") await auth.signInWithGoogle();
+    else if (provider === "github") await auth.signInWithGitHub();
+    else await auth.signInWithApple();
+  };
+
+  const handleCancelOAuth = () => {
+    setPendingProvider(null);
+  };
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,65 +45,75 @@ export function Login({ auth }: LoginProps) {
     await auth.signInWithEmail(email, password);
   };
 
+  // ── OAuth pending screen (fills the whole window) ──────────────────
+  if (pendingProvider) {
+    return <OAuthPending provider={pendingProvider} onCancel={handleCancelOAuth} />;
+  }
+
+  // ── Normal login page ──────────────────────────────────────────────
   return (
-    <div className="flex h-screen items-center justify-center bg-background">
-      <div className="w-full max-w-sm space-y-8 px-4">
+    <div className="relative flex h-screen items-center justify-center overflow-hidden bg-background">
+      {/* Ambient glow */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-40"
+        style={{
+          background:
+            "radial-gradient(ellipse 70% 50% at 50% -5%, hsl(var(--primary) / 0.25) 0%, transparent 65%)",
+        }}
+      />
+
+      {/* Subtle grid */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.025]"
+        style={{
+          backgroundImage: `linear-gradient(hsl(var(--foreground)) 1px, transparent 1px),
+            linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)`,
+          backgroundSize: "48px 48px",
+        }}
+      />
+
+      <div className="relative z-10 w-full max-w-sm space-y-8 px-4">
+        {/* Brand header */}
         <div className="flex flex-col items-center gap-3">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/20 shadow-lg shadow-primary/10">
             <Zap className="h-7 w-7 text-primary" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold">AI Matrx</h1>
+            <h1 className="text-2xl font-bold tracking-tight">AI Matrx</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Sign in to your account
+              Sign in to your workspace
             </p>
           </div>
         </div>
 
-        <Card>
+        <Card className="border-border/60 shadow-xl shadow-black/5">
           <CardContent className="space-y-4 pt-6">
+            {/* OAuth buttons */}
             <div className="grid gap-2">
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={auth.signInWithGoogle}
+              <OAuthButton
+                icon={<GoogleIcon />}
+                label="Continue with Google"
+                loading={auth.loading && pendingProvider === "google"}
+                onClick={() => handleOAuth("google")}
                 disabled={auth.loading}
-              >
-                {auth.loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <GoogleIcon />
-                )}
-                Continue with Google
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={auth.signInWithGitHub}
+              />
+              <OAuthButton
+                icon={<GitHubIcon />}
+                label="Continue with GitHub"
+                loading={auth.loading && pendingProvider === "github"}
+                onClick={() => handleOAuth("github")}
                 disabled={auth.loading}
-              >
-                {auth.loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <GitHubIcon />
-                )}
-                Continue with GitHub
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={auth.signInWithApple}
+              />
+              <OAuthButton
+                icon={<AppleIcon />}
+                label="Continue with Apple"
+                loading={auth.loading && pendingProvider === "apple"}
+                onClick={() => handleOAuth("apple")}
                 disabled={auth.loading}
-              >
-                {auth.loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <AppleIcon />
-                )}
-                Continue with Apple
-              </Button>
+              />
             </div>
 
+            {/* Divider */}
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
                 <Separator />
@@ -101,6 +125,7 @@ export function Login({ auth }: LoginProps) {
               </div>
             </div>
 
+            {/* Email / password */}
             <form onSubmit={handleEmailSignIn} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
@@ -129,7 +154,7 @@ export function Login({ auth }: LoginProps) {
                 className="w-full"
                 disabled={auth.loading || !email || !password}
               >
-                {auth.loading ? (
+                {auth.loading && !pendingProvider ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   "Sign in"
@@ -143,7 +168,7 @@ export function Login({ auth }: LoginProps) {
           </CardContent>
         </Card>
 
-        <p className="text-center text-xs text-muted-foreground">
+        <p className="text-center text-xs text-muted-foreground/50">
           AI Matrx Desktop &middot; v1.0.0
         </p>
       </div>
@@ -151,25 +176,41 @@ export function Login({ auth }: LoginProps) {
   );
 }
 
+// ── Shared OAuth button ─────────────────────────────────────────────────
+function OAuthButton({
+  icon,
+  label,
+  loading,
+  onClick,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  loading: boolean;
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <Button
+      variant="outline"
+      className="w-full gap-2 transition-all hover:bg-muted/60"
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
+      {label}
+    </Button>
+  );
+}
+
+// ── Provider icons ──────────────────────────────────────────────────────
 function GoogleIcon() {
   return (
     <svg className="h-4 w-4" viewBox="0 0 24 24">
-      <path
-        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
-        fill="#4285F4"
-      />
-      <path
-        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-        fill="#34A853"
-      />
-      <path
-        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-        fill="#FBBC05"
-      />
-      <path
-        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-        fill="#EA4335"
-      />
+      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
+      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+      <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+      <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
     </svg>
   );
 }

@@ -7,6 +7,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -28,6 +29,8 @@ struct SidecarStatus {
 ///
 /// In production, this spawns the bundled PyInstaller binary.
 /// The sidecar listens on the configured port (default 22140).
+/// We set TAURI_SIDECAR=1 so that run.py skips the pystray tray icon —
+/// Tauri already owns the single system-tray icon for the whole app.
 #[tauri::command]
 async fn start_sidecar(
     app: tauri::AppHandle,
@@ -41,7 +44,9 @@ async fn start_sidecar(
     let sidecar = app
         .shell()
         .sidecar("aimatrx-engine")
-        .map_err(|e| format!("Failed to create sidecar command: {}", e))?;
+        .map_err(|e| format!("Failed to create sidecar command: {}", e))?
+        // Signal to run.py that it is running inside Tauri — suppress pystray tray icon.
+        .env("TAURI_SIDECAR", "1");
 
     let (mut rx, child) = sidecar
         .spawn()
@@ -198,6 +203,9 @@ async fn check_for_updates(app: tauri::AppHandle, install: bool) -> Result<Updat
 }
 
 /// Set up the system tray icon and menu.
+///
+/// Only ONE tray icon is created here — the auto-trayIcon in tauri.conf.json
+/// has been removed to prevent a second blank icon from appearing.
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItemBuilder::with_id("show", "Show AI Matrx").build(app)?;
     let status =
@@ -212,9 +220,13 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .item(&quit)
         .build()?;
 
-    let _tray = TrayIconBuilder::new()
+    // Use the application's default window icon for the tray.
+    // `app.default_window_icon()` returns the icon configured by the Tauri build system
+    // (from the icon list in tauri.conf.json), so the tray icon always matches the
+    // dock / taskbar icon without any runtime file path resolution.
+    let tray_builder = TrayIconBuilder::new()
         .menu(&menu)
-        .tooltip("AI Matrx Desktop")
+        .tooltip("AI Matrx")
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "show" => {
                 if let Some(window) = app.get_webview_window("main") {
@@ -244,8 +256,13 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = window.set_focus();
                 }
             }
-        })
-        .build(app)?;
+        });
+
+    let _tray = if let Some(icon) = app.default_window_icon() {
+        tray_builder.icon(icon.clone()).build(app)?
+    } else {
+        tray_builder.build(app)?
+    };
 
     Ok(())
 }
@@ -253,6 +270,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -275,7 +293,29 @@ pub fn run() {
             check_for_updates,
         ])
         .setup(|app| {
-            // Set up system tray
+            // Register the deep-link listener for OAuth callbacks.
+            // When Supabase redirects to aimatrx://auth/callback?..., the OS fires this handler.
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                let urls = event.urls();
+                if let Some(url) = urls.first() {
+                    let url_str = url.to_string();
+                    println!("[deep-link] Received URL: {}", url_str);
+
+                    // Bring the window to front
+                    if let Some(window) = handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+
+                    // Emit to the frontend so AuthCallback.tsx can handle the session
+                    let _ = handle.emit("oauth-callback", url_str);
+                }
+            });
+
+            // Set up ONE system tray icon for the whole application.
+            // The trayIcon declaration in tauri.conf.json has been removed to prevent
+            // a second blank icon from appearing alongside this one.
             if let Err(e) = setup_tray(app) {
                 eprintln!("Failed to setup tray: {}", e);
             }
@@ -290,16 +330,22 @@ pub fn run() {
                     .unwrap_or(true);
 
                 if close_to_tray {
-                    // Hide instead of close — keep running in system tray
+                    // Hide the window instead of closing — the Python sidecar keeps running
+                    // in the background (accessible via the system tray icon).
+                    // We do NOT kill the sidecar — it serves as the "server" half and must
+                    // stay alive for background jobs and cloud connectivity.
+                    // The Webview/frontend (npm-side) is effectively paused by the OS when
+                    // the window is hidden; no explicit kill is needed for the UI half.
                     let _ = window.hide();
                     api.prevent_close();
                 } else {
-                    // Actually quit — kill sidecar first
+                    // User explicitly chose "Quit" — kill sidecar before exit.
                     if let Some(state) = window.app_handle().try_state::<SidecarState>() {
                         if let Some(child) = state.child.lock().unwrap().take() {
                             let _ = child.kill();
                         }
                     }
+                    // Fall through: window closes normally, app exits when last window closes.
                 }
             }
         })

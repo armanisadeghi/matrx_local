@@ -200,8 +200,13 @@ class EngineAPI {
   async connectWebSocket(): Promise<void> {
     if (!this.wsUrl) throw new Error("Engine not discovered");
 
+    // WebSocket does not support arbitrary headers in the browser.
+    // The server validates auth via a `?token=` query parameter instead.
+    const token = this._getAccessToken ? await this._getAccessToken() : null;
+    const url = token ? `${this.wsUrl}?token=${encodeURIComponent(token)}` : this.wsUrl;
+
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(this.wsUrl!);
+      this.ws = new WebSocket(url);
 
       this.ws.onopen = () => {
         this.emit("connected", null);
@@ -332,7 +337,9 @@ class EngineAPI {
   /** Check if the remote scraper server is available. */
   async remoteScraperStatus(): Promise<{ available: boolean; reason?: string; status?: string }> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/remote-scraper/status`, {
+      headers,
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) throw new Error(`Remote scraper status failed: ${resp.status}`);
@@ -578,7 +585,8 @@ class EngineAPI {
   /** Local retry queue poller statistics (this engine's activity). */
   async queuePollerStats(): Promise<{ polled: number; claimed: number; submitted: number; failed: number; running: boolean; client_id: string }> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const resp = await fetch(`${this.baseUrl}/remote-scraper/queue/poller-stats`);
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/queue/poller-stats`, { headers });
     if (!resp.ok) throw new Error(`Queue poller stats failed: ${resp.status}`);
     return resp.json();
   }
@@ -1036,7 +1044,9 @@ class EngineAPI {
   /** Get all device/OS permission statuses. */
   async getDevicePermissions(): Promise<DevicePermissionsResponse> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/permissions`, {
+      headers,
       signal: AbortSignal.timeout(15000),
     });
     if (!resp.ok) throw new Error(`Permissions check failed: ${resp.status}`);
@@ -1046,7 +1056,9 @@ class EngineAPI {
   /** Get a single permission status. */
   async getDevicePermission(name: string): Promise<PermissionInfo> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/permissions/${name}`, {
+      headers,
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) throw new Error(`Permission check failed: ${resp.status}`);
@@ -1056,7 +1068,9 @@ class EngineAPI {
   /** List audio input/output devices. */
   async getAudioDevices(): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/audio`, {
+      headers,
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) throw new Error(`Audio device check failed: ${resp.status}`);
@@ -1066,7 +1080,9 @@ class EngineAPI {
   /** List Bluetooth devices. */
   async getBluetoothDevices(): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/bluetooth`, {
+      headers,
       signal: AbortSignal.timeout(15000),
     });
     if (!resp.ok) throw new Error(`Bluetooth check failed: ${resp.status}`);
@@ -1076,7 +1092,9 @@ class EngineAPI {
   /** List WiFi networks. */
   async getWifiNetworks(): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/wifi`, {
+      headers,
       signal: AbortSignal.timeout(15000),
     });
     if (!resp.ok) throw new Error(`WiFi scan failed: ${resp.status}`);
@@ -1086,7 +1104,9 @@ class EngineAPI {
   /** Get network interface info. */
   async getNetworkInfo(): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/network`, {
+      headers,
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) throw new Error(`Network info failed: ${resp.status}`);
@@ -1096,14 +1116,16 @@ class EngineAPI {
   /** List connected peripherals (USB, Bluetooth, etc.). */
   async getConnectedDevices(): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/connected`, {
+      headers,
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) throw new Error(`Connected devices check failed: ${resp.status}`);
     return resp.json();
   }
 
-  /** Get system resource usage. */
+  /** Open a system folder (logs or data) in the file manager. */
   async openSystemFolder(folder: "logs" | "data"): Promise<{ opened: string }> {
     return this.request<{ opened: string }>("/system/open-folder", {
       method: "POST",
@@ -1126,7 +1148,9 @@ class EngineAPI {
 
   async getSystemResources(): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/system`, {
+      headers,
       signal: AbortSignal.timeout(10000),
     });
     if (!resp.ok) throw new Error(`System resources check failed: ${resp.status}`);

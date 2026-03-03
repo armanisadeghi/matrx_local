@@ -1,7 +1,9 @@
 {
   "identifier": "default",
   "description": "Default permissions for AI Matrx Desktop",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "shell:allow-spawn",
@@ -10,6 +12,8 @@
     "store:default",
     "autostart:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "deep-link:default",
+    "deep-link:allow-get-current"
   ]
 }

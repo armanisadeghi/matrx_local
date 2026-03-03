@@ -62,8 +62,14 @@ export function useAuth() {
     async (provider: Provider) => {
       update({ loading: true, error: null });
 
-      // HashRouter: callback must use hash fragment so the route resolves
-      const redirectTo = `${window.location.origin}/#/auth/callback`;
+      // In the Tauri desktop app, window.location.origin is "tauri://localhost"
+      // which Supabase/OAuth providers reject as an invalid redirect URI.
+      // Instead, we use the registered custom deep-link scheme "aimatrx://"
+      // so the OS intercepts the OAuth callback and routes it back into the app.
+      const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+      const redirectTo = isTauri
+        ? "aimatrx://auth/callback"
+        : `${window.location.origin}/#/auth/callback`;
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider,

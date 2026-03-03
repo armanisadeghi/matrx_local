@@ -24,10 +24,6 @@
         "center": true
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "tooltip": "AI Matrx Desktop"
-    },
     "security": {
       "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* https://*.supabase.co wss://*.supabase.co; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.googleusercontent.com https://lh3.google.com https://*.githubusercontent.com https://avatars.githubusercontent.com https://*.supabase.co https://*.gravatar.com"
     }
@@ -64,6 +60,13 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "aimatrx"
+        ]
+      }
+    },
     "updater": {
       "endpoints": [
         "https://github.com/armanisadeghi/matrx_local/releases/latest/download/latest.json"

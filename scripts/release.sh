@@ -3,15 +3,23 @@
 # Fully automated release script for matrx-local.
 #
 # Usage:
-#   ./scripts/release.sh              # auto-bump patch (1.0.1 → 1.0.2)
-#   ./scripts/release.sh minor        # bump minor      (1.0.1 → 1.1.0)
-#   ./scripts/release.sh major        # bump major      (1.0.1 → 2.0.0)
-#   ./scripts/release.sh 2.3.4        # set exact version
+#   ./scripts/release.sh              # auto-bump patch (1.0.14 → 1.0.15)
+#   ./scripts/release.sh --major      # bump minor      (1.0.14 → 1.1.0)
+#   ./scripts/release.sh X.Y.Z        # set exact version
+#
+# Flags:
+#   --major   Bumps the middle number (1.0.x → 1.1.0).
+#             Bumping 1.x.y → 2.0.0 is intentionally manual-only.
 #
 # What it does:
 #   1. Reads current version from pyproject.toml
-#   2. Bumps it (patch by default, or as specified)
-#   3. Updates pyproject.toml, tauri.conf.json, package.json, run.py
+#   2. Bumps patch by default, or minor with --major flag
+#   3. Updates ALL version files:
+#        - pyproject.toml
+#        - desktop/src-tauri/tauri.conf.json
+#        - desktop/src-tauri/Cargo.toml
+#        - desktop/package.json
+#        - run.py
 #   4. Commits the version bump
 #   5. Tags vX.Y.Z
 #   6. Pushes commit + tag to origin (triggers GitHub Actions CI)
@@ -44,14 +52,8 @@ case "$ARG" in
         PATCH=$((PATCH + 1))
         VERSION="$MAJOR.$MINOR.$PATCH"
         ;;
-    minor)
+    --major)
         MINOR=$((MINOR + 1))
-        PATCH=0
-        VERSION="$MAJOR.$MINOR.$PATCH"
-        ;;
-    major)
-        MAJOR=$((MAJOR + 1))
-        MINOR=0
         PATCH=0
         VERSION="$MAJOR.$MINOR.$PATCH"
         ;;
@@ -60,7 +62,13 @@ case "$ARG" in
         VERSION="$ARG"
         ;;
     *)
-        echo "Usage: $0 [patch|minor|major|X.Y.Z]"
+        echo "Usage: $0 [--major|X.Y.Z]"
+        echo ""
+        echo "  (no args)   bump patch: $MAJOR.$MINOR.$PATCH → $MAJOR.$MINOR.$((PATCH + 1))"
+        echo "  --major     bump minor: $MAJOR.$MINOR.$PATCH → $MAJOR.$((MINOR + 1)).0"
+        echo "  X.Y.Z       set exact version"
+        echo ""
+        echo "  NOTE: bumping the major version ($(( MAJOR + 1 )).0.0) is intentionally manual only."
         exit 1
         ;;
 esac
@@ -78,24 +86,42 @@ fi
 # ---- Sync version across all config files ----
 echo "  → Updating version to $VERSION..."
 
-# pyproject.toml
+# 1. pyproject.toml  (top-level: version = "X.Y.Z")
 sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
-# tauri.conf.json (top-level "version" field)
+# 2. tauri.conf.json  (top-level: "version": "X.Y.Z")
+#    Use a context-aware replacement: only the line that starts with "version"
+#    at the JSON root level (2-space indent is NOT present for top-level keys).
 sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
 
-# package.json
+# 3. Cargo.toml  (package section: version = "X.Y.Z")
+sed -i "s/^version = \".*\"/version = \"$VERSION\"/" desktop/src-tauri/Cargo.toml
+
+# 4. desktop/package.json  — use npm so it handles the JSON correctly
 cd desktop
 npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null
 cd "$PROJECT_ROOT"
 
-# run.py (engine root endpoint version)
-sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" run.py
+# 5. run.py  — only the version inside write_discovery_file's payload
+#    The line looks like:  "version": "1.0.13",
+#    We target just the "version" key line in that file.
+sed -i 's/"version": "[0-9]*\.[0-9]*\.[0-9]*"/"version": "'"$VERSION"'"/' run.py
 
-echo "  ✓ Versions synced across pyproject.toml, tauri.conf.json, package.json, run.py"
+echo "  ✓ Versions synced:"
+echo "       pyproject.toml                   → $VERSION"
+echo "       desktop/src-tauri/tauri.conf.json → $VERSION"
+echo "       desktop/src-tauri/Cargo.toml      → $VERSION"
+echo "       desktop/package.json              → $VERSION"
+echo "       run.py                            → $VERSION"
 
 # ---- Commit the version bump ----
-git add pyproject.toml desktop/src-tauri/tauri.conf.json desktop/package.json run.py
+git add \
+    pyproject.toml \
+    desktop/src-tauri/tauri.conf.json \
+    desktop/src-tauri/Cargo.toml \
+    desktop/package.json \
+    run.py
+
 git commit -m "release: $TAG"
 
 # ---- Tag ----
