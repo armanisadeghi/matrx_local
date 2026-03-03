@@ -62,13 +62,18 @@ export function useAuth() {
     async (provider: Provider) => {
       update({ loading: true, error: null });
 
-      // In the Tauri desktop app, window.location.origin is "tauri://localhost"
-      // which Supabase/OAuth providers reject as an invalid redirect URI.
-      // Instead, we use the registered custom deep-link scheme "aimatrx://"
-      // so the OS intercepts the OAuth callback and routes it back into the app.
+      // In the Tauri desktop app, the webview origin (tauri://localhost) cannot
+      // receive OAuth callbacks from an external browser because it's not a
+      // publicly-routable URL.  Instead we redirect to the FastAPI sidecar
+      // which is always listening on localhost:22140 and IS reachable by any
+      // browser.  The sidecar captures the code and pushes it back to the
+      // webview via WebSocket, where we then call exchangeCodeForSession().
+      //
+      // In the web/dev build (no Tauri), we use the hash-router path on the
+      // page origin so the AuthCallback component can pick it up directly.
       const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
       const redirectTo = isTauri
-        ? "aimatrx://auth/callback"
+        ? "http://localhost:22140/auth/callback"
         : `${window.location.origin}/#/auth/callback`;
 
       const { error } = await supabase.auth.signInWithOAuth({

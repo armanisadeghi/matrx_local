@@ -16,7 +16,7 @@ from app.api.cloud_sync_routes import router as cloud_sync_router
 from app.api.chat_routes import router as chat_router, build_ai_sub_app
 from app.api.permissions_routes import router as permissions_router
 from app.api.capabilities_routes import router as capabilities_router
-from app.api.auth import AuthMiddleware
+from app.api.auth import AuthMiddleware, auth_router
 from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
@@ -228,6 +228,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(auth_router)  # OAuth callback — must be before AuthMiddleware
 app.include_router(api_router)
 app.include_router(tool_router, prefix="/tools", tags=["tools"])
 app.include_router(remote_scraper_router)
@@ -304,10 +305,22 @@ async def log_requests(request: Request, call_next):
 
     # ── Response line ─────────────────────────────────────────────────────────
     if response.status_code >= 500:
-        logger.error("← %d %s %s  (%.0fms)", response.status_code, request.method, display_path, duration_ms)
+        logger.error(
+            "← %d %s %s  (%.0fms)",
+            response.status_code,
+            request.method,
+            display_path,
+            duration_ms,
+        )
         logger.error("  %s", _format_request_details(request, body))
     elif response.status_code >= 400:
-        logger.warning("← %d %s %s  (%.0fms)", response.status_code, request.method, display_path, duration_ms)
+        logger.warning(
+            "← %d %s %s  (%.0fms)",
+            response.status_code,
+            request.method,
+            display_path,
+            duration_ms,
+        )
         logger.warning("  %s", _format_request_details(request, body))
     else:
         log("← %d %s  (%.0fms)", response.status_code, request.method, duration_ms)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import supabase from "@/lib/supabase";
+import { engine } from "@/lib/api";
 import { Zap, ArrowLeft, ExternalLink, CheckCircle2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -121,48 +122,57 @@ export function OAuthPending({ provider, onCancel }: OAuthPendingProps) {
         return () => clearInterval(t);
     }, []);
 
-    // Listen for the deep-link oauth-callback event from the Tauri backend
+    // Listen for the oauth-callback message broadcast by the FastAPI sidecar.
+    // When the external browser hits http://localhost:22140/auth/callback the
+    // sidecar pushes { type: "oauth-callback", code?: string,
+    // access_token?: string, refresh_token?: string } over WebSocket to every
+    // connected client (the Tauri webview is one of them).
     useEffect(() => {
         if (handled.current) return;
 
-        const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-        if (!isTauri) return;
+        const off = engine.on("message", async (data: unknown) => {
+            const msg = data as Record<string, string>;
+            if (msg?.type !== "oauth-callback") return;
+            if (handled.current) return;
+            handled.current = true;
+            off();
 
-        let unlisten: (() => void) | undefined;
+            try {
+                if (msg.code) {
+                    // PKCE flow: exchange the short-lived code for a session.
+                    // The Supabase JS client stored the code_verifier in localStorage
+                    // when signInWithOAuth was called, so this call retrieves it
+                    // automatically.
+                    const { error } = await supabase.auth.exchangeCodeForSession(msg.code);
+                    if (!error) {
+                        setCompleted(true);
+                        setTimeout(() => navigate("/", { replace: true }), 800);
+                        return;
+                    }
+                    console.error("[OAuthPending] exchangeCodeForSession error:", error.message);
+                } else if (msg.access_token && msg.refresh_token) {
+                    // Implicit flow: tokens arrived directly (older Supabase projects).
+                    const { error } = await supabase.auth.setSession({
+                        access_token: msg.access_token,
+                        refresh_token: msg.refresh_token,
+                    });
+                    if (!error) {
+                        setCompleted(true);
+                        setTimeout(() => navigate("/", { replace: true }), 800);
+                        return;
+                    }
+                    console.error("[OAuthPending] setSession error:", error.message);
+                } else {
+                    console.warn("[OAuthPending] oauth-callback message missing expected fields:", msg);
+                }
+            } catch (err) {
+                console.error("[OAuthPending] unexpected error handling oauth-callback:", err);
+            }
 
-        import("@tauri-apps/api/event")
-            .then(({ listen }) => {
-                listen<string>("oauth-callback", async (event) => {
-                    if (handled.current) return;
-                    handled.current = true;
-                    unlisten?.();
+            navigate("/login", { replace: true });
+        });
 
-                    try {
-                        const rawUrl = event.payload;
-                        const urlObj = new URL(rawUrl);
-                        const params = urlObj.searchParams;
-                        const access_token = params.get("access_token");
-                        const refresh_token = params.get("refresh_token");
-
-                        if (access_token && refresh_token) {
-                            const { error } = await supabase.auth.setSession({ access_token, refresh_token });
-                            if (!error) {
-                                setCompleted(true);
-                                setTimeout(() => navigate("/", { replace: true }), 800);
-                                return;
-                            }
-                        }
-                    } catch { }
-                    navigate("/login", { replace: true });
-                }).then((fn) => {
-                    unlisten = fn;
-                });
-            })
-            .catch(() => navigate("/login", { replace: true }));
-
-        return () => {
-            unlisten?.();
-        };
+        return () => { off(); };
     }, [navigate]);
 
     return (
