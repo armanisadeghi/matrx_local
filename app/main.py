@@ -17,7 +17,7 @@ from app.api.chat_routes import router as chat_router, build_ai_sub_app
 from app.api.permissions_routes import router as permissions_router
 from app.api.capabilities_routes import router as capabilities_router
 from app.api.auth import AuthMiddleware
-from app.config import ALLOWED_ORIGINS
+from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
 from app.services.scraper.engine import get_scraper_engine
@@ -248,19 +248,22 @@ app.include_router(capabilities_router)
 #   POST /chat/ai/api/ai/cancel/{request_id}
 app.mount("/chat/ai", build_ai_sub_app())
 
-# CORS must be the outermost middleware so preflight OPTIONS requests are
-# handled before any other middleware (auth, logging) can inspect or reject them.
-# Starlette processes add_middleware() calls in reverse — last registered = outermost.
-# So register CORS last to guarantee it wraps everything.
 app.add_middleware(AuthMiddleware)
 
+# CORS middleware must be registered AFTER AuthMiddleware so that Starlette
+# places it as the outer wrapper (add_middleware is processed in reverse order).
+# It handles OPTIONS preflights before AuthMiddleware ever sees them.
+#
+# allow_origins:       exact origins (localhost, production domains)
+# allow_origin_regex:  wildcard subdomains (*.aimatrx.com, Vercel previews, etc.)
+# allow_headers:       explicit list — "*" is invalid when allow_credentials=True
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-User-Id", "X-API-Key", "Accept"],
-    expose_headers=["Content-Type"],
     max_age=600,
 )
 

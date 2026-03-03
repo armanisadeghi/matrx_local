@@ -12,9 +12,34 @@ APP_NAME_SLUG = "matrx-local"  # lowercase-hyphen form for Linux paths
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1")
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
 
+# ---------------------------------------------------------------------------
+# CORS — allowed origins
+#
+# Exact origins are listed here.  Wildcard subdomains (*.aimatrx.com, etc.)
+# are handled by ALLOWED_ORIGIN_REGEX in main.py so Starlette can match them
+# against the incoming Origin header at runtime.
+#
+# To add a new exact origin: append to _DEFAULT_ORIGINS.
+# To allow a new subdomain pattern: extend ALLOWED_ORIGIN_REGEX in main.py.
+# ---------------------------------------------------------------------------
+
 _DEFAULT_ORIGINS = ",".join([
+    # Production domains (exact)
     "https://aimatrx.com",
     "https://www.aimatrx.com",
+    "https://appmatrx.com",
+    "https://www.appmatrx.com",
+    "https://mymatrx.com",
+    "https://www.mymatrx.com",
+    "https://codematrx.com",
+    "https://www.codematrx.com",
+    "https://matrxserver.com",
+    "https://www.matrxserver.com",
+    # Known Vercel deployment
+    "https://ai-matrx-admin.vercel.app",
+    # Chrome extension OAuth callback
+    "https://ccmjgggbdngllppncmidllcjablcdepl.chromiumapp.org",
+    # Local development
     "http://localhost:1420",
     "http://localhost:3000",
     "http://localhost:3001",
@@ -25,9 +50,20 @@ _DEFAULT_ORIGINS = ",".join([
     "http://127.0.0.1:3001",
     "http://127.0.0.1:3002",
     "http://127.0.0.1:5173",
+    # Tauri desktop app
     "tauri://localhost",
 ])
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
+
+# Regex covers wildcard subdomains that can't be listed exhaustively:
+#   *.aimatrx.com, *.appmatrx.com, *.mymatrx.com, *.codematrx.com,
+#   *.matrxserver.com, *-armani-sadeghis-projects.vercel.app
+# This is used by CORSMiddleware's allow_origin_regex parameter.
+ALLOWED_ORIGIN_REGEX = (
+    r"https://(.*\.)?(aimatrx|appmatrx|mymatrx|codematrx|matrxserver)\.com"
+    r"|https://.*-armani-sadeghis-projects\.vercel\.app"
+    r"|https://.*\.vercel\.app"  # covers preview deployments
+)
 
 # Remote scraper server — all DB access goes through this API, never directly.
 # Authenticated users' Supabase JWTs are accepted by the server — no API key needed for users.
