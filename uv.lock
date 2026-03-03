@@ -1258,7 +1258,7 @@ wheels = [
 
 [[package]]
 name = "matrx-ai"
-version = "0.1.6"
+version = "0.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1280,9 +1280,9 @@ dependencies = [
     { name = "together" },
     { name = "xai-sdk" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/de/77/53925c2032d32310d8ce915bc46bef223220ee597b7f2dae090d4f3b238c/matrx_ai-0.1.6.tar.gz", hash = "sha256:7356310219650dc7a1ca431b0ea14f3abef169539bc4e510f270a446a85a7339", size = 592918, upload-time = "2026-03-03T07:33:51.844Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b5/5a/ea57b9e74d1836618eaf1412bf17a51734a24d64cf56c61e1d38a19d7363/matrx_ai-0.1.7.tar.gz", hash = "sha256:5921c438eedb3b89b3effbe04e3b6fcf1033169e45fcab19268076bc07bfe0c0", size = 593147, upload-time = "2026-03-03T07:43:03.703Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a2/d6/7110814e195cac99c583fd15b7b57af361666b37284fd5aa6b851ea00f51/matrx_ai-0.1.6-py3-none-any.whl", hash = "sha256:31b0214e9960b42f68138b55f6f4b1f374444ddb8c2a1023427e9f3e8b9afb39", size = 440364, upload-time = "2026-03-03T07:33:50.071Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/fb/bc49e800a7d637b4b5c479e5a5000d82de25e1f6988023056282aba924f1/matrx_ai-0.1.7-py3-none-any.whl", hash = "sha256:e5823069d520cb62af3dd02d8c1e8df344096364de4f58e028356f30813de9c0", size = 440454, upload-time = "2026-03-03T07:43:01.592Z" },
 ]
 
 [[package]]
@@ -1369,7 +1369,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "markdownify", specifier = ">=0.14.1" },
-    { name = "matrx-ai", specifier = ">=0.1.6" },
+    { name = "matrx-ai", specifier = ">=0.1.7" },
     { name = "matrx-orm", specifier = ">=3.0.12" },
     { name = "matrx-utils", specifier = ">=1.0.13" },
     { name = "numpy", marker = "extra == 'all'", specifier = ">=2.4.2" },
