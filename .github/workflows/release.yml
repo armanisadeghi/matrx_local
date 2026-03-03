@@ -37,10 +37,6 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --extra all
 
-      - name: Install Playwright browsers
-        run: uv run playwright install chromium firefox webkit
-        shell: bash
-
       - name: Build Python sidecar binary
         run: |
           chmod +x scripts/build-sidecar.sh
