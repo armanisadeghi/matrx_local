@@ -24,9 +24,11 @@ graph TB
     FastAPI["FastAPI Server<br/>run.py :22140"]
     ToolDispatcher["Tool Dispatcher<br/>79 tools"]
     ScraperEngine["Scraper Engine<br/>scraper-service subtree"]
+    SyncEngine["Sync Engine<br/>Documents & Settings sync"]
     WSManager["WebSocket Manager<br/>Concurrent sessions"]
     FastAPI --> ToolDispatcher
     FastAPI --> WSManager
+    FastAPI --> SyncEngine
     ToolDispatcher --> ScraperEngine
   end
 
@@ -243,7 +245,7 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 
 ---
 
-## Tool Reference (68 Tools)
+## Tool Reference (79 Tools)
 
 ### File Operations (5)
 
@@ -507,10 +509,10 @@ The remote server provides these endpoints (see `.arman/scraper-api-reference.md
 
 | Mode | IP | Best For |
 |------|-----|----------|
-| **Local** (scraper engine) | User's residential IP | Sites blocking datacenter IPs |
-| **Remote** (scraper server) | Server infrastructure + proxy rotation | Bulk scraping, parallel jobs |
+| Local | User's residential IP | Sites blocking datacenter IPs |
+| Remote | Server infrastructure + proxy rotation | Bulk scraping, parallel jobs |
 
-Both modes coexist. The UI will support toggling between them (not yet implemented).
+Both modes are fully integrated into the Scraping page with a real-time toggle.
 
 ---
 

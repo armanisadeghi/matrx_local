@@ -16,7 +16,7 @@ Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Pytho
 - **Auth:** Supabase Auth (OAuth + email) -- Supabase also acts as OAuth Server for shipping
 - **DB:** PostgreSQL via Supabase (optional, graceful degradation to in-memory)
 - **Scraping:** Integrated scraper-service (git subtree, read-only in matrx_local; editable at source repo)
-- **Package Managers:** npm (desktop), uv (Python)
+- **Package Managers:** pnpm (desktop), uv (Python)
 
 ---
 

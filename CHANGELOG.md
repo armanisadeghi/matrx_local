@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.0.0 — Massive Tool Expansion & Sync Engine
+
+### Major New Features
+
+**1. Documents & Notes Sync**
+- Full local `.md` document store with bidirectional Supabase sync.
+- Folder hierarchy support, markdown editor (split/preview), and version history.
+- Real-time updates via Supabase Realtime and local file watcher.
+
+**2. Local Proxy Server**
+- Async HTTP forward proxy with CONNECT tunneling.
+- Managed via REST API and UI; auto-starts on engine boot.
+- Detailed traffic statistics and connectivity testing.
+
+**3. Cloud Settings Sync**
+- Sync application settings, forbidden URL lists, and instance metadata to Supabase.
+- Multi-device tracking and heartbeat system.
+
+**4. Tools Expansion (79 Tools Total)**
+- Added 45+ new tools across 10 categories:
+  - **Process/Window:** List/Focus/Kill/Move windows and processes.
+  - **Input:** Simulated typing (TypeText), hotkeys, and mouse movement.
+  - **Media:** OCR, Image resizing, PDF extraction, and Archiving.
+  - **Network:** Network scanning, port scanning, and WiFi/Bluetooth discovery.
+  - **Audio:** Recording, playback, and Whisper-based transcription.
+  - **Scheduler:** Recurring task execution and system sleep prevention.
+
+**5. Activity Log & Monitoring**
+- Real-time HTTP request logging (JSON structured) and system log streaming via SSE.
+- iOS-style monitoring UI with live gauges and process tables.
+
+### Infrastructure & UI
+- **GitHub Actions:** Fully automated CI/CD for 4-platform builds and GitHub Releases.
+- **Tauri v2:** Migrated to latest Tauri with plugin-based architecture.
+- **Dark Mode:** Consistent semantic design throughout the UI.
+
 ---
 
 ## v0.3.0 — Scraper Engine Integration
