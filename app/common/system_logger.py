@@ -71,7 +71,10 @@ class SystemLogger:
         sensitive_filter = SensitiveDataFilter()
         self.logger.addFilter(sensitive_filter)
 
-        # Apply to uvicorn loggers too if they exist
+        # Prevent log records from bubbling up to the root logger (avoids duplicate lines)
+        self.logger.propagate = False
+
+        # Apply sensitive filter to uvicorn loggers (format is set via log_config in run.py)
         for u_logger_name in ["uvicorn", "uvicorn.access", "uvicorn.error"]:
             logging.getLogger(u_logger_name).addFilter(sensitive_filter)
 

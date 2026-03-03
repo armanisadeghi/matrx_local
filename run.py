@@ -227,15 +227,42 @@ def create_tray_image() -> Image.Image:
     return Image.new("RGB", (64, 64), color=(59, 130, 246))
 
 
+def _build_log_config() -> dict:
+    """Build uvicorn log_config that matches our console format.
+
+    LOCAL_DEV=True  → no timestamp, no logger name: "INFO - message"
+    LOCAL_DEV=False → full timestamp:                "2026-... - INFO - message"
+    """
+    from app.config import LOCAL_DEV
+
+    fmt = "%(levelname)s - %(message)s" if LOCAL_DEV else "%(asctime)s - %(levelname)s - %(message)s"
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {"format": fmt},
+            "access": {"format": fmt},
+        },
+        "handlers": {
+            "default": {"class": "logging.StreamHandler", "stream": "ext://sys.stdout", "formatter": "default"},
+            "access": {"class": "logging.StreamHandler", "stream": "ext://sys.stdout", "formatter": "access"},
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        },
+    }
+
+
 def start_server(port: int) -> None:
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
         port=port,
         log_level="info",
+        log_config=_build_log_config(),
     )
-    # SO_REUSEADDR is set by uvicorn by default on the server socket, but we
-    # make this explicit: rapid restarts should never be blocked by TIME_WAIT.
     server = uvicorn.Server(config)
     server.run()
 
@@ -273,15 +300,15 @@ def _has_system_tray() -> bool:
 
 
 def _wait_forever() -> None:
-    """Block the main thread indefinitely (used when no tray icon is shown).
-
-    Sleeps in short intervals so KeyboardInterrupt (Ctrl-C) and SIGTERM
-    are processed promptly rather than being delayed by a multi-hour sleep.
-    """
+    """Block the main thread until Ctrl-C or SIGTERM."""
     import time
 
-    while True:
-        time.sleep(1)
+    try:
+        while True:
+            time.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        remove_discovery_file()
+        os._exit(0)
 
 
 def setup_tray(port: int) -> None:
@@ -326,11 +353,10 @@ def _handle_exit(signum: int, frame: object) -> None:  # noqa: ARG001
 
 
 def main() -> None:
-    # Register cleanup handlers so the discovery file is always removed on exit,
-    # regardless of whether we're killed by SIGTERM, Ctrl-C (SIGINT), or the
-    # tray icon's Quit button.
-    signal.signal(signal.SIGTERM, _handle_exit)
-    signal.signal(signal.SIGINT, _handle_exit)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _handle_exit)
+    if hasattr(signal, "SIGINT"):
+        signal.signal(signal.SIGINT, _handle_exit)
 
     try:
         from app.updater import check_for_updates
@@ -352,7 +378,11 @@ def main() -> None:
     server_thread = threading.Thread(target=start_server, args=(port,), daemon=True)
     server_thread.start()
 
-    setup_tray(port)
+    try:
+        setup_tray(port)
+    except (KeyboardInterrupt, SystemExit):
+        remove_discovery_file()
+        os._exit(0)
 
 
 if __name__ == "__main__":
