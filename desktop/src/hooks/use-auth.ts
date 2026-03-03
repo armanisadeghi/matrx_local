@@ -119,9 +119,23 @@ export function useAuth() {
 
   const signOut = useCallback(async () => {
     update({ loading: true, error: null });
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      update({ loading: false, error: error.message });
+    try {
+      // 5-second timeout — if Supabase is unreachable, clear the local session
+      // anyway so the user is never permanently stuck on a spinner.
+      const result = await Promise.race([
+        supabase.auth.signOut(),
+        new Promise<{ error: { message: string } }>((resolve) =>
+          setTimeout(() => resolve({ error: { message: "Sign-out timed out" } }), 5000)
+        ),
+      ]);
+      if (result.error) {
+        console.warn("[signOut]", result.error.message);
+      }
+    } catch (err) {
+      console.warn("[signOut] unexpected error:", err);
+    } finally {
+      // Always clear local state so the UI unlocks regardless of network outcome.
+      update({ loading: false, session: null, user: null, isAuthenticated: false, error: null });
     }
   }, [update]);
 

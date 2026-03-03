@@ -12,7 +12,13 @@ import { Loader2 } from "lucide-react";
  *
  * In the **web browser**, HashRouter produces:
  *   /#/auth/callback#access_token=XXX&refresh_token=YYY
- * Supabase can't parse the double-hash, so we do it manually here.
+ * Supabase can't parse the double-hash, so we extract the token fragment
+ * manually from everything after the second '#' and call setSession().
+ *
+ * IMPORTANT: We also let Supabase's own detectSessionInUrl do its job by
+ * calling getSession() first. If it already picked up the session from the
+ * URL (which newer Supabase JS versions do automatically), we skip setSession
+ * entirely to avoid a double-call that causes a silent no-op.
  */
 export function AuthCallback() {
   const navigate = useNavigate();
@@ -24,9 +30,21 @@ export function AuthCallback() {
 
     async function handleWebCallback() {
       try {
-        // Full hash looks like: "#/auth/callback#access_token=XYZ&refresh_token=ABC..."
+        // 1. Check if Supabase already picked up the session from the URL hash
+        //    (supabase-js v2 with detectSessionInUrl:true does this automatically).
+        const { data: existing } = await supabase.auth.getSession();
+        if (existing.session) {
+          console.log("[AuthCallback] Session already established by Supabase client");
+          navigate("/", { replace: true });
+          return;
+        }
+
+        // 2. Manual extraction: URL looks like:
+        //    http://localhost:1420/#/auth/callback#access_token=XYZ&...
+        //    We want everything after the LAST '#'.
         const fullHash = window.location.hash;
-        const tokenFragment = fullHash.split("#").pop() ?? "";
+        const lastHash = fullHash.indexOf("#", 1); // find second '#'
+        const tokenFragment = lastHash !== -1 ? fullHash.slice(lastHash + 1) : "";
         const params = new URLSearchParams(tokenFragment);
 
         const access_token = params.get("access_token");
@@ -48,7 +66,7 @@ export function AuthCallback() {
           return;
         }
 
-        console.warn("[AuthCallback] No tokens found in URL hash");
+        console.warn("[AuthCallback] No tokens found in URL hash:", tokenFragment);
         setTimeout(() => navigate("/login", { replace: true }), 3000);
       } catch (err) {
         console.error("[AuthCallback] Unexpected error:", err);

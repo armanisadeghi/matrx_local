@@ -124,18 +124,16 @@ export function useEngine() {
     // Sync persisted settings to Tauri + engine.
     syncAllSettings().catch(() => {});
 
-    // Configure cloud sync if authenticated.
+    // Configure cloud sync if already authenticated at connect time.
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token && session?.user?.id) {
         await engine.configureCloudSync(session.access_token, session.user.id);
+        engine.cloudHeartbeat().catch(() => {});
       }
     } catch {
       // Cloud sync configuration is non-critical
     }
-
-    // Send periodic heartbeat (every 5 minutes)
-    engine.cloudHeartbeat().catch(() => {});
   }, [update]);
 
   const refresh = useCallback(async () => {
@@ -152,6 +150,34 @@ export function useEngine() {
     );
     const offDisconnected = engine.on("disconnected", () =>
       update({ wsConnected: false })
+    );
+
+    // Re-configure cloud sync whenever auth state changes.
+    // This covers: login after engine connects, token refresh, logout.
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!engine.engineUrl) return;
+        if (event === "SIGNED_IN" || event === "INITIAL_SESSION") {
+          if (session?.access_token && session?.user?.id) {
+            try {
+              await engine.configureCloudSync(session.access_token, session.user.id);
+              engine.cloudHeartbeat().catch(() => {});
+            } catch {
+              // Non-critical
+            }
+          }
+        } else if (event === "TOKEN_REFRESHED") {
+          if (session?.access_token && session?.user?.id) {
+            try {
+              await engine.reconfigureCloudSync(session.access_token, session.user.id);
+            } catch {
+              // Non-critical
+            }
+          }
+        }
+        // SIGNED_OUT: cloud sync stays configured until next restart — harmless,
+        // all Supabase calls will 401 with an expired JWT anyway.
+      }
     );
 
     // Periodic health check — runs every 10s, but suppresses false "disconnected"
@@ -182,6 +208,7 @@ export function useEngine() {
       mountedRef.current = false;
       offConnected();
       offDisconnected();
+      authSub.unsubscribe();
       clearInterval(healthInterval);
       clearInterval(heartbeatInterval);
     };
