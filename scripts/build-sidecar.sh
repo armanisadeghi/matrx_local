@@ -8,9 +8,11 @@
 #
 # Usage:
 #   ./scripts/build-sidecar.sh
+#   ./scripts/build-sidecar.sh --target x86_64-apple-darwin
 #
 # Prerequisites:
-#   pip install pyinstaller
+#   pip install pyinstaller playwright
+#   playwright install  (or run: playwright install chromium firefox webkit)
 #
 set -euo pipefail
 
@@ -118,90 +120,239 @@ fi
 
 PYTHON_CMD="$PYTHON"
 
+# ---------------------------------------------------------------------------
+# Step 1: Install Playwright browsers (Chromium, Firefox, WebKit)
+# These get installed into $PLAYWRIGHT_BROWSERS_PATH or the default cache.
+# We'll bundle the entire browser cache directory into the binary.
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Installing Playwright Browsers ==="
+"$PYTHON_CMD" -m playwright install chromium firefox webkit
+echo "  → All browsers installed"
+
+# Locate the Playwright browser cache directory
+PLAYWRIGHT_BROWSERS_PATH="$("$PYTHON_CMD" -c "
+import subprocess, sys, os
+result = subprocess.run(
+    [sys.executable, '-m', 'playwright', 'install', '--dry-run', '--help'],
+    capture_output=True, text=True
+)
+# Fallback: use the known default paths
+import platform
+if platform.system() == 'Linux':
+    path = os.path.expanduser('~/.cache/ms-playwright')
+elif platform.system() == 'Darwin':
+    path = os.path.expanduser('~/Library/Caches/ms-playwright')
+else:
+    path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'ms-playwright')
+print(path)
+" 2>/dev/null || echo "")"
+
+# If env var is set, use that
+if [[ -n "${PLAYWRIGHT_BROWSERS_PATH_OVERRIDE:-}" ]]; then
+    PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS_PATH_OVERRIDE"
+fi
+
+echo "  → Playwright browsers path: $PLAYWRIGHT_BROWSERS_PATH"
+
+# ---------------------------------------------------------------------------
+# Step 2: Gather tessdata (Tesseract language data files)
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Gathering Tesseract Data ==="
+TESSDATA_ARG=""
+TESSDATA_PATH="$("$PYTHON_CMD" -c "
+import subprocess, sys
+try:
+    import pytesseract
+    prefix = pytesseract.get_tessdata_prefix()
+    print(prefix.rstrip('/'))
+except Exception:
+    # Try common system paths
+    import os, platform
+    candidates = []
+    if platform.system() == 'Linux':
+        candidates = ['/usr/share/tesseract-ocr/5/tessdata', '/usr/share/tesseract-ocr/4.00/tessdata', '/usr/share/tessdata']
+    elif platform.system() == 'Darwin':
+        candidates = ['/usr/local/share/tessdata', '/opt/homebrew/share/tessdata']
+    for c in candidates:
+        if os.path.isdir(c):
+            print(c)
+            break
+" 2>/dev/null || echo "")"
+
+if [[ -n "$TESSDATA_PATH" && -d "$TESSDATA_PATH" ]]; then
+    echo "  → Bundling tessdata from: $TESSDATA_PATH"
+    TESSDATA_ARG="--add-data \"$TESSDATA_PATH:tessdata\""
+else
+    echo "  → Tesseract data not found locally — OCR will require system Tesseract"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3: Locate imageio-ffmpeg binary for PATH injection
+# ---------------------------------------------------------------------------
+FFMPEG_DIR="$("$PYTHON_CMD" -c "
+import imageio_ffmpeg, os
+ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+print(os.path.dirname(ffmpeg_exe))
+" 2>/dev/null || echo "")"
+
+if [[ -n "$FFMPEG_DIR" ]]; then
+    echo "=== imageio-ffmpeg binary found: $FFMPEG_DIR ==="
+fi
+
+# ---------------------------------------------------------------------------
+# Step 4: Run PyInstaller
+# ---------------------------------------------------------------------------
+echo ""
 echo "Running PyInstaller (using $PYTHON_CMD)..."
-$PYTHON_CMD -m PyInstaller \
-    --name "aimatrx-engine-$TARGET" \
-    --onefile \
-    --clean \
-    --noconfirm \
-    --exclude-module torch \
-    --exclude-module torchvision \
-    --exclude-module torchaudio \
-    --exclude-module tensorflow \
-    --exclude-module tensorboard \
-    --exclude-module triton \
-    --exclude-module scipy \
-    --exclude-module nipype \
-    --exclude-module nibabel \
-    --exclude-module pyxnat \
-    --exclude-module openai_whisper \
-    --exclude-module whisper \
-    --exclude-module matplotlib \
-    --exclude-module sklearn \
-    --exclude-module skimage \
-    --exclude-module cv2 \
-    --exclude-module IPython \
-    --exclude-module ipykernel \
-    --exclude-module jupyter \
-    --exclude-module ipywidgets \
-    --hidden-import uvicorn \
-    --hidden-import uvicorn.logging \
-    --hidden-import uvicorn.loops \
-    --hidden-import uvicorn.loops.auto \
-    --hidden-import uvicorn.protocols \
-    --hidden-import uvicorn.protocols.http \
-    --hidden-import uvicorn.protocols.http.auto \
-    --hidden-import uvicorn.protocols.websockets \
-    --hidden-import uvicorn.protocols.websockets.auto \
-    --hidden-import uvicorn.lifespan \
-    --hidden-import uvicorn.lifespan.on \
-    --hidden-import httptools \
-    --hidden-import pydantic \
-    --hidden-import fastapi \
-    --hidden-import websockets \
-    --hidden-import httpx \
-    --hidden-import curl_cffi \
-    --hidden-import bs4 \
-    --hidden-import lxml \
-    --hidden-import selectolax \
-    --hidden-import asyncpg \
-    --hidden-import cachetools \
-    --hidden-import tldextract \
-    --hidden-import markdownify \
-    --hidden-import tabulate \
-    --hidden-import fitz \
-    --hidden-import pytesseract \
-    --hidden-import app.tools.tools.system \
-    --hidden-import app.tools.tools.file_ops \
-    --hidden-import app.tools.tools.clipboard \
-    --hidden-import app.tools.tools.execution \
-    --hidden-import app.tools.tools.network \
-    --hidden-import app.tools.tools.notify \
-    --hidden-import app.tools.tools.transfer \
-    --hidden-import app.tools.tools.process_manager \
-    --hidden-import app.tools.tools.window_manager \
-    --hidden-import app.tools.tools.input_automation \
-    --hidden-import app.tools.tools.audio \
-    --hidden-import app.tools.tools.browser_automation \
-    --hidden-import app.tools.tools.network_discovery \
-    --hidden-import app.tools.tools.system_monitor \
-    --hidden-import app.tools.tools.file_watch \
-    --hidden-import app.tools.tools.app_integration \
-    --hidden-import app.tools.tools.scheduler \
-    --hidden-import app.tools.tools.media \
-    --hidden-import app.tools.tools.wifi_bluetooth \
-    --hidden-import pydantic_settings \
-    --hidden-import psutil \
-    --hidden-import zeroconf \
-    --hidden-import watchfiles \
-    --hidden-import sounddevice \
-    --hidden-import soundfile \
-    --hidden-import pynput \
-    --hidden-import playwright \
-    --hidden-import playwright.async_api \
-    --add-data "app:app" \
-    --add-data "scraper-service/app:scraper-service/app" \
-    run.py
+
+# Build the --add-data args for Playwright browsers
+PLAYWRIGHT_ADD_DATA=""
+if [[ -n "$PLAYWRIGHT_BROWSERS_PATH" && -d "$PLAYWRIGHT_BROWSERS_PATH" ]]; then
+    PLAYWRIGHT_ADD_DATA="--add-data \"$PLAYWRIGHT_BROWSERS_PATH:playwright_browsers\""
+    echo "  → Bundling Playwright browsers from: $PLAYWRIGHT_BROWSERS_PATH"
+else
+    echo "  → WARNING: Playwright browser directory not found — browsers will not be bundled"
+fi
+
+# Write the PyInstaller command to a temp file to avoid arg-quoting issues
+PYINSTALLER_CMD_FILE="$(mktemp)"
+cat > "$PYINSTALLER_CMD_FILE" << 'PYINSTALLER_EOF'
+import subprocess, sys, os
+
+args = [
+    sys.executable, "-m", "PyInstaller",
+    "--name", os.environ["BINARY_NAME"],
+    "--onefile",
+    "--clean",
+    "--noconfirm",
+    # ---- Runtime hook: sets env vars for bundled tools ----
+    "--runtime-hook", "hooks/runtime_hook.py",
+    # ---- Exclusions (heavy ML/audio models not needed) ----
+    "--exclude-module", "torch",
+    "--exclude-module", "torchvision",
+    "--exclude-module", "torchaudio",
+    "--exclude-module", "tensorflow",
+    "--exclude-module", "tensorboard",
+    "--exclude-module", "triton",
+    "--exclude-module", "scipy",
+    "--exclude-module", "nipype",
+    "--exclude-module", "nibabel",
+    "--exclude-module", "pyxnat",
+    "--exclude-module", "openai_whisper",
+    "--exclude-module", "whisper",
+    "--exclude-module", "matplotlib",
+    "--exclude-module", "sklearn",
+    "--exclude-module", "skimage",
+    "--exclude-module", "cv2",
+    "--exclude-module", "IPython",
+    "--exclude-module", "ipykernel",
+    "--exclude-module", "jupyter",
+    "--exclude-module", "ipywidgets",
+    # ---- Hidden imports: uvicorn internals ----
+    "--hidden-import", "uvicorn",
+    "--hidden-import", "uvicorn.logging",
+    "--hidden-import", "uvicorn.loops",
+    "--hidden-import", "uvicorn.loops.auto",
+    "--hidden-import", "uvicorn.protocols",
+    "--hidden-import", "uvicorn.protocols.http",
+    "--hidden-import", "uvicorn.protocols.http.auto",
+    "--hidden-import", "uvicorn.protocols.websockets",
+    "--hidden-import", "uvicorn.protocols.websockets.auto",
+    "--hidden-import", "uvicorn.lifespan",
+    "--hidden-import", "uvicorn.lifespan.on",
+    "--hidden-import", "httptools",
+    # ---- Hidden imports: web/data libs ----
+    "--hidden-import", "pydantic",
+    "--hidden-import", "fastapi",
+    "--hidden-import", "websockets",
+    "--hidden-import", "httpx",
+    "--hidden-import", "curl_cffi",
+    "--hidden-import", "bs4",
+    "--hidden-import", "lxml",
+    "--hidden-import", "selectolax",
+    "--hidden-import", "asyncpg",
+    "--hidden-import", "cachetools",
+    "--hidden-import", "tldextract",
+    "--hidden-import", "markdownify",
+    "--hidden-import", "tabulate",
+    "--hidden-import", "fitz",
+    "--hidden-import", "pytesseract",
+    # ---- Hidden imports: Playwright (all browsers) ----
+    "--hidden-import", "playwright",
+    "--hidden-import", "playwright.async_api",
+    "--hidden-import", "playwright.sync_api",
+    "--hidden-import", "playwright._impl._driver",
+    # ---- Hidden imports: media / ffmpeg / yt-dlp ----
+    "--hidden-import", "yt_dlp",
+    "--hidden-import", "yt_dlp.extractor",
+    "--hidden-import", "yt_dlp.downloader",
+    "--hidden-import", "yt_dlp.postprocessor",
+    "--hidden-import", "yt_dlp.utils",
+    "--hidden-import", "imageio_ffmpeg",
+    # ---- Hidden imports: system / monitoring ----
+    "--hidden-import", "psutil",
+    "--hidden-import", "pydantic_settings",
+    "--hidden-import", "zeroconf",
+    "--hidden-import", "watchfiles",
+    "--hidden-import", "sounddevice",
+    "--hidden-import", "soundfile",
+    "--hidden-import", "pynput",
+    # ---- Hidden imports: tool modules ----
+    "--hidden-import", "app.tools.tools.system",
+    "--hidden-import", "app.tools.tools.file_ops",
+    "--hidden-import", "app.tools.tools.clipboard",
+    "--hidden-import", "app.tools.tools.execution",
+    "--hidden-import", "app.tools.tools.network",
+    "--hidden-import", "app.tools.tools.notify",
+    "--hidden-import", "app.tools.tools.transfer",
+    "--hidden-import", "app.tools.tools.process_manager",
+    "--hidden-import", "app.tools.tools.window_manager",
+    "--hidden-import", "app.tools.tools.input_automation",
+    "--hidden-import", "app.tools.tools.audio",
+    "--hidden-import", "app.tools.tools.browser_automation",
+    "--hidden-import", "app.tools.tools.network_discovery",
+    "--hidden-import", "app.tools.tools.system_monitor",
+    "--hidden-import", "app.tools.tools.file_watch",
+    "--hidden-import", "app.tools.tools.app_integration",
+    "--hidden-import", "app.tools.tools.scheduler",
+    "--hidden-import", "app.tools.tools.media",
+    "--hidden-import", "app.tools.tools.wifi_bluetooth",
+    "--hidden-import", "pydantic_settings",
+    # ---- Data files: app source ----
+    "--add-data", "app:app",
+    "--add-data", "scraper-service/app:scraper-service/app",
+]
+
+# Playwright browsers
+playwright_browsers = os.environ.get("PLAYWRIGHT_BROWSERS_PATH_ARG", "")
+if playwright_browsers:
+    args += ["--add-data", playwright_browsers]
+
+# Tesseract data
+tessdata = os.environ.get("TESSDATA_PATH_ARG", "")
+if tessdata:
+    args += ["--add-data", tessdata]
+
+args.append("run.py")
+
+print("Running:", " ".join(args))
+result = subprocess.run(args)
+sys.exit(result.returncode)
+PYINSTALLER_EOF
+
+# Set env vars for the Python script
+export BINARY_NAME="aimatrx-engine-$TARGET"
+if [[ -n "$PLAYWRIGHT_BROWSERS_PATH" && -d "$PLAYWRIGHT_BROWSERS_PATH" ]]; then
+    export PLAYWRIGHT_BROWSERS_PATH_ARG="$PLAYWRIGHT_BROWSERS_PATH:playwright_browsers"
+fi
+if [[ -n "${TESSDATA_PATH:-}" && -d "$TESSDATA_PATH" ]]; then
+    export TESSDATA_PATH_ARG="$TESSDATA_PATH:tessdata"
+fi
+
+"$PYTHON_CMD" "$PYINSTALLER_CMD_FILE"
+rm -f "$PYINSTALLER_CMD_FILE"
 
 # Copy to sidecar directory
 echo "Copying binary to sidecar directory..."

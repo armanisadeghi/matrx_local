@@ -7,7 +7,6 @@ requiring the user to touch a terminal.
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 from typing import Literal
@@ -56,7 +55,7 @@ class InstallResponse(BaseModel):
 CAPABILITY_SPECS: dict[str, dict] = {
     "browser_automation": {
         "name": "Browser Automation",
-        "description": "Control a real browser to navigate websites, click elements, fill forms, and take screenshots. Powers the BrowserNavigate, BrowserClick, BrowserExtract, and BrowserScreenshot tools.",
+        "description": "Control a real browser (Chromium, Firefox, or WebKit) to navigate websites, click elements, fill forms, and take screenshots. Powers BrowserNavigate, BrowserClick, BrowserExtract, BrowserScreenshot, and BrowserEval tools.",
         "probe_module": "playwright",
         "packages": ["playwright"],
         "install_extra": "browser",
@@ -83,11 +82,11 @@ CAPABILITY_SPECS: dict[str, dict] = {
     },
     "ocr": {
         "name": "OCR (Image Text Extraction)",
-        "description": "Extract text from images using Tesseract. Powers the ImageOCR tool. Requires Tesseract to be installed on your system separately.",
+        "description": "Extract text from images using Tesseract. Powers the ImageOCR tool. Tesseract data files are bundled in the sidecar — no separate system install needed.",
         "probe_module": "pytesseract",
         "packages": ["pytesseract"],
         "install_extra": None,
-        "size_warning": "Requires system Tesseract install (brew install tesseract / apt install tesseract-ocr)",
+        "size_warning": None,
         "docs_url": "https://github.com/madmaze/pytesseract",
     },
     "pdf_extraction": {
@@ -117,6 +116,24 @@ CAPABILITY_SPECS: dict[str, dict] = {
         "size_warning": None,
         "docs_url": "https://python-zeroconf.readthedocs.io/",
     },
+    "media_download": {
+        "name": "Media Downloading (yt-dlp)",
+        "description": "Download videos/audio from YouTube, Twitter, Instagram, and 1000+ other sites. Powers the DownloadMedia tool. Bundled in the sidecar by default.",
+        "probe_module": "yt_dlp",
+        "packages": ["yt-dlp"],
+        "install_extra": None,
+        "size_warning": None,
+        "docs_url": "https://github.com/yt-dlp/yt-dlp",
+    },
+    "video_processing": {
+        "name": "Video Processing (ffmpeg)",
+        "description": "Convert, trim, merge, and process audio/video files. Powers audio conversion and video extraction tools. Uses imageio-ffmpeg which bundles ffmpeg — no system install needed.",
+        "probe_module": "imageio_ffmpeg",
+        "packages": ["imageio-ffmpeg"],
+        "install_extra": None,
+        "size_warning": None,
+        "docs_url": "https://github.com/imageio/imageio-ffmpeg",
+    },
 }
 
 
@@ -128,6 +145,7 @@ def _check_module(module_name: str) -> bool:
     if module_name == "fitz":
         try:
             import importlib.metadata
+
             importlib.metadata.version("PyMuPDF")
             return True
         except importlib.metadata.PackageNotFoundError:
@@ -138,6 +156,7 @@ def _check_module(module_name: str) -> bool:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("", response_model=CapabilitiesResponse)
 async def get_capabilities() -> CapabilitiesResponse:
@@ -165,7 +184,9 @@ async def install_capability(req: InstallRequest) -> InstallResponse:
     """Install an optional capability by running pip in the current venv."""
     spec = CAPABILITY_SPECS.get(req.capability_id)
     if not spec:
-        raise HTTPException(status_code=404, detail=f"Unknown capability: {req.capability_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Unknown capability: {req.capability_id}"
+        )
 
     packages = spec["packages"]
     logger.info(f"Installing capability '{req.capability_id}': {packages}")
@@ -184,13 +205,21 @@ async def install_capability(req: InstallRequest) -> InstallResponse:
                 message=result.stderr.strip() or "Installation failed.",
             )
 
-        # For Playwright, also run the browser install step
+        # For Playwright, also install all browsers
         if req.capability_id == "browser_automation":
             browser_result = subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
+                [
+                    sys.executable,
+                    "-m",
+                    "playwright",
+                    "install",
+                    "chromium",
+                    "firefox",
+                    "webkit",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=600,  # Larger timeout — 3 browsers to download
             )
             if browser_result.returncode != 0:
                 return InstallResponse(
@@ -199,10 +228,14 @@ async def install_capability(req: InstallRequest) -> InstallResponse:
                 )
 
         logger.info(f"Capability '{req.capability_id}' installed successfully")
-        return InstallResponse(success=True, message=f"Installed: {', '.join(packages)}")
+        return InstallResponse(
+            success=True, message=f"Installed: {', '.join(packages)}"
+        )
 
     except subprocess.TimeoutExpired:
-        return InstallResponse(success=False, message="Installation timed out after 5 minutes.")
+        return InstallResponse(
+            success=False, message="Installation timed out after 5 minutes."
+        )
     except Exception as exc:
         logger.exception(f"Unexpected error installing '{req.capability_id}'")
         return InstallResponse(success=False, message=str(exc))

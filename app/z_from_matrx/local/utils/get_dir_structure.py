@@ -1,5 +1,4 @@
 import os
-import sys
 from config import BASE_DIR
 from matrx_utils import (
     clear_terminal,
@@ -49,7 +48,7 @@ if __name__ == "__main__":
         "root_save_path": os.path.join(BASE_DIR, "temp", "dir_structure"),
         "include_text_output": True,
         "alias_map": {
-            "@": r"D:\app_dev\ai-matrx-admin",
+            "@": r"/home/arman/projects/aidream",
         },
     }
 

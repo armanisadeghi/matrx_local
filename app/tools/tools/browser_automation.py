@@ -1,6 +1,8 @@
 """Browser automation tools — navigate, interact, extract, and screenshot web pages.
 
-Uses Playwright for full browser control. Falls back gracefully if not installed.
+Uses Playwright for full browser control. Supports Chromium (default), Firefox, and WebKit.
+Automatically detects WSL and headless-only Linux environments and adjusts launch mode.
+Falls back gracefully if Playwright is not installed.
 """
 
 from __future__ import annotations
@@ -8,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
+import platform
 import uuid
-from pathlib import Path
+from typing import Literal
 
 from app.config import TEMP_DIR
 from app.tools.session import ToolSession
@@ -17,43 +21,125 @@ from app.tools.types import ImageData, ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
 
-# Module-level browser state (shared across sessions for efficiency)
-_browser_context = None
-_browser_instance = None
+# Module-level browser state (one shared context per browser type)
+_browser_contexts: dict[str, object] = {}
+_browser_instances: dict[str, object] = {}
 _playwright_instance = None
 
 SCREENSHOTS_DIR = TEMP_DIR / "browser_screenshots"
 
+BrowserType = Literal["chromium", "firefox", "webkit"]
+_DEFAULT_BROWSER: BrowserType = "chromium"
 
-async def _get_browser():
-    """Get or create a shared browser instance."""
-    global _browser_instance, _playwright_instance, _browser_context
 
-    if _browser_instance and _browser_instance.is_connected():
-        return _browser_context
+# ---------------------------------------------------------------------------
+# Platform / environment helpers
+# ---------------------------------------------------------------------------
 
+
+def _is_wsl() -> bool:
+    """Return True when running inside Windows Subsystem for Linux."""
+    try:
+        release = platform.uname().release.lower()
+        return "microsoft" in release or "wsl" in release
+    except Exception:
+        return False
+
+
+def _supports_headed() -> bool:
+    """Return True when a display server is available for headed browsers."""
+    if _is_wsl():
+        return False
+    if platform.system() == "Linux":
+        # Need DISPLAY (X11) or WAYLAND_DISPLAY to run headed
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    # macOS and Windows always support headed mode
+    return True
+
+
+def _playwright_browsers_path() -> str | None:
+    """Return the PLAYWRIGHT_BROWSERS_PATH if set (e.g. by runtime_hook.py)."""
+    return os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or None
+
+
+# ---------------------------------------------------------------------------
+# Browser lifecycle
+# ---------------------------------------------------------------------------
+
+
+async def _get_playwright():
+    """Get or create the shared Playwright instance."""
+    global _playwright_instance
+    if _playwright_instance is not None:
+        return _playwright_instance
     try:
         from playwright.async_api import async_playwright
     except ImportError:
         return None
-
     _playwright_instance = await async_playwright().start()
+    return _playwright_instance
+
+
+async def _get_browser(browser_type: BrowserType = _DEFAULT_BROWSER):
+    """Get or create a shared browser context for the requested browser type."""
+    global _browser_contexts, _browser_instances
+
+    # Return existing connected context
+    if browser_type in _browser_instances:
+        inst = _browser_instances[browser_type]
+        try:
+            if inst.is_connected():
+                return _browser_contexts[browser_type]
+        except Exception:
+            pass
+
+    pw = await _get_playwright()
+    if pw is None:
+        return None
+
+    headed = _supports_headed()
+
+    # Common launch kwargs
+    launch_kwargs: dict = {
+        "headless": not headed,
+    }
+
+    # Browser-specific options
+    if browser_type == "chromium":
+        launch_kwargs["args"] = ["--no-first-run", "--no-default-browser-check"]
+        browser_launcher = pw.chromium
+    elif browser_type == "firefox":
+        browser_launcher = pw.firefox
+    elif browser_type == "webkit":
+        # WebKit doesn't support headed on Linux
+        if platform.system() == "Linux":
+            launch_kwargs["headless"] = True
+        browser_launcher = pw.webkit
+    else:
+        browser_launcher = pw.chromium
 
     try:
-        _browser_instance = await _playwright_instance.chromium.launch(
-            headless=False,  # User can see the browser
-            args=["--no-first-run", "--no-default-browser-check"],
-        )
+        instance = await browser_launcher.launch(**launch_kwargs)
     except Exception:
-        # Fallback to headless if headed fails
-        _browser_instance = await _playwright_instance.chromium.launch(headless=True)
+        # Fallback to headless if headed launch fails
+        launch_kwargs["headless"] = True
+        try:
+            instance = await browser_launcher.launch(**launch_kwargs)
+        except Exception as e:
+            logger.error("Failed to launch %s browser: %s", browser_type, e)
+            return None
 
-    _browser_context = await _browser_instance.new_context(
+    context = await instance.new_context(
         viewport={"width": 1280, "height": 720},
-        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        user_agent=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
     )
 
-    return _browser_context
+    _browser_instances[browser_type] = instance
+    _browser_contexts[browser_type] = context
+    return context
 
 
 async def _get_page(context, url: str | None = None):
@@ -71,24 +157,37 @@ async def _get_page(context, url: str | None = None):
     return page
 
 
+def _not_installed_result() -> ToolResult:
+    return ToolResult(
+        type=ToolResultType.ERROR,
+        output=(
+            "Browser Automation is not available. "
+            "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
+            "Developer info: pip install playwright && playwright install"
+        ),
+        metadata={"fix_capability_id": "browser_automation"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public tool functions
+# ---------------------------------------------------------------------------
+
+
 async def tool_browser_navigate(
     session: ToolSession,
     url: str,
     wait_for: str | None = None,
     timeout: int = 30,
+    browser: BrowserType = _DEFAULT_BROWSER,
 ) -> ToolResult:
-    """Navigate to a URL in a controlled browser. Optionally wait for a CSS selector."""
-    context = await _get_browser()
+    """Navigate to a URL in a controlled browser. Optionally wait for a CSS selector.
+
+    browser: chromium (default), firefox, or webkit
+    """
+    context = await _get_browser(browser)
     if context is None:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output=(
-                "Browser Automation is not installed. "
-                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
-                "Developer info: pip install playwright && playwright install chromium"
-            ),
-            metadata={"fix_capability_id": "browser_automation"},
-        )
+        return _not_installed_result()
 
     try:
         page = await _get_page(context, url)
@@ -104,6 +203,7 @@ async def tool_browser_navigate(
             metadata={
                 "url": current_url,
                 "title": title,
+                "browser": browser,
             },
         )
 
@@ -115,19 +215,12 @@ async def tool_browser_click(
     session: ToolSession,
     selector: str,
     timeout: int = 10,
+    browser: BrowserType = _DEFAULT_BROWSER,
 ) -> ToolResult:
     """Click an element on the current page by CSS selector."""
-    context = await _get_browser()
+    context = await _get_browser(browser)
     if context is None:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output=(
-                "Browser Automation is not installed. "
-                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
-                "Developer info: pip install playwright && playwright install chromium"
-            ),
-            metadata={"fix_capability_id": "browser_automation"},
-        )
+        return _not_installed_result()
 
     try:
         page = await _get_page(context)
@@ -139,7 +232,7 @@ async def tool_browser_click(
 
         return ToolResult(
             output=f"Clicked: {selector}\nCurrent URL: {page.url}",
-            metadata={"selector": selector, "url": page.url},
+            metadata={"selector": selector, "url": page.url, "browser": browser},
         )
 
     except Exception as e:
@@ -153,19 +246,12 @@ async def tool_browser_type(
     clear_first: bool = True,
     press_enter: bool = False,
     timeout: int = 10,
+    browser: BrowserType = _DEFAULT_BROWSER,
 ) -> ToolResult:
     """Type text into an input element by CSS selector."""
-    context = await _get_browser()
+    context = await _get_browser(browser)
     if context is None:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output=(
-                "Browser Automation is not installed. "
-                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
-                "Developer info: pip install playwright && playwright install chromium"
-            ),
-            metadata={"fix_capability_id": "browser_automation"},
-        )
+        return _not_installed_result()
 
     try:
         page = await _get_page(context)
@@ -181,7 +267,7 @@ async def tool_browser_type(
 
         return ToolResult(
             output=f"Typed into {selector}: '{text[:50]}{'...' if len(text) > 50 else ''}'",
-            metadata={"selector": selector, "url": page.url},
+            metadata={"selector": selector, "url": page.url, "browser": browser},
         )
 
     except Exception as e:
@@ -194,22 +280,16 @@ async def tool_browser_extract(
     extract_type: str = "text",
     attribute: str | None = None,
     all_matches: bool = False,
+    browser: BrowserType = _DEFAULT_BROWSER,
 ) -> ToolResult:
     """Extract content from the current page.
 
     extract_type: text, html, attribute, links, tables, all_text
+    browser: chromium (default), firefox, or webkit
     """
-    context = await _get_browser()
+    context = await _get_browser(browser)
     if context is None:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output=(
-                "Browser Automation is not installed. "
-                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
-                "Developer info: pip install playwright && playwright install chromium"
-            ),
-            metadata={"fix_capability_id": "browser_automation"},
-        )
+        return _not_installed_result()
 
     try:
         page = await _get_page(context)
@@ -316,19 +396,12 @@ async def tool_browser_screenshot(
     session: ToolSession,
     full_page: bool = False,
     selector: str | None = None,
+    browser: BrowserType = _DEFAULT_BROWSER,
 ) -> ToolResult:
     """Take a screenshot of the current browser page or a specific element."""
-    context = await _get_browser()
+    context = await _get_browser(browser)
     if context is None:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output=(
-                "Browser Automation is not installed. "
-                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
-                "Developer info: pip install playwright && playwright install chromium"
-            ),
-            metadata={"fix_capability_id": "browser_automation"},
-        )
+        return _not_installed_result()
 
     try:
         page = await _get_page(context)
@@ -351,9 +424,9 @@ async def tool_browser_screenshot(
         b64 = base64.b64encode(screenshot_bytes).decode()
 
         return ToolResult(
-            output=f"Browser screenshot: {filepath} ({len(screenshot_bytes)} bytes)\nURL: {page.url}",
+            output=f"Browser screenshot: {filepath} ({len(screenshot_bytes)} bytes)\nURL: {page.url}\nBrowser: {browser}",
             image=ImageData(media_type="image/png", base64_data=b64),
-            metadata={"path": str(filepath), "url": page.url},
+            metadata={"path": str(filepath), "url": page.url, "browser": browser},
         )
 
     except Exception as e:
@@ -363,19 +436,12 @@ async def tool_browser_screenshot(
 async def tool_browser_eval(
     session: ToolSession,
     javascript: str,
+    browser: BrowserType = _DEFAULT_BROWSER,
 ) -> ToolResult:
     """Execute JavaScript in the current browser page and return the result."""
-    context = await _get_browser()
+    context = await _get_browser(browser)
     if context is None:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output=(
-                "Browser Automation is not installed. "
-                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
-                "Developer info: pip install playwright && playwright install chromium"
-            ),
-            metadata={"fix_capability_id": "browser_automation"},
-        )
+        return _not_installed_result()
 
     try:
         page = await _get_page(context)
@@ -389,6 +455,7 @@ async def tool_browser_eval(
             output=output,
             metadata={
                 "url": page.url,
+                "browser": browser,
                 "result": result
                 if isinstance(result, (str, int, float, bool, list, dict))
                 else str(result),
@@ -406,6 +473,7 @@ async def tool_browser_tabs(
     action: str = "list",
     tab_index: int | None = None,
     url: str | None = None,
+    browser: BrowserType = _DEFAULT_BROWSER,
 ) -> ToolResult:
     """Manage browser tabs. Actions: list, new, close, switch.
 
@@ -413,18 +481,11 @@ async def tool_browser_tabs(
     new: Open new tab (optionally with url)
     close: Close tab at index
     switch: Switch to tab at index
+    browser: chromium (default), firefox, or webkit
     """
-    context = await _get_browser()
+    context = await _get_browser(browser)
     if context is None:
-        return ToolResult(
-            type=ToolResultType.ERROR,
-            output=(
-                "Browser Automation is not installed. "
-                "Go to Settings → Capabilities to install it, or open the Devices & Permissions page.\n"
-                "Developer info: pip install playwright && playwright install chromium"
-            ),
-            metadata={"fix_capability_id": "browser_automation"},
-        )
+        return _not_installed_result()
 
     try:
         pages = context.pages
@@ -477,3 +538,38 @@ async def tool_browser_tabs(
         return ToolResult(
             type=ToolResultType.ERROR, output=f"Tab operation failed: {e}"
         )
+
+
+async def tool_browser_close(
+    session: ToolSession,
+    browser: BrowserType | None = None,
+) -> ToolResult:
+    """Close the browser instance(s) and free resources.
+
+    browser: specific browser to close, or None to close all.
+    """
+    global _browser_contexts, _browser_instances, _playwright_instance
+
+    closed = []
+    targets = [browser] if browser else list(_browser_instances.keys())
+
+    for bt in targets:
+        try:
+            if bt in _browser_instances:
+                await _browser_instances[bt].close()
+                del _browser_instances[bt]
+                del _browser_contexts[bt]
+                closed.append(bt)
+        except Exception as e:
+            logger.warning("Error closing %s browser: %s", bt, e)
+
+    if not _browser_instances and _playwright_instance:
+        try:
+            await _playwright_instance.stop()
+            _playwright_instance = None
+        except Exception:
+            pass
+
+    if closed:
+        return ToolResult(output=f"Closed browsers: {', '.join(closed)}")
+    return ToolResult(output="No browser instances were open.")
