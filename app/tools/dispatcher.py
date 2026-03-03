@@ -19,6 +19,7 @@ from app.tools.tools.network import (
 from app.tools.tools.notify import tool_notify
 from app.tools.tools.system import (
     tool_list_directory,
+    tool_list_screens,
     tool_open_path,
     tool_open_url,
     tool_screenshot,
@@ -139,6 +140,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     # ── System ───────────────────────────────────────────────────────
     "SystemInfo": tool_system_info,
     "Screenshot": tool_screenshot,
+    "ListScreens": tool_list_screens,
     "ListDirectory": tool_list_directory,
     "OpenUrl": tool_open_url,
     "OpenPath": tool_open_path,

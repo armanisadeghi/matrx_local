@@ -23,7 +23,8 @@ IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
 
 # Persistence file — same directory as local.json discovery file
-_TASKS_FILE = Path.home() / ".matrx" / "scheduled_tasks.json"
+from app.config import MATRX_HOME_DIR as _MATRX_HOME_DIR
+_TASKS_FILE = _MATRX_HOME_DIR / "scheduled_tasks.json"
 
 # Global scheduler state
 _scheduled_tasks: dict[str, ScheduledTask] = {}

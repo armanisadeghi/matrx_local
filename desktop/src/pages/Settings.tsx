@@ -462,6 +462,51 @@ export function Settings({
                     </div>
                     <Switch id="tray" checked={settings.minimizeToTray} onCheckedChange={(v) => updateSetting("minimizeToTray", v)} />
                   </div>
+
+                  <Separator />
+
+                  {/* ── Notification Preferences ─────────────────── */}
+                  <div>
+                    <p className="text-sm font-medium mb-3">Notification Preferences</p>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label htmlFor="notif-sound">Sound Notifications</Label>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Play a sound when a notification arrives — important for long-running tasks
+                          </p>
+                        </div>
+                        <Switch
+                          id="notif-sound"
+                          checked={settings.notificationSound}
+                          onCheckedChange={(v) => updateSetting("notificationSound", v)}
+                        />
+                      </div>
+
+                      {settings.notificationSound && (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label>Sound Style</Label>
+                            <p className="text-xs text-muted-foreground mt-0.5">Tone used for incoming notifications</p>
+                          </div>
+                          <Select
+                            value={settings.notificationSoundStyle}
+                            onValueChange={(v) => updateSetting("notificationSoundStyle", v as AppSettings["notificationSoundStyle"])}
+                          >
+                            <SelectTrigger className="w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="chime">Chime</SelectItem>
+                              <SelectItem value="alert">Alert</SelectItem>
+                              <SelectItem value="success">Success</SelectItem>
+                              <SelectItem value="error">Error</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </>

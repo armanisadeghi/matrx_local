@@ -16,6 +16,9 @@ export interface AppSettings {
   proxyPort: number;
   // Instance
   instanceName: string;
+  // Notifications
+  notificationSound: boolean;
+  notificationSoundStyle: "chime" | "alert" | "success" | "error";
 }
 
 const DEFAULTS: AppSettings = {
@@ -27,6 +30,8 @@ const DEFAULTS: AppSettings = {
   proxyEnabled: true,
   proxyPort: 22180,
   instanceName: "My Computer",
+  notificationSound: true,
+  notificationSoundStyle: "chime",
 };
 
 export async function loadSettings(): Promise<AppSettings> {
@@ -166,6 +171,8 @@ export function mergeCloudSettings(
     launchOnStartup: cloud.launch_on_startup !== undefined ? Boolean(cloud.launch_on_startup) : local.launchOnStartup,
     minimizeToTray: cloud.minimize_to_tray !== undefined ? Boolean(cloud.minimize_to_tray) : local.minimizeToTray,
     instanceName: (cloud.instance_name as string) || local.instanceName,
+    notificationSound: cloud.notification_sound !== undefined ? Boolean(cloud.notification_sound) : local.notificationSound,
+    notificationSoundStyle: (cloud.notification_sound_style as AppSettings["notificationSoundStyle"]) || local.notificationSoundStyle,
   };
 }
 
@@ -182,5 +189,7 @@ export function settingsToCloud(settings: AppSettings): Record<string, unknown> 
     launch_on_startup: settings.launchOnStartup,
     minimize_to_tray: settings.minimizeToTray,
     instance_name: settings.instanceName,
+    notification_sound: settings.notificationSound,
+    notification_sound_style: settings.notificationSoundStyle,
   };
 }

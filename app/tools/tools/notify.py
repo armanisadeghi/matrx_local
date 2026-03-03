@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-import subprocess
+import time
 
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
@@ -17,13 +17,29 @@ IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
 
 
-async def tool_notify(
-    session: ToolSession,
+async def _broadcast_notification(title: str, message: str, level: str = "info") -> None:
+    """Broadcast a notification event to all connected WebSocket clients."""
+    try:
+        from app.main import websocket_manager
+        await websocket_manager.broadcast_notification(title, message, level)
+    except Exception as e:
+        logger.debug("Failed to broadcast notification to WS clients: %s", e)
+
+
+async def send_notification(
     title: str,
     message: str,
     timeout: int = 10,
+    level: str = "info",
+    broadcast: bool = True,
 ) -> ToolResult:
-    """Send a native OS notification."""
+    """
+    Core notification logic — fires the OS popup and broadcasts to all WS clients.
+    Called by both tool_notify (via WebSocket tool call) and the /notify REST endpoint
+    (used by the cloud / AI server to push notifications to the user).
+    """
+    os_fired = False
+
     # Try plyer first (cross-platform, works on macOS/Windows with desktop)
     try:
         from plyer import notification
@@ -33,73 +49,81 @@ async def tool_notify(
             app_name="Matrx Local",
             timeout=timeout,
         )
-        return ToolResult(output=f"Notification sent: {title}")
+        os_fired = True
     except ImportError:
         pass
     except Exception as e:
         logger.debug("plyer notification failed: %s", e)
 
     # Platform-specific fallbacks
-    try:
-        if IS_MACOS:
-            script = (
-                f'display notification {_osa_str(message)} '
-                f'with title {_osa_str(title)}'
-            )
-            proc = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode == 0:
-                return ToolResult(output=f"Notification sent: {title}")
+    if not os_fired:
+        try:
+            if IS_MACOS:
+                script = (
+                    f'display notification {_osa_str(message)} '
+                    f'with title {_osa_str(title)}'
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    "osascript", "-e", script,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=10)
+                os_fired = proc.returncode == 0
 
-        elif IS_WINDOWS:
-            # PowerShell toast notification
-            ps_script = (
-                f"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; "
-                f"$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
-                f"$template.SelectSingleNode('//text[@id=1]').InnerText = '{_ps_escape(title)}'; "
-                f"$template.SelectSingleNode('//text[@id=2]').InnerText = '{_ps_escape(message)}'; "
-                f"$toast = [Windows.UI.Notifications.ToastNotification]::new($template); "
-                f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Matrx Local').Show($toast)"
-            )
-            proc = await asyncio.create_subprocess_exec(
-                "powershell.exe", "-NonInteractive", "-Command", ps_script,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode == 0:
-                return ToolResult(output=f"Notification sent: {title}")
+            elif IS_WINDOWS:
+                ps_script = (
+                    f"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; "
+                    f"$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+                    f"$template.SelectSingleNode('//text[@id=1]').InnerText = '{_ps_escape(title)}'; "
+                    f"$template.SelectSingleNode('//text[@id=2]').InnerText = '{_ps_escape(message)}'; "
+                    f"$toast = [Windows.UI.Notifications.ToastNotification]::new($template); "
+                    f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Matrx Local').Show($toast)"
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    "powershell.exe", "-NonInteractive", "-Command", ps_script,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=10)
+                os_fired = proc.returncode == 0
 
-        elif IS_LINUX:
-            # notify-send (libnotify) — available in most desktop Linux distros
-            proc = await asyncio.create_subprocess_exec(
-                "notify-send", "-t", str(timeout * 1000), title, message,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode == 0:
-                return ToolResult(output=f"Notification sent: {title}")
-            # WSL / headless fallback — just log
-            logger.info("NOTIFY [%s]: %s", title, message)
-            return ToolResult(
-                output=f"Notification logged (no display detected): {title} — {message}",
-            )
+            elif IS_LINUX:
+                proc = await asyncio.create_subprocess_exec(
+                    "notify-send", "-t", str(timeout * 1000), title, message,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=10)
+                os_fired = proc.returncode == 0
 
-    except FileNotFoundError as e:
-        logger.debug("Notification binary not found: %s", e)
-    except Exception as e:
-        logger.debug("Notification fallback failed: %s", e)
+        except FileNotFoundError as e:
+            logger.debug("Notification binary not found: %s", e)
+        except Exception as e:
+            logger.debug("Notification fallback failed: %s", e)
 
-    # Last resort: log it
-    logger.info("NOTIFY [%s]: %s", title, message)
+    if not os_fired:
+        logger.info("NOTIFY [%s]: %s", title, message)
+
+    # Always broadcast to connected UI clients regardless of OS popup outcome
+    if broadcast:
+        await _broadcast_notification(title, message, level)
+
     return ToolResult(
-        output=f"Notification sent (logged only — no notification daemon available): {title}",
+        output=f"Notification sent: {title}",
+        metadata={"os_fired": os_fired, "title": title, "message": message, "level": level},
     )
+
+
+async def tool_notify(
+    session: ToolSession,
+    title: str,
+    message: str,
+    timeout: int = 10,
+    level: str = "info",
+) -> ToolResult:
+    """Send a native OS desktop notification and broadcast it to the UI."""
+    return await send_notification(title, message, timeout, level, broadcast=True)
 
 
 def _osa_str(s: str) -> str:

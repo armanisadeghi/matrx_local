@@ -15,7 +15,9 @@ import { AuthCallback } from "@/pages/AuthCallback";
 import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/hooks/use-theme";
+import { useNotifications } from "@/hooks/use-notifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { Loader2 } from "lucide-react";
 
 export default function App() {
@@ -30,6 +32,11 @@ export default function App() {
     engineVersion,
     refresh,
   } = useEngine();
+
+  const notif = useNotifications();
+
+  // Keep only the 3 most recent for the toast stack
+  const toasts = notif.notifications.slice(0, 3);
 
   if (auth.loading) {
     return (
@@ -49,7 +56,21 @@ export default function App() {
             {!auth.isAuthenticated ? (
               <Route path="*" element={<Login auth={auth} />} />
             ) : (
-              <Route element={<AppLayout engineStatus={status} engineUrl={url} engineVersion={engineVersion} user={auth.user} onSignOut={auth.signOut} />}>
+              <Route element={
+                <AppLayout
+                  engineStatus={status}
+                  engineUrl={url}
+                  engineVersion={engineVersion}
+                  user={auth.user}
+                  onSignOut={auth.signOut}
+                  notifications={notif.notifications}
+                  unreadCount={notif.unreadCount}
+                  onMarkRead={notif.markRead}
+                  onMarkAllRead={notif.markAllRead}
+                  onDismissNotification={notif.dismiss}
+                  onClearAllNotifications={notif.clearAll}
+                />
+              }>
                 <Route
                   index
                   element={
@@ -137,6 +158,7 @@ export default function App() {
             )}
           </Routes>
         </HashRouter>
+        <NotificationToastContainer toasts={toasts} onDismiss={notif.dismiss} />
       </TooltipProvider>
     </ErrorBoundary>
   );

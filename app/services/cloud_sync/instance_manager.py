@@ -17,7 +17,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-INSTANCE_FILE = Path.home() / ".matrx" / "instance.json"
+from app.config import MATRX_HOME_DIR
+INSTANCE_FILE = MATRX_HOME_DIR / "instance.json"
 
 
 def _stable_machine_id() -> str:

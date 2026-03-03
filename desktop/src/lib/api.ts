@@ -1125,6 +1125,23 @@ class EngineAPI {
     return resp.json();
   }
 
+  /**
+   * Fetch all named path aliases as resolved absolute paths from the engine.
+   *
+   * Use this instead of ever constructing paths in React or any remote caller.
+   * The engine knows the user's OS, drive letter, and configuration — React does not.
+   *
+   * Example usage:
+   *   const paths = await engine.getPaths();
+   *   engine.invokeTool("Read", { file_path: paths.resolved.settings });
+   *
+   * Or use the alias directly in tool calls (engine resolves it):
+   *   engine.invokeTool("Read", { file_path: "@matrx/local.json" });
+   */
+  async getPaths(): Promise<EnginePaths> {
+    return this.request<EnginePaths>("/system/paths");
+  }
+
   /** Open a system folder (logs or data) in the file manager. */
   async openSystemFolder(folder: "logs" | "data"): Promise<{ opened: string }> {
     return this.request<{ opened: string }>("/system/open-folder", {
@@ -1386,6 +1403,37 @@ export interface CapabilitiesResponse {
 export interface InstallCapabilityResult {
   success: boolean;
   message: string;
+}
+
+// ---- Path types ----
+
+/**
+ * Named path aliases and resolved absolute paths on the user's machine.
+ * Returned by GET /system/paths.  React and microservices should fetch this
+ * once on startup and never construct OS paths themselves.
+ */
+export interface EnginePaths {
+  /** Logical alias → absolute directory path (e.g. "@matrx" → "C:\Users\arman\.matrx") */
+  aliases: {
+    "@matrx": string;
+    "@docs": string;
+    "@temp": string;
+    "@data": string;
+    "@logs": string;
+    "@home": string;
+  };
+  /** Named locations with their full absolute paths. */
+  resolved: {
+    discovery: string;    // local.json — engine discovery
+    settings: string;     // settings.json
+    instance: string;     // instance.json
+    documents: string;    // user documents root
+    temp: string;         // temp / cache root
+    screenshots: string;  // screenshot output dir
+    data: string;         // persistent app data root
+    logs: string;         // log file dir
+    config: string;       // app config dir
+  };
 }
 
 // Singleton instance

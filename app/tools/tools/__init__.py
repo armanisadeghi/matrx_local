@@ -38,22 +38,35 @@ def open_path_cross_platform(path_str: str) -> tuple[bool, str]:
 
     Returns (success, message).
     """
-    import os
+    # Strip trailing separator — explorer.exe chokes on "C:\\foo\\" but handles "C:\\foo"
+    clean = path_str.rstrip("/\\") or path_str
 
     system = platform.system()
     try:
         if system == "Darwin":
-            subprocess.Popen(["open", path_str])
+            subprocess.Popen(["open", clean])
         elif system == "Windows":
-            os.startfile(path_str)  # type: ignore[attr-defined]
+            # explorer.exe is more reliable than os.startfile() when the Python
+            # process runs without a window station (e.g. as a background service).
+            # /select highlights the item if it's a file; for directories it just opens them.
+            import os
+
+            if os.path.isfile(clean):
+                subprocess.Popen(["explorer.exe", f"/select,{clean}"])
+            else:
+                subprocess.Popen(["explorer.exe", clean])
         elif is_wsl():
             wsl_path = subprocess.check_output(
-                ["wslpath", "-w", path_str], text=True
+                ["wslpath", "-w", clean], text=True
             ).strip()
-            subprocess.Popen(["explorer.exe", wsl_path])
+            # Strip trailing backslash from wslpath output too
+            wsl_clean = wsl_path.rstrip("\\")
+            subprocess.Popen(["explorer.exe", wsl_clean])
         else:
             if shutil.which("xdg-open"):
-                subprocess.Popen(["xdg-open", path_str])
+                subprocess.Popen(["xdg-open", clean])
+            elif shutil.which("nautilus"):
+                subprocess.Popen(["nautilus", clean])
             else:
                 return True, f"No file manager available. Path: {path_str}"
         return True, f"Opened {path_str}"

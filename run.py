@@ -36,6 +36,7 @@ from PIL import Image
 from pystray import Icon, Menu, MenuItem
 
 from app.main import app
+from app.config import MATRX_HOME_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ STATIC_DIR = BUNDLE_DIR / "static"
 
 DEFAULT_PORT = 22140
 MAX_PORT_SCAN = 20
-DISCOVERY_DIR = Path.home() / ".matrx"
+DISCOVERY_DIR = MATRX_HOME_DIR
 DISCOVERY_FILE = DISCOVERY_DIR / "local.json"
 
 

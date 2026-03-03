@@ -148,9 +148,85 @@ async def tool_system_info(
     return ToolResult(output="\n".join(lines), metadata=info)
 
 
-async def tool_screenshot(
+def _get_screen_geometry() -> list[dict]:
+    """Return a list of monitor dicts with keys: index, x, y, width, height, is_primary."""
+    monitors: list[dict] = []
+    try:
+        import screeninfo
+
+        for i, m in enumerate(screeninfo.get_monitors()):
+            monitors.append(
+                {
+                    "index": i + 1,
+                    "x": m.x,
+                    "y": m.y,
+                    "width": m.width,
+                    "height": m.height,
+                    "is_primary": getattr(m, "is_primary", i == 0),
+                    "name": getattr(m, "name", f"Monitor {i + 1}"),
+                }
+            )
+        return monitors
+    except ImportError:
+        pass
+
+    # Fallback: try tkinter for basic primary-screen dimensions
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.withdraw()
+        w, h = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.destroy()
+        monitors.append(
+            {"index": 1, "x": 0, "y": 0, "width": w, "height": h, "is_primary": True, "name": "Primary"}
+        )
+    except Exception:
+        pass
+
+    return monitors
+
+
+async def tool_list_screens(
     session: ToolSession,
 ) -> ToolResult:
+    """List all connected monitors with their geometry."""
+    monitors = _get_screen_geometry()
+    if not monitors:
+        return ToolResult(
+            type=ToolResultType.ERROR,
+            output="Could not detect screen geometry. Install 'screeninfo' for multi-monitor support.",
+        )
+
+    lines = []
+    for m in monitors:
+        primary = " (primary)" if m.get("is_primary") else ""
+        lines.append(
+            f"Monitor {m['index']}{primary}: {m['width']}x{m['height']} at ({m['x']}, {m['y']})  name={m['name']}"
+        )
+
+    return ToolResult(
+        output="\n".join(lines),
+        metadata={"monitors": monitors, "count": len(monitors)},
+    )
+
+
+async def tool_screenshot(
+    session: ToolSession,
+    monitor: int | str = "all",
+    region: list[int] | None = None,
+) -> ToolResult:
+    """Capture a screenshot.
+
+    Args:
+        monitor: Which display to capture.
+                 - "all"     : full virtual desktop (all monitors combined, default)
+                 - "primary" : the primary monitor only
+                 - 1, 2, …   : specific monitor by 1-based index (use ListScreens to discover)
+        region: Optional [x, y, width, height] crop within the selected monitor's coordinate space.
+                Coordinates are absolute screen pixels when monitor="all", or relative to the
+                chosen monitor's top-left corner otherwise.
+    """
     try:
         from PIL import ImageGrab
     except ImportError:
@@ -159,8 +235,72 @@ async def tool_screenshot(
             output="Screenshot requires Pillow with ImageGrab support.",
         )
 
+    bbox: tuple[int, int, int, int] | None = None
+    monitor_meta: dict = {}
+
+    if monitor == "all":
+        # all_screens=True ensures all displays are included on every platform
+        all_screens = True
+    else:
+        all_screens = False
+        monitors = _get_screen_geometry()
+
+        if monitor == "primary":
+            target = next((m for m in monitors if m.get("is_primary")), monitors[0] if monitors else None)
+        else:
+            try:
+                idx = int(monitor)
+            except (ValueError, TypeError):
+                return ToolResult(
+                    type=ToolResultType.ERROR,
+                    output=f"Invalid monitor value '{monitor}'. Use 'all', 'primary', or a 1-based integer index.",
+                )
+            target = next((m for m in monitors if m["index"] == idx), None)
+            if target is None:
+                available = [m["index"] for m in monitors]
+                return ToolResult(
+                    type=ToolResultType.ERROR,
+                    output=f"Monitor {idx} not found. Available monitors: {available}. Use ListScreens to see all displays.",
+                )
+
+        if target:
+            monitor_meta = target
+            if region:
+                if len(region) != 4:
+                    return ToolResult(
+                        type=ToolResultType.ERROR,
+                        output="region must be [x, y, width, height] with exactly 4 values.",
+                    )
+                rx, ry, rw, rh = region
+                # Translate relative coords to absolute screen space
+                bbox = (
+                    target["x"] + rx,
+                    target["y"] + ry,
+                    target["x"] + rx + rw,
+                    target["y"] + ry + rh,
+                )
+            else:
+                bbox = (
+                    target["x"],
+                    target["y"],
+                    target["x"] + target["width"],
+                    target["y"] + target["height"],
+                )
+
+    if region and monitor == "all":
+        if len(region) != 4:
+            return ToolResult(
+                type=ToolResultType.ERROR,
+                output="region must be [x, y, width, height] with exactly 4 values.",
+            )
+        rx, ry, rw, rh = region
+        bbox = (rx, ry, rx + rw, ry + rh)
+
     try:
-        screenshot = ImageGrab.grab()
+        screenshot = ImageGrab.grab(bbox=bbox, all_screens=all_screens)
+    except TypeError:
+        # Older Pillow versions don't have all_screens
+        screenshot = ImageGrab.grab(bbox=bbox)
     except OSError as e:
         return ToolResult(type=ToolResultType.ERROR, output=f"Screenshot failed: {e}")
 
@@ -173,10 +313,22 @@ async def tool_screenshot(
     image_bytes = filepath.read_bytes()
     b64 = base64.b64encode(image_bytes).decode()
 
+    w, h = screenshot.size
+    meta: dict = {
+        "path": str(filepath),
+        "width": w,
+        "height": h,
+        "monitor": monitor,
+    }
+    if monitor_meta:
+        meta["monitor_info"] = monitor_meta
+    if region:
+        meta["region"] = region
+
     return ToolResult(
-        output=f"Screenshot captured: {filepath} ({len(image_bytes)} bytes)",
+        output=f"Screenshot captured: {filepath} ({w}x{h}, {len(image_bytes)} bytes)",
         image=ImageData(media_type="image/png", base64_data=b64),
-        metadata={"path": str(filepath)},
+        metadata=meta,
     )
 
 

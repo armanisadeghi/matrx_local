@@ -7,21 +7,20 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from app.api.browser_events import handle_browser_event
 from app.api.system_control import get_system_info
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
-from app.config import BASE_DIR, LOG_DIR, TEMP_DIR
+from app.config import BASE_DIR, LOG_DIR, TEMP_DIR, MATRX_HOME_DIR, DOCUMENTS_BASE_DIR, DATA_DIR, CONFIG_DIR
 from app.services.screenshots.capture import take_screenshot
 from app.utils.directory_utils.generate_directory_structure import (
     get_structure_with_common_configs,
 )
 
 from pathlib import Path
-
-from app.config import DATA_DIR
 
 # Initialize the APIRouter
 router = APIRouter()
@@ -85,6 +84,54 @@ async def system_info():
         raise HTTPException(
             status_code=500, detail=f"Error fetching system info: {str(e)}"
         )
+
+
+@router.get("/system/paths")
+async def system_paths():
+    """Return all named path aliases as resolved absolute paths.
+
+    React and microservices use this to learn where things actually live on
+    the current user's machine.  They should never construct paths themselves.
+
+    Response shape:
+    {
+      "aliases": {
+        "@matrx":  "/home/arman/.matrx",
+        "@docs":   "/home/arman/.matrx/documents",
+        "@temp":   "/home/arman/.matrx/temp",       // or OS cache dir
+        "@data":   "...",
+        "@logs":   "...",
+        "@home":   "/home/arman"
+      },
+      "resolved": {
+        "discovery":  "/home/arman/.matrx/local.json",
+        "settings":   "/home/arman/.matrx/settings.json",
+        "documents":  "/home/arman/.matrx/documents",
+        "temp":       "...",
+        "data":       "...",
+        "logs":       "...",
+        "config":     "...",
+        "screenshots":"..."
+      }
+    }
+    """
+    from app.tools.session import _build_alias_map
+
+    aliases = {alias: str(path) for alias, path in _build_alias_map().items()}
+    return {
+        "aliases": aliases,
+        "resolved": {
+            "discovery":   str(MATRX_HOME_DIR / "local.json"),
+            "settings":    str(MATRX_HOME_DIR / "settings.json"),
+            "instance":    str(MATRX_HOME_DIR / "instance.json"),
+            "documents":   str(DOCUMENTS_BASE_DIR),
+            "temp":        str(TEMP_DIR),
+            "screenshots": str(TEMP_DIR / "screenshots"),
+            "data":        str(DATA_DIR),
+            "logs":        str(LOG_DIR),
+            "config":      str(CONFIG_DIR),
+        },
+    }
 
 
 @router.post("/system/open-folder")
@@ -322,3 +369,35 @@ async def generate_directory_structure(
         raise HTTPException(
             status_code=500, detail=f"Error generating directory structure: {str(e)}"
         )
+
+
+# ── Push Notifications ──────────────────────────────────────────────────────
+
+
+class NotifyRequest(BaseModel):
+    title: str = Field(description="Notification title.")
+    message: str = Field(description="Notification body text.")
+    timeout: int = Field(default=10, ge=1, le=60, description="OS popup display seconds.")
+    level: str = Field(default="info", description="Severity: info | success | warning | error")
+
+
+@router.post("/notify")
+async def push_notification(body: NotifyRequest):
+    """
+    Push a notification to the user from the cloud AI or any external caller.
+    Fires the native OS popup AND broadcasts a 'notification' WebSocket event
+    to every connected UI client.
+    """
+    from app.tools.tools.notify import send_notification
+    result = await send_notification(
+        title=body.title,
+        message=body.message,
+        timeout=body.timeout,
+        level=body.level,
+        broadcast=True,
+    )
+    return {
+        "status": "ok",
+        "output": result.output,
+        "os_fired": result.metadata.get("os_fired", False),
+    }

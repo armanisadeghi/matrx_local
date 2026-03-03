@@ -3,7 +3,16 @@ import { Bell, Send, CheckCircle2, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AiBadge } from "@/components/tools/panels/AiBadge";
+
+type NotifyLevel = "info" | "success" | "warning" | "error";
 
 interface NotifyPanelProps {
   onInvoke: (toolName: string, params: Record<string, unknown>) => Promise<void>;
@@ -12,22 +21,30 @@ interface NotifyPanelProps {
 }
 
 export function NotifyPanel({ onInvoke, loading, result }: NotifyPanelProps) {
-  const [title, setTitle]   = useState("Matrx Notification");
-  const [body, setBody]     = useState("");
-  const [sent, setSent]     = useState(false);
+  const [title, setTitle] = useState("Matrx Notification");
+  const [body, setBody]   = useState("");
+  const [level, setLevel] = useState<NotifyLevel>("info");
+  const [sent, setSent]   = useState(false);
 
   const isSuccess = result && (result as { type?: string }).type !== "error";
 
   const send = useCallback(async () => {
     if (!body.trim()) return;
-    await onInvoke("Notify", { title, body });
+    await onInvoke("Notify", { title, message: body, level });
     setSent(true);
     setTimeout(() => setSent(false), 3000);
-  }, [onInvoke, title, body]);
+  }, [onInvoke, title, body, level]);
+
+  const levelColors: Record<NotifyLevel, string> = {
+    info:    "text-sky-400",
+    success: "text-emerald-400",
+    warning: "text-amber-400",
+    error:   "text-red-400",
+  };
 
   return (
     <div className="flex h-full flex-col gap-4 p-5 overflow-auto">
-      <AiBadge text="Your AI can send native desktop notifications" />
+      <AiBadge text="Your AI can send desktop notifications and in-app alerts" />
 
       {/* Preview card */}
       <div className="rounded-2xl border bg-card/50 p-4 space-y-3">
@@ -36,10 +53,9 @@ export function NotifyPanel({ onInvoke, loading, result }: NotifyPanelProps) {
           <span className="text-xs text-muted-foreground">Notification Preview</span>
         </div>
 
-        {/* Fake macOS notification preview */}
         <div className="rounded-xl border border-border/60 bg-background/80 backdrop-blur-sm shadow-lg p-3 flex items-start gap-3">
           <div className="h-10 w-10 rounded-xl bg-primary/20 flex items-center justify-center shrink-0">
-            <Bell className="h-5 w-5 text-primary" />
+            <Bell className={`h-5 w-5 ${levelColors[level]}`} />
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold truncate">{title || "Title…"}</p>
@@ -57,10 +73,24 @@ export function NotifyPanel({ onInvoke, loading, result }: NotifyPanelProps) {
             placeholder="Notification title" className="mt-1" />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Body</label>
+          <label className="text-xs font-medium text-muted-foreground">Message</label>
           <Textarea value={body} onChange={(e) => setBody(e.target.value)}
             placeholder="Write your notification message…"
             rows={4} className="mt-1 resize-none" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Level</label>
+          <Select value={level} onValueChange={(v) => setLevel(v as NotifyLevel)}>
+            <SelectTrigger className="mt-1">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="info">Info</SelectItem>
+              <SelectItem value="success">Success</SelectItem>
+              <SelectItem value="warning">Warning</SelectItem>
+              <SelectItem value="error">Error</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <Button onClick={send} disabled={loading || !body.trim()}
@@ -70,7 +100,7 @@ export function NotifyPanel({ onInvoke, loading, result }: NotifyPanelProps) {
               : ""
           }`}>
           {sent || isSuccess ? (
-            <><CheckCircle2 className="h-4 w-4" /> Notification Sent!</>
+            <><CheckCircle2 className="h-4 w-4" /> Sent — check the bell!</>
           ) : (
             <><Send className="h-4 w-4" /> Send Notification</>
           )}
@@ -78,9 +108,12 @@ export function NotifyPanel({ onInvoke, loading, result }: NotifyPanelProps) {
       </div>
 
       {/* Info */}
-      <div className="rounded-xl border border-dashed border-muted-foreground/20 p-3 text-center">
-        <p className="text-xs text-muted-foreground">
-          Notifications appear in your OS notification center. Make sure permission is granted.
+      <div className="rounded-xl border border-dashed border-muted-foreground/20 p-3 space-y-1">
+        <p className="text-xs text-muted-foreground text-center">
+          Fires an OS system tray popup <em>and</em> appears in the bell icon above.
+        </p>
+        <p className="text-xs text-muted-foreground text-center">
+          This is the same path the cloud AI uses to alert you during long-running tasks.
         </p>
       </div>
     </div>

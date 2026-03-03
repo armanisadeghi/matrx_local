@@ -22,7 +22,8 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-LOCAL_SETTINGS_FILE = Path.home() / ".matrx" / "settings.json"
+from app.config import MATRX_HOME_DIR
+LOCAL_SETTINGS_FILE = MATRX_HOME_DIR / "settings.json"
 
 # Default settings — every possible setting with its default value
 DEFAULT_SETTINGS: dict[str, Any] = {

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 
 from fastapi import WebSocket
 
@@ -177,6 +176,24 @@ class WebSocketManager:
     async def broadcast(self, message: str) -> None:
         for conn in self.connections.values():
             await self._send(conn, {"type": "broadcast", "output": message})
+
+    async def broadcast_notification(
+        self,
+        title: str,
+        message: str,
+        level: str = "info",
+    ) -> None:
+        """Push a notification event to every connected UI client."""
+        import time as _time
+        payload = {
+            "type": "notification",
+            "title": title,
+            "message": message,
+            "level": level,
+            "timestamp": int(_time.time() * 1000),
+        }
+        for conn in self.connections.values():
+            await self._send(conn, payload)
 
     @property
     def active_count(self) -> int:

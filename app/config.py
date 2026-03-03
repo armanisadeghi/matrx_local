@@ -1,4 +1,6 @@
 import os
+import platform
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -6,6 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 APP_NAME = "MatrxLocal"
+APP_NAME_SLUG = "matrx-local"  # lowercase-hyphen form for Linux paths
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1")
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
 
@@ -36,21 +39,104 @@ SCRAPER_SERVER_URL = os.getenv("SCRAPER_SERVER_URL", "https://scraper.app.matrxs
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
 
-# Documents — local base directory for .md files
-DOCUMENTS_BASE_DIR = Path(
-    os.getenv("DOCUMENTS_BASE_DIR", str(Path.home() / ".matrx" / "documents"))
-)
+# ---------------------------------------------------------------------------
+# Platform-aware storage roots
+#
+# Development (running from source):
+#   All paths fall back to  <project_root>/system/...  so nothing changes for
+#   your local workflow — the "system" folder keeps working exactly as before.
+#
+# Installed / frozen app (PyInstaller, Tauri sidecar):
+#   Paths follow OS conventions so the app behaves like a proper desktop app
+#   and doesn't write user data next to its binaries.
+#
+#   Windows  → %APPDATA%\MatrxLocal\          (Roaming — per-user, synced)
+#              %LOCALAPPDATA%\MatrxLocal\      (Local  — per-user, not synced, for cache/temp/logs)
+#   macOS    → ~/Library/Application Support/MatrxLocal/
+#              ~/Library/Logs/MatrxLocal/
+#              ~/Library/Caches/MatrxLocal/
+#   Linux    → ~/.local/share/matrx-local/
+#              ~/.cache/matrx-local/
+#
+# Every path can be overridden by an env var for power users / CI.
+# ---------------------------------------------------------------------------
 
-TEMP_DIR = BASE_DIR / "system" / "temp"
-DATA_DIR = BASE_DIR / "system" / "data"
-CONFIG_DIR = BASE_DIR / "system" / "config"
-LOCAL_LOG_DIR = BASE_DIR / "system" / "logs"
-CODE_SAVES_DIR = BASE_DIR / "system" / "temp" / "code_saves"
+_is_frozen = getattr(sys, "frozen", False)  # True when running as PyInstaller bundle
+_system = platform.system()
+
+
+def _platform_data_dir() -> Path:
+    """Persistent user data — settings, DB, manifests."""
+    if _system == "Windows":
+        base = Path(os.getenv("APPDATA", Path.home() / "AppData" / "Roaming"))
+        return base / APP_NAME
+    if _system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    # Linux / BSD
+    xdg = os.getenv("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+    return Path(xdg) / APP_NAME_SLUG
+
+
+def _platform_cache_dir() -> Path:
+    """Ephemeral cache / temp — screenshots, audio, extracted files, etc."""
+    if _system == "Windows":
+        base = Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        return base / APP_NAME / "cache"
+    if _system == "Darwin":
+        return Path.home() / "Library" / "Caches" / APP_NAME
+    xdg = os.getenv("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+    return Path(xdg) / APP_NAME_SLUG
+
+
+def _platform_log_dir() -> Path:
+    """Application log files."""
+    if _system == "Windows":
+        base = Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        return base / APP_NAME / "logs"
+    if _system == "Darwin":
+        return Path.home() / "Library" / "Logs" / APP_NAME
+    xdg = os.getenv("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))
+    return Path(xdg) / APP_NAME_SLUG / "logs"
+
+
+# In development (not frozen) keep everything inside the repo so nothing moves.
+# In a frozen/installed build use the OS-appropriate locations.
+_dev_system = BASE_DIR / "system"
+
+if _is_frozen:
+    _data_root  = _platform_data_dir()
+    _cache_root = _platform_cache_dir()
+    _log_root   = _platform_log_dir()
+else:
+    _data_root  = _dev_system / "data"
+    _cache_root = _dev_system / "temp"
+    _log_root   = _dev_system / "logs"
+
+# Env-var overrides (always respected regardless of frozen/dev)
+TEMP_DIR       = Path(os.getenv("MATRX_TEMP_DIR",   str(_cache_root)))
+DATA_DIR       = Path(os.getenv("MATRX_DATA_DIR",   str(_data_root)))
+CONFIG_DIR     = Path(os.getenv("MATRX_CONFIG_DIR", str(_data_root / "config")))
+LOCAL_LOG_DIR  = Path(os.getenv("MATRX_LOG_DIR",    str(_log_root)))
+CODE_SAVES_DIR = TEMP_DIR / "code_saves"
+
+# ---------------------------------------------------------------------------
+# ~/.matrx  — discovery file, settings, instance ID, scheduled tasks
+#
+# This is intentionally always in the user's home regardless of platform.
+# It is a small, well-known location that lets multiple tools (web, mobile,
+# CLI) discover the running engine without platform-specific logic on their end.
+# ---------------------------------------------------------------------------
+MATRX_HOME_DIR = Path(os.getenv("MATRX_HOME_DIR", str(Path.home() / ".matrx")))
+
+# Documents — user's note store (user-configurable, defaults to ~/.matrx/documents)
+DOCUMENTS_BASE_DIR = Path(
+    os.getenv("DOCUMENTS_BASE_DIR", str(MATRX_HOME_DIR / "documents"))
+)
 
 LOG_VCPRINT = True
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG")
-LOG_DIR = os.getenv("LOG_DIR", LOCAL_LOG_DIR)
+LOG_DIR = Path(os.getenv("LOG_DIR", str(LOCAL_LOG_DIR)))
 MAX_LOG_FILE_SIZE = int(os.getenv("MAX_LOG_FILE_SIZE", 10 * 1024 * 1024))
 BACKUP_COUNT = int(os.getenv("BACKUP_COUNT", 5))
 

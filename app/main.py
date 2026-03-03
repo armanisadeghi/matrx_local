@@ -248,14 +248,20 @@ app.include_router(capabilities_router)
 #   POST /chat/ai/api/ai/cancel/{request_id}
 app.mount("/chat/ai", build_ai_sub_app())
 
+# CORS must be the outermost middleware so preflight OPTIONS requests are
+# handled before any other middleware (auth, logging) can inspect or reject them.
+# Starlette processes add_middleware() calls in reverse — last registered = outermost.
+# So register CORS last to guarantee it wraps everything.
 app.add_middleware(AuthMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-User-Id", "X-API-Key", "Accept"],
+    expose_headers=["Content-Type"],
+    max_age=600,
 )
 
 
