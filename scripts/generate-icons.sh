@@ -3,7 +3,7 @@
 # Generate Tauri app icons from a source PNG.
 #
 # Usage:
-#   ./scripts/generate-icons.sh [source.png]
+#   ./scripts/generate-icons.sh [source.png] 
 #
 # If no source is provided, generates placeholder icons.
 # Requires: ImageMagick (convert command)
