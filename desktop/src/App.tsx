@@ -97,7 +97,7 @@ export default function App() {
                   }
                 />
                 <Route
-                  path="documents"
+                  path="notes"
                   element={
                     <Documents
                       engineStatus={status}

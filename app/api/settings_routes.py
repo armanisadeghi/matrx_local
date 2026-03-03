@@ -1,19 +1,22 @@
 """Engine runtime settings — configurable from the desktop UI.
 
-Now integrates with the cloud settings sync engine so that engine-specific
-settings (headless_scraping, scrape_delay) are persisted alongside other
-settings in the unified settings store.
+Includes:
+- Engine settings (headless_scraping, scrape_delay)
+- Forbidden URL list
+- Storage path overrides (GET /settings/paths, PUT /settings/paths/{name},
+  DELETE /settings/paths/{name} to reset to default)
 """
 
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import Any, List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services.cloud_sync.settings_sync import get_settings_sync
+from app.services.paths.manager import all_paths, set_path, reset_path, safe_dir
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -114,3 +117,55 @@ async def replace_forbidden_urls(body: ForbiddenUrlsResponse) -> ForbiddenUrlsRe
     sync = get_settings_sync()
     sync.set("forbidden_urls", normalized)
     return ForbiddenUrlsResponse(urls=normalized)
+
+
+# ── Storage paths ─────────────────────────────────────────────────────────────
+
+class PathEntry(BaseModel):
+    name: str
+    label: str
+    current: str
+    default: str
+    is_custom: bool
+    user_visible: bool
+
+
+class PathUpdateRequest(BaseModel):
+    path: str
+
+
+@router.get("/paths", response_model=list[PathEntry])
+async def get_paths() -> list[dict[str, Any]]:
+    """Return all storage path configurations with their current resolved values."""
+    return all_paths()
+
+
+@router.put("/paths/{name}", response_model=PathEntry)
+async def update_path(name: str, req: PathUpdateRequest) -> dict[str, Any]:
+    """Set a custom path for a named storage location.
+
+    The directory is created immediately to validate accessibility.
+    If creation fails, a 422 is returned with the error message.
+    """
+    result = set_path(name, req.path)
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result.get("error", "Could not create directory"))
+    # Return the updated entry
+    entries = all_paths()
+    entry = next((e for e in entries if e["name"] == name), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Path '{name}' not found")
+    return entry
+
+
+@router.delete("/paths/{name}", response_model=PathEntry)
+async def reset_path_to_default(name: str) -> dict[str, Any]:
+    """Reset a path override back to the compiled default."""
+    result = reset_path(name)
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result.get("error", "Reset failed"))
+    entries = all_paths()
+    entry = next((e for e in entries if e["name"] == name), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Path '{name}' not found")
+    return entry

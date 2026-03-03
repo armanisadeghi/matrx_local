@@ -21,32 +21,46 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from app.config import MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR, MATRX_WORKSPACES_DIR, MATRX_DATA_DIR
-
 logger = logging.getLogger(__name__)
 
-# Backward-compat alias used by sync_engine and supabase_client imports
+# These module-level names are used as fallbacks during import-time initialisation
+# before the path manager is fully loaded. After that, DocumentFileManager.base_dir
+# resolves dynamically via safe_dir() so user overrides take effect immediately.
+from app.config import MATRX_NOTES_DIR
+
+# Backward-compat alias
 DOCUMENTS_BASE_DIR = MATRX_NOTES_DIR
 
-# Sync metadata lives inside a hidden .sync subfolder of the notes dir
-SYNC_DIR = MATRX_NOTES_DIR / ".sync"
-STATE_FILE = SYNC_DIR / "state.json"
-MAPPINGS_FILE = SYNC_DIR / "mappings.json"
-CONFLICTS_DIR = SYNC_DIR / "conflicts"
+
+def _notes_dir() -> Path:
+    """Resolve the current notes directory — respects user overrides."""
+    try:
+        from app.services.paths.manager import safe_dir
+        return safe_dir("notes")
+    except Exception:
+        MATRX_NOTES_DIR.mkdir(parents=True, exist_ok=True)
+        return MATRX_NOTES_DIR
 
 
 def _ensure_dirs() -> None:
-    """Create all required directory structures on first run."""
-    # User-visible dirs
-    MATRX_NOTES_DIR.mkdir(parents=True, exist_ok=True)
-    MATRX_FILES_DIR.mkdir(parents=True, exist_ok=True)
-    MATRX_CODE_DIR.mkdir(parents=True, exist_ok=True)
-    # Hidden dirs
-    MATRX_WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
-    MATRX_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    # Sync metadata
-    SYNC_DIR.mkdir(parents=True, exist_ok=True)
-    CONFLICTS_DIR.mkdir(parents=True, exist_ok=True)
+    """Create all required directory structures, respecting user path overrides."""
+    try:
+        from app.services.paths.manager import safe_dir
+        safe_dir("notes")
+        safe_dir("files")
+        safe_dir("code")
+        safe_dir("workspaces")
+        safe_dir("agent_data")
+    except Exception:
+        # Path manager not yet initialised — use defaults
+        from app.config import MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR, MATRX_WORKSPACES_DIR, MATRX_DATA_DIR
+        for d in [MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR, MATRX_WORKSPACES_DIR, MATRX_DATA_DIR]:
+            d.mkdir(parents=True, exist_ok=True)
+
+    # Sync metadata always lives inside the resolved notes dir
+    notes = _notes_dir()
+    (notes / ".sync").mkdir(parents=True, exist_ok=True)
+    (notes / ".sync" / "conflicts").mkdir(parents=True, exist_ok=True)
 
 
 def _safe_filename(name: str) -> str:
@@ -64,14 +78,20 @@ def content_hash(content: str) -> str:
 class DocumentFileManager:
     """Manages .md/.txt notes on the local filesystem.
 
-    base_dir defaults to MATRX_NOTES_DIR (~/Documents/Matrx/Notes/).
-    All paths returned are relative to base_dir so they are portable across
-    machines and OS installs.
+    base_dir resolves dynamically from the path manager so user-configured
+    path overrides take effect without a restart. Pass an explicit base_dir
+    only in tests.
     """
 
     def __init__(self, base_dir: Path | None = None) -> None:
-        self.base_dir = base_dir or MATRX_NOTES_DIR
+        self._explicit_base = base_dir
         _ensure_dirs()
+
+    @property
+    def base_dir(self) -> Path:
+        if self._explicit_base is not None:
+            return self._explicit_base
+        return _notes_dir()
 
     # ── Path helpers ─────────────────────────────────────────────────────────
 

@@ -27,6 +27,10 @@ import {
   Ban,
   Plus,
   X,
+  HardDrive,
+  RotateCcw,
+  Pencil,
+  Check,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
@@ -60,6 +64,7 @@ import {
   settingsToCloud,
   type AppSettings,
 } from "@/lib/settings";
+import type { StoragePath } from "@/lib/api";
 
 type AuthActions = ReturnType<typeof useAuth>;
 
@@ -107,6 +112,13 @@ export function Settings({
 
   // Forbidden URLs state
   const [forbiddenUrls, setForbiddenUrls] = useState<string[]>([]);
+
+  // Storage paths state
+  const [storagePaths, setStoragePaths] = useState<StoragePath[]>([]);
+  const [pathEditing, setPathEditing] = useState<string | null>(null);  // name of path being edited
+  const [pathEditValue, setPathEditValue] = useState("");
+  const [pathSaving, setPathSaving] = useState<string | null>(null);
+  const [pathError, setPathError] = useState<string | null>(null);
   const [newForbiddenUrl, setNewForbiddenUrl] = useState("");
   const [forbiddenSaving, setForbiddenSaving] = useState(false);
 
@@ -121,6 +133,7 @@ export function Settings({
     loadProxyStatus();
     loadInstanceInfo();
     loadCapabilities();
+    loadStoragePaths();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineStatus]);
 
@@ -157,6 +170,53 @@ export function Settings({
       setForbiddenUrls(data?.urls ?? []);
     } catch { /* non-critical */ }
   }, [engineStatus]);
+
+  const loadStoragePaths = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const paths = await engine.getStoragePaths();
+      setStoragePaths(paths);
+    } catch { /* non-critical */ }
+  }, [engineStatus]);
+
+  const startEditPath = useCallback((p: StoragePath) => {
+    setPathEditing(p.name);
+    setPathEditValue(p.current);
+    setPathError(null);
+  }, []);
+
+  const cancelEditPath = useCallback(() => {
+    setPathEditing(null);
+    setPathEditValue("");
+    setPathError(null);
+  }, []);
+
+  const savePathEdit = useCallback(async (name: string) => {
+    setPathSaving(name);
+    setPathError(null);
+    try {
+      const updated = await engine.setStoragePath(name, pathEditValue);
+      setStoragePaths(prev => prev.map(p => p.name === name ? updated : p));
+      setPathEditing(null);
+    } catch (err) {
+      setPathError(err instanceof Error ? err.message : "Failed to set path");
+    } finally {
+      setPathSaving(null);
+    }
+  }, [pathEditValue]);
+
+  const resetPathToDefault = useCallback(async (name: string) => {
+    setPathSaving(name);
+    setPathError(null);
+    try {
+      const updated = await engine.resetStoragePath(name);
+      setStoragePaths(prev => prev.map(p => p.name === name ? updated : p));
+    } catch (err) {
+      setPathError(err instanceof Error ? err.message : "Failed to reset path");
+    } finally {
+      setPathSaving(null);
+    }
+  }, []);
 
   const addForbiddenUrl = useCallback(async () => {
     const url = newForbiddenUrl.trim();
@@ -341,6 +401,7 @@ export function Settings({
 
   const settingsTabs = [
     { value: "general", label: "General" },
+    { value: "storage", label: "Storage" },
     { value: "proxy", label: "Proxy" },
     { value: "scraping", label: "Scraping" },
     { value: "capabilities", label: "Capabilities" },
@@ -509,6 +570,158 @@ export function Settings({
                   </div>
                 </CardContent>
               </Card>
+            </>
+          )}
+
+          {/* ── Storage Tab ────────────────────────────────── */}
+          {activeTab === "storage" && (
+            <>
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <HardDrive className="h-4 w-4 text-primary" /> Storage Locations
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Customise where Matrx stores your files. Changes take effect immediately — the engine creates the directory if it doesn't exist, and falls back to the default if the path is inaccessible.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {engineStatus !== "connected" && (
+                    <p className="text-xs text-muted-foreground">Connect to the engine to manage storage paths.</p>
+                  )}
+
+                  {pathError && (
+                    <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
+                      <AlertCircle className="mr-1.5 inline h-4 w-4" />
+                      {pathError}
+                    </div>
+                  )}
+
+                  {storagePaths.filter(p => p.user_visible).map((p, i) => (
+                    <div key={p.name}>
+                      {i > 0 && <Separator className="my-3" />}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label className="text-sm font-medium">{p.label}</Label>
+                            {p.is_custom && (
+                              <Badge variant="secondary" className="ml-2 text-xs">Custom</Badge>
+                            )}
+                          </div>
+                          <div className="flex gap-1.5">
+                            {p.is_custom && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs text-muted-foreground"
+                                disabled={pathSaving === p.name}
+                                onClick={() => resetPathToDefault(p.name)}
+                                title="Reset to default"
+                              >
+                                {pathSaving === p.name ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => pathEditing === p.name ? cancelEditPath() : startEditPath(p)}
+                            >
+                              {pathEditing === p.name ? (
+                                <X className="h-3.5 w-3.5" />
+                              ) : (
+                                <Pencil className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+
+                        {pathEditing === p.name ? (
+                          <div className="flex gap-2">
+                            <Input
+                              value={pathEditValue}
+                              onChange={e => setPathEditValue(e.target.value)}
+                              placeholder={p.default}
+                              className="h-8 font-mono text-xs flex-1"
+                              onKeyDown={e => {
+                                if (e.key === "Enter") savePathEdit(p.name);
+                                if (e.key === "Escape") cancelEditPath();
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              className="h-8 px-3"
+                              disabled={pathSaving === p.name || !pathEditValue.trim()}
+                              onClick={() => savePathEdit(p.name)}
+                            >
+                              {pathSaving === p.name ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Check className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          </div>
+                        ) : (
+                          <code className="block truncate rounded bg-muted px-2 py-1 text-xs font-mono text-muted-foreground">
+                            {p.current}
+                          </code>
+                        )}
+
+                        {!p.is_custom && (
+                          <p className="text-xs text-muted-foreground">Default location</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {storagePaths.length > 0 && (
+                    <div className="pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={loadStoragePaths}
+                        disabled={engineStatus !== "connected"}
+                      >
+                        <RefreshCw className="h-4 w-4" /> Refresh
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {storagePaths.filter(p => !p.user_visible).length > 0 && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base text-muted-foreground">
+                      <HardDrive className="h-4 w-4" /> Internal Directories
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Engine internals — only change these if you have a specific reason to.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {storagePaths.filter(p => !p.user_visible).map((p, i) => (
+                      <div key={p.name}>
+                        {i > 0 && <Separator className="my-3" />}
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-sm font-medium text-muted-foreground">{p.label}</Label>
+                            {p.is_custom && <Badge variant="secondary" className="text-xs">Custom</Badge>}
+                          </div>
+                          <code className="block truncate rounded bg-muted px-2 py-1 text-xs font-mono text-muted-foreground">
+                            {p.current}
+                          </code>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
             </>
           )}
 

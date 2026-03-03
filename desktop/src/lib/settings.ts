@@ -21,6 +21,16 @@ export interface AppSettings {
   notificationSoundStyle: "chime" | "alert" | "success" | "error";
 }
 
+/** One storage path entry as returned by GET /settings/paths */
+export interface StoragePath {
+  name: string;
+  label: string;
+  current: string;
+  default: string;
+  is_custom: boolean;
+  user_visible: boolean;
+}
+
 const DEFAULTS: AppSettings = {
   launchOnStartup: false,
   minimizeToTray: true,

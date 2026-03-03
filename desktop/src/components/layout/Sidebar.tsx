@@ -25,7 +25,7 @@ interface SidebarProps {
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/chat", icon: MessageSquare, label: "Chat" },
-  { to: "/documents", icon: FileText, label: "Documents" },
+  { to: "/notes", icon: FileText, label: "Notes" },
   { to: "/scraping", icon: Globe, label: "Scraping" },
   { to: "/tools", icon: Wrench, label: "Tools" },
   { to: "/ports", icon: Network, label: "Port Manager" },

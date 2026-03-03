@@ -31,26 +31,32 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _build_alias_map() -> dict[str, Path]:
-    from app.config import (
-        MATRX_HOME_DIR, MATRX_USER_DIR,
-        MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR,
-        MATRX_WORKSPACES_DIR, MATRX_DATA_DIR,
-        TEMP_DIR, DATA_DIR, LOG_DIR,
-    )
+    from app.config import MATRX_HOME_DIR, MATRX_USER_DIR, TEMP_DIR, DATA_DIR, LOG_DIR
+    try:
+        from app.services.paths.manager import safe_dir
+        notes      = safe_dir("notes")
+        files      = safe_dir("files")
+        code       = safe_dir("code")
+        workspaces = safe_dir("workspaces")
+        agentdata  = safe_dir("agent_data")
+    except Exception:
+        from app.config import MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR, MATRX_WORKSPACES_DIR, MATRX_DATA_DIR
+        notes, files, code = MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR
+        workspaces, agentdata = MATRX_WORKSPACES_DIR, MATRX_DATA_DIR
+
     return {
-        "@matrx":      MATRX_HOME_DIR,       # ~/.matrx/  — engine internals
-        "@notes":      MATRX_NOTES_DIR,       # ~/Documents/Matrx/Notes/
-        "@files":      MATRX_FILES_DIR,       # ~/Documents/Matrx/Files/
-        "@code":       MATRX_CODE_DIR,        # ~/Documents/Matrx/Code/
-        "@workspaces": MATRX_WORKSPACES_DIR,  # ~/.matrx/workspaces/
-        "@agentdata":  MATRX_DATA_DIR,        # ~/.matrx/data/
-        "@user":       MATRX_USER_DIR,        # ~/Documents/Matrx/
+        "@matrx":      MATRX_HOME_DIR,   # ~/.matrx/  — engine internals
+        "@notes":      notes,            # user-configured notes dir
+        "@files":      files,            # user-configured files dir
+        "@code":       code,             # user-configured code dir
+        "@workspaces": workspaces,       # agent workspace dir
+        "@agentdata":  agentdata,        # agent internal data
+        "@user":       MATRX_USER_DIR,   # ~/Documents/Matrx/
         "@temp":       TEMP_DIR,
         "@data":       DATA_DIR,
         "@logs":       Path(str(LOG_DIR)),
         "@home":       Path.home(),
-        # Deprecated alias — keep for backward compat
-        "@docs":       MATRX_NOTES_DIR,
+        "@docs":       notes,            # deprecated alias — same as @notes
     }
 
 

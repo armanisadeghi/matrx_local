@@ -232,11 +232,7 @@ app.include_router(api_router)
 app.include_router(tool_router, prefix="/tools", tags=["tools"])
 app.include_router(remote_scraper_router)
 app.include_router(settings_router)
-# Register under /notes (canonical) and /documents (backward-compat alias).
-# Both prefixes hit the same local-first handlers. Old frontends keep working
-# while new code migrates to /notes.
 app.include_router(document_router, prefix="/notes")
-app.include_router(document_router, prefix="/documents", include_in_schema=False)
 app.include_router(proxy_router)
 app.include_router(cloud_sync_router)
 app.include_router(chat_router)

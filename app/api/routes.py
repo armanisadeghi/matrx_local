@@ -121,8 +121,18 @@ async def system_paths():
     }
     """
     from app.tools.session import _build_alias_map
+    from app.services.paths.manager import safe_dir
 
     aliases = {alias: str(path) for alias, path in _build_alias_map().items()}
+
+    notes   = safe_dir("notes")
+    files   = safe_dir("files")
+    code    = safe_dir("code")
+    ws      = safe_dir("workspaces")
+    adata   = safe_dir("agent_data")
+    tmp     = safe_dir("temp")
+    logs_d  = safe_dir("logs")
+
     return {
         "aliases": aliases,
         "resolved": {
@@ -130,18 +140,18 @@ async def system_paths():
             "discovery":   str(MATRX_HOME_DIR / "local.json"),
             "settings":    str(MATRX_HOME_DIR / "settings.json"),
             "instance":    str(MATRX_HOME_DIR / "instance.json"),
-            "agent_data":  str(MATRX_DATA_DIR),
-            "workspaces":  str(MATRX_WORKSPACES_DIR),
-            # User-visible
+            "agent_data":  str(adata),
+            "workspaces":  str(ws),
+            # User-visible (may be user-overridden)
             "user_root":   str(MATRX_USER_DIR),
-            "notes":       str(MATRX_NOTES_DIR),
-            "files":       str(MATRX_FILES_DIR),
-            "code":        str(MATRX_CODE_DIR),
+            "notes":       str(notes),
+            "files":       str(files),
+            "code":        str(code),
             # Platform cache
-            "temp":        str(TEMP_DIR),
-            "screenshots": str(TEMP_DIR / "screenshots"),
+            "temp":        str(tmp),
+            "screenshots": str(tmp / "screenshots"),
             "data":        str(DATA_DIR),
-            "logs":        str(LOG_DIR),
+            "logs":        str(logs_d),
             "config":      str(CONFIG_DIR),
         },
     }

@@ -68,6 +68,16 @@ export interface EngineSettings {
   scrape_delay: number;
 }
 
+/** A configurable storage path entry from GET /settings/paths */
+export interface StoragePath {
+  name: string;       // e.g. "notes"
+  label: string;      // e.g. "Notes folder"
+  current: string;    // resolved absolute path
+  default: string;    // compiled default path
+  is_custom: boolean; // true if user has set a custom path
+  user_visible: boolean; // whether to show in Settings UI
+}
+
 export interface SystemInfo {
   platform: string;
   architecture: string;
@@ -170,6 +180,41 @@ class EngineAPI {
       body: JSON.stringify(settings),
     });
     if (!resp.ok) throw new Error(`Failed to update settings: ${resp.status}`);
+    return resp.json();
+  }
+
+  // ── Storage path management ────────────────────────────────────────────
+
+  /** List all configurable storage paths with their current resolved values. */
+  async getStoragePaths(): Promise<StoragePath[]> {
+    return this.request<StoragePath[]>("/settings/paths");
+  }
+
+  /** Set a custom path for a named storage location. */
+  async setStoragePath(name: string, path: string): Promise<StoragePath> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/settings/paths/${name}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ path }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`Failed to set path: ${text}`);
+    }
+    return resp.json();
+  }
+
+  /** Reset a storage path to its compiled default. */
+  async resetStoragePath(name: string): Promise<StoragePath> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/settings/paths/${name}`, {
+      method: "DELETE",
+      headers,
+    });
+    if (!resp.ok) throw new Error(`Failed to reset path: ${resp.status}`);
     return resp.json();
   }
 

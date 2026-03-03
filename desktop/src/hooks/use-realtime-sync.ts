@@ -1,5 +1,5 @@
 /**
- * Supabase Realtime subscription for document sync.
+ * Supabase Realtime subscription for notes sync.
  *
  * Subscribes to changes on the `notes` and `note_folders` tables,
  * then notifies the engine to pull updates and refresh the UI.
@@ -41,7 +41,7 @@ export function useRealtimeSync({
     }
 
     const channel = supabase
-      .channel("documents-sync")
+      .channel("notes-sync")
       .on(
         "postgres_changes",
         {
@@ -87,7 +87,7 @@ export function useRealtimeSync({
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
-          console.log("[realtime] Subscribed to document changes");
+          console.log("[realtime] Subscribed to notes changes");
         } else if (status === "CHANNEL_ERROR") {
           console.warn("[realtime] Channel error — will retry");
         }
