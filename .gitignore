@@ -135,7 +135,7 @@ dmypy.json
 /armani_dev/secrets/
 /armani/
 /_armani/
-
+.history/
 
 
 # pytype static type analyzer

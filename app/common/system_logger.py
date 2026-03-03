@@ -9,6 +9,40 @@ from app.config import LOG_LEVEL, LOG_DIR, MAX_LOG_FILE_SIZE, BACKUP_COUNT, LOCA
 # Ensure the log directory exists
 os.makedirs(LOG_DIR, exist_ok=True)
 
+# ANSI color codes — only used on the console, never in file logs.
+_RESET  = "\033[0m"
+_BOLD   = "\033[1m"
+_CYAN   = "\033[36m"
+_GREEN  = "\033[32m"
+_YELLOW = "\033[33m"
+_RED    = "\033[31m"
+_BRIGHT_RED = "\033[91m"
+
+_LEVEL_COLORS = {
+    logging.DEBUG:    _CYAN,
+    logging.INFO:     _GREEN,
+    logging.WARNING:  _YELLOW,
+    logging.ERROR:    _RED,
+    logging.CRITICAL: _BRIGHT_RED + _BOLD,
+}
+
+
+class ColorFormatter(logging.Formatter):
+    """Console formatter that colorizes the level name."""
+
+    def __init__(self, fmt: str):
+        super().__init__()
+        self._fmt = fmt
+
+    def format(self, record: logging.LogRecord) -> str:
+        color = _LEVEL_COLORS.get(record.levelno, "")
+        levelname = f"{color}{record.levelname}{_RESET}" if color else record.levelname
+        # Build the message manually so we can slot in the colored level name.
+        msg = record.getMessage()
+        if record.exc_info:
+            msg += "\n" + self.formatException(record.exc_info)
+        return self._fmt.replace("%(levelname)s", levelname).replace("%(message)s", msg)
+
 
 class SensitiveDataFilter(logging.Filter):
     """Mask tokens in log messages."""
@@ -78,9 +112,7 @@ class SystemLogger:
         for u_logger_name in ["uvicorn", "uvicorn.access", "uvicorn.error"]:
             logging.getLogger(u_logger_name).addFilter(sensitive_filter)
 
-        # Console Handler
-        # LOCAL_DEV=True: clean output without timestamp or logger name
-        # LOCAL_DEV=False: full timestamp for server/production logs
+        # Console Handler — colored output, no timestamp in LOCAL_DEV mode
         self.console_handler = logging.StreamHandler(sys.stdout)
         self.console_handler.setLevel(level)
         console_fmt = (
@@ -88,7 +120,7 @@ class SystemLogger:
             if LOCAL_DEV
             else "%(asctime)s - %(levelname)s - %(message)s"
         )
-        self.console_handler.setFormatter(logging.Formatter(console_fmt))
+        self.console_handler.setFormatter(ColorFormatter(console_fmt))
         self.logger.addHandler(self.console_handler)
 
         # File Handler with Concurrent Rotation — always full timestamp, no logger name

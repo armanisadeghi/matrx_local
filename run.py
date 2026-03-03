@@ -228,10 +228,10 @@ def create_tray_image() -> Image.Image:
 
 
 def _build_log_config() -> dict:
-    """Build uvicorn log_config that matches our console format.
+    """Build uvicorn log_config.
 
-    LOCAL_DEV=True  → no timestamp, no logger name: "INFO - message"
-    LOCAL_DEV=False → full timestamp:                "2026-... - INFO - message"
+    - uvicorn.error  → our console format (startup/shutdown messages)
+    - uvicorn.access → suppressed entirely (our middleware already logs every request)
     """
     from app.config import LOCAL_DEV
 
@@ -241,16 +241,15 @@ def _build_log_config() -> dict:
         "disable_existing_loggers": False,
         "formatters": {
             "default": {"format": fmt},
-            "access": {"format": fmt},
         },
         "handlers": {
             "default": {"class": "logging.StreamHandler", "stream": "ext://sys.stdout", "formatter": "default"},
-            "access": {"class": "logging.StreamHandler", "stream": "ext://sys.stdout", "formatter": "access"},
+            "null":    {"class": "logging.NullHandler"},
         },
         "loggers": {
-            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+            "uvicorn":        {"handlers": ["default"], "level": "INFO",  "propagate": False},
+            "uvicorn.error":  {"handlers": ["default"], "level": "INFO",  "propagate": False},
+            "uvicorn.access": {"handlers": ["null"],    "level": "INFO",  "propagate": False},
         },
     }
 

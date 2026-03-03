@@ -261,39 +261,53 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    import json as _json
     import time as _time
 
     t0 = _time.monotonic()
+    path = request.url.path
+    query = str(request.url.query) if request.url.query else ""
+    display_path = f"{path}?{query}" if query else path
 
-    # Best-effort body preview for system logger (doesn't consume the stream).
+    # Health checks are noisy — log at DEBUG so they don't flood INFO output.
+    is_health = path in ("/health", "/tools/list")
+    log = logger.debug if is_health else logger.info
+
+    # Read body for mutating methods (doesn't consume the ASGI stream).
     body = None
     try:
-        if request.method in ["POST", "PUT", "PATCH"]:
+        if request.method in ("POST", "PUT", "PATCH"):
             body = await request.json()
             if body is not None:
                 body = _sanitize_body_for_log(body)
-        logger.info(
-            f"Request: {request.method} {_sanitize_url(request.url)} | Body: {body}"
-        )
     except Exception:
-        logger.info(f"Request: {request.method} {_sanitize_url(request.url)}")
+        pass
+
+    # ── Request line ──────────────────────────────────────────────────────────
+    if body is not None:
+        body_str = _json.dumps(body, indent=2, ensure_ascii=False)
+        log("→ %s %s\n%s", request.method, display_path, body_str)
+    else:
+        log("→ %s %s", request.method, display_path)
 
     response = await call_next(request)
     duration_ms = (_time.monotonic() - t0) * 1000
 
-    if response.status_code >= 400:
-        details = _format_request_details(request, body)
-        logger.error(f"Response Error {response.status_code}: {details}")
+    # ── Response line ─────────────────────────────────────────────────────────
+    if response.status_code >= 500:
+        logger.error("← %d %s %s  (%.0fms)", response.status_code, request.method, display_path, duration_ms)
+        logger.error("  %s", _format_request_details(request, body))
+    elif response.status_code >= 400:
+        logger.warning("← %d %s %s  (%.0fms)", response.status_code, request.method, display_path, duration_ms)
+        logger.warning("  %s", _format_request_details(request, body))
     else:
-        logger.info(
-            f"Response: {response.status_code} for {request.method} {_sanitize_url(request.url)}"
-        )
+        log("← %d %s  (%.0fms)", response.status_code, request.method, duration_ms)
 
-    # Write structured access-log entry.
+    # Write structured access-log entry (unchanged — consumed by UI).
     access_log.record(
         method=request.method,
-        path=request.url.path,
-        query=_sanitize_url(str(request.url.query or "")),
+        path=path,
+        query=_sanitize_url(query),
         origin=request.headers.get("origin", ""),
         user_agent=request.headers.get("user-agent", ""),
         status=response.status_code,

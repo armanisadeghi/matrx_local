@@ -116,3 +116,6 @@ First time a tool requiring them runs, macOS will prompt. Or grant manually in S
 - **Accessibility** → AI Matrx (for TypeText, MouseClick, Hotkey, FocusWindow)
 - **Screen Recording** → AI Matrx (for Screenshot tool)
 - **Microphone** → AI Matrx (for RecordAudio, TranscribeAudio)
+
+
+POWERSHELL KILL: Get-Process -Name python | Stop-Process -Force

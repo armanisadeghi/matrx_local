@@ -179,7 +179,7 @@ class ScraperEngine:
         if self._started:
             return
 
-        logger.info("[app/services/scraper/engine.py] ScraperEngine: starting")
+        logger.info("[scraper/engine.py] ScraperEngine: starting")
 
         config_mod = _import_scraper("app.config")
         settings_cls = config_mod.Settings
@@ -193,7 +193,7 @@ class ScraperEngine:
             self._settings = settings_cls()  # type: ignore[call-arg]
         except Exception:
             logger.exception(
-                "[app/services/scraper/engine.py] ScraperEngine: failed to load settings"
+                "[scraper/engine.py] ScraperEngine: failed to load settings"
             )
             return
 
@@ -205,15 +205,12 @@ class ScraperEngine:
             await browser_pool.start()
             self._browser_pool = browser_pool
             logger.info(
-                "[app/services/scraper/engine.py] ScraperEngine: browser pool started ✓ (size=%d)",
+                "[scraper/engine.py] ScraperEngine: browser pool started ✓ (size=%d)",
                 self._settings.PLAYWRIGHT_POOL_SIZE,
             )
         except Exception as pw_exc:
             logger.warning(
-                "[app/services/scraper/engine.py] ScraperEngine: Playwright unavailable — "
-                "browser fetching disabled. Falling back to curl-cffi.  Error: %s  "
-                "Tip: run 'uv sync --extra browser && uv run playwright install chromium'",
-                pw_exc,
+                "[scraper/engine.py] ScraperEngine: Playwright unavailable — "
             )
             self._browser_pool = None
 
@@ -259,9 +256,9 @@ class ScraperEngine:
         search_mod = _import_scraper("app.core.search")
         if self._settings.BRAVE_API_KEY:
             self._search_client = search_mod.BraveSearchClient(self._settings)
-            logger.info("[app/services/scraper/engine.py] ScraperEngine: Brave Search configured ✓")
+            logger.info("[scraper/engine.py] ScraperEngine: Brave Search configured ✓")
         else:
-            logger.info("[app/services/scraper/engine.py] ScraperEngine: no BRAVE_API_KEY — search disabled")
+            logger.info("[scraper/engine.py] ScraperEngine: no BRAVE_API_KEY — search disabled")
 
         orchestrator_mod = _import_scraper("app.core.orchestrator")
         self._orchestrator = orchestrator_mod.ScrapeOrchestrator(
@@ -275,7 +272,7 @@ class ScraperEngine:
 
         self._started = True
         logger.info(
-            "[app/services/scraper/engine.py] ScraperEngine: ready ✓ (browser=%s, search=%s)",
+            "[scraper/engine.py] ScraperEngine: ready ✓ (browser=%s, search=%s)",
             self._browser_pool is not None,
             self._search_client is not None,
         )
@@ -284,16 +281,16 @@ class ScraperEngine:
         if not self._started:
             return
 
-        logger.info("[app/services/scraper/engine.py] ScraperEngine: stopping")
+        logger.info("[scraper/engine.py] ScraperEngine: stopping")
 
         if self._browser_pool:
             try:
                 await self._browser_pool.stop()
             except Exception:
-                logger.exception("[app/services/scraper/engine.py] ScraperEngine: error stopping browser pool")
+                logger.exception("[scraper/engine.py] ScraperEngine: error stopping browser pool")
 
         self._started = False
-        logger.info("[app/services/scraper/engine.py] ScraperEngine: stopped")
+        logger.info("[scraper/engine.py] ScraperEngine: stopped")
 
 
 class _MemoryOnlyPageCache:

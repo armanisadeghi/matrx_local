@@ -96,17 +96,35 @@ async def tool_bash(
     return await _bash_foreground(session, command, timeout_s)
 
 
-async def _bash_foreground(session: ToolSession, command: str, timeout_s: float) -> ToolResult:
-    wrapped = _wrap_foreground(command, session.cwd)
-    shell_path = _get_shell()
+async def _launch_shell(cmd: str) -> asyncio.subprocess.Process:
+    """Launch a shell subprocess in a cross-platform way.
 
-    proc = await asyncio.create_subprocess_shell(
-        wrapped,
+    On Windows, asyncio.create_subprocess_shell does not accept the
+    `executable` kwarg reliably; we use create_subprocess_exec with PowerShell
+    directly instead.  On POSIX we keep the simpler create_subprocess_shell +
+    executable approach which has always worked.
+    """
+    if IS_WINDOWS:
+        shell_path = _get_shell()
+        return await asyncio.create_subprocess_exec(
+            shell_path, "-NoProfile", "-NonInteractive", "-Command", cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env=_shell_env(),
+        )
+    return await asyncio.create_subprocess_shell(
+        cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        executable=shell_path,
+        executable=_get_shell(),
         env=_shell_env(),
     )
+
+
+async def _bash_foreground(session: ToolSession, command: str, timeout_s: float) -> ToolResult:
+    wrapped = _wrap_foreground(command, session.cwd)
+
+    proc = await _launch_shell(wrapped)
 
     timed_out = False
     try:
@@ -139,16 +157,9 @@ async def _bash_foreground(session: ToolSession, command: str, timeout_s: float)
 
 async def _bash_background(session: ToolSession, command: str) -> ToolResult:
     shell_id = session.next_shell_id()
-    shell_path = _get_shell()
     wrapped = _wrap_background(command, session.cwd)
 
-    proc = await asyncio.create_subprocess_shell(
-        wrapped,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        executable=shell_path,
-        env=_shell_env(),
-    )
+    proc = await _launch_shell(wrapped)
 
     shell = BackgroundShell(shell_id=shell_id, process=proc)
     session.background_shells[shell_id] = shell
