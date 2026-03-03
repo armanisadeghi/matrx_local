@@ -167,10 +167,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path.rstrip("/") or "/"
 
-        # Skip auth for public routes, device status, and OPTIONS (CORS preflight).
+        # Skip auth for public routes, device status, fetch-proxy (iframe nav), and OPTIONS.
         if (
             path in _PUBLIC_PATHS
             or path.startswith("/devices/")
+            or path.startswith("/fetch-proxy")
             or request.method == "OPTIONS"
         ):
             return await call_next(request)

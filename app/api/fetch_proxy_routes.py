@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from app.common.system_logger import get_logger
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 router = APIRouter(prefix="/fetch-proxy", tags=["fetch-proxy"])
 
