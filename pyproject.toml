@@ -44,7 +44,7 @@ dependencies = [
     "pytesseract>=0.3.13",
     # Matrx
     "matrx-utils>=1.0.13",
-    "matrx-orm>=3.0.12",
+    "matrx-orm>=3.0.13",
     "matrx-ai>=0.1.7",
     "screeninfo>=0.8.1",
     # Media downloading & video processing
