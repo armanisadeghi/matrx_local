@@ -62,30 +62,67 @@ export function useAuth() {
     async (provider: Provider) => {
       update({ loading: true, error: null });
 
-      // In the Tauri desktop app, the webview origin (tauri://localhost) cannot
-      // receive OAuth callbacks from an external browser because it's not a
-      // publicly-routable URL.  Instead we redirect to the FastAPI sidecar
-      // which is always listening on localhost:22140 and IS reachable by any
-      // browser.  The sidecar captures the code and pushes it back to the
-      // webview via WebSocket, where we then call exchangeCodeForSession().
-      //
-      // In the web/dev build (no Tauri), we use the hash-router path on the
-      // page origin so the AuthCallback component can pick it up directly.
-      const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-      const redirectTo = isTauri
-        ? "http://localhost:22140/auth/callback"
-        : `${window.location.origin}/#/auth/callback`;
+      const isInTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo,
-          skipBrowserRedirect: false,
-        },
-      });
+      if (isInTauri) {
+        // ── Tauri desktop path ────────────────────────────────────────────
+        // CRITICAL: skipBrowserRedirect MUST be true in Tauri.
+        //
+        // With skipBrowserRedirect:false, Supabase JS calls:
+        //   window.location.href = authUrl
+        // This navigates the TAURI WEBVIEW itself away from the React app,
+        // destroying OAuthPending, the WebSocket connection, and any ability
+        // to receive the callback — that's why auth appeared to succeed but
+        // the app never resumed.
+        //
+        // Correct flow:
+        // 1. skipBrowserRedirect:true  → Supabase returns the URL without navigating
+        // 2. shell.open(url)           → opens URL in the SYSTEM BROWSER (not webview)
+        // 3. Webview stays on OAuthPending with WS connection alive
+        // 4. User completes OAuth in system browser
+        // 5. System browser → http://localhost:22140/auth/callback?code=X
+        // 6. FastAPI sidecar broadcasts { type:"oauth-callback", code:"X" } via WS
+        // 7. OAuthPending receives it → exchangeCodeForSession() → navigate("/")
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider,
+          options: {
+            redirectTo: "http://localhost:22140/auth/callback",
+            skipBrowserRedirect: true,
+          },
+        });
 
-      if (error) {
-        update({ loading: false, error: error.message });
+        if (error) {
+          update({ loading: false, error: error.message });
+          return;
+        }
+
+        if (data?.url) {
+          try {
+            // Open in the system browser — this does NOT navigate the webview.
+            const { open } = await import("@tauri-apps/plugin-shell");
+            await open(data.url);
+          } catch (shellErr) {
+            console.error("[auth] shell.open failed:", shellErr);
+            // Last-resort fallback: window.open targets a new window, not the webview.
+            window.open(data.url, "_blank");
+          }
+        }
+      } else {
+        // ── Web / dev browser path ────────────────────────────────────────
+        // Standard browser flow: Supabase navigates the tab to the auth URL.
+        // After OAuth completes, Supabase redirects to /#/auth/callback where
+        // AuthCallback.tsx extracts and sets the session.
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider,
+          options: {
+            redirectTo: `${window.location.origin}/#/auth/callback`,
+            skipBrowserRedirect: false,
+          },
+        });
+
+        if (error) {
+          update({ loading: false, error: error.message });
+        }
       }
     },
     [update]
