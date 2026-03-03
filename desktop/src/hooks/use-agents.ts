@@ -87,7 +87,7 @@ async function fetchUserPromptsFromSupabase(): Promise<{
   }
 
   if (sharedResult.status === "fulfilled" && !sharedResult.value.error && sharedResult.value.data) {
-    for (const row of sharedResult.value.data as { prompt_id: string; prompts: RawPromptRow | null }[]) {
+    for (const row of (sharedResult.value.data as unknown as { prompt_id: string; prompts: RawPromptRow | null }[])) {
       if (row.prompts) {
         shared.push(shapeFromRow(row.prompts, "shared"));
       }
