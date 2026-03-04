@@ -1,12 +1,22 @@
 import asyncio
-import importlib.metadata
 import io
 import os
+import re
 import uuid
 import zipfile
+from pathlib import Path
 from typing import Optional
 
-_APP_VERSION = importlib.metadata.version("matrx-local")
+def _read_version() -> str:
+    """Read version directly from pyproject.toml — works without package install."""
+    try:
+        text = (Path(__file__).parent.parent.parent / "pyproject.toml").read_text()
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        return m.group(1) if m else "0.0.0"
+    except Exception:
+        return "0.0.0"
+
+_APP_VERSION = _read_version()
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse

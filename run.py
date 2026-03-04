@@ -21,10 +21,10 @@ can discover it without configuration.
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -32,7 +32,16 @@ import sys
 import threading
 from pathlib import Path
 
-_APP_VERSION = importlib.metadata.version("matrx-local")
+def _read_version() -> str:
+    """Read version directly from pyproject.toml — works without package install."""
+    try:
+        text = (Path(__file__).parent / "pyproject.toml").read_text()
+        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        return m.group(1) if m else "0.0.0"
+    except Exception:
+        return "0.0.0"
+
+_APP_VERSION = _read_version()
 
 import uvicorn
 from PIL import Image
