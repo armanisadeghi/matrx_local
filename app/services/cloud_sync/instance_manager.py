@@ -155,6 +155,55 @@ class InstanceManager:
             "ram_total_gb": info.get("ram_total_gb"),
         }
 
+    async def update_tunnel_url(self, tunnel_url: Optional[str], active: bool) -> bool:
+        """Push the current tunnel URL and active state to Supabase app_instances.
+
+        Called when a tunnel starts or stops. Best-effort — never raises.
+        Returns True on success, False on failure.
+        """
+        try:
+            from app.services.cloud_sync.settings_sync import get_settings_sync
+            from datetime import datetime, timezone
+            import httpx
+
+            sync = get_settings_sync()
+            if not sync.is_configured:
+                logger.debug("update_tunnel_url: settings sync not configured, skipping")
+                return False
+
+            now = datetime.now(timezone.utc).isoformat()
+            payload = {
+                "tunnel_url": tunnel_url,
+                "tunnel_active": active,
+                "tunnel_updated_at": now,
+                "last_seen": now,
+            }
+            url = (
+                f"{sync._supabase_url}/rest/v1/app_instances"
+                f"?instance_id=eq.{self.instance_id}&user_id=eq.{sync._user_id}"
+            )
+            headers = {
+                **sync._headers(),
+                "Prefer": "return=minimal",
+            }
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.patch(url, json=payload, headers=headers)
+                if resp.is_success:
+                    logger.debug(
+                        "Tunnel URL updated in Supabase: active=%s url=%s",
+                        active, tunnel_url,
+                    )
+                    return True
+                else:
+                    logger.warning(
+                        "update_tunnel_url failed: %d %s",
+                        resp.status_code, resp.text[:200],
+                    )
+                    return False
+        except Exception as exc:
+            logger.debug("update_tunnel_url exception: %s", exc)
+            return False
+
 
 # Module-level singleton
 _instance_manager: Optional[InstanceManager] = None

@@ -18,11 +18,13 @@ from app.api.permissions_routes import router as permissions_router
 from app.api.capabilities_routes import router as capabilities_router
 from app.api.auth import AuthMiddleware, auth_router
 from app.api.fetch_proxy_routes import router as fetch_proxy_router
-from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX
+from app.api.tunnel_routes import router as tunnel_router
+from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, TUNNEL_ENABLED
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
 from app.services.scraper.engine import get_scraper_engine
 from app.services.proxy.server import get_proxy_server
+from app.services.tunnel.manager import get_tunnel_manager
 from app.services.cloud_sync.settings_sync import get_settings_sync
 from app.services.ai.engine import initialize_matrx_ai, load_tools_and_register
 from app.tools.tools.scheduler import restore_scheduled_tasks
@@ -195,6 +197,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     # Phase 1: Initialize matrx-ai (loads env, registers DB if credentials present)
+    # This MUST run before build_ai_sub_app() is called — the matrx_ai imports
+    # inside that function try to access the DB config registered here.
     logger.info("[app/main.py] Phase 1: Initializing matrx-ai engine...")
     try:
         initialize_matrx_ai()
@@ -203,6 +207,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error(
             "[app/main.py] Phase 1: matrx-ai initialization FAILED — AI endpoints will not work. "
             "Check SUPABASE_MATRIX_* vars in .env",
+            exc_info=True,
+        )
+
+    # Phase 1b: Mount the matrx-ai sub-app now that the DB config is registered.
+    # This must happen after initialize_matrx_ai() because the matrx_ai module-level
+    # imports (agent router → resolver → cache → definition → executor → persistence →
+    # AiModelManager) trigger an auto-fetch that requires 'supabase_automation_matrix'
+    # to already be registered in the ORM config registry.
+    logger.info("[app/main.py] Phase 1b: Mounting matrx-ai sub-app...")
+    try:
+        app.mount("/chat/ai", build_ai_sub_app())
+        logger.info("[app/main.py] Phase 1b: matrx-ai sub-app mounted at /chat/ai ✓")
+    except Exception:
+        logger.error(
+            "[app/main.py] Phase 1b: matrx-ai sub-app mount FAILED — AI chat/agent endpoints will be unavailable",
             exc_info=True,
         )
 
@@ -265,6 +284,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "[app/main.py] Phase 4: HTTP proxy FAILED to start", exc_info=True
             )
 
+    # Phase 5: Start Cloudflare tunnel if enabled in settings or env
+    tunnel_enabled = settings_sync.get("tunnel_enabled", TUNNEL_ENABLED)
+    logger.info("[app/main.py] Phase 5: Tunnel enabled=%s", tunnel_enabled)
+    if tunnel_enabled:
+        try:
+            from app.services.tunnel.manager import get_tunnel_manager as _get_tm
+            _tm = _get_tm()
+            # Port is not known here — tunnel_routes.py stores it; we use 22140 as
+            # the default. The actual bound port is set by run.py via tunnel_start().
+            # Auto-start will use DEFAULT_PORT; the Settings UI can restart if needed.
+            _tunnel_url = await _tm.start(port=22140)
+            if _tunnel_url:
+                logger.info("[app/main.py] Phase 5: Tunnel started ✓ → %s", _tunnel_url)
+                try:
+                    from app.services.cloud_sync.instance_manager import get_instance_manager as _get_im
+                    await _get_im().update_tunnel_url(_tunnel_url, active=True)
+                except Exception:
+                    pass
+            else:
+                logger.warning("[app/main.py] Phase 5: Tunnel started but no URL captured yet")
+        except Exception:
+            logger.error("[app/main.py] Phase 5: Tunnel FAILED to start", exc_info=True)
+
     # Background heartbeat: updates last_seen and retries failed syncs
     async def _heartbeat_loop() -> None:
         while True:
@@ -310,6 +352,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error("[app/main.py] HTTP proxy failed to stop cleanly", exc_info=True)
 
     try:
+        tm = get_tunnel_manager()
+        if tm.running:
+            await tm.stop()
+            logger.info("[app/main.py] Tunnel stopped ✓")
+    except Exception:
+        logger.error("[app/main.py] Tunnel failed to stop cleanly", exc_info=True)
+
+    try:
         await engine.stop()
         logger.info("[app/main.py] Scraper engine stopped ✓")
     except Exception:
@@ -337,15 +387,12 @@ app.include_router(chat_router)
 app.include_router(permissions_router)
 app.include_router(capabilities_router)
 app.include_router(fetch_proxy_router)
+app.include_router(tunnel_router)
 
-# Mount the matrx-ai engine as a sub-application.
-# It has its own AuthMiddleware (sets AppContext + StreamEmitter per request).
-# Effective AI endpoint paths:
-#   POST /chat/ai/api/ai/chat
-#   POST /chat/ai/api/ai/agents/{agent_id}
-#   POST /chat/ai/api/ai/conversations/{conversation_id}
-#   POST /chat/ai/api/ai/cancel/{request_id}
-app.mount("/chat/ai", build_ai_sub_app())
+# NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler
+# (Phase 1b) AFTER initialize_matrx_ai() registers the DB config. Calling it here
+# at module level would crash because matrx_ai imports trigger an ORM auto-fetch
+# before the 'supabase_automation_matrix' config is registered.
 
 app.add_middleware(AuthMiddleware)
 

@@ -58,12 +58,27 @@ ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
 # Regex covers wildcard subdomains that can't be listed exhaustively:
 #   *.aimatrx.com, *.appmatrx.com, *.mymatrx.com, *.codematrx.com,
 #   *.matrxserver.com, *-armani-sadeghis-projects.vercel.app
+#   *.trycloudflare.com — Cloudflare quick-tunnel URLs (remote access)
 # This is used by CORSMiddleware's allow_origin_regex parameter.
 ALLOWED_ORIGIN_REGEX = (
     r"https://(.*\.)?(aimatrx|appmatrx|mymatrx|codematrx|matrxserver)\.com"
     r"|https://.*-armani-sadeghis-projects\.vercel\.app"
     r"|https://.*\.vercel\.app"  # covers preview deployments
+    r"|https://.*\.trycloudflare\.com"  # Cloudflare quick tunnels (remote access dev/testing)
 )
+
+# ---------------------------------------------------------------------------
+# Cloudflare Tunnel — remote access
+#
+# When CLOUDFLARE_TUNNEL_TOKEN is set, the engine starts a named tunnel on
+# startup (stable URL, survives restarts).  Without it, a quick-tunnel is
+# used (random *.trycloudflare.com URL, changes each restart).
+#
+# tunnel_enabled controls whether the tunnel starts automatically on boot.
+# It is also writable via PUT /settings so the desktop UI can toggle it.
+# ---------------------------------------------------------------------------
+CLOUDFLARE_TUNNEL_TOKEN = os.getenv("CLOUDFLARE_TUNNEL_TOKEN", "")
+TUNNEL_ENABLED = os.getenv("TUNNEL_ENABLED", "False").lower() in ("true", "1")
 
 # Remote scraper server — all DB access goes through this API, never directly.
 # Authenticated users' Supabase JWTs are accepted by the server — no API key needed for users.

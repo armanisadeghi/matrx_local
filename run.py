@@ -196,11 +196,11 @@ def find_available_port() -> int:
     )
 
 
-def write_discovery_file(port: int) -> None:
-    """Write the active port to ~/.matrx/local.json for frontend discovery."""
+def write_discovery_file(port: int, tunnel_url: str | None = None) -> None:
+    """Write the active port (and optional tunnel URL) to ~/.matrx/local.json."""
     try:
         DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: dict = {
             "port": port,
             "host": "127.0.0.1",
             "url": f"http://127.0.0.1:{port}",
@@ -208,10 +208,30 @@ def write_discovery_file(port: int) -> None:
             "pid": os.getpid(),
             "version": "1.0.25",
         }
+        if tunnel_url:
+            payload["tunnel_url"] = tunnel_url
+            payload["tunnel_ws"] = tunnel_url.replace("https://", "wss://") + "/ws"
         DISCOVERY_FILE.write_text(json.dumps(payload, indent=2))
         logger.info("Discovery file written: %s", DISCOVERY_FILE)
     except Exception:
         logger.warning("Failed to write discovery file", exc_info=True)
+
+
+def update_discovery_tunnel(tunnel_url: str | None) -> None:
+    """Update only the tunnel fields in the discovery file (called after tunnel starts)."""
+    try:
+        if not DISCOVERY_FILE.exists():
+            return
+        data = json.loads(DISCOVERY_FILE.read_text())
+        if tunnel_url:
+            data["tunnel_url"] = tunnel_url
+            data["tunnel_ws"] = tunnel_url.replace("https://", "wss://") + "/ws"
+        else:
+            data.pop("tunnel_url", None)
+            data.pop("tunnel_ws", None)
+        DISCOVERY_FILE.write_text(json.dumps(data, indent=2))
+    except Exception:
+        logger.debug("Failed to update tunnel in discovery file", exc_info=True)
 
 
 def remove_discovery_file() -> None:

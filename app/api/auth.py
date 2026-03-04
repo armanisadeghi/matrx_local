@@ -44,6 +44,9 @@ _PUBLIC_PATHS = frozenset(
         # OAuth callback — the external browser delivers this with no token.
         # Auth is completed inside the Tauri webview after the code is forwarded.
         "/auth/callback",
+        # Tunnel status — needed by mobile/remote clients before they have a
+        # session to check if the tunnel is active without authenticating first.
+        "/tunnel/status",
     }
 )
 

@@ -31,6 +31,9 @@ import {
   RotateCcw,
   Pencil,
   Check,
+  Radio,
+  QrCode,
+  Link,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
@@ -110,6 +113,17 @@ export function Settings({
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [installResult, setInstallResult] = useState<Record<string, { success: boolean; message: string }>>({});
 
+  // Tunnel / remote access state
+  const [tunnelStatus, setTunnelStatus] = useState<{
+    running: boolean;
+    url: string | null;
+    ws_url: string | null;
+    uptime_seconds: number;
+    mode: string;
+  } | null>(null);
+  const [tunnelLoading, setTunnelLoading] = useState(false);
+  const [tunnelCopied, setTunnelCopied] = useState(false);
+
   // Forbidden URLs state
   const [forbiddenUrls, setForbiddenUrls] = useState<string[]>([]);
 
@@ -134,6 +148,7 @@ export function Settings({
     loadInstanceInfo();
     loadCapabilities();
     loadStoragePaths();
+    loadTunnelStatus();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineStatus]);
 
@@ -319,6 +334,36 @@ export function Settings({
     }
   };
 
+  const loadTunnelStatus = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const status = await engine.get("/tunnel/status") as typeof tunnelStatus;
+      setTunnelStatus(status);
+    } catch {
+      // Non-critical
+    }
+  }, [engineStatus]);
+
+  const handleTunnelToggle = async (enable: boolean) => {
+    setTunnelLoading(true);
+    try {
+      const result = await engine.post(enable ? "/tunnel/start" : "/tunnel/stop", {}) as typeof tunnelStatus;
+      setTunnelStatus(result);
+    } catch (err) {
+      console.error("[Settings] Tunnel toggle failed:", err);
+    } finally {
+      setTunnelLoading(false);
+    }
+  };
+
+  const handleCopyTunnelUrl = () => {
+    if (tunnelStatus?.url) {
+      navigator.clipboard.writeText(tunnelStatus.url);
+      setTunnelCopied(true);
+      setTimeout(() => setTunnelCopied(false), 2000);
+    }
+  };
+
   // Proxy handlers
   const handleProxyTest = async () => {
     setProxyTesting(true);
@@ -403,6 +448,7 @@ export function Settings({
     { value: "general", label: "General" },
     { value: "storage", label: "Storage" },
     { value: "proxy", label: "Proxy" },
+    { value: "remote", label: "Remote Access" },
     { value: "scraping", label: "Scraping" },
     { value: "capabilities", label: "Capabilities" },
     { value: "cloud", label: "Cloud & Account" },
@@ -830,6 +876,219 @@ export function Settings({
                 )}
               </CardContent>
             </Card>
+          )}
+
+          {/* ── Remote Access Tab ────────────────────────────── */}
+          {activeTab === "remote" && (
+            <>
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Radio className="h-4 w-4 text-primary" /> Remote Access
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Open this engine to the internet so you can connect from your phone,
+                    tablet, or any browser — without port forwarding or a static IP.
+                    Powered by Cloudflare Tunnel.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {engineStatus !== "connected" && (
+                    <p className="text-xs text-muted-foreground">
+                      Connect to the engine to manage remote access.
+                    </p>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="tunnel-enabled">Enable Remote Access</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Start a secure tunnel so remote devices can connect to this engine
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {tunnelLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                      <Switch
+                        id="tunnel-enabled"
+                        checked={tunnelStatus?.running ?? false}
+                        disabled={tunnelLoading || engineStatus !== "connected"}
+                        onCheckedChange={handleTunnelToggle}
+                      />
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Tunnel Status</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {tunnelStatus?.running
+                          ? `Active · ${tunnelStatus.mode === "named" ? "Named tunnel (stable URL)" : "Quick tunnel (URL changes on restart)"}`
+                          : "Tunnel is not running"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={tunnelStatus?.running ? "success" : "secondary"}>
+                        {tunnelStatus?.running ? "Running" : "Stopped"}
+                      </Badge>
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={loadTunnelStatus}>
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {tunnelStatus?.running && tunnelStatus.url && (
+                    <>
+                      <Separator />
+
+                      <div className="space-y-2">
+                        <Label>Public URL</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Share this URL with any authorized device to connect remotely
+                        </p>
+                        <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
+                          <Link className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <code className="flex-1 truncate text-xs font-mono text-foreground">
+                            {tunnelStatus.url}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 shrink-0"
+                            onClick={handleCopyTunnelUrl}
+                            title="Copy URL"
+                          >
+                            {tunnelCopied
+                              ? <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />
+                              : <Copy className="h-3.5 w-3.5" />}
+                          </Button>
+                          <a
+                            href={tunnelStatus.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-muted-foreground hover:text-foreground"
+                            title="Open in browser"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>WebSocket URL</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Use this in your mobile app or custom client
+                        </p>
+                        <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
+                          <code className="flex-1 truncate text-xs font-mono text-muted-foreground">
+                            {tunnelStatus.ws_url}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 shrink-0"
+                            onClick={() => {
+                              if (tunnelStatus.ws_url) {
+                                navigator.clipboard.writeText(tunnelStatus.ws_url);
+                              }
+                            }}
+                            title="Copy WebSocket URL"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2 text-xs">
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <QrCode className="h-3.5 w-3.5" />
+                          <span>Scan on mobile to connect instantly</span>
+                        </div>
+                        <span className="font-mono text-muted-foreground">
+                          {tunnelStatus.uptime_seconds > 3600
+                            ? `${Math.floor(tunnelStatus.uptime_seconds / 3600)}h up`
+                            : tunnelStatus.uptime_seconds > 60
+                              ? `${Math.floor(tunnelStatus.uptime_seconds / 60)}m up`
+                              : `${Math.floor(tunnelStatus.uptime_seconds)}s up`}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {!tunnelStatus?.running && (
+                    <div className="rounded-lg border border-muted bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
+                      <p className="font-medium text-foreground/70">How it works</p>
+                      <p>
+                        Enabling remote access downloads a small <code className="font-mono bg-muted px-1 rounded">cloudflared</code> binary
+                        and starts a secure outbound tunnel to Cloudflare's network.
+                        No port forwarding or firewall changes are needed.
+                      </p>
+                      <p>
+                        For a stable URL that doesn't change on restart, add a
+                        <code className="font-mono bg-muted px-1 rounded mx-1">CLOUDFLARE_TUNNEL_TOKEN</code>
+                        to your <code className="font-mono bg-muted px-1 rounded">.env</code> file.
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Monitor className="h-4 w-4 text-primary" /> Connected Devices
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Devices linked to your account that can connect remotely.
+                    Active tunnel URLs are stored in the cloud and visible to your mobile app.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {instances.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-2">
+                      No registered devices found. Sign in and configure cloud sync to register this device.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {instances.map((inst) => {
+                        const isThis = inst.instance_id === instanceInfo?.instance_id;
+                        const hasTunnel = !!(inst as { tunnel_url?: string }).tunnel_url;
+                        return (
+                          <div
+                            key={inst.instance_id}
+                            className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2.5"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium truncate">
+                                  {inst.instance_name || inst.hostname || "Unknown"}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {inst.platform} {inst.architecture}
+                                  {inst.last_seen && ` · ${new Date(inst.last_seen).toLocaleDateString()}`}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {hasTunnel && (
+                                <Badge variant="success" className="text-xs gap-1">
+                                  <Radio className="h-2.5 w-2.5" /> Tunnel Active
+                                </Badge>
+                              )}
+                              {isThis && (
+                                <Badge variant="outline" className="text-xs">This Device</Badge>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
           )}
 
           {/* ── Scraping Tab ─────────────────────────────────── */}

@@ -1,6 +1,6 @@
 # Matrx Local -- Task Tracker
 
-_Last updated: 2026-03-03_
+_Last updated: 2026-03-04_
 
 > Living document. Every discovered bug, missing feature, or architectural issue gets logged here immediately.
 > Check items off as they're resolved. Move completed items to the History section at the bottom.
@@ -10,6 +10,9 @@ _Last updated: 2026-03-03_
 ## 🔴 AGENT PRIORITY QUEUE
 
 > Pick tasks from top to bottom. Each is self-contained.
+
+### P0 — Engine startup crash (blocks all features)
+- [x] **`matrx_ai` package crashes on import** — Fixed. Moved `app.mount("/chat/ai", build_ai_sub_app())` from module-level in `app/main.py` into the lifespan handler (Phase 1b), after `initialize_matrx_ai()` registers the `supabase_automation_matrix` DB config. The ORM auto-fetch triggered by `matrx_ai` module-level imports now finds the config already registered.
 
 ### P0 — Fix broken core features (ship blockers)
 - [ ] **App icon is default purple box** — Replace placeholder icons in `desktop/src-tauri/icons/` with the AI Matrx logo.
