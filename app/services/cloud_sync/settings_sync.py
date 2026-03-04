@@ -479,11 +479,28 @@ class SettingsSync:
             return []
 
     async def heartbeat(self) -> None:
-        """Update last_seen timestamp for this instance."""
+        """Update last_seen and refresh tunnel state for this instance.
+
+        The tunnel URL is included so remote devices always see a fresh value —
+        if the engine is running with a tunnel, last_seen proves the URL is still valid.
+        If no tunnel is active, tunnel_active is explicitly set to False so stale
+        rows don't mislead clients.
+        """
         if not self._configured:
             return
 
         import httpx
+
+        # Include current tunnel state so remote devices never see stale URLs
+        try:
+            from app.services.tunnel.manager import get_tunnel_manager
+            tm = get_tunnel_manager()
+            tunnel_payload: dict = {
+                "tunnel_url": tm.url if tm.running else None,
+                "tunnel_active": tm.running,
+            }
+        except Exception:
+            tunnel_payload = {}
 
         url = (
             f"{self._supabase_url}/rest/v1/app_instances"
@@ -491,7 +508,7 @@ class SettingsSync:
             f"&instance_id=eq.{self._instance_id}"
         )
         headers = {**self._headers(), "Prefer": "return=minimal"}
-        payload = {"last_seen": datetime.now(timezone.utc).isoformat()}
+        payload = {"last_seen": datetime.now(timezone.utc).isoformat(), **tunnel_payload}
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.patch(url, json=payload, headers=headers)

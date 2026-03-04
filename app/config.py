@@ -70,12 +70,13 @@ ALLOWED_ORIGIN_REGEX = (
 # ---------------------------------------------------------------------------
 # Cloudflare Tunnel — remote access
 #
-# When CLOUDFLARE_TUNNEL_TOKEN is set, the engine starts a named tunnel on
-# startup (stable URL, survives restarts).  Without it, a quick-tunnel is
-# used (random *.trycloudflare.com URL, changes each restart).
+# Default (all users): quick tunnel — cloudflared spawns as a subprocess and
+# Cloudflare assigns a unique random *.trycloudflare.com URL per installation.
+# No token, no account, no setup required. URL changes each restart but is
+# immediately pushed to Supabase so remote devices discover it automatically.
 #
-# tunnel_enabled controls whether the tunnel starts automatically on boot.
-# It is also writable via PUT /settings so the desktop UI can toggle it.
+# Optional: set CLOUDFLARE_TUNNEL_TOKEN to use a named tunnel with a stable URL.
+# TUNNEL_ENABLED controls auto-start on engine boot.
 # ---------------------------------------------------------------------------
 CLOUDFLARE_TUNNEL_TOKEN = os.getenv("CLOUDFLARE_TUNNEL_TOKEN", "")
 TUNNEL_ENABLED = os.getenv("TUNNEL_ENABLED", "False").lower() in ("true", "1")

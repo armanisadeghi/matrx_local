@@ -43,7 +43,8 @@
       "sidecar/*"
     ],
     "externalBin": [
-      "sidecar/aimatrx-engine"
+      "sidecar/aimatrx-engine",
+      "sidecar/cloudflared"
     ],
     "windows": {
       "wix": {

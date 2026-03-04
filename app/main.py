@@ -284,26 +284,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "[app/main.py] Phase 4: HTTP proxy FAILED to start", exc_info=True
             )
 
-    # Phase 5: Start Cloudflare tunnel if enabled in settings or env
+    # Phase 5: Start Cloudflare tunnel (quick tunnel for all users — no account needed).
+    # Each instance gets a unique random URL from Cloudflare's trycloudflare.com pool.
+    # The URL is pushed to Supabase so mobile/web can discover it via app_instances lookup.
+    # Users with a CLOUDFLARE_TUNNEL_TOKEN get a stable named tunnel URL instead.
     tunnel_enabled = settings_sync.get("tunnel_enabled", TUNNEL_ENABLED)
     logger.info("[app/main.py] Phase 5: Tunnel enabled=%s", tunnel_enabled)
     if tunnel_enabled:
         try:
             from app.services.tunnel.manager import get_tunnel_manager as _get_tm
             _tm = _get_tm()
-            # Port is not known here — tunnel_routes.py stores it; we use 22140 as
-            # the default. The actual bound port is set by run.py via tunnel_start().
-            # Auto-start will use DEFAULT_PORT; the Settings UI can restart if needed.
             _tunnel_url = await _tm.start(port=22140)
             if _tunnel_url:
-                logger.info("[app/main.py] Phase 5: Tunnel started ✓ → %s", _tunnel_url)
+                logger.info("[app/main.py] Phase 5: Tunnel active ✓ → %s", _tunnel_url)
                 try:
                     from app.services.cloud_sync.instance_manager import get_instance_manager as _get_im
                     await _get_im().update_tunnel_url(_tunnel_url, active=True)
                 except Exception:
                     pass
             else:
-                logger.warning("[app/main.py] Phase 5: Tunnel started but no URL captured yet")
+                logger.warning("[app/main.py] Phase 5: Tunnel started but no URL captured within timeout")
         except Exception:
             logger.error("[app/main.py] Phase 5: Tunnel FAILED to start", exc_info=True)
 
@@ -356,6 +356,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if tm.running:
             await tm.stop()
             logger.info("[app/main.py] Tunnel stopped ✓")
+            # Clear tunnel_active in Supabase so remote devices don't try a dead URL
+            try:
+                from app.services.cloud_sync.instance_manager import get_instance_manager as _get_im
+                await _get_im().update_tunnel_url(None, active=False)
+            except Exception:
+                pass
     except Exception:
         logger.error("[app/main.py] Tunnel failed to stop cleanly", exc_info=True)
 

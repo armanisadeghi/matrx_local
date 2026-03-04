@@ -1020,14 +1020,11 @@ export function Settings({
                     <div className="rounded-lg border border-muted bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
                       <p className="font-medium text-foreground/70">How it works</p>
                       <p>
-                        Enabling remote access downloads a small <code className="font-mono bg-muted px-1 rounded">cloudflared</code> binary
-                        and starts a secure outbound tunnel to Cloudflare's network.
-                        No port forwarding or firewall changes are needed.
+                        Enabling remote access starts a secure outbound tunnel via Cloudflare.
+                        Each installation gets its own unique URL — no port forwarding, no firewall changes, works on every network.
                       </p>
                       <p>
-                        For a stable URL that doesn't change on restart, add a
-                        <code className="font-mono bg-muted px-1 rounded mx-1">CLOUDFLARE_TUNNEL_TOKEN</code>
-                        to your <code className="font-mono bg-muted px-1 rounded">.env</code> file.
+                        The URL is a random <code className="font-mono bg-muted px-1 rounded">*.trycloudflare.com</code> address that is saved to your account so your phone and other devices can always find this PC automatically.
                       </p>
                     </div>
                   )}

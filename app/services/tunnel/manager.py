@@ -4,14 +4,17 @@ Manages a `cloudflared` subprocess that exposes the local engine
 (127.0.0.1:{port}) to the internet via a Cloudflare Tunnel URL.
 
 Two modes:
-  - Quick tunnel (no token): assigns a random *.trycloudflare.com URL.
-    URL changes on every restart. Good for dev/testing.
+  - Quick tunnel (no token, default for all users): assigns a random
+    *.trycloudflare.com URL per instance. URL changes on each restart.
+    Zero config — no Cloudflare account, no token, no setup required.
+    The URL is automatically stored in Supabase so remote devices can
+    discover it via the /api/local-instances lookup.
   - Named tunnel (CLOUDFLARE_TUNNEL_TOKEN set): uses a pre-provisioned
-    tunnel with a stable subdomain (e.g. xyz.local.matrxserver.com).
-    URL is permanent. Recommended for production.
+    tunnel with a stable subdomain. URL survives restarts. Optional — for
+    power users who want a permanent address.
 
-The cloudflared binary is downloaded on first use and cached at
-~/.matrx/bin/cloudflared (or cloudflared.exe on Windows).
+The cloudflared binary is bundled with the installer. If not found, it is
+downloaded on first use and cached at ~/.matrx/bin/cloudflared.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ import os
 import platform
 import re
 import stat
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -46,21 +50,28 @@ _DOWNLOAD_URLS: dict[tuple[str, str], str] = {
     ("Windows", "ARM64"):  f"https://github.com/cloudflare/cloudflared/releases/download/{_CLOUDFLARED_VERSION}/cloudflared-windows-arm64.exe",
 }
 
-# Regex that matches the tunnel URL printed by cloudflared to stderr.
-# Quick-tunnel: https://random-words.trycloudflare.com
-# Named tunnel: https://subdomain.domain.com
-_URL_RE = re.compile(
-    r"https://[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}(?:/[^\s]*)?"
-    r"(?=.*(?:tunnel|INF))",
-    re.IGNORECASE,
-)
-# More specific pattern for the actual tunnel URL line cloudflared emits
+# cloudflared prints the tunnel URL to stdout/stderr during startup.
+#
+# Quick tunnel log line looks like:
+#   INF +----------------------------+
+#   INF |  https://abc-def.trycloudflare.com  |
+#   INF +----------------------------+
+#
+# Named tunnel log line looks like:
+#   INF Registered tunnel connection ... url=https://your-subdomain.example.com
+#
+# _TUNNEL_URL_RE: matches the boxed URL line cloudflared prints for quick tunnels.
 _TUNNEL_URL_RE = re.compile(
-    r"\|\s*(https://[a-zA-Z0-9._-]+(?:\.trycloudflare\.com|\.matrxserver\.com)[^\s]*)"
+    r"\|\s*(https://[a-zA-Z0-9._-]+\.trycloudflare\.com[^\s|]*)"
 )
-# Fallback: any https URL on a line containing "trycloudflare" or "tunnel"
+# _NAMED_URL_RE: matches the url= field cloudflared logs for named tunnels.
+_NAMED_URL_RE = re.compile(
+    r'url=(https://[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}[^\s"]*)'
+)
+# _FALLBACK_URL_RE: broad fallback — any https URL on a line mentioning the tunnel.
+# Catches any format cloudflare might use across versions.
 _FALLBACK_URL_RE = re.compile(
-    r"(https://[a-zA-Z0-9.-]+(?:\.trycloudflare\.com|\.local\.matrxserver\.com)[^\s]*)"
+    r"(https://[a-zA-Z0-9._-]+\.trycloudflare\.com[^\s]*)"
 )
 
 
@@ -92,42 +103,72 @@ def _get_download_url() -> str:
     return url
 
 
-def _find_system_cloudflared() -> Path | None:
-    """Check well-known system install locations before downloading."""
-    candidates = [
-        "/opt/homebrew/bin/cloudflared",   # macOS Apple Silicon (Homebrew)
-        "/usr/local/bin/cloudflared",       # macOS Intel (Homebrew) / Linux
-        "/usr/bin/cloudflared",             # Linux package manager
+def _find_preinstalled_cloudflared() -> Path | None:
+    """Look for cloudflared in:
+    1. Tauri resource directory (bundled in the .app / installer)
+    2. ~/.matrx/bin/ (previously downloaded by us)
+    3. System PATH / well-known locations (Homebrew, package manager)
+
+    Returns the first found binary, or None if not available anywhere.
+    This function intentionally does NOT download — that's _ensure_binary().
+    """
+    import shutil
+
+    # 1. Tauri resource dir: the frozen Python sidecar runs from a Resources/ folder.
+    #    When we bundle cloudflared as a Tauri resource it lands next to the engine binary.
+    resource_candidates = [
+        Path(sys.executable).parent / "cloudflared",            # macOS/Linux sidecar
+        Path(sys.executable).parent / "cloudflared.exe",        # Windows sidecar
+        Path(sys.executable).with_name("cloudflared"),          # same dir as binary
+        Path(sys.executable).with_name("cloudflared.exe"),
+    ]
+    for p in resource_candidates:
+        if p.exists() and p.is_file():
+            logger.debug("Found bundled cloudflared at %s", p)
+            return p
+
+    # 2. Our own cached download
+    cached = _bin_path()
+    if cached.exists():
+        return cached
+
+    # 3. System install (Homebrew, apt, MSI installer, etc.)
+    system_candidates = [
+        "/opt/homebrew/bin/cloudflared",          # macOS Apple Silicon (Homebrew)
+        "/usr/local/bin/cloudflared",              # macOS Intel (Homebrew) / Linux
+        "/usr/bin/cloudflared",                    # Linux package manager
         "C:\\Program Files\\cloudflared\\cloudflared.exe",  # Windows MSI
     ]
-    for path_str in candidates:
+    for path_str in system_candidates:
         p = Path(path_str)
         if p.exists() and p.is_file():
             logger.debug("Found system cloudflared at %s", p)
             return p
+
     # Also check PATH
-    import shutil
     found = shutil.which("cloudflared")
     if found:
         return Path(found)
+
     return None
 
 
 def _ensure_binary() -> Path:
-    """Return path to cloudflared binary, using system install if available,
-    otherwise downloading and caching it in ~/.matrx/bin/."""
-    # Prefer system-installed binary (Homebrew, package manager, etc.)
-    system_bin = _find_system_cloudflared()
-    if system_bin:
-        return system_bin
+    """Return path to a working cloudflared binary.
 
-    # Fall back to our cached download
+    Priority:
+    1. Bundled (Tauri resource) or system-installed binary — no download needed.
+    2. Previously cached download in ~/.matrx/bin/.
+    3. Fresh download from GitHub Releases (first-run only, ~18 MB).
+    """
+    existing = _find_preinstalled_cloudflared()
+    if existing:
+        return existing
+
+    # Nothing found locally — download once and cache it.
     dest = _bin_path()
-    if dest.exists():
-        return dest
-
     url = _get_download_url()
-    logger.info("Downloading cloudflared from %s → %s", url, dest)
+    logger.info("cloudflared not found locally — downloading from %s → %s", url, dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -284,8 +325,8 @@ class TunnelManager:
                 if line:
                     logger.debug("[cloudflared] %s", line)
 
-                # Try specific pattern first, then fallback
-                match = _TUNNEL_URL_RE.search(line) or _FALLBACK_URL_RE.search(line)
+                # Try patterns in order: boxed quick-tunnel URL, named tunnel url= field, broad fallback
+                match = _TUNNEL_URL_RE.search(line) or _NAMED_URL_RE.search(line) or _FALLBACK_URL_RE.search(line)
                 if match and not self._url:
                     url = match.group(1).rstrip("/")
                     self._url = url

@@ -17,7 +17,11 @@ _Last updated: 2026-03-02_
 - [ ] **Permissions** — Grant OS permissions (Screen, Mic, etc.). [HOWTO.md → macOS Permissions](HOWTO.md#macos-permissions)
 - [ ] **UI Toggles** — Test Launch on Startup, Minimize to Tray, and Headless Scraping in Settings.
 
-### 3. Supabase & Cloud Config
+### 3. Remote Access / Tunnel
+- [ ] **Run cloudflared download script** — Before next release build, run `./scripts/download-cloudflared.sh --current` to place the cloudflared binary in `desktop/src-tauri/sidecar/` for your platform. CI should run `./scripts/download-cloudflared.sh` (all platforms) before `tauri build`.
+- [ ] **Remove personal named tunnel** (optional) — Delete the `matrx-local` tunnel from [Cloudflare dashboard](https://one.dash.cloudflare.com/). Uninstall the system service: `sudo launchctl unload /Library/LaunchDaemons/com.cloudflare.cloudflared.plist && sudo rm /Library/LaunchDaemons/com.cloudflare.cloudflared.plist`.
+
+### 4. Supabase & Cloud Config
 - [ ] **Verify `app_settings` Table** — Check RLS and existence. [HOWTO.md → Cloud Sync](HOWTO.md#app_settings-table)
 - [ ] **Verify `note_folders` Table** — "New Folder" failing suggests RLS/Table issue. [HOWTO.md → Cloud Sync](HOWTO.md#note_folders-table)
 - [ ] **Add `BRAVE_API_KEY` to `.env`** — Required for web search. [HOWTO.md → Cloud Sync](HOWTO.md#brave_api_key-for-web-search)
