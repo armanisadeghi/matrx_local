@@ -7,8 +7,9 @@
 # Run this once before building a release, or in CI before `tauri build`.
 #
 # Usage:
-#   ./scripts/download-cloudflared.sh           # download all platforms
-#   ./scripts/download-cloudflared.sh --current # download only current platform
+#   ./scripts/download-cloudflared.sh                          # download all platforms
+#   ./scripts/download-cloudflared.sh --current                # download only current platform
+#   ./scripts/download-cloudflared.sh --target aarch64-apple-darwin  # download specific target
 #
 set -euo pipefail
 
@@ -21,7 +22,7 @@ CF_VERSION="2026.2.0"
 CF_BASE="https://github.com/cloudflare/cloudflared/releases/download/${CF_VERSION}"
 
 # Maps Tauri target triple → cloudflared release filename
-declare -A TARGETS=(
+declare -A CF_TARGETS=(
   ["aarch64-apple-darwin"]="cloudflared-darwin-arm64"
   ["x86_64-apple-darwin"]="cloudflared-darwin-amd64"
   ["x86_64-unknown-linux-gnu"]="cloudflared-linux-amd64"
@@ -51,7 +52,27 @@ download_target() {
   echo "✓ Saved: $(basename "$dest")"
 }
 
-if [[ "${1:-}" == "--current" ]]; then
+# Parse arguments
+OVERRIDE_TARGET=""
+MODE="all"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target) OVERRIDE_TARGET="$2"; shift 2 ;;
+    --current) MODE="current"; shift ;;
+    *) echo "Unknown argument: $1"; exit 1 ;;
+  esac
+done
+
+if [[ -n "$OVERRIDE_TARGET" ]]; then
+  # Download a specific target triple (used by CI for cross-compilation)
+  filename="${CF_TARGETS[$OVERRIDE_TARGET]:-}"
+  if [[ -z "$filename" ]]; then
+    echo "ERROR: Unknown target triple '$OVERRIDE_TARGET'"
+    echo "Supported: ${!CF_TARGETS[*]}"
+    exit 1
+  fi
+  download_target "$OVERRIDE_TARGET" "$filename"
+elif [[ "$MODE" == "current" ]]; then
   # Detect current platform
   OS="$(uname -s)"
   ARCH="$(uname -m)"
@@ -60,14 +81,14 @@ if [[ "${1:-}" == "--current" ]]; then
     Darwin-x86_64)  download_target "x86_64-apple-darwin"         "cloudflared-darwin-amd64" ;;
     Linux-x86_64)   download_target "x86_64-unknown-linux-gnu"    "cloudflared-linux-amd64" ;;
     Linux-aarch64)  download_target "aarch64-unknown-linux-gnu"   "cloudflared-linux-arm64" ;;
-    *)              echo "Unknown platform $OS-$ARCH" ; exit 1 ;;
+    *)              echo "Unknown platform $OS-$ARCH"; exit 1 ;;
   esac
 else
-  for triple in "${!TARGETS[@]}"; do
-    download_target "$triple" "${TARGETS[$triple]}"
+  for triple in "${!CF_TARGETS[@]}"; do
+    download_target "$triple" "${CF_TARGETS[$triple]}"
   done
 fi
 
 echo ""
-echo "All cloudflared binaries ready in $SIDECAR_DIR"
+echo "cloudflared binaries ready in $SIDECAR_DIR"
 ls -lh "$SIDECAR_DIR"/cloudflared-*

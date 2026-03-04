@@ -129,6 +129,33 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 
 ---
 
+## CI/Build Common Pitfalls
+
+The release workflow (`release.yml`) builds on 4 platforms (macOS arm64, macOS x86_64, Linux, Windows). Builds fail when a file listed in `tauri.conf.json` → `bundle.externalBin` or `bundle.resources` doesn't exist at build time.
+
+**Rule: every binary in `externalBin` needs a download/build step in `release.yml`.**
+
+### Sidecar binaries in `tauri.conf.json`
+
+Currently two binaries are in `externalBin`:
+- `sidecar/aimatrx-engine` — built by `scripts/build-sidecar.sh` (PyInstaller)
+- `sidecar/cloudflared` — downloaded by `scripts/download-cloudflared.sh`
+
+Tauri appends the Rust target triple to each name (e.g. `cloudflared-x86_64-unknown-linux-gnu`), so the files **must** exist with those exact names before `tauri build` runs.
+
+### Adding a new bundled binary
+
+1. Add it to `bundle.externalBin` in `tauri.conf.json`
+2. Create a download/build script in `scripts/`
+3. Add a CI step in `.github/workflows/release.yml` that calls the script **before** the `Build and release` step
+4. Mirror the macOS cross-compilation pattern used by the existing steps (check `matrix.args` for `x86_64-apple-darwin` vs `aarch64-apple-darwin`, fall back to `--current` for Linux/Windows)
+
+### macOS cross-compilation note
+
+macOS CI runners (`macos-15`) are ARM. The matrix builds *both* `aarch64-apple-darwin` and `x86_64-apple-darwin` from the same runner. Scripts must accept `--target <triple>` so CI can pass the correct target rather than auto-detecting the host arch. See `scripts/build-sidecar.sh` and `scripts/download-cloudflared.sh` for the pattern.
+
+---
+
 ## Development Commands
 
 ```bash
