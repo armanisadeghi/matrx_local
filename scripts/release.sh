@@ -1,38 +1,49 @@
 #!/usr/bin/env bash
+# release.sh — Bump version, commit, tag, and push.
+# GitHub Actions builds multi-platform desktop binaries on tag push.
 #
-# Fully automated release script for matrx-local.
-#
-# Works on: macOS (BSD sed), Linux (GNU sed), WSL (GNU sed).
-# Windows native: run inside Git Bash or WSL — not bare cmd/PowerShell.
-#
-# Usage:
-#   ./scripts/release.sh              # auto-bump patch  (1.0.25 → 1.0.26)
-#   ./scripts/release.sh --major      # bump minor       (1.0.25 → 1.1.0)
-#   ./scripts/release.sh X.Y.Z        # set exact version
-#
-# Source of truth: pyproject.toml  `version = "X.Y.Z"`
-#
-# Files kept in sync by this script:
+# Source of truth: pyproject.toml
+# Files kept in sync:
 #   pyproject.toml
 #   desktop/src-tauri/tauri.conf.json
 #   desktop/src-tauri/Cargo.toml
-#   desktop/package.json            (via npm version — also updates package-lock.json)
+#   desktop/package.json  (via npm — also updates package-lock.json)
 #
-# Files that no longer need updating (dynamic — read from package metadata at runtime):
-#   run.py              uses importlib.metadata.version("matrx-local")
-#   app/api/routes.py   uses importlib.metadata.version("matrx-local")
+# Dynamic (no update needed):
+#   run.py, app/api/routes.py — read via importlib.metadata
 #
+# Usage:
+#   ./scripts/release.sh              # patch bump  (default)
+#   ./scripts/release.sh --patch      # patch bump
+#   ./scripts/release.sh --minor      # minor bump
+#   ./scripts/release.sh --major      # major bump
+#   ./scripts/release.sh --message "feat: something"   # custom commit message
+#   ./scripts/release.sh --dry-run    # preview without changes
+#   ./scripts/release.sh X.Y.Z       # set exact version
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-cd "$PROJECT_ROOT"
+# ── Resolve repo root ────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_ROOT"
 
-# ---------------------------------------------------------------------------
-# Portable in-place sed.
-# BSD sed (macOS) requires:  sed -i '' 's/old/new/' file
-# GNU sed (Linux / WSL):     sed -i    's/old/new/' file
-# ---------------------------------------------------------------------------
+PROJECT_NAME="matrx-local"
+GITHUB_REPO="armanisadeghi/matrx-local"
+VERSION_FILE="pyproject.toml"
+REMOTE="origin"
+BRANCH="main"
+
+# ── Colors ───────────────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
+
+info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
+ok()      { echo -e "${GREEN}[OK]${NC}    $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
+fail()    { echo -e "${RED}[FAIL]${NC}  $*" >&2; exit 1; }
+preview() { echo -e "${YELLOW}[DRY]${NC}   $*"; }
+
+# ── Portable in-place sed ────────────────────────────────────────────────────
 sedi() {
     if sed --version 2>/dev/null | grep -q GNU; then
         sed -i "$@"
@@ -41,123 +52,166 @@ sedi() {
     fi
 }
 
-# ---------------------------------------------------------------------------
-# 1. Read current version from pyproject.toml (single source of truth)
-# ---------------------------------------------------------------------------
-CURRENT=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
-if [[ -z "$CURRENT" ]]; then
-    echo "ERROR: Could not read version from pyproject.toml"
-    exit 1
+# ── Parse flags ──────────────────────────────────────────────────────────────
+BUMP_TYPE="patch"
+CUSTOM_MESSAGE=""
+DRY_RUN=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --patch)   BUMP_TYPE="patch"; shift ;;
+        --minor)   BUMP_TYPE="minor"; shift ;;
+        --major)   BUMP_TYPE="major"; shift ;;
+        --message|-m)
+            [[ -n "${2:-}" ]] || fail "--message requires an argument."
+            CUSTOM_MESSAGE="$2"; shift 2 ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        -h|--help)
+            grep '^#' "$0" | head -20 | sed 's/^# \?//'
+            exit 0 ;;
+        [0-9]*)    BUMP_TYPE="exact"; EXACT_VERSION="$1"; shift ;;
+        *) fail "Unknown flag: $1. Use --patch, --minor, --major, --message, --dry-run, or X.Y.Z." ;;
+    esac
+done
+
+# ── Pre-flight checks ────────────────────────────────────────────────────────
+[[ -f "$VERSION_FILE" ]] || fail "$VERSION_FILE not found."
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+[[ "$CURRENT_BRANCH" == "$BRANCH" ]] \
+    || fail "Not on '$BRANCH' branch (currently on '$CURRENT_BRANCH'). Switch first."
+
+if [[ -n "$(git diff --cached --name-only)" ]]; then
+    fail "Staged but uncommitted changes detected. Commit or unstage them first."
 fi
 
-IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+if ! git diff --quiet; then
+    fail "Uncommitted changes detected. Commit them first."
+fi
 
-# ---------------------------------------------------------------------------
-# 2. Determine new version
-# ---------------------------------------------------------------------------
-ARG="${1:-patch}"
+# ── TypeScript type-check ────────────────────────────────────────────────────
+info "Running TypeScript type-check (pnpm tsc --noEmit)..."
+if ! command -v pnpm &>/dev/null; then
+    warn "pnpm not found — skipping TypeScript check. Install pnpm to enable this guard."
+else
+    if ! (cd desktop && pnpm tsc --noEmit 2>&1); then
+        echo ""
+        fail "TypeScript errors detected. Fix them before releasing (shown above)."
+    fi
+    ok "TypeScript check passed."
+fi
 
-case "$ARG" in
-    patch)
-        PATCH=$((PATCH + 1))
-        VERSION="$MAJOR.$MINOR.$PATCH"
-        ;;
-    --major)
-        MINOR=$((MINOR + 1))
-        PATCH=0
-        VERSION="$MAJOR.$MINOR.$PATCH"
-        ;;
-    [0-9]*)
-        VERSION="$ARG"
-        ;;
-    *)
-        echo "Usage: $0 [--major|X.Y.Z]"
-        echo ""
-        echo "  (no args)   bump patch: $MAJOR.$MINOR.$PATCH → $MAJOR.$MINOR.$((PATCH + 1))"
-        echo "  --major     bump minor: $MAJOR.$MINOR.$PATCH → $MAJOR.$((MINOR + 1)).0"
-        echo "  X.Y.Z       set exact version"
-        echo ""
-        echo "  NOTE: bumping major ($((MAJOR + 1)).0.0) is intentionally manual only."
-        exit 1
-        ;;
+# ── Read current version ─────────────────────────────────────────────────────
+CURRENT_VERSION=$(grep -m1 '^version' "$VERSION_FILE" | sed 's/.*"\(.*\)".*/\1/')
+[[ -n "$CURRENT_VERSION" ]] || fail "Could not read version from $VERSION_FILE."
+
+IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+
+# ── Calculate new version ────────────────────────────────────────────────────
+case "$BUMP_TYPE" in
+    patch) NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+    minor) NEW_VERSION="${MAJOR}.$((MINOR + 1)).0" ;;
+    major) NEW_VERSION="$((MAJOR + 1)).0.0" ;;
+    exact) NEW_VERSION="$EXACT_VERSION" ;;
 esac
 
-TAG="v$VERSION"
-echo "=== Releasing $TAG (was $CURRENT) ==="
+NEW_TAG="v${NEW_VERSION}"
 
-# ---------------------------------------------------------------------------
-# 3. Require a clean working tree
-# ---------------------------------------------------------------------------
-if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "ERROR: Uncommitted changes detected. Commit them first:"
-    echo "  git add . && git commit -m \"your changes\""
-    exit 1
+# ── Check tag doesn't already exist ──────────────────────────────────────────
+if git rev-parse "$NEW_TAG" &>/dev/null; then
+    fail "Tag $NEW_TAG already exists. Resolve manually or choose a different bump type."
 fi
 
-# ---------------------------------------------------------------------------
-# 4. Sync version across all manifest files
-# ---------------------------------------------------------------------------
-echo "  → Updating version to $VERSION..."
+# ── Build commit message ─────────────────────────────────────────────────────
+if [[ -n "$CUSTOM_MESSAGE" ]]; then
+    COMMIT_MSG="$CUSTOM_MESSAGE"
+else
+    COMMIT_MSG="release: ${NEW_TAG}"
+fi
 
-# pyproject.toml — top-level:  version = "X.Y.Z"
-sedi "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" pyproject.toml
-
-# tauri.conf.json — the root-level "version" field (2-space indent)
-sedi "s/^  \"version\": \"[^\"]*\"/  \"version\": \"$VERSION\"/" \
-    desktop/src-tauri/tauri.conf.json
-
-# Cargo.toml — [package] section:  version = "X.Y.Z"
-sedi "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" \
-    desktop/src-tauri/Cargo.toml
-
-# package.json + package-lock.json — npm handles JSON correctly and atomically
-cd desktop
-npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null
-cd "$PROJECT_ROOT"
-
-echo "  ✓ Versions synced:"
-echo "       pyproject.toml                    → $VERSION"
-echo "       desktop/src-tauri/tauri.conf.json → $VERSION"
-echo "       desktop/src-tauri/Cargo.toml      → $VERSION"
-echo "       desktop/package.json              → $VERSION"
-echo "       desktop/package-lock.json         → $VERSION  (via npm)"
+# ── Preview ──────────────────────────────────────────────────────────────────
 echo ""
-echo "  ℹ  run.py and app/api/routes.py read the version dynamically"
-echo "     from importlib.metadata — no sed update needed."
+echo -e "${BOLD}  ${PROJECT_NAME} release${NC}"
+echo -e "  ─────────────────────────────────────────────"
+echo -e "  Bump type  : ${CYAN}${BUMP_TYPE}${NC}"
+echo -e "  Old version: ${YELLOW}${CURRENT_VERSION}${NC}"
+echo -e "  New version: ${GREEN}${NEW_VERSION}${NC}"
+echo -e "  Tag        : ${GREEN}${NEW_TAG}${NC}"
+echo -e "  Commit msg : ${CYAN}${COMMIT_MSG}${NC}"
+$DRY_RUN && echo -e "  Mode       : ${YELLOW}DRY RUN — nothing will be changed${NC}"
+echo -e "  ─────────────────────────────────────────────"
+echo ""
 
-# ---------------------------------------------------------------------------
-# 5. Commit the version bump (includes package-lock.json from npm above)
-# ---------------------------------------------------------------------------
+if $DRY_RUN; then
+    preview "Would run: pnpm tsc --noEmit (TypeScript check)"
+    preview "Would update $VERSION_FILE: $CURRENT_VERSION → $NEW_VERSION"
+    preview "Would update desktop/src-tauri/tauri.conf.json"
+    preview "Would update desktop/src-tauri/Cargo.toml"
+    preview "Would update desktop/package.json + package-lock.json"
+    preview "Would commit: '$COMMIT_MSG'"
+    preview "Would create tag: $NEW_TAG"
+    preview "Would push to $REMOTE/$BRANCH"
+    echo ""
+    echo -e "  ${CYAN}run.py and app/api/routes.py read the version dynamically${NC}"
+    echo -e "  ${CYAN}from importlib.metadata — no update needed.${NC}"
+    echo ""
+    preview "Dry run complete. No changes made."
+    exit 0
+fi
+
+# ── Update pyproject.toml ────────────────────────────────────────────────────
+info "Bumping version in $VERSION_FILE..."
+sedi "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" pyproject.toml
+ok "pyproject.toml → $NEW_VERSION"
+
+# ── Update tauri.conf.json ───────────────────────────────────────────────────
+info "Syncing desktop/src-tauri/tauri.conf.json..."
+sedi "s/^  \"version\": \"[^\"]*\"/  \"version\": \"${NEW_VERSION}\"/" \
+    desktop/src-tauri/tauri.conf.json
+ok "tauri.conf.json → $NEW_VERSION"
+
+# ── Update Cargo.toml ────────────────────────────────────────────────────────
+info "Syncing desktop/src-tauri/Cargo.toml..."
+sedi "s/^version = \"[^\"]*\"/version = \"${NEW_VERSION}\"/" \
+    desktop/src-tauri/Cargo.toml
+ok "Cargo.toml → $NEW_VERSION"
+
+# ── Update desktop/package.json (+ package-lock.json) ────────────────────────
+info "Syncing desktop/package.json..."
+cd desktop
+npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version 2>/dev/null
+cd "$REPO_ROOT"
+ok "package.json + package-lock.json → $NEW_VERSION"
+
+# ── Commit ───────────────────────────────────────────────────────────────────
+info "Committing..."
 git add \
     pyproject.toml \
     desktop/src-tauri/tauri.conf.json \
     desktop/src-tauri/Cargo.toml \
     desktop/package.json \
     desktop/package-lock.json
+git commit -m "$COMMIT_MSG"
+ok "Committed: '$COMMIT_MSG'"
 
-git commit -m "release: $TAG"
+# ── Tag ──────────────────────────────────────────────────────────────────────
+info "Creating tag $NEW_TAG..."
+git tag "$NEW_TAG"
+ok "Tag $NEW_TAG created"
 
-# ---------------------------------------------------------------------------
-# 6. Tag
-# ---------------------------------------------------------------------------
-if git tag --list "$TAG" | grep -q "$TAG"; then
-    echo "  → Tag $TAG already exists, removing and recreating..."
-    git tag -d "$TAG"
-    git push origin ":refs/tags/$TAG" 2>/dev/null || true
-fi
+# ── Push ─────────────────────────────────────────────────────────────────────
+info "Pushing to $REMOTE/$BRANCH..."
+git push "$REMOTE" "$BRANCH"
+git push "$REMOTE" "$NEW_TAG"
+ok "Pushed to $REMOTE/$BRANCH with tag $NEW_TAG"
 
-git tag "$TAG"
-
-# ---------------------------------------------------------------------------
-# 7. Push commit + tag (triggers GitHub Actions → PyPI publish)
-# ---------------------------------------------------------------------------
-echo "  → Pushing to origin..."
-git push origin main
-git push origin "$TAG"
-
+# ── Done ─────────────────────────────────────────────────────────────────────
 echo ""
-echo "=== Released $TAG ==="
-echo "  $CURRENT → $VERSION"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${GREEN}  Released ${PROJECT_NAME} ${NEW_VERSION}${NC}"
+echo -e "${GREEN}  GitHub Actions will build desktop binaries.${NC}"
+echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
-echo "Monitor CI: https://github.com/armanisadeghi/matrx-local/actions"
-echo "Releases:   https://github.com/armanisadeghi/matrx-local/releases"
+echo -e "  Monitor : ${CYAN}https://github.com/${GITHUB_REPO}/actions${NC}"
+echo -e "  Releases: ${CYAN}https://github.com/${GITHUB_REPO}/releases${NC}"
+echo ""
