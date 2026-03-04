@@ -88,8 +88,13 @@ SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 SCRAPER_SERVER_URL = os.getenv("SCRAPER_SERVER_URL", "https://scraper.app.matrxserver.com")
 
 # Supabase (for document sync — uses PostgREST API with user JWTs)
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+# These are publishable values — safe to embed in the binary (RLS enforces security).
+# The env var overrides are for local dev; shipped users get the baked-in defaults.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://txzxabzwovsujtloxrus.supabase.co")
+SUPABASE_PUBLISHABLE_KEY = os.getenv(
+    "SUPABASE_PUBLISHABLE_KEY",
+    "sb_publishable_4pvkRT-9-_dB0PWqF1sp1w_W9leRIoW",
+)
 
 # ---------------------------------------------------------------------------
 # Platform-aware storage roots

@@ -70,7 +70,7 @@
     },
     "updater": {
       "endpoints": [
-        "https://github.com/armanisadeghi/matrx_local/releases/latest/download/latest.json"
+        "https://github.com/armanisadeghi/matrx-local/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxNEJEOEY2QTc2RkRDNTkKUldSWjNHK245dGhMNGZKOWJHM0tucnUzUkY3M3hJd1hpQ09YdEJhZGN4V01UNE85ZG9sY0ZraUIK"
     }
