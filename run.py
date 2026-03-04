@@ -206,7 +206,7 @@ def write_discovery_file(port: int, tunnel_url: str | None = None) -> None:
             "url": f"http://127.0.0.1:{port}",
             "ws": f"ws://127.0.0.1:{port}/ws",
             "pid": os.getpid(),
-            "version": "1.0.26",
+            "version": "1.0.27",
         }
         if tunnel_url:
             payload["tunnel_url"] = tunnel_url
