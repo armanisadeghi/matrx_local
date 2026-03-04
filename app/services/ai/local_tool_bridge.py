@@ -1,37 +1,42 @@
-"""Local tool bridge — registers matrx-local's OS tools into matrx-ai's ToolRegistry.
+"""Local tool bridge — registers matrx-local's OS tools into matrx-ai via ExternalToolAdapter.
 
 Architecture
 ------------
-matrx-ai's ToolExecutor calls tools via:
+matrx-ai's ToolExecutor dispatches tool calls for ``source_app="matrx_local"`` to
+the registered ``ExternalToolAdapter``.  This module provides that adapter.
 
-    result = await tool_callable(args: dict, ctx: ToolContext)
+Each local tool handler has the signature::
 
-matrx-local's tool handlers have the signature:
-
-    result = await tool_xxx(session: ToolSession, param1, param2, ...) -> ToolResult
+    async def tool_xxx(session: ToolSession, param1, param2, ...) -> LocalToolResult
 
 The bridge:
-  1. Maintains a per-conversation ToolSession (tracks cwd, background shells, etc.)
-  2. Wraps each local handler in an adapter that:
-       a. Gets/creates the ToolSession for this conversation
-       b. Validates args through the Pydantic arg model (if one is wired in the manifest)
-       c. Calls the real handler with unpacked validated args
-       d. Converts matrx-local's ToolResult → matrx-ai's ToolResult
+  1. Maintains a per-conversation ``ToolSession`` (tracks cwd, background shells, etc.)
+  2. For each tool call, gets or creates the session for the conversation
+  3. Validates args through the Pydantic arg model (from the manifest)
+  4. Calls the real handler with unpacked validated args
+  5. Converts matrx-local's ``ToolResult`` → matrx-ai's ``ToolResult``
 
-Registration
-------------
-Call `register_local_tools(registry)` once at startup (from engine.py).
-All tools defined in LOCAL_TOOL_MANIFEST are registered.
+The adapter auto-discovers all 79 local tools from ``LOCAL_TOOL_MANIFEST`` at startup
+and registers them as individual per-tool handlers (highest priority in the resolution
+chain).  Any tool from ``source_app="matrx_local"`` not covered by the manifest falls
+through to ``dispatch()``, which surfaces a clear "not implemented" error to the model.
 
-The registry key is the tool `name` from the manifest (e.g. "local_bash").
-Prompts/agents reference tools by name in their `settings.tools` list.
+Conversation lifecycle
+----------------------
+``ToolSession`` objects are keyed by ``conversation_id`` and cleaned up automatically
+when matrx-ai's ``ToolLifecycleManager`` detects a conversation has ended or idled out
+(30-minute default timeout).  The adapter's ``on_conversation_end()`` hook handles this.
 
 Schema generation
 -----------------
-When a manifest entry carries an `arg_model` (a Pydantic BaseModel subclass),
-the bridge calls `arg_model.model_json_schema()` and passes the result to the
-registry instead of the hand-written `parameters` dict. This keeps the DB schema
-in sync with the code automatically.
+When a manifest entry carries an ``arg_model`` (a Pydantic BaseModel subclass),
+the bridge generates the JSON Schema from it — keeping the DB schema in sync with
+the code automatically.
+
+Registration
+------------
+Call ``LocalToolBridge().register()`` once at startup (from engine.py) **before** the
+first AI request.  This replaces the old ``register_local_tools(registry)`` call.
 """
 
 from __future__ import annotations
@@ -42,62 +47,259 @@ import logging
 import time
 from typing import Any
 
+from matrx_ai.tools import ExternalToolAdapter, ToolContext, ToolResult, external_tool
+from matrx_ai.tools.models import ToolError
+
 logger = logging.getLogger(__name__)
-
-# ---- Lazy imports so this module can be imported before matrx_ai is initialized ----
-
-
-def _get_registry():
-    from matrx_ai.tools.registry import ToolRegistryV2
-    return ToolRegistryV2.get_instance()
 
 
 # ---------------------------------------------------------------------------
 # ToolSession pool — keyed by conversation_id
 # ---------------------------------------------------------------------------
 
-_session_pool: dict[str, Any] = {}  # conversation_id → ToolSession
+class LocalToolBridge(ExternalToolAdapter):
+    """ExternalToolAdapter that exposes all 79 matrx-local OS tools to matrx-ai.
 
+    At startup, the manifest is scanned and every tool is registered as a per-tool
+    handler (highest priority).  ``dispatch()`` handles any tool that slips through
+    (e.g. a new tool added to the DB but not yet in the manifest).
 
-def _get_session(conversation_id: str) -> Any:
-    """Get or create a ToolSession for a conversation."""
-    from app.tools.session import ToolSession
-
-    if conversation_id not in _session_pool:
-        _session_pool[conversation_id] = ToolSession()
-        logger.debug("Created new ToolSession for conversation %s", conversation_id)
-    return _session_pool[conversation_id]
-
-
-def evict_session(conversation_id: str) -> None:
-    """Remove the ToolSession for a conversation (call when conversation ends)."""
-    _session_pool.pop(conversation_id, None)
-
-
-def session_count() -> int:
-    return len(_session_pool)
-
-
-# ---------------------------------------------------------------------------
-# Result conversion
-# ---------------------------------------------------------------------------
-
-def _convert_result(local_result: Any) -> Any:
-    """Convert matrx-local ToolResult → matrx-ai ToolResult.
-
-    matrx-local: ToolResult(type=ToolResultType.SUCCESS, output=str, metadata=dict)
-    matrx-ai:    ToolResult(success=bool, output=Any, error=ToolError|None, ...)
+    ``on_conversation_end()`` evicts the ``ToolSession`` when matrx-ai's lifecycle
+    manager signals that a conversation has ended or timed out.
     """
-    from matrx_ai.tools.models import ToolError
-    from matrx_ai.tools.models import ToolResult as AiToolResult
+
+    source_app = "matrx_local"
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, Any] = {}  # conversation_id → ToolSession
+
+    # ------------------------------------------------------------------
+    # Session management
+    # ------------------------------------------------------------------
+
+    def _get_session(self, conversation_id: str) -> Any:
+        """Get or create a ToolSession for a conversation."""
+        from app.tools.session import ToolSession
+
+        if conversation_id not in self._sessions:
+            self._sessions[conversation_id] = ToolSession()
+            logger.debug("Created new ToolSession for conversation %s", conversation_id)
+        return self._sessions[conversation_id]
+
+    async def on_conversation_end(self, conversation_id: str) -> None:
+        """Clean up the ToolSession when matrx-ai signals a conversation has ended."""
+        session = self._sessions.pop(conversation_id, None)
+        if session is not None:
+            try:
+                await session.cleanup()
+            except Exception:
+                logger.debug(
+                    "Error cleaning up ToolSession for conversation %s",
+                    conversation_id,
+                    exc_info=True,
+                )
+            logger.debug("Evicted ToolSession for conversation %s", conversation_id)
+
+    @property
+    def session_count(self) -> int:
+        return len(self._sessions)
+
+    # ------------------------------------------------------------------
+    # Dynamic registration from manifest (called by register())
+    # ------------------------------------------------------------------
+
+    def register(self, registry: Any = None) -> None:
+        """Register all manifest tools + lifecycle cleanup.
+
+        Overrides ``ExternalToolAdapter.register()`` to dynamically build per-tool
+        handlers from ``LOCAL_TOOL_MANIFEST`` instead of relying on the ``@external_tool``
+        decorator (which would require 79 explicit method definitions).
+        """
+        from app.tools.local_tool_manifest import LOCAL_TOOL_MANIFEST
+        from matrx_ai.tools.external_handlers import ExternalHandlerRegistry
+
+        reg = registry or ExternalHandlerRegistry.get_instance()
+
+        registered = 0
+        failed: list[str] = []
+
+        for entry in LOCAL_TOOL_MANIFEST:
+            try:
+                handler = _resolve_handler(entry.function_path)
+                tool_handler = self._make_tool_handler(handler, entry.name, entry.arg_model)
+                reg.register(entry.name, tool_handler)
+                registered += 1
+            except ImportError as exc:
+                # Module not available on this platform (e.g. applescript on Linux)
+                logger.debug("Skipping local tool %s — import error: %s", entry.name, exc)
+            except AttributeError as exc:
+                logger.warning("Skipping local tool %s — handler not found: %s", entry.name, exc)
+            except Exception as exc:
+                failed.append(entry.name)
+                logger.error("Failed to register local tool %s: %s", entry.name, exc)
+
+        # Register the app-level fallback dispatcher for any tool not in the manifest.
+        reg.register_app_handler(self.source_app, self._app_dispatcher)
+
+        # Wire on_conversation_end into matrx-ai's ToolLifecycleManager.
+        try:
+            from matrx_ai.tools.lifecycle import ToolLifecycleManager
+            ToolLifecycleManager.get_instance().register_external_adapter_cleanup(
+                self._on_conversation_end
+            )
+        except Exception:
+            pass
+
+        if failed:
+            logger.warning("[LocalToolBridge] Failed to register: %s", failed)
+
+        logger.info(
+            "[LocalToolBridge] Registered %d/%d local tools",
+            registered,
+            len(LOCAL_TOOL_MANIFEST),
+        )
+
+    # ------------------------------------------------------------------
+    # Adapter factory (replaces the old _make_adapter + _resolve_handler)
+    # ------------------------------------------------------------------
+
+    def _make_tool_handler(
+        self,
+        handler: Any,
+        tool_name: str,
+        arg_model: type | None,
+    ) -> Any:
+        """Build a matrx-ai compatible async callable for a local tool handler.
+
+        The returned callable has the signature expected by ExternalHandlerRegistry:
+            ``async (args: dict, ctx: ToolContext) -> ToolResult``
+        """
+        sig = inspect.signature(handler)
+        param_names = [p for p in sig.parameters if p != "session"]
+
+        async def tool_handler(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+            started_at = time.time()
+            session = self._get_session(ctx.conversation_id)
+
+            # Validate + coerce args via the Pydantic model when available.
+            validated_args = args
+            if arg_model is not None:
+                try:
+                    parsed = arg_model.model_validate(args)
+                    validated_args = parsed.model_dump(exclude_none=True)
+                except Exception as exc:
+                    return ToolResult(
+                        success=False,
+                        error=ToolError(
+                            error_type="invalid_arguments",
+                            message=f"Argument validation failed for '{tool_name}': {exc}",
+                            is_retryable=True,
+                            suggested_action=(
+                                "Review the tool's parameter schema and correct the arguments."
+                            ),
+                        ),
+                        started_at=started_at,
+                        completed_at=time.time(),
+                        tool_name=tool_name,
+                        call_id=ctx.call_id,
+                    )
+
+            # Build kwargs — only pass params the handler signature accepts.
+            kwargs: dict[str, Any] = {}
+            for name in param_names:
+                param = sig.parameters[name]
+                if name in validated_args:
+                    kwargs[name] = validated_args[name]
+                elif param.default is not inspect.Parameter.empty:
+                    pass  # use the handler's default
+                # else: required param missing — handler will raise a meaningful error
+
+            try:
+                local_result = await handler(session, **kwargs)
+                return _convert_result(local_result, tool_name, ctx.call_id, started_at)
+            except Exception as exc:
+                logger.exception("Local tool %s raised an exception", tool_name)
+                return ToolResult(
+                    success=False,
+                    error=ToolError(
+                        error_type="execution",
+                        message=f"Tool '{tool_name}' failed: {exc}",
+                        is_retryable=False,
+                        suggested_action="Check the error message and adjust parameters.",
+                    ),
+                    started_at=started_at,
+                    completed_at=time.time(),
+                    tool_name=tool_name,
+                    call_id=ctx.call_id,
+                )
+
+        tool_handler.__name__ = f"local_{tool_name}_handler"
+        return tool_handler
+
+    # ------------------------------------------------------------------
+    # Fallback dispatch for tools not in the manifest
+    # ------------------------------------------------------------------
+
+    async def dispatch(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        """Handle any ``matrx_local`` tool that has no registered handler.
+
+        This fires only when the DB contains a tool with ``source_app="matrx_local"``
+        that isn't in ``LOCAL_TOOL_MANIFEST``.  The model receives a clear error so it
+        can inform the user rather than silently failing.
+        """
+        return ToolResult(
+            success=False,
+            error=ToolError(
+                error_type="not_implemented",
+                message=(
+                    f"Local tool '{ctx.tool_name}' is not in the LOCAL_TOOL_MANIFEST. "
+                    "Either the tool hasn't been implemented yet or the manifest is out of date. "
+                    "Run: uv run python -m app.tools.tool_sync status"
+                ),
+                is_retryable=False,
+                suggested_action=(
+                    "This local tool is not available. "
+                    "Inform the user and suggest an alternative approach."
+                ),
+            ),
+            started_at=time.time(),
+            completed_at=time.time(),
+            tool_name=ctx.tool_name,
+            call_id=ctx.call_id,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_handler(function_path: str) -> Any:
+    """Import and return the callable at the given dotted path."""
+    module_path, func_name = function_path.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, func_name)
+
+
+def _convert_result(
+    local_result: Any,
+    tool_name: str,
+    call_id: str,
+    started_at: float,
+) -> ToolResult:
+    """Convert matrx-local ``ToolResult`` → matrx-ai ``ToolResult``.
+
+    matrx-local: ``ToolResult(type=ToolResultType.SUCCESS, output=str, image=ImageData|None)``
+    matrx-ai:    ``ToolResult(success=bool, output=Any, error=ToolError|None, ...)``
+    """
     from app.tools.types import ToolResultType
 
     is_error = local_result.type == ToolResultType.ERROR
+    completed_at = time.time()
 
     output: Any = local_result.output or ""
 
-    # Include image data in output if present
-    if local_result.image:
+    # Include image data in output if present.
+    if local_result.image is not None:
         output = {
             "text": local_result.output,
             "image": {
@@ -106,8 +308,7 @@ def _convert_result(local_result: Any) -> Any:
             },
         }
 
-    now = time.time()
-    return AiToolResult(
+    return ToolResult(
         success=not is_error,
         output=output if not is_error else None,
         error=(
@@ -120,185 +321,73 @@ def _convert_result(local_result: Any) -> Any:
             if is_error
             else None
         ),
-        started_at=now,
-        completed_at=now,
+        started_at=started_at,
+        completed_at=completed_at,
+        tool_name=tool_name,
+        call_id=call_id,
     )
 
 
 # ---------------------------------------------------------------------------
-# Adapter factory
+# Backwards-compatible registration function (used by engine.py)
 # ---------------------------------------------------------------------------
 
-def _resolve_handler(function_path: str) -> Any:
-    """Import and return the callable at the given dotted path."""
-    module_path, func_name = function_path.rsplit(".", 1)
-    module = importlib.import_module(module_path)
-    return getattr(module, func_name)
+_bridge_instance: LocalToolBridge | None = None
 
 
-def _make_adapter(handler: Any, tool_name: str, arg_model: type | None = None) -> Any:
-    """Wrap a local tool handler in a matrx-ai compatible async callable.
+def get_bridge() -> LocalToolBridge:
+    """Return the process-level LocalToolBridge singleton."""
+    global _bridge_instance
+    if _bridge_instance is None:
+        _bridge_instance = LocalToolBridge()
+    return _bridge_instance
 
-    If an arg_model (Pydantic BaseModel) is provided, args are validated and
-    coerced through it before being passed to the handler. This catches type
-    errors early and surfaces clear messages to the AI.
-    """
-    sig = inspect.signature(handler)
-    param_names = [p for p in sig.parameters if p != "session"]
-
-    async def adapter(args: dict[str, Any], ctx: Any) -> Any:
-        session = _get_session(ctx.conversation_id)
-
-        # Validate + coerce args via the Pydantic model when available
-        validated_args = args
-        if arg_model is not None:
-            try:
-                parsed = arg_model.model_validate(args)
-                validated_args = parsed.model_dump(exclude_none=True)
-            except Exception as exc:
-                from matrx_ai.tools.models import ToolError
-                from matrx_ai.tools.models import ToolResult as AiToolResult
-
-                now = time.time()
-                return AiToolResult(
-                    success=False,
-                    error=ToolError(
-                        error_type="invalid_arguments",
-                        message=f"Argument validation failed for '{tool_name}': {exc}",
-                        is_retryable=True,
-                        suggested_action=(
-                            "Review the tool's parameter schema and correct the arguments."
-                        ),
-                    ),
-                    started_at=now,
-                    completed_at=now,
-                )
-
-        # Build kwargs — only pass params the handler signature accepts
-        kwargs: dict[str, Any] = {}
-        for name in param_names:
-            param = sig.parameters[name]
-            if name in validated_args:
-                kwargs[name] = validated_args[name]
-            elif param.default is not inspect.Parameter.empty:
-                pass  # use the handler default
-            # else: required param missing — handler will raise a meaningful error
-
-        try:
-            local_result = await handler(session, **kwargs)
-            return _convert_result(local_result)
-        except Exception as exc:
-            from matrx_ai.tools.models import ToolError
-            from matrx_ai.tools.models import ToolResult as AiToolResult
-
-            logger.exception("Local tool %s raised an exception", tool_name)
-            now = time.time()
-            return AiToolResult(
-                success=False,
-                error=ToolError(
-                    error_type="execution",
-                    message=f"Tool '{tool_name}' failed: {exc}",
-                    is_retryable=False,
-                    suggested_action="Check the error message and adjust parameters.",
-                ),
-                started_at=now,
-                completed_at=now,
-            )
-
-    adapter.__name__ = f"local_{tool_name}_adapter"
-    adapter.__doc__ = handler.__doc__
-    return adapter
-
-
-# ---------------------------------------------------------------------------
-# Schema resolution — prefer arg_model over hand-written dict
-# ---------------------------------------------------------------------------
-
-def _resolve_parameters(entry: Any) -> dict[str, Any]:
-    """Return the JSON Schema for a manifest entry.
-
-    Priority:
-    1. entry.arg_model.model_json_schema()  — auto-generated, always in sync
-    2. entry.parameters                     — hand-written fallback
-    """
-    if entry.arg_model is not None:
-        try:
-            schema = entry.arg_model.model_json_schema()
-            # Normalise to the same envelope the DB expects
-            return {
-                "type": "object",
-                "properties": schema.get("properties", {}),
-                "required": schema.get("required", []),
-            }
-        except Exception as exc:
-            logger.warning(
-                "Could not generate schema from arg_model for %s: %s — falling back to hand-written",
-                entry.name,
-                exc,
-            )
-    return entry.parameters
-
-
-# ---------------------------------------------------------------------------
-# Registration
-# ---------------------------------------------------------------------------
 
 def register_local_tools(registry: Any | None = None) -> int:
-    """Register all local tools from the manifest into the matrx-ai registry.
+    """Register all local tools. Returns the number of tools registered.
 
-    Args:
-        registry: ToolRegistryV2 instance. If None, uses the singleton.
-
-    Returns:
-        Number of tools successfully registered.
+    Called from ``engine.py``.  Creates and registers the ``LocalToolBridge``
+    singleton, then returns the count of successfully registered tools.
     """
     from app.tools.local_tool_manifest import LOCAL_TOOL_MANIFEST
 
-    if registry is None:
-        registry = _get_registry()
+    bridge = get_bridge()
+    bridge.register(registry)
 
-    registered = 0
-    failed: list[str] = []
-
-    for entry in LOCAL_TOOL_MANIFEST:
-        try:
-            handler = _resolve_handler(entry.function_path)
-            adapter = _make_adapter(handler, entry.name, arg_model=entry.arg_model)
-            parameters = _resolve_parameters(entry)
-
-            registry.register_local(
-                name=entry.name,
-                func=adapter,
-                description=entry.description,
-                category=entry.category,
-                tags=entry.tags,
-                parameters=parameters,
-                version=entry.version,
-                timeout_seconds=entry.timeout_seconds,
-            )
-            registered += 1
-
-        except ImportError as exc:
-            # Module not available on this platform (e.g. applescript on Linux)
-            logger.debug("Skipping local tool %s — import error: %s", entry.name, exc)
-        except AttributeError as exc:
-            logger.warning("Skipping local tool %s — handler not found: %s", entry.name, exc)
-        except Exception as exc:
-            failed.append(entry.name)
-            logger.error("Failed to register local tool %s: %s", entry.name, exc)
-
-    logger.info(
-        "Local tool bridge: registered %d/%d tools",
-        registered,
-        len(LOCAL_TOOL_MANIFEST),
-    )
-    if failed:
-        logger.warning("Failed to register: %s", failed)
-
-    return registered
+    # Return count of tools that were registered (those in the manifest that
+    # succeeded — the bridge logs failures internally).
+    from matrx_ai.tools.external_handlers import ExternalHandlerRegistry
+    reg = ExternalHandlerRegistry.get_instance()
+    return sum(1 for e in LOCAL_TOOL_MANIFEST if reg.has_handler(e.name, "matrx_local"))
 
 
 def registered_local_tool_names() -> list[str]:
-    """Return the names of all registered local tools."""
+    """Return the names of all local tools defined in the manifest."""
     from app.tools.local_tool_manifest import LOCAL_TOOL_MANIFEST
     return [e.name for e in LOCAL_TOOL_MANIFEST]
+
+
+def evict_session(conversation_id: str) -> None:
+    """Manually evict the ToolSession for a conversation.
+
+    You normally don't need to call this — matrx-ai's ToolLifecycleManager handles
+    cleanup automatically via ``on_conversation_end``.  Use this for explicit cleanup
+    (e.g. when a WebSocket disconnects).
+    """
+    import asyncio
+
+    bridge = get_bridge()
+    if conversation_id in bridge._sessions:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(bridge.on_conversation_end(conversation_id))
+            else:
+                loop.run_until_complete(bridge.on_conversation_end(conversation_id))
+        except Exception:
+            bridge._sessions.pop(conversation_id, None)
+
+
+def session_count() -> int:
+    """Return the number of active ToolSessions."""
+    return get_bridge().session_count

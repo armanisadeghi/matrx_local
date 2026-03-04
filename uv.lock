@@ -984,6 +984,20 @@ wheels = [
 ]
 
 [[package]]
+name = "imageio-ffmpeg"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz", hash = "sha256:e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755", size = 25210, upload-time = "2025-01-16T21:34:32.747Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/58/87ef68ac83f4c7690961bce288fd8e382bc5f1513860fc7f90a9c1c1c6bf/imageio_ffmpeg-0.6.0-py3-none-macosx_10_9_intel.macosx_10_9_x86_64.whl", hash = "sha256:9d2baaf867088508d4a3458e61eeb30e945c4ad8016025545f66c4b5aaef0a61", size = 24932969, upload-time = "2025-01-16T21:34:20.464Z" },
+    { url = "https://files.pythonhosted.org/packages/40/5c/f3d8a657d362cc93b81aab8feda487317da5b5d31c0e1fdfd5e986e55d17/imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b1ae3173414b5fc5f538a726c4e48ea97edc0d2cdc11f103afee655c463fa742", size = 21113891, upload-time = "2025-01-16T21:34:00.277Z" },
+    { url = "https://files.pythonhosted.org/packages/33/e7/1925bfbc563c39c1d2e82501d8372734a5c725e53ac3b31b4c2d081e895b/imageio_ffmpeg-0.6.0-py3-none-manylinux2014_aarch64.whl", hash = "sha256:1d47bebd83d2c5fc770720d211855f208af8a596c82d17730aa51e815cdee6dc", size = 25632706, upload-time = "2025-01-16T21:33:53.475Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/2d/43c8522a2038e9d0e7dbdf3a61195ecc31ca576fb1527a528c877e87d973/imageio_ffmpeg-0.6.0-py3-none-manylinux2014_x86_64.whl", hash = "sha256:c7e46fcec401dd990405049d2e2f475e2b397779df2519b544b8aab515195282", size = 29498237, upload-time = "2025-01-16T21:34:13.726Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/13/59da54728351883c3c1d9fca1710ab8eee82c7beba585df8f25ca925f08f/imageio_ffmpeg-0.6.0-py3-none-win32.whl", hash = "sha256:196faa79366b4a82f95c0f4053191d2013f4714a715780f0ad2a68ff37483cc2", size = 19652251, upload-time = "2025-01-16T21:34:06.812Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/c6/fa760e12a2483469e2bf5058c5faff664acf66cadb4df2ad6205b016a73d/imageio_ffmpeg-0.6.0-py3-none-win_amd64.whl", hash = "sha256:02fa47c83703c37df6bfe4896aab339013f62bf02c5ebf2dce6da56af04ffc0a", size = 31246824, upload-time = "2025-01-16T21:34:28.6Z" },
+]
+
+[[package]]
 name = "importlib-metadata"
 version = "8.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1258,7 +1272,7 @@ wheels = [
 
 [[package]]
 name = "matrx-ai"
-version = "0.1.7"
+version = "0.1.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1273,6 +1287,7 @@ dependencies = [
     { name = "pip" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pytest" },
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "supabase" },
@@ -1280,14 +1295,14 @@ dependencies = [
     { name = "together" },
     { name = "xai-sdk" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/5a/ea57b9e74d1836618eaf1412bf17a51734a24d64cf56c61e1d38a19d7363/matrx_ai-0.1.7.tar.gz", hash = "sha256:5921c438eedb3b89b3effbe04e3b6fcf1033169e45fcab19268076bc07bfe0c0", size = 593147, upload-time = "2026-03-03T07:43:03.703Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/53/a4a45942e2285d895066d2793e2d683168c7f9ece38d23eb52126fe334c4/matrx_ai-0.1.15.tar.gz", hash = "sha256:809ecfe00f671a3ed75a701c98187aae334284bfdcb1a60fcc45d810c249b54a", size = 693662, upload-time = "2026-03-04T04:47:21.013Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/fb/bc49e800a7d637b4b5c479e5a5000d82de25e1f6988023056282aba924f1/matrx_ai-0.1.7-py3-none-any.whl", hash = "sha256:e5823069d520cb62af3dd02d8c1e8df344096364de4f58e028356f30813de9c0", size = 440454, upload-time = "2026-03-03T07:43:01.592Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/9f/8fc9bf5efee4746f305f19aef15a0cc2fb94a31e06f228b790436c5e27c2/matrx_ai-0.1.15-py3-none-any.whl", hash = "sha256:00c4872a31a80f4fcbc928477716782bacf8c6e77292fb7bc93253eb3776289a", size = 464085, upload-time = "2026-03-04T04:47:19.306Z" },
 ]
 
 [[package]]
 name = "matrx-local"
-version = "1.0.22"
+version = "1.0.24"
 source = { virtual = "." }
 dependencies = [
     { name = "asyncpg" },
@@ -1298,6 +1313,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httptools" },
     { name = "httpx" },
+    { name = "imageio-ffmpeg" },
     { name = "lxml" },
     { name = "markdownify" },
     { name = "matrx-ai" },
@@ -1322,15 +1338,18 @@ dependencies = [
     { name = "uvicorn" },
     { name = "watchfiles" },
     { name = "websockets" },
+    { name = "yt-dlp" },
 ]
 
 [package.optional-dependencies]
 all = [
+    { name = "imageio-ffmpeg" },
     { name = "numpy" },
     { name = "openai-whisper" },
     { name = "playwright" },
     { name = "psutil" },
     { name = "sounddevice" },
+    { name = "yt-dlp" },
     { name = "zeroconf" },
 ]
 audio = [
@@ -1367,10 +1386,12 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httptools" },
     { name = "httpx" },
+    { name = "imageio-ffmpeg", specifier = ">=0.5.1" },
+    { name = "imageio-ffmpeg", marker = "extra == 'all'", specifier = ">=0.5.1" },
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "markdownify", specifier = ">=0.14.1" },
-    { name = "matrx-ai", specifier = ">=0.1.7" },
-    { name = "matrx-orm", specifier = ">=3.0.12" },
+    { name = "matrx-ai", specifier = ">=0.1.15" },
+    { name = "matrx-orm", specifier = ">=3.0.13" },
     { name = "matrx-utils", specifier = ">=1.0.13" },
     { name = "numpy", marker = "extra == 'all'", specifier = ">=2.4.2" },
     { name = "numpy", marker = "extra == 'audio'", specifier = ">=2.4.2" },
@@ -1402,6 +1423,8 @@ requires-dist = [
     { name = "uvicorn" },
     { name = "watchfiles" },
     { name = "websockets" },
+    { name = "yt-dlp", specifier = ">=2024.1.0" },
+    { name = "yt-dlp", marker = "extra == 'all'", specifier = ">=2024.1.0" },
     { name = "zeroconf", marker = "extra == 'all'", specifier = ">=0.131.0" },
     { name = "zeroconf", marker = "extra == 'discovery'", specifier = ">=0.131.0" },
 ]
@@ -1415,7 +1438,7 @@ dev = [
 
 [[package]]
 name = "matrx-orm"
-version = "3.0.12"
+version = "3.0.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asyncpg" },
@@ -1425,9 +1448,9 @@ dependencies = [
     { name = "psycopg-pool" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/65/5b/c63876f35cb8d85546c6239f53c5dd8eb90f771d25d6aadf623aca5a5c5b/matrx_orm-3.0.12.tar.gz", hash = "sha256:8e4291905379e2678d25e6b9f66325904cb24ab4486c50bb0905c792cfb1f335", size = 434914, upload-time = "2026-03-03T07:07:39.638Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/dd/ff60889eb9b9d15316903f5705172be3132bfa93e70757b5ded4a742a97b/matrx_orm-3.0.13.tar.gz", hash = "sha256:ea3470e4eb7297ed08ff071d454b681a675891006811dcb1eda7235ea2069138", size = 435386, upload-time = "2026-03-03T22:10:09.241Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/e0/4a768b8d1617cae8271f2737c95687da6e4e09f803b9e5452b4495bd6d87/matrx_orm-3.0.12-py3-none-any.whl", hash = "sha256:7fd6d9ea8f756c8c94d737905c6d104b47b7f11789d504b290261905ea90536d", size = 270247, upload-time = "2026-03-03T07:07:37.465Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/94/114d0e7c0c725e42d369c90cbf1106def6e3ec9594404bf1ef64ca37f2ef/matrx_orm-3.0.13-py3-none-any.whl", hash = "sha256:7d257db0413fb51215680c1b709dc8162936cde83d2792fd7f6a7543dad84886", size = 270260, upload-time = "2026-03-03T22:10:07.222Z" },
 ]
 
 [[package]]
@@ -3739,6 +3762,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/86/0f0dccb6e59a9e7f122c5afd43568b1d31b8ab7dda5f1b01fb5c7025c9a9/yarl-1.22.0-cp314-cp314t-win_amd64.whl", hash = "sha256:9fb17ea16e972c63d25d4a97f016d235c78dd2344820eb35bc034bc32012ee27", size = 96292, upload-time = "2025-10-06T14:12:15.398Z" },
     { url = "https://files.pythonhosted.org/packages/48/b7/503c98092fb3b344a179579f55814b613c1fbb1c23b3ec14a7b008a66a6e/yarl-1.22.0-cp314-cp314t-win_arm64.whl", hash = "sha256:9f6d73c1436b934e3f01df1e1b21ff765cd1d28c77dfb9ace207f746d4610ee1", size = 85171, upload-time = "2025-10-06T14:12:16.935Z" },
     { url = "https://files.pythonhosted.org/packages/73/ae/b48f95715333080afb75a4504487cbe142cae1268afc482d06692d605ae6/yarl-1.22.0-py3-none-any.whl", hash = "sha256:1380560bdba02b6b6c90de54133c81c9f2a453dee9912fe58c1dcced1edb7cff", size = 46814, upload-time = "2025-10-06T14:12:53.872Z" },
+]
+
+[[package]]
+name = "yt-dlp"
+version = "2026.3.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/6f/7427d23609353e5ef3470ff43ef551b8bd7b166dd4fef48957f0d0e040fe/yt_dlp-2026.3.3.tar.gz", hash = "sha256:3db7969e3a8964dc786bdebcffa2653f31123bf2a630f04a17bdafb7bbd39952", size = 3118658, upload-time = "2026-03-03T16:54:53.909Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7e/a4/8b5cd28ab87aef48ef15e74241befec3445496327db028f34147a9e0f14f/yt_dlp-2026.3.3-py3-none-any.whl", hash = "sha256:166c6e68c49ba526474bd400e0129f58aa522c2896204aa73be669c3d2f15e63", size = 3315599, upload-time = "2026-03-03T16:54:51.899Z" },
 ]
 
 [[package]]

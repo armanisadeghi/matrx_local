@@ -45,7 +45,7 @@ dependencies = [
     # Matrx
     "matrx-utils>=1.0.13",
     "matrx-orm>=3.0.13",
-    "matrx-ai>=0.1.7",
+    "matrx-ai>=0.1.15",
     "screeninfo>=0.8.1",
     # Media downloading & video processing
     "yt-dlp>=2024.1.0",
