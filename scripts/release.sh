@@ -3,8 +3,8 @@
 # Fully automated release script for matrx-local.
 #
 # Usage:
-#   ./scripts/release.sh              # auto-bump patch (1.0.14 → 1.0.15)
-#   ./scripts/release.sh --major      # bump minor      (1.0.14 → 1.1.0)
+#   ./scripts/release.sh              # auto-bump patch (1.0.25 → 1.0.26)
+#   ./scripts/release.sh --major      # bump minor      (1.0.25 → 1.1.0)
 #   ./scripts/release.sh X.Y.Z        # set exact version
 #
 # Flags:
@@ -12,7 +12,7 @@
 #             Bumping 1.x.y → 2.0.0 is intentionally manual-only.
 #
 # What it does:
-#   1. Reads current version from pyproject.toml
+#   1. Reads current version from pyproject.toml (single source of truth)
 #   2. Bumps patch by default, or minor with --major flag
 #   3. Updates ALL version files:
 #        - pyproject.toml
@@ -22,7 +22,7 @@
 #        - run.py
 #   4. Commits the version bump
 #   5. Tags vX.Y.Z
-#   6. Pushes commit + tag to origin (triggers GitHub Actions CI)
+#   6. Pushes commit + tag to origin (triggers GitHub Actions CI / PyPI publish)
 #
 # Workflow:
 #   git add . && git commit -m "your changes"
@@ -35,7 +35,16 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
 
-# ---- Read current version from pyproject.toml ----
+# Portable in-place sed: BSD (macOS) requires -i '', GNU requires -i alone.
+sedi() {
+    if sed --version 2>/dev/null | grep -q GNU; then
+        sed -i "$@"
+    else
+        sed -i '' "$@"
+    fi
+}
+
+# ---- Read current version from pyproject.toml (single source of truth) ----
 CURRENT=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
 if [[ -z "$CURRENT" ]]; then
     echo "ERROR: Could not read version from pyproject.toml"
@@ -58,7 +67,6 @@ case "$ARG" in
         VERSION="$MAJOR.$MINOR.$PATCH"
         ;;
     [0-9]*)
-        # Exact version specified
         VERSION="$ARG"
         ;;
     *)
@@ -68,7 +76,7 @@ case "$ARG" in
         echo "  --major     bump minor: $MAJOR.$MINOR.$PATCH → $MAJOR.$((MINOR + 1)).0"
         echo "  X.Y.Z       set exact version"
         echo ""
-        echo "  NOTE: bumping the major version ($(( MAJOR + 1 )).0.0) is intentionally manual only."
+        echo "  NOTE: bumping the major version ($((MAJOR + 1)).0.0) is intentionally manual only."
         exit 1
         ;;
 esac
@@ -87,28 +95,25 @@ fi
 echo "  → Updating version to $VERSION..."
 
 # 1. pyproject.toml  (top-level: version = "X.Y.Z")
-sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+sedi "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
-# 2. tauri.conf.json  (top-level: "version": "X.Y.Z")
-#    Use a context-aware replacement: only the line that starts with "version"
-#    at the JSON root level (2-space indent is NOT present for top-level keys).
-sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
+# 2. tauri.conf.json  (top-level "version" field — no indentation)
+sedi "s/^  \"version\": \"[^\"]*\"/  \"version\": \"$VERSION\"/" desktop/src-tauri/tauri.conf.json
 
-# 3. Cargo.toml  (package section: version = "X.Y.Z")
-sed -i "s/^version = \".*\"/version = \"$VERSION\"/" desktop/src-tauri/Cargo.toml
+# 3. Cargo.toml  ([package] section: version = "X.Y.Z")
+sedi "s/^version = \".*\"/version = \"$VERSION\"/" desktop/src-tauri/Cargo.toml
 
-# 4. desktop/package.json  — use npm so it handles the JSON correctly
+# 4. desktop/package.json — npm handles JSON correctly
 cd desktop
 npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null
 cd "$PROJECT_ROOT"
 
-# 5. run.py  — only the version inside write_discovery_file's payload
-#    The line looks like:  "version": "1.0.13",
-#    We target just the "version" key line in that file.
-sed -i 's/"version": "[0-9]*\.[0-9]*\.[0-9]*"/"version": "'"$VERSION"'"/' run.py
+# 5. run.py — the "version" key inside write_discovery_file's payload
+#    Targets lines like:  "version": "1.0.25",
+sedi 's/"version": "[0-9]*\.[0-9]*\.[0-9]*"/"version": "'"$VERSION"'"/' run.py
 
 echo "  ✓ Versions synced:"
-echo "       pyproject.toml                   → $VERSION"
+echo "       pyproject.toml                    → $VERSION"
 echo "       desktop/src-tauri/tauri.conf.json → $VERSION"
 echo "       desktop/src-tauri/Cargo.toml      → $VERSION"
 echo "       desktop/package.json              → $VERSION"
@@ -125,7 +130,7 @@ git add \
 git commit -m "release: $TAG"
 
 # ---- Tag ----
-if git tag -l "$TAG" | grep -q "$TAG"; then
+if git tag --list "$TAG" | grep -q "$TAG"; then
     echo "  → Tag $TAG already exists, removing..."
     git tag -d "$TAG"
     git push origin ":refs/tags/$TAG" 2>/dev/null || true
