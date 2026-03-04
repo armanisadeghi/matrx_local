@@ -21,6 +21,7 @@ can discover it without configuration.
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import logging
 import os
@@ -30,6 +31,8 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+
+_APP_VERSION = importlib.metadata.version("matrx-local")
 
 import uvicorn
 from PIL import Image
@@ -206,7 +209,7 @@ def write_discovery_file(port: int, tunnel_url: str | None = None) -> None:
             "url": f"http://127.0.0.1:{port}",
             "ws": f"ws://127.0.0.1:{port}/ws",
             "pid": os.getpid(),
-            "version": "1.0.27",
+            "version": _APP_VERSION,
         }
         if tunnel_url:
             payload["tunnel_url"] = tunnel_url

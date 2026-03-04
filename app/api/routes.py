@@ -1,9 +1,12 @@
 import asyncio
+import importlib.metadata
 import io
 import os
 import uuid
 import zipfile
 from typing import Optional
+
+_APP_VERSION = importlib.metadata.version("matrx-local")
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -36,7 +39,7 @@ logger = get_logger()
 @router.get("/")
 async def root():
     logger.info("Root endpoint accessed")
-    return {"status": "ok", "service": "matrx-local", "version": "1.0.9"}
+    return {"status": "ok", "service": "matrx-local", "version": _APP_VERSION}
 
 
 # ── Public discovery / health endpoints ─────────────────────────────────
@@ -51,7 +54,7 @@ async def health():
 @router.get("/version")
 async def version():
     """Return the engine version."""
-    return {"version": "1.0.9", "service": "matrx-local"}
+    return {"version": _APP_VERSION, "service": "matrx-local"}
 
 
 @router.get("/ports")
