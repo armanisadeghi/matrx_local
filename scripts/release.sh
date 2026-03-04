@@ -125,6 +125,7 @@ git add \
     desktop/src-tauri/tauri.conf.json \
     desktop/src-tauri/Cargo.toml \
     desktop/package.json \
+    desktop/package-lock.json \
     run.py
 
 git commit -m "release: $TAG"
