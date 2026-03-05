@@ -43,7 +43,7 @@ dependencies = [
     "PyMuPDF>=1.27.1",
     "pytesseract>=0.3.13",
     # Matrx
-    "matrx-utils>=1.0.13",
+    "matrx-utils>=1.0.14",
     "matrx-orm>=3.0.13",
     "matrx-ai>=0.1.15",
     "screeninfo>=0.8.1",

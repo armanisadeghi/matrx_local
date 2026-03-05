@@ -1302,7 +1302,7 @@ wheels = [
 
 [[package]]
 name = "matrx-local"
-version = "1.0.30"
+version = "1.1.2"
 source = { virtual = "." }
 dependencies = [
     { name = "asyncpg" },
@@ -1392,7 +1392,7 @@ requires-dist = [
     { name = "markdownify", specifier = ">=0.14.1" },
     { name = "matrx-ai", specifier = ">=0.1.15" },
     { name = "matrx-orm", specifier = ">=3.0.13" },
-    { name = "matrx-utils", specifier = ">=1.0.13" },
+    { name = "matrx-utils", specifier = ">=1.0.14" },
     { name = "numpy", marker = "extra == 'all'", specifier = ">=2.4.2" },
     { name = "numpy", marker = "extra == 'audio'", specifier = ">=2.4.2" },
     { name = "openai-whisper", marker = "extra == 'all'" },
@@ -1455,7 +1455,7 @@ wheels = [
 
 [[package]]
 name = "matrx-utils"
-version = "1.0.13"
+version = "1.0.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
@@ -1472,9 +1472,9 @@ dependencies = [
     { name = "requests" },
     { name = "supabase" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/98/c8/64289194d6c19f9f121cd520fb60a4ce4877e7443e1e4405b793ba7244f5/matrx_utils-1.0.13.tar.gz", hash = "sha256:8c150f8da91004fac5987bbab0d08d8ff6efa4da345d2a3dd279db13fa12cd0f", size = 4232697, upload-time = "2026-03-02T20:09:16.576Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cf/46/36b7e414aea72859859658103ec4fa3d8504de8b6f4cc3eccb2a18122621/matrx_utils-1.0.14.tar.gz", hash = "sha256:1472d71894c6d9e5f8a2e6893673d051e01b7e39b6009d8da5bf95641bba9594", size = 4235942, upload-time = "2026-03-05T03:03:56.524Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/2d/3d96a1aa111be6f6e42ec94b77eca272dde4f2c43b79818752d81a6512c7/matrx_utils-1.0.13-py3-none-any.whl", hash = "sha256:49b0a67f50c13d37d618b2d010fdff87610493c34f59c783ead80839676686b6", size = 4317666, upload-time = "2026-03-02T20:09:13.783Z" },
+    { url = "https://files.pythonhosted.org/packages/72/95/c4f2bda411cf5dc5a2494821c0cbc2a2656f3042862d48a959628340a2cc/matrx_utils-1.0.14-py3-none-any.whl", hash = "sha256:68d87d5ea9a06a20829808fdb9bf4e8343800c477ee90bf6c3ae72cb21be5a7b", size = 4317701, upload-time = "2026-03-05T03:03:54.64Z" },
 ]
 
 [[package]]

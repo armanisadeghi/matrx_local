@@ -23,6 +23,27 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { Loader2 } from "lucide-react";
 
+// ---------------------------------------------------------------------------
+// HashRouter + OAuth callback bridge
+//
+// When Supabase redirects after OAuth approval it lands on the real URL:
+//   http://localhost:1420/auth/callback?code=XXX&state=YYY
+//
+// HashRouter only reads window.location.hash, so "/auth/callback" as a real
+// pathname is invisible to it — the app would render the "/" route instead.
+//
+// We detect this on every render (before anything mounts) and immediately
+// redirect to the equivalent hash route, preserving the query string so
+// AuthCallback.tsx can read window.location.search as normal.
+if (
+  typeof window !== "undefined" &&
+  window.location.pathname === "/auth/callback" &&
+  !window.location.hash.includes("/auth/callback")
+) {
+  const search = window.location.search; // "?code=XXX&state=YYY"
+  window.location.replace(`/#/auth/callback${search}`);
+}
+
 export default function App() {
   const auth = useAuth();
   const themeCtx = useTheme();
@@ -34,14 +55,20 @@ export default function App() {
     browserStatus,
     engineVersion,
     refresh,
-  } = useEngine();
+  } = useEngine(auth.isAuthenticated);
 
   const notif = useNotifications();
 
   // Keep only the 3 most recent for the toast stack
   const toasts = notif.notifications.slice(0, 3);
 
-  if (auth.loading) {
+  // Allow /auth/callback to render before auth loads — it handles its own
+  // loading state and must be reachable immediately after OAuth redirect.
+  const isCallbackRoute =
+    typeof window !== "undefined" &&
+    window.location.hash.startsWith("#/auth/callback");
+
+  if (auth.loading && !isCallbackRoute) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -54,6 +81,10 @@ export default function App() {
       <TooltipProvider>
         <HashRouter>
           <Routes>
+            {/* AuthCallback MUST be listed unconditionally — before the auth
+                check — so it renders regardless of authentication state.
+                After OAuth approval the user lands here with ?code= and is
+                not yet authenticated. */}
             <Route path="/auth/callback" element={<AuthCallback />} />
 
             {!auth.isAuthenticated ? (

@@ -22,6 +22,7 @@ _Last updated: 2026-03-02_
 - [ ] **Remove personal named tunnel** (optional) — Delete the `matrx-local` tunnel from [Cloudflare dashboard](https://one.dash.cloudflare.com/). Uninstall the system service: `sudo launchctl unload /Library/LaunchDaemons/com.cloudflare.cloudflared.plist && sudo rm /Library/LaunchDaemons/com.cloudflare.cloudflared.plist`.
 
 ### 4. Supabase & Cloud Config
+- [ ] **Add `aimatrx://auth/callback` to OAuth client redirect URIs** — In Supabase Dashboard → Authentication → OAuth Apps → client `af37ec97-3e0c-423c-a205-3d6c5adc5645`, add `aimatrx://auth/callback` as a redirect URI. This is the production deep-link URI used by the Tauri app on macOS, Linux, and Windows. The `aimatrx` scheme is already registered in `tauri.conf.json`. Keep the existing URIs (`http://localhost:1420/auth/callback`, `http://localhost:22140/auth/callback`, `tauri://localhost/auth/callback`).
 - [ ] **Verify `app_settings` Table** — Check RLS and existence. [HOWTO.md → Cloud Sync](HOWTO.md#app_settings-table)
 - [ ] **Verify `note_folders` Table** — "New Folder" failing suggests RLS/Table issue. [HOWTO.md → Cloud Sync](HOWTO.md#note_folders-table)
 - [ ] **Add `BRAVE_API_KEY` to `.env`** — Required for web search. [HOWTO.md → Cloud Sync](HOWTO.md#brave_api_key-for-web-search)

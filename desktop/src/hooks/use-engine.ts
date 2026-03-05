@@ -17,7 +17,7 @@ interface EngineState {
   wsConnected: boolean;
 }
 
-export function useEngine() {
+export function useEngine(authenticated = true) {
   const [state, setState] = useState<EngineState>({
     status: "discovering",
     url: null,
@@ -141,9 +141,17 @@ export function useEngine() {
     await initialize();
   }, [initialize]);
 
+  // Trigger initialize() whenever authentication state changes from false → true.
+  // The [] effect below sets up long-lived listeners; this separate effect handles
+  // the one-shot initialization that must wait for a valid session.
+  useEffect(() => {
+    if (authenticated) {
+      initialize();
+    }
+  }, [authenticated, initialize]);
+
   useEffect(() => {
     mountedRef.current = true;
-    initialize();
 
     const offConnected = engine.on("connected", () =>
       update({ wsConnected: true })
