@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { engine } from "@/lib/api";
 import { Zap, ArrowLeft, ExternalLink, CheckCircle2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -47,7 +46,6 @@ function OrbitRing() {
 }
 
 export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingProps) {
-    const navigate = useNavigate();
     const handled = useRef(false);
     const [completed, setCompleted] = useState(false);
     const [elapsed, setElapsed] = useState(0);
@@ -97,15 +95,17 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
             try {
                 const ok = await completeOAuthExchange(code, TAURI_REDIRECT_URI);
                 if (ok) {
+                    // auth.isAuthenticated will flip true → App.tsx re-renders to
+                    // the dashboard automatically. Show success briefly first.
                     setCompleted(true);
-                    setTimeout(() => navigate("/", { replace: true }), 800);
                     return;
                 }
                 console.error("[OAuthPending] completeOAuthExchange returned false");
             } catch (err) {
                 console.error("[OAuthPending] unexpected error during exchange:", err);
             }
-            navigate("/login", { replace: true });
+            // Exchange failed — clear pending state and return to login screen.
+            onCancel();
         }
 
         async function setup() {
@@ -156,7 +156,7 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
             tauriUnlisten?.();
             wsOff?.();
         };
-    }, [navigate, completeOAuthExchange]);
+    }, [completeOAuthExchange, onCancel]);
 
     return (
         <div className="relative flex h-screen w-full flex-col overflow-hidden bg-background">
