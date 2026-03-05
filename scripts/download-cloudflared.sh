@@ -51,7 +51,17 @@ download_target() {
   echo "✓ Saved: $(basename "$dest")"
 }
 
-if [[ "${1:-}" == "--current" ]]; then
+MODE="${1:-}"
+TARGET_OVERRIDE="${2:-}"
+
+if [[ "$MODE" == "--target" ]]; then
+  # Download a single explicit target triple (used by CI per-platform)
+  triple="$TARGET_OVERRIDE"
+  [[ -n "$triple" ]] || { echo "ERROR: --target requires a target triple argument"; exit 1; }
+  filename="${TARGETS[$triple]:-}"
+  [[ -n "$filename" ]] || { echo "ERROR: Unknown target triple: $triple"; exit 1; }
+  download_target "$triple" "$filename"
+elif [[ "$MODE" == "--current" ]]; then
   # Detect current platform
   OS="$(uname -s)"
   ARCH="$(uname -m)"
@@ -63,6 +73,7 @@ if [[ "${1:-}" == "--current" ]]; then
     *)              echo "Unknown platform $OS-$ARCH" ; exit 1 ;;
   esac
 else
+  # Download all platforms (default — for local dev setup)
   for triple in "${!TARGETS[@]}"; do
     download_target "$triple" "${TARGETS[$triple]}"
   done

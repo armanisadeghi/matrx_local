@@ -89,6 +89,16 @@ if ! git diff --quiet; then
     fail "Uncommitted changes detected. Commit them first."
 fi
 
+# ── Ensure cloudflared sidecar binary exists for current platform ─────────────
+info "Ensuring cloudflared sidecar binary is present..."
+if [[ -f "scripts/download-cloudflared.sh" ]]; then
+    chmod +x scripts/download-cloudflared.sh
+    ./scripts/download-cloudflared.sh --current
+    ok "cloudflared sidecar ready."
+else
+    warn "scripts/download-cloudflared.sh not found — skipping cloudflared download."
+fi
+
 # ── TypeScript type-check ────────────────────────────────────────────────────
 info "Running TypeScript type-check (pnpm tsc --noEmit)..."
 if ! command -v pnpm &>/dev/null; then

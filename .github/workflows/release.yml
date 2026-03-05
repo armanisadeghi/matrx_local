@@ -49,6 +49,20 @@ jobs:
           fi
         shell: bash
 
+      - name: Download cloudflared sidecar binary
+        run: |
+          chmod +x scripts/download-cloudflared.sh
+          if [[ "${{ matrix.args }}" == *"x86_64-apple-darwin"* ]]; then
+            ./scripts/download-cloudflared.sh --target x86_64-apple-darwin
+          elif [[ "${{ matrix.args }}" == *"aarch64-apple-darwin"* ]]; then
+            ./scripts/download-cloudflared.sh --target aarch64-apple-darwin
+          elif [[ "${{ matrix.platform }}" == "ubuntu-22.04" ]]; then
+            ./scripts/download-cloudflared.sh --target x86_64-unknown-linux-gnu
+          elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            ./scripts/download-cloudflared.sh --target x86_64-pc-windows-msvc
+          fi
+        shell: bash
+
       # ---- Frontend + Tauri build ----
       - name: Install pnpm
         uses: pnpm/action-setup@v4
