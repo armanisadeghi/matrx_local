@@ -224,4 +224,5 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo ""
 echo -e "  Monitor : ${CYAN}https://github.com/${GITHUB_REPO}/actions${NC}"
 echo -e "  Releases: ${CYAN}https://github.com/${GITHUB_REPO}/releases${NC}"
+echo -e "  Mac Trick: ${CYAN}Use: xattr -cr '/Applications/AI Matrx.app' after installation and putting it in Applications folder ${NC}"
 echo ""

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import supabase from "@/lib/supabase";
 import { exchangeOAuthCode, clearOAuthState, extractVerifierFromState } from "@/lib/oauth";
 import { Loader2, AlertTriangle } from "lucide-react";
 
@@ -96,24 +95,39 @@ export function AuthCallback() {
           "http://localhost:1420/auth/callback"
         );
         clearOAuthState();
-        console.log("[AuthCallback] token exchange succeeded");
+        console.log("[AuthCallback] token exchange succeeded, storing session...");
 
-        // ── Step 4: Inject tokens into supabase-js ──────────────────────────
-        const { error } = await supabase.auth.setSession({
+        // ── Step 4: Store tokens directly into supabase-js storage ──────────
+        //
+        // supabase.auth.setSession() makes an extra network round-trip to validate
+        // the token which can hang in the dev browser. Instead, write the session
+        // directly into the storage key supabase-js reads on startup, then do a
+        // hard reload so useAuth re-initialises from storage with the new session.
+        //
+        // Storage key: "sb-<project-ref>-auth-token"
+        // Value: the session object supabase-js expects.
+        const projectRef = new URL(import.meta.env.VITE_SUPABASE_URL as string).hostname.split(".")[0];
+        const storageKey = `sb-${projectRef}-auth-token`;
+
+        const expiresAt = Math.floor(Date.now() / 1000) + tokens.expires_in;
+        const sessionObj = {
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
-        });
+          expires_in: tokens.expires_in,
+          expires_at: expiresAt,
+          token_type: tokens.token_type ?? "bearer",
+        };
 
-        if (error) {
-          const msg = `setSession failed: ${error.message}`;
-          console.error("[AuthCallback]", msg);
-          setErrorMsg(msg);
-          setTimeout(() => navigate("/login", { replace: true }), 4000);
-          return;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(sessionObj));
+          console.log("[AuthCallback] session stored at", storageKey, "— reloading app");
+        } catch (storageErr) {
+          console.error("[AuthCallback] failed to write session to storage:", storageErr);
         }
 
-        console.log("[AuthCallback] session set — navigating to /");
-        navigate("/", { replace: true });
+        // Hard reload to `/` — useAuth will call getSession() which reads from
+        // the storage key we just wrote, and the user lands on the dashboard.
+        window.location.replace("/");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error("[AuthCallback] token exchange failed:", msg);
