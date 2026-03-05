@@ -113,7 +113,11 @@ jobs:
           # Scraper server URL — public, not a secret. All scraper API calls go here.
           # Authenticated users' Supabase JWTs are forwarded; no user-level API key needed.
           SCRAPER_SERVER_URL: "https://scraper.app.matrxserver.com"
-          # macOS notarization (optional — only active when secrets are set)
+          # macOS code signing
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # macOS notarization
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
