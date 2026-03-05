@@ -3,10 +3,11 @@ import { engine } from "@/lib/api";
 import { Zap, ArrowLeft, ExternalLink, CheckCircle2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-// Production redirect URI — the "aimatrx" custom URI scheme registered in
-// tauri.conf.json is intercepted by the OS after OAuth approval and routed
-// directly to the running desktop app via tauri-plugin-deep-link.
-const TAURI_REDIRECT_URI = "aimatrx://auth/callback";
+// Production redirect URI — points to the web intermediary page on aimatrx.com
+// which receives the OAuth code from Supabase, then triggers the aimatrx://
+// deep link to hand off to the desktop app. This must match the redirect_uri
+// used in the authorization request (see use-auth.ts getRedirectUri()).
+const TAURI_REDIRECT_URI = "https://www.aimatrx.com/oauth/callback/matrx-local";
 
 const BRAND_COLOR = "hsl(var(--primary))";
 

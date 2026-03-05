@@ -81,7 +81,12 @@ function getRedirectUri(): string {
   if (import.meta.env.DEV) {
     return "http://localhost:1420/auth/callback";
   }
-  return "aimatrx://auth/callback";
+  // Use the web intermediary page on aimatrx.com instead of the direct
+  // deep link. The web page receives the OAuth code from Supabase, then
+  // triggers the aimatrx:// deep link to hand off to the desktop app.
+  // This gives the user a polished success page instead of a blank browser
+  // tab showing the aimatrx:// URL.
+  return "https://www.aimatrx.com/oauth/callback/matrx-local";
 }
 
 export function useAuth() {
