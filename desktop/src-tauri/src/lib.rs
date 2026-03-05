@@ -260,6 +260,21 @@ fn get_pending_oauth_url(state: tauri::State<'_, PendingOAuthUrl>) -> Option<Str
     state.0.lock().unwrap().take()
 }
 
+/// Bring the main window to front.
+///
+/// On macOS, `window.show()` alone is not enough when the app has been hidden
+/// via `window.hide()` — the app process may not be the frontmost application,
+/// so the window appears but receives no focus. We must call both `show()` and
+/// `set_focus()`, and additionally `unminimize()` in case the window was
+/// minimized into the Dock rather than hidden.
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 /// Set up the system tray icon and menu.
 ///
 /// Only ONE tray icon is created here — the auto-trayIcon in tauri.conf.json
@@ -287,10 +302,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("AI Matrx")
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(app);
             }
             "quit" => {
                 // Kill the sidecar before quitting
@@ -309,10 +321,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } = event
             {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                show_main_window(tray.app_handle());
             }
         });
 
@@ -364,10 +373,7 @@ pub fn run() {
                     println!("[deep-link] Received URL: {}", url_str);
 
                     // Bring the window to front
-                    if let Some(window) = handle.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    show_main_window(&handle);
 
                     // Store in app state — OAuthPending.tsx will poll this via
                     // get_pending_oauth_url() in case it wasn't mounted yet when
@@ -419,6 +425,17 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // On macOS, clicking the Dock icon when all windows are hidden fires
+            // RunEvent::Reopen. Without this handler the click does nothing — the
+            // app stays invisible. We re-show the main window here so the standard
+            // Mac UX (click Dock icon → app comes back) works as expected.
+            if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+                if !has_visible_windows {
+                    show_main_window(app);
+                }
+            }
+        });
 }

@@ -1,6 +1,6 @@
 # Matrx Local -- Task Tracker
 
-_Last updated: 2026-03-04_
+_Last updated: 2026-03-05_
 
 > Living document. Every discovered bug, missing feature, or architectural issue gets logged here immediately.
 > Check items off as they're resolved. Move completed items to the History section at the bottom.
@@ -62,6 +62,9 @@ _Last updated: 2026-03-04_
 
 ## 🟡 OPEN ISSUES & BUGS (Organized by Feature)
 
+### Devices / Permissions
+- [x] **Screen Recording permission prompt keeps re-appearing** — Fixed. See History section for details.
+
 ### Dashboard
 - [ ] Status indicators can sometimes lag behind actual engine state.
 
@@ -84,6 +87,9 @@ _Last updated: 2026-03-04_
 ---
 
 ## ✅ HISTORY OF COMPLETED TASKS
+
+### Permission Check Bug Fix (2026-03-05)
+- [x] **Screen Recording re-prompt bug** — `check_screen_recording()` called `screencapture -x -t png <tmp>` as a liveness probe. macOS TCC permission is bound to the **process identity** (bundle ID / code signature), not the user. The Python sidecar has a different identity than the Tauri `.app` bundle, so macOS fires the consent notification on every check even after the user has granted permission. Fixed by replacing the probe with `Quartz.CGPreflightScreenCaptureAccess()` from `pyobjc-framework-Quartz`, which reads the TCC database directly without performing any capture and without triggering the prompt. Added `pyobjc-framework-Quartz; sys_platform == 'darwin'` to `pyproject.toml`.
 
 ### Local-First Architecture Implementation (2026-03-03)
 - [x] **config.py:** Added `MATRX_USER_DIR`, `MATRX_NOTES_DIR`, `MATRX_FILES_DIR`, `MATRX_CODE_DIR`, `MATRX_WORKSPACES_DIR`, `MATRX_DATA_DIR`. All user-visible content now lives under `~/Documents/Matrx/` (OS-native Documents folder). Engine internals stay in `~/.matrx/`.

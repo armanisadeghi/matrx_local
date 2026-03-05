@@ -621,37 +621,41 @@ def _network_instructions() -> str:
 async def check_screen_recording() -> PermissionResult:
     """Check screen recording / screenshot permission."""
     if IS_MACOS:
-        # Try taking a screenshot to temp — if denied, macOS blocks it
-        import tempfile, os
-
-        tmp = os.path.join(tempfile.gettempdir(), "_matrx_perm_test.png")
+        # CGPreflightScreenCaptureAccess() reads the TCC database status without
+        # performing any screen capture and without triggering the system permission
+        # prompt. Using screencapture as a probe is incorrect: it spawns a child
+        # process with a different identity than the app bundle, causing macOS to
+        # re-prompt the user on every check even after they have granted permission.
         try:
-            _, err, rc = await _run(["screencapture", "-x", "-t", "png", tmp])
-            if rc == 0 and os.path.exists(tmp):
-                size = os.path.getsize(tmp)
-                os.unlink(tmp)
-                # A very small file might indicate a blank/permission-denied capture
-                if size > 500:
-                    return PermissionResult(
-                        permission="screen_recording",
-                        status=PermissionStatus.GRANTED,
-                        details="Screen capture works",
-                        grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-                        user_details="Screen capture is active",
-                        user_instructions="",
-                    )
-            if os.path.exists(tmp):
-                os.unlink(tmp)
+            import Quartz  # pyobjc-framework-Quartz (already in the venv)
+            has_access: bool = Quartz.CGPreflightScreenCaptureAccess()
+            if has_access:
+                return PermissionResult(
+                    permission="screen_recording",
+                    status=PermissionStatus.GRANTED,
+                    details="Screen recording permission granted",
+                    grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
+                    user_details="Screen capture is active",
+                    user_instructions="",
+                )
+            return PermissionResult(
+                permission="screen_recording",
+                status=PermissionStatus.DENIED,
+                details="Screen recording permission not granted",
+                grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
+                user_details="Screen capture needs permission",
+                user_instructions="Open System Settings to allow screen recording",
+            )
         except Exception:
             pass
 
         return PermissionResult(
             permission="screen_recording",
             status=PermissionStatus.UNKNOWN,
-            details="Screen recording permission may be required",
+            details="Could not determine screen recording status",
             grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-            user_details="Screen capture may need permission",
-            user_instructions="Open System Settings to allow screen recording",
+            user_details="Screen capture status unknown",
+            user_instructions="Open System Settings to check screen recording permissions",
         )
 
     elif IS_WINDOWS:

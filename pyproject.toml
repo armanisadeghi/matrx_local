@@ -21,6 +21,8 @@ dependencies = [
     "pyperclip",
     # Notifications
     "plyer",
+    # macOS TCC permission checks (CGPreflightScreenCaptureAccess etc.)
+    "pyobjc-framework-Quartz; sys_platform == 'darwin'",
     # System tray
     "pystray",
     "pillow",
