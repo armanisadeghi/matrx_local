@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent } from "@/components/ui/card";
-import { OAuthPending } from "@/pages/OAuthPending";
 import type { useAuth } from "@/hooks/use-auth";
 
 type AuthActions = ReturnType<typeof useAuth>;
@@ -15,7 +14,6 @@ interface LoginProps {
     AuthActions,
     | "signInWithOAuth"
     | "signInWithEmail"
-    | "completeOAuthExchange"
     | "loading"
     | "error"
   >;
@@ -24,15 +22,11 @@ interface LoginProps {
 export function Login({ auth }: LoginProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [oauthPending, setOAuthPending] = useState(false);
 
   const handleOAuth = async () => {
-    setOAuthPending(true);
     await auth.signInWithOAuth();
-  };
-
-  const handleCancelOAuth = () => {
-    setOAuthPending(false);
+    // App.tsx watches auth.oauthPending — as soon as signInWithOAuth() sets it,
+    // App.tsx swaps to <OAuthPending> automatically. No local state needed.
   };
 
   const handleEmailSignIn = async (e: React.FormEvent) => {
@@ -40,16 +34,6 @@ export function Login({ auth }: LoginProps) {
     if (!email || !password) return;
     await auth.signInWithEmail(email, password);
   };
-
-  // ── OAuth pending screen (fills the whole window) ──────────────────
-  if (oauthPending) {
-    return (
-      <OAuthPending
-        onCancel={handleCancelOAuth}
-        completeOAuthExchange={auth.completeOAuthExchange}
-      />
-    );
-  }
 
   // ── Normal login page ──────────────────────────────────────────────
   return (
@@ -95,7 +79,7 @@ export function Login({ auth }: LoginProps) {
               onClick={handleOAuth}
               disabled={auth.loading}
             >
-              {auth.loading && oauthPending ? (
+              {auth.loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <MatrxIcon />
@@ -145,11 +129,11 @@ export function Login({ auth }: LoginProps) {
                 className="w-full"
                 disabled={auth.loading || !email || !password}
               >
-                {auth.loading && !oauthPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Sign in"
-                )}
+              {auth.loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Sign in"
+              )}
               </Button>
             </form>
 

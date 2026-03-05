@@ -51,6 +51,9 @@ import {
   exchangeOAuthCode,
   saveOAuthState,
   clearOAuthState,
+  setOAuthPending,
+  clearOAuthPending,
+  isOAuthPending,
 } from "@/lib/oauth";
 
 export interface AuthState {
@@ -59,6 +62,7 @@ export interface AuthState {
   isAuthenticated: boolean;
   loading: boolean;
   error: string | null;
+  oauthPending: boolean;
 }
 
 /**
@@ -87,6 +91,9 @@ export function useAuth() {
     isAuthenticated: false,
     loading: true,
     error: null,
+    // Restore from localStorage — if the user had launched OAuth and the app
+    // was backgrounded, this is still true when the app is re-activated.
+    oauthPending: isOAuthPending(),
   });
 
   const mountedRef = useRef(true);
@@ -151,13 +158,17 @@ export function useAuth() {
         await buildOAuthAuthorizeUrl({ redirectUri });
 
       // Persist verifier + state so the callback can complete the exchange.
-      // sessionStorage survives within the same Tauri webview / browser tab.
+      // Uses localStorage so it survives app backgrounding and potential restart.
       saveOAuthState(codeVerifier, oauthState);
 
       if (isInTauri) {
+        // Mark OAuth as in-flight BEFORE opening the browser. This persists
+        // to localStorage so OAuthPending renders correctly when the OS
+        // re-activates the app window after the user approves in the browser.
+        setOAuthPending();
+        update({ oauthPending: true });
+
         // Open the authorization URL in the system browser.
-        // The webview stays on OAuthPending, keeping sessionStorage alive so
-        // the code_verifier is available when the Tauri event fires.
         try {
           const { open } = await import("@tauri-apps/plugin-shell");
           await open(url);
@@ -207,6 +218,7 @@ export function useAuth() {
       try {
         const tokens = await exchangeOAuthCode(code, stored, redirectUri);
         clearOAuthState();
+        clearOAuthPending();
 
         // Inject tokens into supabase-js so getSession(), onAuthStateChange(),
         // and all other supabase-js APIs work correctly going forward.
@@ -217,17 +229,19 @@ export function useAuth() {
 
         if (error) {
           console.error("[auth] setSession error:", error.message);
-          update({ loading: false, error: error.message });
+          update({ loading: false, oauthPending: false, error: error.message });
           return false;
         }
 
         // onAuthStateChange fires automatically and updates state.
+        update({ oauthPending: false });
         return true;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error("[auth] completeOAuthExchange error:", message);
-        update({ loading: false, error: message });
         clearOAuthState();
+        clearOAuthPending();
+        update({ loading: false, oauthPending: false, error: message });
         return false;
       }
     },
@@ -250,6 +264,12 @@ export function useAuth() {
     [update]
   );
 
+  const cancelOAuth = useCallback(() => {
+    clearOAuthState();
+    clearOAuthPending();
+    update({ loading: false, oauthPending: false, error: null });
+  }, [update]);
+
   const signOut = useCallback(async () => {
     update({ loading: true, error: null });
     try {
@@ -269,8 +289,10 @@ export function useAuth() {
       console.warn("[signOut] unexpected error:", err);
     } finally {
       clearOAuthState();
+      clearOAuthPending();
       update({
         loading: false,
+        oauthPending: false,
         session: null,
         user: null,
         isAuthenticated: false,
@@ -290,6 +312,7 @@ export function useAuth() {
     ...state,
     signInWithOAuth,
     completeOAuthExchange,
+    cancelOAuth,
     signInWithEmail,
     signOut,
     getAccessToken,

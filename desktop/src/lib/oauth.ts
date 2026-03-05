@@ -94,6 +94,30 @@ export function loadOAuthState(): { verifier: string | null; state: string | nul
 export function clearOAuthState(): void {
   localStorage.removeItem(VERIFIER_KEY);
   localStorage.removeItem(STATE_KEY);
+  localStorage.removeItem(PENDING_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// OAuth pending flag
+//
+// Set to "1" when shell.open() launches the system browser. Cleared on
+// success, failure, or cancel. Persists across app backgrounding so that
+// OAuthPending renders correctly when the OS re-activates the app after
+// the user approves in the browser.
+// ---------------------------------------------------------------------------
+
+const PENDING_KEY = "matrx_oauth_pending";
+
+export function setOAuthPending(): void {
+  localStorage.setItem(PENDING_KEY, "1");
+}
+
+export function isOAuthPending(): boolean {
+  return localStorage.getItem(PENDING_KEY) === "1";
+}
+
+export function clearOAuthPending(): void {
+  localStorage.removeItem(PENDING_KEY);
 }
 
 // ---------------------------------------------------------------------------

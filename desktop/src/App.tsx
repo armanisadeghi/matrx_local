@@ -11,6 +11,7 @@ import { Settings } from "@/pages/Settings";
 import { Devices } from "@/pages/Devices";
 import { Chat } from "@/pages/Chat";
 import { Login } from "@/pages/Login";
+import { OAuthPending } from "@/pages/OAuthPending";
 import { AuthCallback } from "@/pages/AuthCallback";
 import { AiMatrx } from "@/pages/AiMatrx";
 import { BrowserLab } from "@/pages/BrowserLab";
@@ -68,11 +69,26 @@ export default function App() {
     typeof window !== "undefined" &&
     window.location.hash.startsWith("#/auth/callback");
 
-  if (auth.loading && !isCallbackRoute) {
+  if (auth.loading && !isCallbackRoute && !auth.oauthPending) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
+    );
+  }
+
+  // OAuthPending is rendered at the App level (not inside Login) so it
+  // survives the app being backgrounded and re-activated by the OS deep link.
+  // oauthPending is persisted to localStorage so it's still true after the
+  // app window comes back to front following browser-side OAuth approval.
+  if (auth.oauthPending && !auth.isAuthenticated) {
+    return (
+      <ErrorBoundary>
+        <OAuthPending
+          onCancel={auth.cancelOAuth}
+          completeOAuthExchange={auth.completeOAuthExchange}
+        />
+      </ErrorBoundary>
     );
   }
 
