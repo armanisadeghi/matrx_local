@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# Download cloudflared binaries for all supported Tauri target platforms
-# and place them in desktop/src-tauri/sidecar/ following Tauri's naming
-# convention: cloudflared-<rust-target-triple>
+# Download cloudflared binaries for Tauri target platforms and place them in
+# desktop/src-tauri/sidecar/ with the naming Tauri expects:
+#   cloudflared-<rust-target-triple>[.exe]
 #
-# Run this once before building a release, or in CI before `tauri build`.
+# Run once before building, or in CI before `tauri build`.
 #
 # Usage:
-#   ./scripts/download-cloudflared.sh           # download all platforms
-#   ./scripts/download-cloudflared.sh --current # download only current platform
+#   ./scripts/download-cloudflared.sh                        # download all platforms
+#   ./scripts/download-cloudflared.sh --current              # download only current platform
+#   ./scripts/download-cloudflared.sh --target <triple>      # download one specific target
 #
 set -euo pipefail
 
@@ -16,69 +17,101 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SIDECAR_DIR="$SCRIPT_DIR/../desktop/src-tauri/sidecar"
 mkdir -p "$SIDECAR_DIR"
 
-# Pin to a known-good release. Update when Cloudflare releases security fixes.
-CF_VERSION="2026.2.0"
-CF_BASE="https://github.com/cloudflare/cloudflared/releases/download/${CF_VERSION}"
-
-# Maps Tauri target triple → cloudflared release filename
-declare -A TARGETS=(
-  ["aarch64-apple-darwin"]="cloudflared-darwin-arm64"
-  ["x86_64-apple-darwin"]="cloudflared-darwin-amd64"
-  ["x86_64-unknown-linux-gnu"]="cloudflared-linux-amd64"
-  ["aarch64-unknown-linux-gnu"]="cloudflared-linux-arm64"
-  ["x86_64-pc-windows-msvc"]="cloudflared-windows-amd64.exe"
-)
-
-download_target() {
-  local triple="$1"
-  local filename="$2"
-  local ext=""
-  [[ "$filename" == *.exe ]] && ext=".exe"
-  local dest="$SIDECAR_DIR/cloudflared-${triple}${ext}"
-
-  if [[ -f "$dest" ]]; then
-    echo "✓ Already exists: $(basename "$dest")"
-    return
-  fi
-
-  local url="${CF_BASE}/${filename}"
-  echo "↓ Downloading cloudflared ${CF_VERSION} for ${triple} ..."
-  curl -fsSL --progress-bar -o "$dest" "$url"
-
-  if [[ "$ext" != ".exe" ]]; then
-    chmod +x "$dest"
-  fi
-  echo "✓ Saved: $(basename "$dest")"
+# Resolve the latest cloudflared version from GitHub API.
+resolve_cf_version() {
+    curl -fsSL "https://api.github.com/repos/cloudflare/cloudflared/releases/latest" \
+        | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])"
 }
 
-MODE="${1:-}"
-TARGET_OVERRIDE="${2:-}"
+CF_VERSION="$(resolve_cf_version)"
+CF_BASE="https://github.com/cloudflare/cloudflared/releases/download/${CF_VERSION}"
+echo "  cloudflared version: ${CF_VERSION}"
 
-if [[ "$MODE" == "--target" ]]; then
-  # Download a single explicit target triple (used by CI per-platform)
-  triple="$TARGET_OVERRIDE"
-  [[ -n "$triple" ]] || { echo "ERROR: --target requires a target triple argument"; exit 1; }
-  filename="${TARGETS[$triple]:-}"
-  [[ -n "$filename" ]] || { echo "ERROR: Unknown target triple: $triple"; exit 1; }
-  download_target "$triple" "$filename"
-elif [[ "$MODE" == "--current" ]]; then
-  # Detect current platform
-  OS="$(uname -s)"
-  ARCH="$(uname -m)"
-  case "$OS-$ARCH" in
-    Darwin-arm64)   download_target "aarch64-apple-darwin"        "cloudflared-darwin-arm64" ;;
-    Darwin-x86_64)  download_target "x86_64-apple-darwin"         "cloudflared-darwin-amd64" ;;
-    Linux-x86_64)   download_target "x86_64-unknown-linux-gnu"    "cloudflared-linux-amd64" ;;
-    Linux-aarch64)  download_target "aarch64-unknown-linux-gnu"   "cloudflared-linux-arm64" ;;
-    *)              echo "Unknown platform $OS-$ARCH" ; exit 1 ;;
-  esac
-else
-  # Download all platforms (default — for local dev setup)
-  for triple in "${!TARGETS[@]}"; do
-    download_target "$triple" "${TARGETS[$triple]}"
-  done
-fi
+# Returns the release asset filename for a given Tauri target triple.
+cf_asset_for_triple() {
+    case "$1" in
+        aarch64-apple-darwin)       echo "cloudflared-darwin-arm64.tgz" ;;
+        x86_64-apple-darwin)        echo "cloudflared-darwin-amd64.tgz" ;;
+        x86_64-unknown-linux-gnu)   echo "cloudflared-linux-amd64" ;;
+        aarch64-unknown-linux-gnu)  echo "cloudflared-linux-arm64" ;;
+        x86_64-pc-windows-msvc)     echo "cloudflared-windows-amd64.exe" ;;
+        *)                          echo "" ;;
+    esac
+}
+
+download_target() {
+    local triple="$1"
+    local asset="$2"
+    local ext=""
+    [[ "$asset" == *.exe ]] && ext=".exe"
+    local dest="$SIDECAR_DIR/cloudflared-${triple}${ext}"
+
+    if [[ -f "$dest" ]]; then
+        echo "  ✓ Already exists: $(basename "$dest")"
+        return
+    fi
+
+    local url="${CF_BASE}/${asset}"
+    echo "  ↓ Downloading cloudflared ${CF_VERSION} for ${triple} ..."
+
+    if [[ "$asset" == *.tgz ]]; then
+        # macOS assets are tarballs containing a single `cloudflared` binary
+        local tmp_dir
+        tmp_dir="$(mktemp -d)"
+        curl -fsSL --progress-bar -o "$tmp_dir/cloudflared.tgz" "$url"
+        tar -xzf "$tmp_dir/cloudflared.tgz" -C "$tmp_dir"
+        # The binary inside is named `cloudflared`
+        mv "$tmp_dir/cloudflared" "$dest"
+        rm -rf "$tmp_dir"
+    else
+        curl -fsSL --progress-bar -o "$dest" "$url"
+    fi
+
+    [[ "$ext" != ".exe" ]] && chmod +x "$dest"
+    echo "  ✓ Saved: $(basename "$dest")"
+}
+
+MODE="${1:-all}"
+
+case "$MODE" in
+    --target)
+        triple="${2:-}"
+        [[ -n "$triple" ]] || { echo "ERROR: --target requires a target triple."; exit 1; }
+        asset="$(cf_asset_for_triple "$triple")"
+        [[ -n "$asset" ]] || { echo "ERROR: Unknown target triple: $triple"; exit 1; }
+        download_target "$triple" "$asset"
+        ;;
+    --current)
+        OS="$(uname -s)"
+        ARCH="$(uname -m)"
+        case "$OS-$ARCH" in
+            Darwin-arm64)   triple="aarch64-apple-darwin" ;;
+            Darwin-x86_64)  triple="x86_64-apple-darwin" ;;
+            Linux-x86_64)   triple="x86_64-unknown-linux-gnu" ;;
+            Linux-aarch64)  triple="aarch64-unknown-linux-gnu" ;;
+            *) echo "ERROR: Unknown platform $OS-$ARCH"; exit 1 ;;
+        esac
+        asset="$(cf_asset_for_triple "$triple")"
+        download_target "$triple" "$asset"
+        ;;
+    all|"")
+        for triple in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu \
+            x86_64-pc-windows-msvc
+        do
+            asset="$(cf_asset_for_triple "$triple")"
+            download_target "$triple" "$asset"
+        done
+        ;;
+    *)
+        echo "Usage: $0 [--current | --target <triple> | all]"
+        exit 1
+        ;;
+esac
 
 echo ""
-echo "All cloudflared binaries ready in $SIDECAR_DIR"
-ls -lh "$SIDECAR_DIR"/cloudflared-*
+echo "cloudflared binaries in $SIDECAR_DIR:"
+ls -lh "$SIDECAR_DIR"/cloudflared-* 2>/dev/null || echo "  (none)"
