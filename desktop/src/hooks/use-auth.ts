@@ -198,7 +198,7 @@ export function useAuth() {
    *     params after the browser tab is redirected back.
    *
    * The redirectUri passed here MUST exactly match what was sent in the
-   * authorization request (stored in sessionStorage) and what is registered
+   * authorization request (stored in localStorage) and what is registered
    * on the OAuth client.
    *
    * Returns true on success.
@@ -207,7 +207,7 @@ export function useAuth() {
     async (code: string, redirectUri: string): Promise<boolean> => {
       const stored = localStorage.getItem("matrx_oauth_code_verifier");
       if (!stored) {
-        console.error("[auth] completeOAuthExchange: no code_verifier in sessionStorage");
+        console.error("[auth] completeOAuthExchange: no code_verifier in localStorage");
         update({
           loading: false,
           error: "OAuth session expired. Please try signing in again.",

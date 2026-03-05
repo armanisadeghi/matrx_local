@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import supabase from "@/lib/supabase";
-import { exchangeOAuthCode, clearOAuthState } from "@/lib/oauth";
+import { exchangeOAuthCode, clearOAuthState, extractVerifierFromState } from "@/lib/oauth";
 import { Loader2, AlertTriangle } from "lucide-react";
 
 /**
@@ -52,6 +52,8 @@ export function AuthCallback() {
       console.log("[AuthCallback] hash:", hash);
       console.log("[AuthCallback] code present:", !!code, "state present:", !!state);
 
+      console.log("[AuthCallback] state length:", state?.length);
+
       if (!code) {
         const msg = "No authorization code in callback URL. The OAuth flow may have been interrupted.";
         console.error("[AuthCallback]", msg, "hash:", hash);
@@ -60,25 +62,26 @@ export function AuthCallback() {
         return;
       }
 
-      // ── Step 2: Retrieve the PKCE code_verifier ──────────────────────────
-      const codeVerifier = sessionStorage.getItem("matrx_oauth_code_verifier");
-      const savedState = sessionStorage.getItem("matrx_oauth_state");
-
-      console.log("[AuthCallback] codeVerifier present:", !!codeVerifier);
-
-      if (!codeVerifier) {
-        const msg = "PKCE session expired — the code_verifier is missing from sessionStorage. This usually means the browser tab was closed and reopened, or too much time passed.";
+      // ── Step 2: Extract the PKCE code_verifier from the state param ────────
+      //
+      // The verifier is encoded directly into the state we sent, in the format:
+      //   "<verifier>.<nonce>"
+      // This survives cross-origin browser navigation (localStorage gets cleared
+      // when the tab goes aimatrx.com → localhost in some browsers).
+      if (!state) {
+        const msg = "No state parameter returned — cannot recover PKCE verifier.";
         console.error("[AuthCallback]", msg);
         setErrorMsg(msg);
         setTimeout(() => navigate("/login", { replace: true }), 4000);
         return;
       }
 
-      // Optional: verify state to guard against CSRF
-      if (savedState && state && savedState !== state) {
-        const msg = "OAuth state mismatch — possible CSRF attack or stale session. Please try signing in again.";
-        console.error("[AuthCallback]", msg);
-        clearOAuthState();
+      const codeVerifier = extractVerifierFromState(state);
+      console.log("[AuthCallback] codeVerifier extracted from state:", !!codeVerifier);
+
+      if (!codeVerifier) {
+        const msg = "Could not extract PKCE verifier from state parameter. Please try signing in again.";
+        console.error("[AuthCallback]", msg, "state:", state?.slice(0, 30));
         setErrorMsg(msg);
         setTimeout(() => navigate("/login", { replace: true }), 4000);
         return;

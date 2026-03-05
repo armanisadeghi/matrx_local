@@ -141,7 +141,17 @@ export async function buildOAuthAuthorizeUrl(
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-  const state = base64URLEncode(crypto.getRandomValues(new Uint8Array(16)));
+  // Encode the verifier directly into the state parameter so it survives the
+  // cross-origin browser navigation in the web dev flow. Browsers may clear
+  // localStorage/sessionStorage across aimatrx.com → localhost round trips.
+  // The state is echoed back verbatim by Supabase, so the verifier travels
+  // in the URL itself — no storage required.
+  //
+  // Format: "<verifier>.<random-nonce>"
+  // The nonce provides the CSRF protection that state is meant to give.
+  const nonce = base64URLEncode(crypto.getRandomValues(new Uint8Array(16)));
+  const state = `${codeVerifier}.${nonce}`;
+
   // Do NOT include "openid" — it requires asymmetric JWT signing keys (RS256/ES256)
   // which Supabase must be explicitly migrated to. With the default HS256 key,
   // requesting "openid" causes Supabase to return a 500 "Error generating ID token".
@@ -164,6 +174,17 @@ export async function buildOAuthAuthorizeUrl(
     state,
     codeVerifier,
   };
+}
+
+/**
+ * Extract the code_verifier from the echoed state parameter.
+ * State format: "<verifier>.<nonce>" — split on the first dot only,
+ * since base64url characters don't include dots.
+ */
+export function extractVerifierFromState(state: string): string | null {
+  const dotIdx = state.indexOf(".");
+  if (dotIdx === -1) return null;
+  return state.slice(0, dotIdx) || null;
 }
 
 // ---------------------------------------------------------------------------
