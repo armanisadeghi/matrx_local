@@ -11,6 +11,8 @@
 #
 # Dynamic (no update needed):
 #   run.py, app/api/routes.py — read via importlib.metadata
+#   desktop/src/pages/Login.tsx — reads __APP_VERSION__ injected by Vite from package.json
+#   desktop/src/pages/Settings.tsx — reads __APP_VERSION__ injected by Vite from package.json
 #
 # Usage:
 #   ./scripts/release.sh              # patch bump  (default)

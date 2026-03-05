@@ -7,6 +7,8 @@ import { Separator } from "@/components/ui/separator";
 import { Card, CardContent } from "@/components/ui/card";
 import type { useAuth } from "@/hooks/use-auth";
 
+declare const __APP_VERSION__: string;
+
 type AuthActions = ReturnType<typeof useAuth>;
 
 interface LoginProps {
@@ -144,7 +146,7 @@ export function Login({ auth }: LoginProps) {
         </Card>
 
         <p className="text-center text-xs text-muted-foreground/50">
-          Matrx Local &middot; v1.0.0
+          Matrx Local &middot; v{__APP_VERSION__}
         </p>
       </div>
     </div>
