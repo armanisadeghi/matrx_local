@@ -111,6 +111,7 @@ export default function App() {
                   engineStatus={status}
                   engineUrl={url}
                   engineVersion={engineVersion}
+                  onRefresh={refresh}
                   user={auth.user}
                   onSignOut={auth.signOut}
                   notifications={notif.notifications}

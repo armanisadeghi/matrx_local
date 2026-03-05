@@ -141,14 +141,27 @@ export function useEngine(authenticated = true) {
     await initialize();
   }, [initialize]);
 
-  // Trigger initialize() whenever authentication state changes from false → true.
-  // The [] effect below sets up long-lived listeners; this separate effect handles
-  // the one-shot initialization that must wait for a valid session.
+  // Trigger initialize() whenever authentication state changes to true.
+  // Also listen to supabase onAuthStateChange directly — this catches the case
+  // where the session is set via setSession() (deep-link Tauri path) which fires
+  // onAuthStateChange before the React prop update propagates.
   useEffect(() => {
     if (authenticated) {
       initialize();
     }
   }, [authenticated, initialize]);
+
+  // Belt-and-suspenders: also watch supabase auth state directly so we catch
+  // the SIGNED_IN event that fires from setSession() in completeOAuthExchange,
+  // in case the authenticated prop hasn't propagated yet when it fires.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_IN") {
+        initialize();
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [initialize]);
 
   useEffect(() => {
     mountedRef.current = true;
