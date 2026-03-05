@@ -432,10 +432,13 @@ pub fn run() {
             // RunEvent::Reopen. Without this handler the click does nothing — the
             // app stays invisible. We re-show the main window here so the standard
             // Mac UX (click Dock icon → app comes back) works as expected.
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
                 if !has_visible_windows {
                     show_main_window(app);
                 }
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
         });
 }

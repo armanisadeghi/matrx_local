@@ -18,9 +18,23 @@ SIDECAR_DIR="$SCRIPT_DIR/../desktop/src-tauri/sidecar"
 mkdir -p "$SIDECAR_DIR"
 
 # Resolve the latest cloudflared version from GitHub API.
+# Passes GITHUB_TOKEN if set (avoids 60 req/hr rate limit on shared CI runners).
+# Falls back to a known-good version if the API is unreachable or rate-limited.
+CF_FALLBACK_VERSION="2026.2.0"
 resolve_cf_version() {
-    curl -fsSL "https://api.github.com/repos/cloudflare/cloudflared/releases/latest" \
-        | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])"
+    local curl_args=(-fsSL)
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    fi
+    local response
+    response="$(curl "${curl_args[@]}" "https://api.github.com/repos/cloudflare/cloudflared/releases/latest" 2>/dev/null)" || true
+    if [[ -z "$response" ]]; then
+        echo "Warning: GitHub API unreachable, using fallback version ${CF_FALLBACK_VERSION}" >&2
+        echo "${CF_FALLBACK_VERSION}"
+        return
+    fi
+    python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])" <<< "$response" 2>/dev/null \
+        || { echo "Warning: Could not parse GitHub API response, using fallback version ${CF_FALLBACK_VERSION}" >&2; echo "${CF_FALLBACK_VERSION}"; }
 }
 
 CF_VERSION="$(resolve_cf_version)"
