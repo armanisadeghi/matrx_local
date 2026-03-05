@@ -315,7 +315,9 @@ class SettingsSync:
             "instance_id": self._instance_id,
             "settings_json": self.get_all(),
         }
-        url = f"{self._supabase_url}/rest/v1/app_settings"
+        # on_conflict tells PostgREST which unique constraint to use, preventing
+        # 409 errors on the second and subsequent pushes from the same instance.
+        url = f"{self._supabase_url}/rest/v1/app_settings?on_conflict=user_id,instance_id"
         headers = {
             **self._headers(),
             "Prefer": "resolution=merge-duplicates,return=representation",
@@ -360,8 +362,12 @@ class SettingsSync:
     async def register_instance(self, registration: dict) -> Optional[dict]:
         """Register or update this instance in the cloud.
 
-        Sets _is_orphan=True and logs at ERROR level if registration fails,
-        because an unregistered instance cannot be managed from the cloud.
+        Uses an explicit upsert via POST with on_conflict targeting the
+        (user_id, instance_id) unique constraint so re-registrations on
+        every startup correctly update the row rather than hitting a 409.
+
+        Sets _is_orphan=True and logs at ERROR level only on genuine failures
+        (not on expected conflicts that resolve via upsert).
         """
         if not self._configured:
             logger.warning(
@@ -378,7 +384,9 @@ class SettingsSync:
             "is_active": True,
             "last_seen": datetime.now(timezone.utc).isoformat(),
         }
-        url = f"{self._supabase_url}/rest/v1/app_instances"
+        # on_conflict tells PostgREST exactly which unique constraint to use for
+        # the merge, preventing the 409 that occurs when it can't infer it.
+        url = f"{self._supabase_url}/rest/v1/app_instances?on_conflict=user_id,instance_id"
         headers = {
             **self._headers(),
             "Prefer": "resolution=merge-duplicates,return=representation",

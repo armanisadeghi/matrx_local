@@ -28,6 +28,11 @@ struct SidecarState {
 /// Controls whether window close hides to tray or quits the app.
 struct CloseToTray(AtomicBool);
 
+/// Holds a pending OAuth deep-link URL that arrived before the frontend
+/// mounted its listener. The frontend polls this via get_pending_oauth_url
+/// and clears it after consuming.
+struct PendingOAuthUrl(Mutex<Option<String>>);
+
 #[derive(Serialize)]
 struct SidecarStatus {
     running: bool,
@@ -248,6 +253,13 @@ async fn check_for_updates(app: tauri::AppHandle, install: bool) -> Result<Updat
     }
 }
 
+/// Return the pending OAuth deep-link URL (if one arrived before the frontend
+/// listener was ready) and clear it from state. Returns null if none pending.
+#[tauri::command]
+fn get_pending_oauth_url(state: tauri::State<'_, PendingOAuthUrl>) -> Option<String> {
+    state.0.lock().unwrap().take()
+}
+
 /// Set up the system tray icon and menu.
 ///
 /// Only ONE tray icon is created here — the auto-trayIcon in tauri.conf.json
@@ -330,6 +342,7 @@ pub fn run() {
             child: Mutex::new(None),
         })
         .manage(CloseToTray(AtomicBool::new(true)))
+        .manage(PendingOAuthUrl(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
@@ -338,6 +351,7 @@ pub fn run() {
             get_close_to_tray,
             check_for_updates,
             proxy_fetch,
+            get_pending_oauth_url,
         ])
         .setup(|app| {
             // Register the deep-link listener for OAuth callbacks.
@@ -355,7 +369,16 @@ pub fn run() {
                         let _ = window.set_focus();
                     }
 
-                    // Emit to the frontend so AuthCallback.tsx can handle the session
+                    // Store in app state — OAuthPending.tsx will poll this via
+                    // get_pending_oauth_url() in case it wasn't mounted yet when
+                    // the event fired (race condition on app activation).
+                    if let Some(state) = handle.try_state::<PendingOAuthUrl>() {
+                        *state.0.lock().unwrap() = Some(url_str.clone());
+                    }
+
+                    // Also emit the event for the case where OAuthPending IS
+                    // already mounted and listening — whichever wins, the other
+                    // is ignored via the handled.current guard.
                     let _ = handle.emit("oauth-callback", url_str);
                 }
             });

@@ -46,6 +46,9 @@ class InstanceInfo(BaseModel):
     cpu_model: str | None = None
     cpu_cores: int | None = None
     ram_total_gb: float | None = None
+    hardware_uuid: str | None = None
+    serial_number: str | None = None
+    board_id: str | None = None
 
 
 # ── Configuration ───────────────────────────────────────────────────────

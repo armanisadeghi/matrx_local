@@ -61,27 +61,39 @@ export async function generateCodeChallenge(verifier: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Session storage keys
+// Persistent storage for PKCE state
+//
+// We use localStorage (not sessionStorage) because:
+//   - In production Tauri, the OS may activate the app via deep link and
+//     restart the process. sessionStorage is wiped on restart; localStorage
+//     persists to disk across restarts.
+//   - In web dev, the tab navigates away to Supabase and back. Most browsers
+//     preserve sessionStorage across same-tab navigations to other origins,
+//     but some configurations (privacy mode, certain browsers) do not.
+//     localStorage is reliable in all cases.
+//   - The verifier has no meaningful value after the code exchange completes —
+//     we clear it immediately on success or failure. The only risk window is
+//     the seconds between clicking "Sign in" and the code returning.
 // ---------------------------------------------------------------------------
 
 const VERIFIER_KEY = "matrx_oauth_code_verifier";
 const STATE_KEY = "matrx_oauth_state";
 
 export function saveOAuthState(verifier: string, state: string): void {
-  sessionStorage.setItem(VERIFIER_KEY, verifier);
-  sessionStorage.setItem(STATE_KEY, state);
+  localStorage.setItem(VERIFIER_KEY, verifier);
+  localStorage.setItem(STATE_KEY, state);
 }
 
 export function loadOAuthState(): { verifier: string | null; state: string | null } {
   return {
-    verifier: sessionStorage.getItem(VERIFIER_KEY),
-    state: sessionStorage.getItem(STATE_KEY),
+    verifier: localStorage.getItem(VERIFIER_KEY),
+    state: localStorage.getItem(STATE_KEY),
   };
 }
 
 export function clearOAuthState(): void {
-  sessionStorage.removeItem(VERIFIER_KEY);
-  sessionStorage.removeItem(STATE_KEY);
+  localStorage.removeItem(VERIFIER_KEY);
+  localStorage.removeItem(STATE_KEY);
 }
 
 // ---------------------------------------------------------------------------

@@ -20,12 +20,12 @@ _Last updated: 2026-03-04_
 - [ ] **Windows MSI installer looks outdated** — Investigate switching from WiX (.msi) to NSIS (.exe) for a modern installer experience.
 - [ ] **Proxy `POST /system/open-folder` 500 Error** — Investigation needed into why this endpoint fails with 500 Internal Server Error when clicking "Open Logs/Data Folder".
 
-### P0 — Cloud Instance Registration (completely broken, blocks cloud features)
+### P0 — Cloud Instance Registration (partially fixed)
 
-- [ ] **ORPHAN INSTANCES: `app_instances` table is empty — zero registrations ever succeeded.**
-  - After this fix, the engine now logs the real HTTP error at ERROR level on every failure.
-  - **To diagnose:** Start engine, log in, then hit `GET /cloud/debug`. It shows `is_orphan`, `last_error`, `last_registration_result`, `configure_called_at`.
-  - **Most likely cause: RLS policy mismatch.** The app uses Supabase OAuth (the desktop OAuth flow), which issues a JWT for the user. However, `auth.uid()` in Supabase RLS only resolves correctly when the JWT `sub` claim matches the `auth.users` table. If the OAuth app is registered as a separate provider or the JWT `aud` claim doesn't match the Supabase project, RLS returns 0 rows silently or a 401/403.
+- [x] **409 on `register_instance` and `push_to_cloud`** — Root cause: PostgREST's `resolution=merge-duplicates` upsert requires an explicit `?on_conflict=col1,col2` parameter to identify which unique constraint to use; without it the upsert falls through to a plain INSERT which collides with the existing row. Fixed by adding `?on_conflict=user_id,instance_id` to both `register_instance` (app_instances) and `_push_to_cloud` (app_settings) URLs. Also added `hardware_uuid`, `serial_number`, and `board_id` to system info collection and registration payload; migration `005_hardware_identity.sql` adds the columns to `app_instances`.
+
+- [ ] **Verify registrations now succeed** — Start engine, log in, hit `GET /cloud/debug`. Confirm `is_orphan=false` and `last_registration_result="ok"`.
+  - **If still failing:** The remaining cause is likely RLS. The app uses Supabase OAuth (the desktop OAuth flow), which issues a JWT for the user. However, `auth.uid()` in Supabase RLS only resolves correctly when the JWT `sub` claim matches the `auth.users` table. If the OAuth app is registered as a separate provider or the JWT `aud` claim doesn't match the Supabase project, RLS returns 0 rows silently or a 401/403.
   - **Investigation steps:**
     1. Hit `GET /cloud/debug` after login — copy `last_error` verbatim from the response.
     2. If error is `HTTP 401` → JWT is being rejected outright (wrong key, expired, or wrong `aud`).

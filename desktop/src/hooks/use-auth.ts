@@ -194,7 +194,7 @@ export function useAuth() {
    */
   const completeOAuthExchange = useCallback(
     async (code: string, redirectUri: string): Promise<boolean> => {
-      const stored = sessionStorage.getItem("matrx_oauth_code_verifier");
+      const stored = localStorage.getItem("matrx_oauth_code_verifier");
       if (!stored) {
         console.error("[auth] completeOAuthExchange: no code_verifier in sessionStorage");
         update({

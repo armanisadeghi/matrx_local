@@ -59,22 +59,33 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
 
     // ── Callback receiver ──────────────────────────────────────────────────
     //
-    // DEV path: the browser tab navigates to http://localhost:1420/auth/callback
-    // where <AuthCallback /> handles the code exchange. OAuthPending is NOT
-    // shown in the web dev path — this component only appears in Tauri.
-    //
     // Tauri production path:
-    //   1. shell.open() sent the browser to the Supabase authorize URL
+    //   1. shell.open() sent the system browser to the Supabase authorize URL
     //   2. User approved on aimatrx.com/oauth/consent
     //   3. Supabase redirected the browser to aimatrx://auth/callback?code=XXX
     //   4. OS intercepted the aimatrx:// scheme → called Rust on_open_url handler
-    //   5. Rust emitted Tauri event "oauth-callback" with the full URL string
-    //   6. We receive it here, extract the code, exchange for tokens
+    //   5a. Rust stored the URL in PendingOAuthUrl app state (for the race case)
+    //   5b. Rust emitted Tauri event "oauth-callback" with the full URL string
+    //   6. We receive via event (if mounted) OR via get_pending_oauth_url poll
+    //
+    // Race condition: on_open_url fires immediately when the OS activates the app.
+    // The React component may not have mounted yet. We handle both cases:
+    //   - Event listener catches it if we're already mounted.
+    //   - get_pending_oauth_url() Tauri command retrieves it if it arrived first.
     useEffect(() => {
         if (handled.current) return;
 
         let tauriUnlisten: (() => void) | null = null;
         let wsOff: (() => void) | null = null;
+
+        function extractCode(urlStr: string): string | null {
+            try {
+                return new URL(urlStr).searchParams.get("code");
+            } catch {
+                console.warn("[OAuthPending] could not parse URL:", urlStr);
+                return null;
+            }
+        }
 
         async function handleCode(code: string) {
             if (handled.current) return;
@@ -82,6 +93,7 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
             tauriUnlisten?.();
             wsOff?.();
 
+            console.log("[OAuthPending] exchanging code for tokens...");
             try {
                 const ok = await completeOAuthExchange(code, TAURI_REDIRECT_URI);
                 if (ok) {
@@ -89,26 +101,41 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
                     setTimeout(() => navigate("/", { replace: true }), 800);
                     return;
                 }
+                console.error("[OAuthPending] completeOAuthExchange returned false");
             } catch (err) {
-                console.error("[OAuthPending] unexpected error:", err);
+                console.error("[OAuthPending] unexpected error during exchange:", err);
             }
             navigate("/login", { replace: true });
         }
 
-        // Primary: Tauri "oauth-callback" event from the deep-link plugin
-        async function setupTauriListener() {
+        async function setup() {
+            // ── Step 1: Check if the deep-link arrived before we mounted ──
+            // Rust stores it in PendingOAuthUrl; get_pending_oauth_url() retrieves
+            // and clears it atomically. This is the fix for the race condition.
+            try {
+                const { invoke } = await import("@tauri-apps/api/core");
+                const pendingUrl = await invoke<string | null>("get_pending_oauth_url");
+                if (pendingUrl) {
+                    console.log("[OAuthPending] found pending URL from before mount:", pendingUrl);
+                    const code = extractCode(pendingUrl);
+                    if (code) {
+                        handleCode(code);
+                        return; // handled — don't set up listeners
+                    }
+                }
+            } catch {
+                // Not in Tauri (e.g., web dev) — skip
+            }
+
+            // ── Step 2: Set up event listener for URLs arriving after mount ──
             try {
                 const { listen } = await import("@tauri-apps/api/event");
                 const unlisten = await listen<string>("oauth-callback", (event) => {
                     if (handled.current) return;
-                    try {
-                        const url = new URL(event.payload);
-                        const code = url.searchParams.get("code");
-                        if (code) handleCode(code);
-                        else console.warn("[OAuthPending] deep-link has no code:", event.payload);
-                    } catch {
-                        console.warn("[OAuthPending] could not parse deep-link URL:", event.payload);
-                    }
+                    console.log("[OAuthPending] received oauth-callback event:", event.payload);
+                    const code = extractCode(event.payload);
+                    if (code) handleCode(code);
+                    else console.warn("[OAuthPending] deep-link has no code param:", event.payload);
                 });
                 tauriUnlisten = unlisten;
             } catch {
@@ -123,7 +150,7 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
             handleCode(msg.code);
         });
 
-        setupTauriListener();
+        setup();
 
         return () => {
             tauriUnlisten?.();
