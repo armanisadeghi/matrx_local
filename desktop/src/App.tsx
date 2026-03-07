@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -21,6 +22,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/hooks/use-theme";
 import { useNotifications } from "@/hooks/use-notifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { EngineRecoveryModal } from "@/components/EngineRecoveryModal";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { Loader2 } from "lucide-react";
 
@@ -55,13 +57,32 @@ export default function App() {
     systemInfo,
     browserStatus,
     engineVersion,
+    error: engineError,
     refresh,
+    restartEngine,
   } = useEngine(auth.isAuthenticated);
 
   const notif = useNotifications();
 
   // Keep only the 3 most recent for the toast stack
   const toasts = notif.notifications.slice(0, 3);
+
+  // Track whether recovery modal was manually dismissed (so we don't re-show
+  // until status cycles back to connected and then fails again).
+  const [recoveryDismissed, setRecoveryDismissed] = useState(false);
+
+  // Auto-reset the dismissed flag when engine becomes connected
+  useEffect(() => {
+    if (status === "connected") {
+      setRecoveryDismissed(false);
+    }
+  }, [status]);
+
+  // Show recovery modal when auth is done but engine is broken
+  const showRecoveryModal =
+    auth.isAuthenticated &&
+    !recoveryDismissed &&
+    (status === "error" || status === "disconnected");
 
   // Allow /auth/callback to render before auth loads — it handles its own
   // loading state and must be reachable immediately after OAuth redirect.
@@ -213,6 +234,13 @@ export default function App() {
           </Routes>
         </HashRouter>
         <NotificationToastContainer toasts={toasts} onDismiss={notif.dismiss} />
+        <EngineRecoveryModal
+          open={showRecoveryModal}
+          engineStatus={status}
+          engineError={engineError}
+          onRestartEngine={restartEngine}
+          onRefresh={refresh}
+        />
       </TooltipProvider>
     </ErrorBoundary>
   );

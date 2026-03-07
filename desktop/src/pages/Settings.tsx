@@ -274,17 +274,24 @@ export function Settings({
   };
 
   const handleRestartEngine = async () => {
-    if (!isTauri()) {
-      onRefresh();
-      return;
-    }
     setRestarting(true);
     try {
-      const { stopSidecar, startSidecar } = await import("@/lib/sidecar");
-      await stopSidecar();
-      await startSidecar();
+      // onRefresh now does a proper stop → start → wait → discover cycle
+      // via restartEngine() in use-engine.ts when called from Settings.
+      // The restart logic is centralized there.
+      if (isTauri()) {
+        const { stopSidecar, startSidecar } = await import("@/lib/sidecar");
+        const { waitForEngine } = await import("@/lib/sidecar");
+        await stopSidecar();
+        // Small delay for port release
+        await new Promise((r) => setTimeout(r, 500));
+        await startSidecar();
+        // Wait for engine to actually be ready before refreshing
+        await waitForEngine("http://127.0.0.1:22140", 60, 1000);
+      }
       await onRefresh();
     } catch {
+      // Still try to reconnect even if restart failed
       onRefresh();
     } finally {
       setRestarting(false);

@@ -74,16 +74,30 @@ export async function restartApp(): Promise<void> {
   }
 }
 
-/** Wait for the engine health endpoint to respond. */
+/** Get sidecar process status from Rust (Tauri only). */
+export async function getSidecarStatus(): Promise<{ running: boolean; port: number } | null> {
+  const inv = await loadTauriInvoke();
+  if (!inv) return null;
+  try {
+    return (await inv("sidecar_status")) as { running: boolean; port: number };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wait for the engine health endpoint to respond.
+ * Defaults tuned for PyInstaller sidecar cold boot (~10-30s).
+ */
 export async function waitForEngine(
   baseUrl: string,
-  maxRetries = 30,
-  intervalMs = 500
+  maxRetries = 60,
+  intervalMs = 1000
 ): Promise<boolean> {
   for (let i = 0; i < maxRetries; i++) {
     try {
       const resp = await fetch(`${baseUrl}/tools/list`, {
-        signal: AbortSignal.timeout(1000),
+        signal: AbortSignal.timeout(2000),
       });
       if (resp.ok) return true;
     } catch {
@@ -92,4 +106,23 @@ export async function waitForEngine(
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   return false;
+}
+
+/**
+ * Scan the engine port range and return the first port that responds.
+ * This is a standalone helper so the recovery modal can use it independently.
+ */
+export async function discoverEnginePort(): Promise<string | null> {
+  const ports = Array.from({ length: 20 }, (_, i) => 22140 + i);
+  for (const port of ports) {
+    try {
+      const resp = await fetch(`http://127.0.0.1:${port}/tools/list`, {
+        signal: AbortSignal.timeout(1000),
+      });
+      if (resp.ok) return `http://127.0.0.1:${port}`;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
