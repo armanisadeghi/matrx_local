@@ -22,6 +22,7 @@
 #   ./scripts/release.sh --message "feat: something"   # custom commit message
 #   ./scripts/release.sh --dry-run    # preview without changes
 #   ./scripts/release.sh --monitor    # push then poll GitHub Actions until done
+#   ./scripts/release.sh --monitor-only # just monitor the latest tag (no release)
 #   ./scripts/release.sh X.Y.Z       # set exact version
 set -euo pipefail
 
@@ -55,11 +56,218 @@ sedi() {
     fi
 }
 
+# ── Monitor function ────────────────────────────────────────────────────────
+monitor_build() {
+    local tag="$1"
+    local version="$2"
+    local repo="$3"
+    local start_epoch
+    start_epoch=$(date +%s)
+
+    # Platform keys and labels (parallel arrays for bash 3 compat)
+    local PLATFORM_KEYS=("aarch64-apple-darwin" "x86_64-apple-darwin" "ubuntu" "windows")
+    local PLATFORM_LABELS=("macOS ARM" "macOS x86" "Linux" "Windows")
+
+    # ── Status icon helper ──────────────────────────────────────────────
+    status_icon() {
+        local status="$1" conclusion="$2"
+        if [[ "$status" == "completed" ]]; then
+            case "$conclusion" in
+                success)   echo -e "${GREEN}✅${NC}" ;;
+                failure)   echo -e "${RED}❌${NC}" ;;
+                cancelled) echo -e "⚪" ;;
+                skipped)   echo -e "⏭️" ;;
+                *)         echo -e "${RED}❌${NC}" ;;
+            esac
+        elif [[ "$status" == "in_progress" ]]; then
+            echo -e "${YELLOW}🔨${NC}"
+        else
+            echo -e "${CYAN}🔵${NC}"
+        fi
+    }
+
+    # ── Status color helper ─────────────────────────────────────────────
+    status_color() {
+        local status="$1" conclusion="$2"
+        if [[ "$status" == "completed" ]]; then
+            case "$conclusion" in
+                success) echo "$GREEN" ;;
+                failure) echo "$RED" ;;
+                *)       echo "$YELLOW" ;;
+            esac
+        elif [[ "$status" == "in_progress" ]]; then
+            echo "$YELLOW"
+        else
+            echo "$CYAN"
+        fi
+    }
+
+    # ── Current step helper ─────────────────────────────────────────────
+    current_step() {
+        local jobs_json="$1" job_index="$2"
+        # Find the last in_progress step, or the last completed step
+        local step
+        step=$(echo "$jobs_json" | jq -r ".jobs[$job_index].steps[] | select(.status==\"in_progress\") | .name" 2>/dev/null | tail -1)
+        if [[ -z "$step" ]]; then
+            step=$(echo "$jobs_json" | jq -r ".jobs[$job_index].steps[] | select(.status==\"completed\") | .name" 2>/dev/null | tail -1)
+        fi
+        echo "${step:-waiting...}"
+    }
+
+    # ── Wait for workflow run to appear ─────────────────────────────────
+    echo ""
+    info "Waiting for GitHub Actions workflow to start for tag ${BOLD}${tag}${NC}..."
+    local run_id=""
+    for attempt in $(seq 1 24); do  # up to ~2 minutes
+        run_id=$(
+            gh run list --repo "$repo" --limit 5 \
+                --json databaseId,headBranch,name,status \
+            | jq -r ".[] | select(.headBranch==\"$tag\" and .name==\"Release\") | .databaseId" \
+            | head -1
+        )
+        [[ -n "$run_id" ]] && break
+        sleep 5
+    done
+
+    if [[ -z "$run_id" ]]; then
+        warn "Could not find a workflow run for tag ${tag} after 2 minutes."
+        echo -e "  Check manually: ${CYAN}https://github.com/${repo}/actions${NC}"
+        return 1
+    fi
+
+    ok "Found workflow run ${BOLD}#${run_id}${NC}"
+    echo ""
+
+    # ── Poll loop ───────────────────────────────────────────────────────
+    local all_done=false
+    while ! $all_done; do
+        local now_epoch
+        now_epoch=$(date +%s)
+        local elapsed=$(( now_epoch - start_epoch ))
+        local mins=$(( elapsed / 60 ))
+        local secs=$(( elapsed % 60 ))
+        local elapsed_str
+        elapsed_str=$(printf "%02d:%02d" "$mins" "$secs")
+
+        # Fetch job data
+        local jobs_json
+        jobs_json=$(gh run view "$run_id" --repo "$repo" --json jobs 2>/dev/null || echo '{"jobs":[]}')
+        local job_count
+        job_count=$(echo "$jobs_json" | jq '.jobs | length')
+
+        # Clear screen and draw
+        printf '\033[2J\033[H'
+        echo ""
+        echo -e "${BOLD}  📦 ${PROJECT_NAME} ${version} — Build Monitor${NC}"
+        echo -e "  ─────────────────────────────────────────────────────────────"
+        echo -e "  Tag: ${GREEN}${tag}${NC}    Elapsed: ${CYAN}${elapsed_str}${NC}    Jobs: ${BOLD}${job_count}/4${NC}"
+        echo -e "  ─────────────────────────────────────────────────────────────"
+        echo ""
+
+        local completed_count=0
+        local any_failed=false
+        local failed_platforms=()
+
+        if [[ "$job_count" -eq 0 ]]; then
+            echo -e "  ${CYAN}🔵 Waiting for jobs to be created...${NC}"
+        else
+            # Match jobs to platform keys by scanning job names
+            local i
+            for i in 0 1 2 3; do
+                local key="${PLATFORM_KEYS[$i]}"
+                local label="${PLATFORM_LABELS[$i]}"
+                local padded_label
+                padded_label=$(printf '%-12s' "$label")
+
+                # Find this job's index in the JSON
+                local job_index
+                job_index=$(echo "$jobs_json" | jq -r \
+                    "[.jobs[].name] | to_entries[] | select(.value | test(\"$key\")) | .key" 2>/dev/null | head -1)
+
+                if [[ -z "$job_index" ]]; then
+                    echo -e "  🔵 ${CYAN}${padded_label}${NC}  waiting..."
+                    continue
+                fi
+
+                local j_status j_conclusion
+                j_status=$(echo "$jobs_json" | jq -r ".jobs[$job_index].status")
+                j_conclusion=$(echo "$jobs_json" | jq -r ".jobs[$job_index].conclusion // \"\"")
+
+                local icon color step
+                icon=$(status_icon "$j_status" "$j_conclusion")
+                color=$(status_color "$j_status" "$j_conclusion")
+                step=$(current_step "$jobs_json" "$job_index")
+
+                # Truncate step name if too long
+                [[ ${#step} -gt 42 ]] && step="${step:0:39}..."
+
+                echo -e "  ${icon} ${color}${padded_label}${NC}  ${step}"
+
+                if [[ "$j_status" == "completed" ]]; then
+                    (( completed_count++ ))
+                    if [[ "$j_conclusion" != "success" ]]; then
+                        any_failed=true
+                        failed_platforms+=("$label")
+                    fi
+                fi
+            done
+        fi
+
+        echo ""
+        echo -e "  ─────────────────────────────────────────────────────────────"
+
+        # Check overall run status
+        local run_status
+        run_status=$(gh run view "$run_id" --repo "$repo" --json status --jq '.status' 2>/dev/null || echo "unknown")
+
+        if [[ "$run_status" == "completed" ]] || [[ "$completed_count" -ge 4 && "$job_count" -ge 4 ]]; then
+            all_done=true
+
+            # Final elapsed time
+            now_epoch=$(date +%s)
+            elapsed=$(( now_epoch - start_epoch ))
+            mins=$(( elapsed / 60 ))
+            secs=$(( elapsed % 60 ))
+            elapsed_str=$(printf "%02d:%02d" "$mins" "$secs")
+
+            echo ""
+            if $any_failed; then
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${RED}  ❌ BUILD FAILED  (${elapsed_str})${NC}"
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo ""
+                echo -e "  Failed platforms:"
+                for fp in "${failed_platforms[@]}"; do
+                    echo -e "    ${RED}✗${NC} ${fp}"
+                done
+                echo ""
+                echo -e "  Debug: ${CYAN}https://github.com/${repo}/actions/runs/${run_id}${NC}"
+            else
+                local RELEASE_URL="https://github.com/${repo}/releases/tag/${tag}"
+                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${GREEN}  ✅ ALL BUILDS PASSED  (${elapsed_str})${NC}"
+                echo -e "${GREEN}  🚀 Release is LIVE!${NC}"
+                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo ""
+                echo -e "  🔗 ${BOLD}${RELEASE_URL}${NC}"
+                echo ""
+                echo -e "  Mac Trick: ${CYAN}xattr -cr '/Applications/AI Matrx.app'${NC}"
+            fi
+            echo ""
+        else
+            echo -e "  ${CYAN}Refreshing in 15s...  Press Ctrl-C to stop monitoring.${NC}"
+            echo ""
+            sleep 15
+        fi
+    done
+}
+
 # ── Parse flags ──────────────────────────────────────────────────────────────
 BUMP_TYPE="patch"
 CUSTOM_MESSAGE=""
 DRY_RUN=false
 MONITOR=false
+MONITOR_ONLY=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -71,13 +279,25 @@ while [[ $# -gt 0 ]]; do
             CUSTOM_MESSAGE="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         --monitor) MONITOR=true; shift ;;
+        --monitor-only) MONITOR_ONLY=true; shift ;;
         -h|--help)
             grep '^#' "$0" | head -20 | sed 's/^# \?//'
             exit 0 ;;
         [0-9]*)    BUMP_TYPE="exact"; EXACT_VERSION="$1"; shift ;;
-        *) fail "Unknown flag: $1. Use --patch, --minor, --major, --message, --monitor, --dry-run, or X.Y.Z." ;;
+        *) fail "Unknown flag: $1. Use --patch, --minor, --major, --message, --monitor, --monitor-only, --dry-run, or X.Y.Z." ;;
     esac
 done
+
+# ── Monitor-only shortcut ────────────────────────────────────────────────────
+if $MONITOR_ONLY; then
+    [[ -f "$VERSION_FILE" ]] || fail "$VERSION_FILE not found."
+    CURRENT_VERSION=$(grep -m1 '^version' "$VERSION_FILE" | sed 's/.*"\(.*\)".*/\1/')
+    [[ -n "$CURRENT_VERSION" ]] || fail "Could not read version from $VERSION_FILE."
+    LATEST_TAG="v${CURRENT_VERSION}"
+    info "Monitor-only mode — watching builds for ${BOLD}${LATEST_TAG}${NC}"
+    monitor_build "$LATEST_TAG" "$CURRENT_VERSION" "$GITHUB_REPO"
+    exit $?
+fi
 
 # ── Pre-flight checks ────────────────────────────────────────────────────────
 [[ -f "$VERSION_FILE" ]] || fail "$VERSION_FILE not found."
@@ -221,217 +441,6 @@ info "Pushing to $REMOTE/$BRANCH..."
 git push "$REMOTE" "$BRANCH"
 git push "$REMOTE" "$NEW_TAG"
 ok "Pushed to $REMOTE/$BRANCH with tag $NEW_TAG"
-
-# ── Monitor (optional) ───────────────────────────────────────────────────────
-
-monitor_build() {
-    local tag="$1"
-    local version="$2"
-    local repo="$3"
-    local start_epoch
-    start_epoch=$(date +%s)
-
-    # Platform label map (keyed by partial job name)
-    declare -A PLATFORM_LABELS
-    PLATFORM_LABELS[aarch64-apple-darwin]="macOS ARM"
-    PLATFORM_LABELS[x86_64-apple-darwin]="macOS x86"
-    PLATFORM_LABELS[ubuntu]="Linux"
-    PLATFORM_LABELS[windows]="Windows"
-
-    # Order for display
-    local PLATFORM_KEYS=("aarch64-apple-darwin" "x86_64-apple-darwin" "ubuntu" "windows")
-
-    # ── Status icon helper ──────────────────────────────────────────────
-    status_icon() {
-        local status="$1" conclusion="$2"
-        if [[ "$status" == "completed" ]]; then
-            case "$conclusion" in
-                success)   echo -e "${GREEN}✅${NC}" ;;
-                failure)   echo -e "${RED}❌${NC}" ;;
-                cancelled) echo -e "⚪" ;;
-                skipped)   echo -e "⏭️" ;;
-                *)         echo -e "${RED}❌${NC}" ;;
-            esac
-        elif [[ "$status" == "in_progress" ]]; then
-            echo -e "${YELLOW}🔨${NC}"
-        else
-            echo -e "${CYAN}🔵${NC}"
-        fi
-    }
-
-    # ── Status color helper ─────────────────────────────────────────────
-    status_color() {
-        local status="$1" conclusion="$2"
-        if [[ "$status" == "completed" ]]; then
-            case "$conclusion" in
-                success) echo "$GREEN" ;;
-                failure) echo "$RED" ;;
-                *)       echo "$YELLOW" ;;
-            esac
-        elif [[ "$status" == "in_progress" ]]; then
-            echo "$YELLOW"
-        else
-            echo "$CYAN"
-        fi
-    }
-
-    # ── Current step helper ─────────────────────────────────────────────
-    current_step() {
-        local jobs_json="$1" job_index="$2"
-        # Find the last in_progress step, or the last completed step
-        local step
-        step=$(echo "$jobs_json" | jq -r ".jobs[$job_index].steps[] | select(.status==\"in_progress\") | .name" 2>/dev/null | tail -1)
-        if [[ -z "$step" ]]; then
-            step=$(echo "$jobs_json" | jq -r ".jobs[$job_index].steps[] | select(.status==\"completed\") | .name" 2>/dev/null | tail -1)
-        fi
-        echo "${step:-waiting...}"
-    }
-
-    # ── Wait for workflow run to appear ─────────────────────────────────
-    echo ""
-    info "Waiting for GitHub Actions workflow to start for tag ${BOLD}${tag}${NC}..."
-    local run_id=""
-    for attempt in $(seq 1 24); do  # up to ~2 minutes
-        run_id=$(
-            gh run list --repo "$repo" --limit 5 \
-                --json databaseId,headBranch,name,status \
-            | jq -r ".[] | select(.headBranch==\"$tag\" and .name==\"Release\") | .databaseId" \
-            | head -1
-        )
-        [[ -n "$run_id" ]] && break
-        sleep 5
-    done
-
-    if [[ -z "$run_id" ]]; then
-        warn "Could not find a workflow run for tag ${tag} after 2 minutes."
-        echo -e "  Check manually: ${CYAN}https://github.com/${repo}/actions${NC}"
-        return 1
-    fi
-
-    ok "Found workflow run ${BOLD}#${run_id}${NC}"
-    echo ""
-
-    # ── Poll loop ───────────────────────────────────────────────────────
-    local all_done=false
-    while ! $all_done; do
-        local now_epoch
-        now_epoch=$(date +%s)
-        local elapsed=$(( now_epoch - start_epoch ))
-        local mins=$(( elapsed / 60 ))
-        local secs=$(( elapsed % 60 ))
-        local elapsed_str
-        elapsed_str=$(printf "%02d:%02d" "$mins" "$secs")
-
-        # Fetch job data
-        local jobs_json
-        jobs_json=$(gh run view "$run_id" --repo "$repo" --json jobs 2>/dev/null || echo '{"jobs":[]}')
-        local job_count
-        job_count=$(echo "$jobs_json" | jq '.jobs | length')
-
-        # Clear screen and draw
-        printf '\033[2J\033[H'
-        echo ""
-        echo -e "${BOLD}  📦 ${PROJECT_NAME} ${version} — Build Monitor${NC}"
-        echo -e "  ─────────────────────────────────────────────────────────────"
-        echo -e "  Tag: ${GREEN}${tag}${NC}    Elapsed: ${CYAN}${elapsed_str}${NC}    Jobs: ${BOLD}${job_count}/4${NC}"
-        echo -e "  ─────────────────────────────────────────────────────────────"
-        echo ""
-
-        local completed_count=0
-        local any_failed=false
-        local failed_platforms=()
-
-        if [[ "$job_count" -eq 0 ]]; then
-            echo -e "  ${CYAN}🔵 Waiting for jobs to be created...${NC}"
-        else
-            # Match jobs to platform keys by scanning job names
-            for key in "${PLATFORM_KEYS[@]}"; do
-                local label="${PLATFORM_LABELS[$key]}"
-                local padded_label
-                padded_label=$(printf '%-12s' "$label")
-
-                # Find this job's index in the JSON
-                local job_index
-                job_index=$(echo "$jobs_json" | jq -r \
-                    "[.jobs[].name] | to_entries[] | select(.value | test(\"$key\")) | .key" 2>/dev/null | head -1)
-
-                if [[ -z "$job_index" ]]; then
-                    echo -e "  🔵 ${CYAN}${padded_label}${NC}  waiting..."
-                    continue
-                fi
-
-                local j_status j_conclusion
-                j_status=$(echo "$jobs_json" | jq -r ".jobs[$job_index].status")
-                j_conclusion=$(echo "$jobs_json" | jq -r ".jobs[$job_index].conclusion // \"\"")
-
-                local icon color step
-                icon=$(status_icon "$j_status" "$j_conclusion")
-                color=$(status_color "$j_status" "$j_conclusion")
-                step=$(current_step "$jobs_json" "$job_index")
-
-                # Truncate step name if too long
-                [[ ${#step} -gt 42 ]] && step="${step:0:39}..."
-
-                echo -e "  ${icon} ${color}${padded_label}${NC}  ${step}"
-
-                if [[ "$j_status" == "completed" ]]; then
-                    (( completed_count++ ))
-                    if [[ "$j_conclusion" != "success" ]]; then
-                        any_failed=true
-                        failed_platforms+=("$label")
-                    fi
-                fi
-            done
-        fi
-
-        echo ""
-        echo -e "  ─────────────────────────────────────────────────────────────"
-
-        # Check overall run status
-        local run_status
-        run_status=$(gh run view "$run_id" --repo "$repo" --json status --jq '.status' 2>/dev/null || echo "unknown")
-
-        if [[ "$run_status" == "completed" ]] || [[ "$completed_count" -ge 4 && "$job_count" -ge 4 ]]; then
-            all_done=true
-
-            # Final elapsed time
-            now_epoch=$(date +%s)
-            elapsed=$(( now_epoch - start_epoch ))
-            mins=$(( elapsed / 60 ))
-            secs=$(( elapsed % 60 ))
-            elapsed_str=$(printf "%02d:%02d" "$mins" "$secs")
-
-            echo ""
-            if $any_failed; then
-                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${RED}  ❌ BUILD FAILED  (${elapsed_str})${NC}"
-                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo ""
-                echo -e "  Failed platforms:"
-                for fp in "${failed_platforms[@]}"; do
-                    echo -e "    ${RED}✗${NC} ${fp}"
-                done
-                echo ""
-                echo -e "  Debug: ${CYAN}https://github.com/${repo}/actions/runs/${run_id}${NC}"
-            else
-                local RELEASE_URL="https://github.com/${repo}/releases/tag/${tag}"
-                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${GREEN}  ✅ ALL BUILDS PASSED  (${elapsed_str})${NC}"
-                echo -e "${GREEN}  🚀 Release is LIVE!${NC}"
-                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo ""
-                echo -e "  🔗 ${BOLD}${RELEASE_URL}${NC}"
-                echo ""
-                echo -e "  Mac Trick: ${CYAN}xattr -cr '/Applications/AI Matrx.app'${NC}"
-            fi
-            echo ""
-        else
-            echo -e "  ${CYAN}Refreshing in 15s...  Press Ctrl-C to stop monitoring.${NC}"
-            echo ""
-            sleep 15
-        fi
-    done
-}
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 echo ""

@@ -131,3 +131,125 @@ jobs:
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
+  # ── Rename assets to human-friendly names ──────────────────────────────────
+  rename-assets:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Rename release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${{ steps.version.outputs.version }}"
+          REPO="${{ github.repository }}"
+          PREFIX="AI-Matrx_${VERSION}"
+
+          echo "🏷  Tag: $TAG  Version: $VERSION"
+          echo ""
+
+          # Fetch current asset list
+          ASSETS=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')
+
+          rename_asset() {
+            local old="$1" new="$2"
+            if [[ "$old" == "$new" ]]; then return; fi
+            echo "  📦 $old → $new"
+            # Download, delete old, rename on disk, upload with new name
+            gh release download "$TAG" --repo "$REPO" --pattern "$old" --dir /tmp/assets
+            gh release delete-asset "$TAG" --repo "$REPO" --yes "$old"
+            mv "/tmp/assets/$old" "/tmp/assets/$new"
+            gh release upload "$TAG" --repo "$REPO" "/tmp/assets/$new"
+          }
+
+          mkdir -p /tmp/assets
+
+          for ASSET in $ASSETS; do
+            case "$ASSET" in
+              # ── macOS Apple Silicon ──
+              *_aarch64.app.tar.gz)
+                rename_asset "$ASSET" "${PREFIX}_macOS-Apple-Silicon.app.tar.gz" ;;
+              *_aarch64.app.tar.gz.sig)
+                rename_asset "$ASSET" "${PREFIX}_macOS-Apple-Silicon.app.tar.gz.sig" ;;
+
+              # ── macOS Intel ──
+              *_x64.app.tar.gz)
+                rename_asset "$ASSET" "${PREFIX}_macOS-Intel.app.tar.gz" ;;
+              *_x64.app.tar.gz.sig)
+                rename_asset "$ASSET" "${PREFIX}_macOS-Intel.app.tar.gz.sig" ;;
+
+              # ── Linux ──
+              *_amd64.deb)
+                rename_asset "$ASSET" "${PREFIX}_Linux.deb" ;;
+              *_amd64.deb.sig)
+                rename_asset "$ASSET" "${PREFIX}_Linux.deb.sig" ;;
+
+              # ── Windows Setup (.exe) ──
+              *_x64-setup.exe)
+                rename_asset "$ASSET" "${PREFIX}_Windows-Setup.exe" ;;
+              *_x64-setup.exe.sig)
+                rename_asset "$ASSET" "${PREFIX}_Windows-Setup.exe.sig" ;;
+
+              # ── Windows Installer (.msi) ──
+              *_x64_en-US.msi)
+                rename_asset "$ASSET" "${PREFIX}_Windows.msi" ;;
+              *_x64_en-US.msi.sig)
+                rename_asset "$ASSET" "${PREFIX}_Windows.msi.sig" ;;
+
+              # ── NSIS (.nsis.zip) if present ──
+              *_x64-setup.nsis.zip)
+                rename_asset "$ASSET" "${PREFIX}_Windows-Setup.nsis.zip" ;;
+              *_x64-setup.nsis.zip.sig)
+                rename_asset "$ASSET" "${PREFIX}_Windows-Setup.nsis.zip.sig" ;;
+
+              # ── Skip latest.json / source archives ──
+              latest.json|*.zip|*.tar.gz)
+                echo "  ⏭  Skipping $ASSET" ;;
+
+              *)
+                echo "  ⚠  Unknown asset pattern: $ASSET (left as-is)" ;;
+            esac
+          done
+
+          echo ""
+          echo "✅ Asset rename complete"
+
+      - name: Patch latest.json URLs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${{ steps.version.outputs.version }}"
+          REPO="${{ github.repository }}"
+          PREFIX="AI-Matrx_${VERSION}"
+
+          # Download latest.json
+          gh release download "$TAG" --repo "$REPO" --pattern "latest.json" --dir /tmp/updater
+
+          # Patch the URLs to match new asset names
+          cd /tmp/updater
+          sed -i \
+            -e "s|AI\.Matrx_aarch64\.app\.tar\.gz|${PREFIX}_macOS-Apple-Silicon.app.tar.gz|g" \
+            -e "s|AI\.Matrx_x64\.app\.tar\.gz|${PREFIX}_macOS-Intel.app.tar.gz|g" \
+            -e "s|AI\.Matrx_${VERSION}_x64-setup\.nsis\.zip|${PREFIX}_Windows-Setup.nsis.zip|g" \
+            -e "s|AI\.Matrx_${VERSION}_x64-setup\.exe|${PREFIX}_Windows-Setup.exe|g" \
+            -e "s|AI\.Matrx_${VERSION}_amd64\.deb|${PREFIX}_Linux.deb|g" \
+            latest.json
+
+          echo "📝 Patched latest.json:"
+          cat latest.json
+
+          # Re-upload
+          gh release delete-asset "$TAG" --repo "$REPO" --yes "latest.json"
+          gh release upload "$TAG" --repo "$REPO" "latest.json"
+
+          echo ""
+          echo "✅ latest.json updated"
