@@ -19,6 +19,16 @@ cd "$REPO_ROOT"
 LOCAL_AI_DREAM="${LOCAL_AI_DREAM:-$HOME/projects/aidream}"
 REMOTE_URL="https://github.com/AI-Matrix-Engine/aidream-current.git"
 
+# Ensure the 'aidream' remote exists, creating it if needed.
+ensure_remote() {
+    local url="$1"
+    if git remote get-url aidream &>/dev/null; then
+        git remote set-url aidream "$url"
+    else
+        git remote add aidream "$url"
+    fi
+}
+
 if [[ "${1:-}" == "--local" ]]; then
     if [[ ! -d "$LOCAL_AI_DREAM" ]]; then
         echo "ERROR: Local aidream repo not found at '$LOCAL_AI_DREAM'."
@@ -33,18 +43,18 @@ if [[ "${1:-}" == "--local" ]]; then
      cd "$LOCAL_AI_DREAM" && git subtree split --prefix=scraper-service -b scraper-service-split)
 
     echo "Step 2: Setting remote to local path..."
-    git remote set-url aidream "$LOCAL_AI_DREAM"
+    ensure_remote "$LOCAL_AI_DREAM"
 
     echo "Step 3: Pulling subtree updates..."
     git subtree pull --prefix=scraper-service aidream scraper-service-split --squash -m "Update scraper-service from aidream (local)"
 
     echo "Step 4: Restoring remote URL..."
-    git remote set-url aidream "$REMOTE_URL"
+    ensure_remote "$REMOTE_URL"
 else
     echo "Using remote GitHub repo"
 
     echo "Step 1: Pulling subtree updates from GitHub..."
-    git remote set-url aidream "$REMOTE_URL"
+    ensure_remote "$REMOTE_URL"
 
     echo "Step 2: Pulling subtree updates..."
     git subtree pull --prefix=scraper-service aidream main --squash -m "Update scraper-service from aidream"
