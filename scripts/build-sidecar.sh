@@ -300,8 +300,49 @@ if [[ -n "${TESSDATA_PATH:-}" && -d "$TESSDATA_PATH" ]]; then
     export TESSDATA_PATH_ARG="$TESSDATA_PATH:tessdata"
 fi
 
+# ── macOS code signing: tell PyInstaller to sign all bundled dylibs ────
+# APPLE_SIGNING_IDENTITY is set by CI (from secrets) or by the developer
+# locally. When set, PyInstaller signs every .dylib/.so before packing
+# them into the one-file archive, preventing the "different Team IDs"
+# error on macOS.
+ENTITLEMENTS_FILE="$PROJECT_ROOT/desktop/src-tauri/sidecar/sidecar.entitlements.plist"
+if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && "$(uname -s)" == "Darwin" ]]; then
+    echo "  → Code signing enabled: $APPLE_SIGNING_IDENTITY"
+    export APPLE_SIGNING_IDENTITY
+    if [[ -f "$ENTITLEMENTS_FILE" ]]; then
+        export SIDECAR_ENTITLEMENTS="$ENTITLEMENTS_FILE"
+        echo "  → Entitlements: $ENTITLEMENTS_FILE"
+    fi
+else
+    echo "  → Code signing: skipped (not macOS or APPLE_SIGNING_IDENTITY not set)"
+fi
+
 "$PYTHON_CMD" "$PYINSTALLER_CMD_FILE"
 rm -f "$PYINSTALLER_CMD_FILE"
+
+# ── Post-build: deep-sign and verify (macOS only) ─────────────────────
+# Belt-and-suspenders: re-sign the final binary with hardened runtime +
+# entitlements, then verify. This catches any signing problems at build
+# time rather than at runtime on the user's machine.
+BUILT_BINARY="dist/aimatrx-engine-$TARGET"
+if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && "$(uname -s)" == "Darwin" && -f "$BUILT_BINARY" ]]; then
+    echo ""
+    echo "=== Post-Build Code Signing ==="
+
+    SIGN_ARGS=(codesign --deep --force --options runtime
+               --sign "$APPLE_SIGNING_IDENTITY")
+    if [[ -f "$ENTITLEMENTS_FILE" ]]; then
+        SIGN_ARGS+=(--entitlements "$ENTITLEMENTS_FILE")
+    fi
+    SIGN_ARGS+=("$BUILT_BINARY")
+
+    echo "  → Signing: ${SIGN_ARGS[*]}"
+    "${SIGN_ARGS[@]}"
+
+    echo "  → Verifying signature..."
+    codesign --verify --verbose "$BUILT_BINARY"
+    echo "  ✅ Code signature valid"
+fi
 
 # Copy to sidecar directory
 echo "Copying binary to sidecar directory..."

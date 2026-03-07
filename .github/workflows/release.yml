@@ -38,6 +38,8 @@ jobs:
         run: uv sync --extra all
 
       - name: Build Python sidecar binary
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-15' && secrets.APPLE_SIGNING_IDENTITY || '' }}
         run: |
           chmod +x scripts/build-sidecar.sh
           if [[ "${{ matrix.args }}" == *"x86_64-apple-darwin"* ]]; then
