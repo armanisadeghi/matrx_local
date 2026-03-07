@@ -2,8 +2,8 @@
  * EngineRecoveryModal — shown when the engine fails to connect after auth.
  *
  * Provides step-by-step diagnostics, real action buttons that actually
- * control the sidecar, and a live log console the user can copy/paste
- * to support.
+ * control the sidecar, and a live log console that subscribes to sidecar
+ * stdout/stderr via Tauri events.
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -38,6 +38,7 @@ import {
   startSidecar,
   stopSidecar,
   getSidecarStatus,
+  getSidecarLogs,
   waitForEngine,
   discoverEnginePort,
 } from "@/lib/sidecar";
@@ -83,10 +84,46 @@ export function EngineRecoveryModal({
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  // Run diagnostics automatically when modal opens
+  // Subscribe to sidecar-log Tauri events for live output
+  useEffect(() => {
+    if (!open || !isTauri()) return;
+
+    let unlisten: (() => void) | null = null;
+
+    (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<string>("sidecar-log", (event) => {
+          addLog(event.payload);
+        });
+      } catch {
+        // Not in Tauri — ignore
+      }
+    })();
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [open, addLog]);
+
+  // Load buffered sidecar logs and run diagnostics when modal opens
   useEffect(() => {
     if (open) {
-      runDiagnostics();
+      (async () => {
+        // Load any existing sidecar output from Rust's ring buffer
+        if (isTauri()) {
+          const buffered = await getSidecarLogs();
+          if (buffered.length > 0) {
+            setLogs((prev) => {
+              const newLines = buffered.map(
+                (line) => `[buffered] ${line}`
+              );
+              return [...prev, ...newLines].slice(-200);
+            });
+          }
+        }
+        runDiagnostics();
+      })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -140,6 +177,19 @@ export function EngineRecoveryModal({
           detail: "Could not query sidecar status from Rust backend",
         });
         addLog("Failed to query sidecar status");
+      }
+
+      // Also load any new sidecar logs from the buffer
+      const freshLogs = await getSidecarLogs();
+      if (freshLogs.length > 0) {
+        const lastFew = freshLogs.slice(-20);
+        addLog(`--- Last ${lastFew.length} sidecar output lines ---`);
+        for (const line of lastFew) {
+          addLog(line);
+        }
+        addLog("--- End sidecar output ---");
+      } else {
+        addLog("No sidecar output captured (engine may have crashed silently)");
       }
     } else {
       updateStep(1, {
@@ -229,6 +279,7 @@ export function EngineRecoveryModal({
           addLog("Connected successfully.");
         } else {
           addLog("ERROR: Engine started but never became reachable after 60s.");
+          addLog("Check the sidecar output above for crash details.");
         }
       }
     } catch (err) {
@@ -301,7 +352,7 @@ export function EngineRecoveryModal({
       ),
       "",
       "=== Recent Logs ===",
-      ...logs.slice(-50),
+      ...logs.slice(-100),
       "",
       "=== End Report ===",
     ];
@@ -473,7 +524,7 @@ export function EngineRecoveryModal({
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium flex items-center gap-1.5">
               <Terminal className="h-4 w-4 text-primary" />
-              Console
+              Engine Output
             </h3>
             <div className="flex items-center gap-1">
               <Button
@@ -504,13 +555,24 @@ export function EngineRecoveryModal({
               </Button>
             </div>
           </div>
-          <ScrollArea className="h-40 rounded-lg border border-border/50 bg-zinc-950 p-3">
+          <ScrollArea className="h-48 rounded-lg border border-border/50 bg-zinc-950 p-3">
             <div className="font-mono text-xs text-zinc-400 space-y-0.5">
               {logs.length === 0 && (
-                <div className="text-zinc-600 italic">No logs yet</div>
+                <div className="text-zinc-600 italic">
+                  Waiting for engine output... (sidecar stdout/stderr will appear here)
+                </div>
               )}
               {logs.map((line, i) => (
-                <div key={i} className="break-words leading-relaxed">
+                <div
+                  key={i}
+                  className={`break-words leading-relaxed ${
+                    line.includes("[stderr]") || line.includes("ERROR")
+                      ? "text-red-400"
+                      : line.includes("[terminated]")
+                      ? "text-amber-400"
+                      : ""
+                  }`}
+                >
                   {line}
                 </div>
               ))}

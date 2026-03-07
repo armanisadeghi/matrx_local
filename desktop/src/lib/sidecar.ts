@@ -85,6 +85,17 @@ export async function getSidecarStatus(): Promise<{ running: boolean; port: numb
   }
 }
 
+/** Get buffered sidecar stdout/stderr lines from Rust (Tauri only). */
+export async function getSidecarLogs(): Promise<string[]> {
+  const inv = await loadTauriInvoke();
+  if (!inv) return [];
+  try {
+    return (await inv("get_sidecar_logs")) as string[];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Wait for the engine health endpoint to respond.
  * Defaults tuned for PyInstaller sidecar cold boot (~10-30s).

@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -23,6 +23,12 @@ struct FetchResponse {
 /// Holds the sidecar child process handle for lifecycle management.
 struct SidecarState {
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
+}
+
+/// Ring buffer of recent sidecar stdout/stderr lines for frontend diagnostics.
+#[derive(Clone)]
+struct SidecarLogs {
+    lines: Arc<Mutex<Vec<String>>>,
 }
 
 /// Controls whether window close hides to tray or quits the app.
@@ -68,21 +74,49 @@ async fn start_sidecar(
 
     *state.child.lock().unwrap() = Some(child);
 
-    // Forward sidecar output to Tauri logs
+    // Forward sidecar output to Tauri logs AND to the frontend via events.
+    // The SidecarLogs ring buffer stores the last 200 lines so the frontend
+    // can retrieve them on demand (e.g. when the recovery modal opens).
+    let app_handle = app.clone();
+    let log_lines = app.state::<SidecarLogs>().lines.clone();
     tauri::async_runtime::spawn(async move {
         use tauri_plugin_shell::process::CommandEvent;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
-                    let text = String::from_utf8_lossy(&line);
+                    let text = String::from_utf8_lossy(&line).to_string();
                     println!("[engine] {}", text);
+                    {
+                        let mut lines = log_lines.lock().unwrap();
+                        lines.push(format!("[stdout] {}", text));
+                        let excess = lines.len().saturating_sub(200);
+                        if excess > 0 {
+                            lines.drain(..excess);
+                        }
+                    }
+                    let _ = app_handle.emit("sidecar-log", format!("[stdout] {}", text));
                 }
                 CommandEvent::Stderr(line) => {
-                    let text = String::from_utf8_lossy(&line);
+                    let text = String::from_utf8_lossy(&line).to_string();
                     eprintln!("[engine] {}", text);
+                    {
+                        let mut lines = log_lines.lock().unwrap();
+                        lines.push(format!("[stderr] {}", text));
+                        let excess = lines.len().saturating_sub(200);
+                        if excess > 0 {
+                            lines.drain(..excess);
+                        }
+                    }
+                    let _ = app_handle.emit("sidecar-log", format!("[stderr] {}", text));
                 }
                 CommandEvent::Terminated(status) => {
-                    eprintln!("[engine] Process terminated: {:?}", status);
+                    let msg = format!("[terminated] Process exited: {:?}", status);
+                    eprintln!("[engine] {}", msg);
+                    {
+                        let mut lines = log_lines.lock().unwrap();
+                        lines.push(msg.clone());
+                    }
+                    let _ = app_handle.emit("sidecar-log", msg);
                     break;
                 }
                 _ => {}
@@ -112,6 +146,13 @@ async fn sidecar_status(state: tauri::State<'_, SidecarState>) -> Result<Sidecar
         running,
         port: 22140,
     })
+}
+
+/// Get recent sidecar output lines (for recovery modal diagnostics).
+#[tauri::command]
+async fn get_sidecar_logs(state: tauri::State<'_, SidecarLogs>) -> Result<Vec<String>, String> {
+    let lines = state.lines.lock().unwrap();
+    Ok(lines.clone())
 }
 
 /// Set whether closing the window hides to tray or quits the app.
@@ -350,12 +391,16 @@ pub fn run() {
         .manage(SidecarState {
             child: Mutex::new(None),
         })
+        .manage(SidecarLogs {
+            lines: Arc::new(Mutex::new(Vec::new())),
+        })
         .manage(CloseToTray(AtomicBool::new(true)))
         .manage(PendingOAuthUrl(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
             sidecar_status,
+            get_sidecar_logs,
             set_close_to_tray,
             get_close_to_tray,
             check_for_updates,
