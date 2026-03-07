@@ -173,9 +173,28 @@ echo ""
 echo "Running PyInstaller (using $PYTHON_CMD)..."
 echo "  → Playwright browsers will be auto-installed at runtime (not bundled)"
 
-# Write the PyInstaller command to a temp file to avoid arg-quoting issues
-PYINSTALLER_CMD_FILE="$(mktemp)"
-cat > "$PYINSTALLER_CMD_FILE" << 'PYINSTALLER_EOF'
+# ── Choose build method: spec file (macOS) or inline flags (Linux/Windows) ──
+#
+# The spec file (aimatrx-engine-aarch64-apple-darwin.spec or *x86_64*) is the
+# authoritative build config for macOS. It contains codesign_identity (for
+# signing all collected dylibs) and upx=False (UPX corrupts dylibs on macOS).
+# We MUST use the spec file on macOS — CLI flags alone can't express these.
+#
+SPEC_FILE="$PROJECT_ROOT/aimatrx-engine-$TARGET.spec"
+
+build_with_spec() {
+    echo "  → Using spec file: $SPEC_FILE"
+    "$PYTHON_CMD" -m PyInstaller \
+        --clean \
+        --noconfirm \
+        "$SPEC_FILE"
+}
+
+build_with_flags() {
+    # Write the PyInstaller command to a temp file to avoid arg-quoting issues
+    local CMD_FILE
+    CMD_FILE="$(mktemp)"
+cat > "$CMD_FILE" << 'PYINSTALLER_EOF'
 import subprocess, sys, os
 
 args = [
@@ -184,9 +203,7 @@ args = [
     "--onefile",
     "--clean",
     "--noconfirm",
-    # ---- Runtime hook: sets env vars for bundled tools ----
     "--runtime-hook", "hooks/runtime_hook.py",
-    # ---- Exclusions (heavy ML/audio models not needed) ----
     "--exclude-module", "torch",
     "--exclude-module", "torchvision",
     "--exclude-module", "torchaudio",
@@ -207,7 +224,6 @@ args = [
     "--exclude-module", "ipykernel",
     "--exclude-module", "jupyter",
     "--exclude-module", "ipywidgets",
-    # ---- Hidden imports: uvicorn internals ----
     "--hidden-import", "uvicorn",
     "--hidden-import", "uvicorn.logging",
     "--hidden-import", "uvicorn.loops",
@@ -220,7 +236,6 @@ args = [
     "--hidden-import", "uvicorn.lifespan",
     "--hidden-import", "uvicorn.lifespan.on",
     "--hidden-import", "httptools",
-    # ---- Hidden imports: web/data libs ----
     "--hidden-import", "pydantic",
     "--hidden-import", "fastapi",
     "--hidden-import", "websockets",
@@ -236,19 +251,16 @@ args = [
     "--hidden-import", "tabulate",
     "--hidden-import", "fitz",
     "--hidden-import", "pytesseract",
-    # ---- Hidden imports: Playwright (all browsers) ----
     "--hidden-import", "playwright",
     "--hidden-import", "playwright.async_api",
     "--hidden-import", "playwright.sync_api",
     "--hidden-import", "playwright._impl._driver",
-    # ---- Hidden imports: media / ffmpeg / yt-dlp ----
     "--hidden-import", "yt_dlp",
     "--hidden-import", "yt_dlp.extractor",
     "--hidden-import", "yt_dlp.downloader",
     "--hidden-import", "yt_dlp.postprocessor",
     "--hidden-import", "yt_dlp.utils",
     "--hidden-import", "imageio_ffmpeg",
-    # ---- Hidden imports: system / monitoring ----
     "--hidden-import", "psutil",
     "--hidden-import", "pydantic_settings",
     "--hidden-import", "zeroconf",
@@ -256,7 +268,6 @@ args = [
     "--hidden-import", "sounddevice",
     "--hidden-import", "soundfile",
     "--hidden-import", "pynput",
-    # ---- Hidden imports: tool modules ----
     "--hidden-import", "app.tools.tools.system",
     "--hidden-import", "app.tools.tools.file_ops",
     "--hidden-import", "app.tools.tools.clipboard",
@@ -277,12 +288,10 @@ args = [
     "--hidden-import", "app.tools.tools.media",
     "--hidden-import", "app.tools.tools.wifi_bluetooth",
     "--hidden-import", "pydantic_settings",
-    # ---- Data files: app source ----
     "--add-data", "app:app",
     "--add-data", "scraper-service/app:scraper-service/app",
 ]
 
-# Tesseract data
 tessdata = os.environ.get("TESSDATA_PATH_ARG", "")
 if tessdata:
     args += ["--add-data", tessdata]
@@ -293,6 +302,11 @@ print("Running:", " ".join(args))
 result = subprocess.run(args)
 sys.exit(result.returncode)
 PYINSTALLER_EOF
+    "$PYTHON_CMD" "$CMD_FILE"
+    local rc=$?
+    rm -f "$CMD_FILE"
+    return $rc
+}
 
 # Set env vars for the Python script
 export BINARY_NAME="aimatrx-engine-$TARGET"
@@ -321,12 +335,13 @@ if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && "$(uname -s)" == "Darwin" ]]; then
     PYTHON_PREFIX="$("$PYTHON_CMD" -c 'import sys; print(sys.base_prefix)')"
     echo "  Python prefix: $PYTHON_PREFIX"
 
-    # Build codesign base args
-    SIGN_BASE=(codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime)
-    if [[ -f "$ENTITLEMENTS_FILE" ]]; then
-        SIGN_BASE+=(--entitlements "$ENTITLEMENTS_FILE")
-        echo "  Entitlements: $ENTITLEMENTS_FILE"
-    fi
+    # Build codesign base args — plain identity signing, no --timestamp or
+    # --options runtime (those are for executables, not shared libraries).
+    # The Team ID from --sign is the only thing macOS checks for dlopen().
+    SIGN_BASE=(codesign --force --sign "$APPLE_SIGNING_IDENTITY")
+    # No entitlements on dylibs — entitlements are only meaningful on process
+    # executables. The outer EXE gets entitlements via SIDECAR_ENTITLEMENTS
+    # (consumed by codesign_identity in the spec file).
 
     # Re-sign every .dylib and .so in the Python installation.
     # This ensures libpython3.13.dylib and any extension modules packed by
@@ -355,8 +370,14 @@ else
     echo "  → Pre-build signing: skipped (not macOS or APPLE_SIGNING_IDENTITY not set)"
 fi
 
-"$PYTHON_CMD" "$PYINSTALLER_CMD_FILE"
-rm -f "$PYINSTALLER_CMD_FILE"
+# Run PyInstaller — prefer spec file (contains codesign_identity + upx=False),
+# fall back to inline flags for platforms without a spec file.
+if [[ -f "$SPEC_FILE" ]]; then
+    build_with_spec
+else
+    echo "  → No spec file found at $SPEC_FILE — using inline flags"
+    build_with_flags
+fi
 
 # ── Post-build: verify the outer binary is signed (macOS only) ────────
 # Note: codesign --verify only checks the outer EXE signature, not the
