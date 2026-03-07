@@ -1,9 +1,16 @@
 /**
- * EngineRecoveryModal — shown when the engine fails to connect after auth.
+ * EngineMonitor — a user-controlled live engine monitor.
  *
- * Provides step-by-step diagnostics, real action buttons that actually
- * control the sidecar, and a live log console that subscribes to sidecar
- * stdout/stderr via Tauri events.
+ * Accessible from:
+ *   - StatusBar (click the status dot/badge)
+ *   - Dashboard Engine status card
+ *   - Settings Reconnect/Restart buttons
+ *   - Auto-shows on engine error (but user can dismiss)
+ *
+ * Tabs:
+ *   1. Status — diagnostics + action buttons
+ *   2. Ports  — live port scan of 22140-22159
+ *   3. Logs   — live sidecar stdout/stderr
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -17,7 +24,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
   RefreshCw,
   Play,
@@ -32,6 +38,7 @@ import {
   AlertTriangle,
   Terminal,
   Cpu,
+  Network,
 } from "lucide-react";
 import {
   isTauri,
@@ -44,6 +51,8 @@ import {
 } from "@/lib/sidecar";
 import type { EngineStatus } from "@/hooks/use-engine";
 
+// ── Types ──────────────────────────────────────────────────────────────
+
 type StepStatus = "pending" | "running" | "pass" | "fail" | "skip";
 
 interface DiagnosticStep {
@@ -52,26 +61,43 @@ interface DiagnosticStep {
   detail?: string;
 }
 
-interface EngineRecoveryModalProps {
+interface PortScanResult {
+  port: number;
+  status: "open" | "closed" | "scanning";
+  detail?: string;
+}
+
+type MonitorTab = "status" | "ports" | "logs";
+
+// ── Props ──────────────────────────────────────────────────────────────
+
+interface EngineMonitorProps {
   open: boolean;
+  onOpenChange: (open: boolean) => void;
   engineStatus: EngineStatus;
   engineError: string | null;
   onRestartEngine: () => Promise<void>;
   onRefresh: () => Promise<void>;
 }
 
-export function EngineRecoveryModal({
+// ── Component ──────────────────────────────────────────────────────────
+
+export function EngineMonitor({
   open,
+  onOpenChange,
   engineStatus,
   engineError,
   onRestartEngine,
   onRefresh,
-}: EngineRecoveryModalProps) {
+}: EngineMonitorProps) {
+  const [activeTab, setActiveTab] = useState<MonitorTab>("status");
   const [steps, setSteps] = useState<DiagnosticStep[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
+  const [ports, setPorts] = useState<PortScanResult[]>([]);
   const [actionRunning, setActionRunning] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [logsCopied, setLogsCopied] = useState(false);
+  const [portScanning, setPortScanning] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((line: string) => {
@@ -110,14 +136,11 @@ export function EngineRecoveryModal({
   useEffect(() => {
     if (open) {
       (async () => {
-        // Load any existing sidecar output from Rust's ring buffer
         if (isTauri()) {
           const buffered = await getSidecarLogs();
           if (buffered.length > 0) {
             setLogs((prev) => {
-              const newLines = buffered.map(
-                (line) => `[buffered] ${line}`
-              );
+              const newLines = buffered.map((line) => `[buffered] ${line}`);
               return [...prev, ...newLines].slice(-200);
             });
           }
@@ -128,6 +151,8 @@ export function EngineRecoveryModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // ── Diagnostics ────────────────────────────────────────────────────
+
   const updateStep = (index: number, patch: Partial<DiagnosticStep>) => {
     setSteps((prev) =>
       prev.map((s, i) => (i === index ? { ...s, ...patch } : s))
@@ -136,88 +161,58 @@ export function EngineRecoveryModal({
 
   const runDiagnostics = async () => {
     const initialSteps: DiagnosticStep[] = [
-      { label: "Check if running in Tauri (desktop)", status: "pending" },
-      { label: "Query sidecar process status", status: "pending" },
-      { label: "Scan port range 22140–22159", status: "pending" },
-      { label: "Test engine health endpoint", status: "pending" },
+      { label: "Environment check", status: "pending" },
+      { label: "Sidecar process status", status: "pending" },
+      { label: "Port scan (22140–22159)", status: "pending" },
+      { label: "Engine health endpoint", status: "pending" },
     ];
     setSteps(initialSteps);
-    addLog("Starting engine diagnostics...");
+    addLog("Running diagnostics...");
 
-    // Step 1: Tauri check
+    // Step 1
     updateStep(0, { status: "running" });
     const inTauri = isTauri();
     updateStep(0, {
       status: "pass",
-      detail: inTauri
-        ? "Running inside Tauri desktop app"
-        : "Running in browser (dev mode) — sidecar management unavailable",
+      detail: inTauri ? "Tauri desktop app" : "Browser dev mode",
     });
-    addLog(`Environment: ${inTauri ? "Tauri desktop" : "Browser dev mode"}`);
 
-    // Step 2: Sidecar status
+    // Step 2
     updateStep(1, { status: "running" });
     if (inTauri) {
-      const sidecarInfo = await getSidecarStatus();
-      if (sidecarInfo) {
+      const info = await getSidecarStatus();
+      if (info) {
         updateStep(1, {
-          status: sidecarInfo.running ? "pass" : "fail",
-          detail: sidecarInfo.running
-            ? `Sidecar process is running (port config: ${sidecarInfo.port})`
-            : "Sidecar process is NOT running",
+          status: info.running ? "pass" : "fail",
+          detail: info.running
+            ? `Running (port config: ${info.port})`
+            : "Not running",
         });
-        addLog(
-          sidecarInfo.running
-            ? `Sidecar running, configured port: ${sidecarInfo.port}`
-            : "Sidecar is not running"
-        );
       } else {
-        updateStep(1, {
-          status: "fail",
-          detail: "Could not query sidecar status from Rust backend",
-        });
-        addLog("Failed to query sidecar status");
+        updateStep(1, { status: "fail", detail: "Could not query status" });
       }
-
-      // Also load any new sidecar logs from the buffer
+      // Load fresh sidecar output
       const freshLogs = await getSidecarLogs();
       if (freshLogs.length > 0) {
-        const lastFew = freshLogs.slice(-20);
-        addLog(`--- Last ${lastFew.length} sidecar output lines ---`);
-        for (const line of lastFew) {
+        for (const line of freshLogs.slice(-20)) {
           addLog(line);
         }
-        addLog("--- End sidecar output ---");
-      } else {
-        addLog("No sidecar output captured (engine may have crashed silently)");
       }
     } else {
-      updateStep(1, {
-        status: "skip",
-        detail: "Not applicable in browser dev mode — start the Python server manually",
-      });
-      addLog("Sidecar check skipped (not in Tauri)");
+      updateStep(1, { status: "skip", detail: "Not in Tauri" });
     }
 
-    // Step 3: Port scan
+    // Step 3
     updateStep(2, { status: "running" });
-    addLog("Scanning ports 22140–22159...");
     const engineUrl = await discoverEnginePort();
-    if (engineUrl) {
-      updateStep(2, {
-        status: "pass",
-        detail: `Engine found at ${engineUrl}`,
-      });
-      addLog(`Engine discovered at ${engineUrl}`);
-    } else {
-      updateStep(2, {
-        status: "fail",
-        detail: "No engine responded on any port in range 22140–22159",
-      });
-      addLog("Port scan: no engine found on any port");
-    }
+    updateStep(2, {
+      status: engineUrl ? "pass" : "fail",
+      detail: engineUrl
+        ? `Found at ${engineUrl}`
+        : "No engine on any port",
+    });
 
-    // Step 4: Health check
+    // Step 4
     updateStep(3, { status: "running" });
     if (engineUrl) {
       try {
@@ -226,116 +221,135 @@ export function EngineRecoveryModal({
         });
         if (resp.ok) {
           const data = await resp.json();
-          const toolCount = Array.isArray(data?.tools) ? data.tools.length : Array.isArray(data) ? data.length : "?";
-          updateStep(3, {
-            status: "pass",
-            detail: `Health OK — ${toolCount} tools available`,
-          });
-          addLog(`Health check passed: ${toolCount} tools`);
+          const n = Array.isArray(data?.tools)
+            ? data.tools.length
+            : Array.isArray(data)
+            ? data.length
+            : "?";
+          updateStep(3, { status: "pass", detail: `OK — ${n} tools` });
         } else {
           updateStep(3, {
             status: "fail",
-            detail: `Health endpoint returned HTTP ${resp.status}`,
+            detail: `HTTP ${resp.status}`,
           });
-          addLog(`Health check failed: HTTP ${resp.status}`);
         }
       } catch (err) {
-        updateStep(3, {
-          status: "fail",
-          detail: `Health check error: ${err}`,
-        });
-        addLog(`Health check error: ${err}`);
+        updateStep(3, { status: "fail", detail: String(err) });
       }
     } else {
-      updateStep(3, {
-        status: "skip",
-        detail: "Skipped — no engine found in port scan",
-      });
-      addLog("Health check skipped (no engine found)");
+      updateStep(3, { status: "skip", detail: "No engine found" });
     }
 
     addLog("Diagnostics complete.");
   };
 
-  const handleStartEngine = async () => {
-    setActionRunning("start");
-    addLog("Starting engine sidecar...");
-    try {
-      await startSidecar();
-      addLog("Sidecar process spawned. Waiting for engine to become ready...");
+  // ── Port Scanner ───────────────────────────────────────────────────
 
-      // Wait for it to be reachable
+  const scanPorts = async () => {
+    setPortScanning(true);
+    const results: PortScanResult[] = Array.from({ length: 20 }, (_, i) => ({
+      port: 22140 + i,
+      status: "scanning" as const,
+    }));
+    setPorts(results);
+
+    for (let i = 0; i < 20; i++) {
+      const port = 22140 + i;
+      try {
+        const resp = await fetch(`http://127.0.0.1:${port}/tools/list`, {
+          signal: AbortSignal.timeout(1000),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const n = Array.isArray(data?.tools)
+            ? data.tools.length
+            : Array.isArray(data)
+            ? data.length
+            : 0;
+          setPorts((prev) =>
+            prev.map((p) =>
+              p.port === port
+                ? { ...p, status: "open", detail: `Engine (${n} tools)` }
+                : p
+            )
+          );
+        } else {
+          setPorts((prev) =>
+            prev.map((p) =>
+              p.port === port
+                ? { ...p, status: "open", detail: `HTTP ${resp.status} (not engine)` }
+                : p
+            )
+          );
+        }
+      } catch {
+        setPorts((prev) =>
+          prev.map((p) =>
+            p.port === port ? { ...p, status: "closed" } : p
+          )
+        );
+      }
+    }
+    setPortScanning(false);
+  };
+
+  // ── Actions ────────────────────────────────────────────────────────
+
+  const handleAction = async (
+    name: string,
+    fn: () => Promise<void>
+  ) => {
+    setActionRunning(name);
+    addLog(`Action: ${name}...`);
+    try {
+      await fn();
+      addLog(`${name} completed.`);
+    } catch (err) {
+      addLog(`ERROR (${name}): ${err}`);
+    } finally {
+      setActionRunning(null);
+      await runDiagnostics();
+    }
+  };
+
+  const handleStartEngine = () =>
+    handleAction("Start Engine", async () => {
+      await startSidecar();
+      addLog("Sidecar spawned. Waiting for engine...");
       const ready = await waitForEngine("http://127.0.0.1:22140", 60, 1000);
       if (ready) {
-        addLog("Engine is ready! Reconnecting...");
+        addLog("Engine ready. Connecting...");
         await onRefresh();
-        addLog("Connected successfully.");
       } else {
-        // Try full port range
-        const altUrl = await discoverEnginePort();
-        if (altUrl) {
-          addLog(`Engine found at ${altUrl}. Reconnecting...`);
+        const alt = await discoverEnginePort();
+        if (alt) {
+          addLog(`Found at ${alt}. Connecting...`);
           await onRefresh();
-          addLog("Connected successfully.");
         } else {
-          addLog("ERROR: Engine started but never became reachable after 60s.");
-          addLog("Check the sidecar output above for crash details.");
+          addLog("Engine never became reachable after 60s.");
         }
       }
-    } catch (err) {
-      addLog(`ERROR starting engine: ${err}`);
-    } finally {
-      setActionRunning(null);
-      await runDiagnostics();
-    }
-  };
+    });
 
-  const handleRestartEngine = async () => {
-    setActionRunning("restart");
-    addLog("Restarting engine...");
-    try {
-      addLog("Stopping current sidecar...");
+  const handleRestartEngine = () =>
+    handleAction("Restart Engine", async () => {
       await stopSidecar();
-      addLog("Sidecar stopped. Waiting 1s for port release...");
+      addLog("Stopped. Waiting 1s...");
       await new Promise((r) => setTimeout(r, 1000));
-      addLog("Starting fresh sidecar...");
       await onRestartEngine();
-      addLog("Restart complete.");
-    } catch (err) {
-      addLog(`ERROR during restart: ${err}`);
-    } finally {
-      setActionRunning(null);
-      await runDiagnostics();
-    }
-  };
+    });
 
-  const handleKillEngine = async () => {
-    setActionRunning("kill");
-    addLog("Killing sidecar process...");
-    try {
+  const handleKillEngine = () =>
+    handleAction("Kill Engine", async () => {
       await stopSidecar();
-      addLog("Sidecar killed successfully.");
-    } catch (err) {
-      addLog(`ERROR killing sidecar: ${err}`);
-    } finally {
-      setActionRunning(null);
-      await runDiagnostics();
-    }
-  };
+    });
 
-  const handleRetryConnection = async () => {
-    setActionRunning("retry");
-    addLog("Retrying engine connection...");
-    try {
+  const handleRetryConnection = () =>
+    handleAction("Retry Connection", async () => {
       await onRefresh();
-      addLog("Connection retry complete.");
-    } catch (err) {
-      addLog(`ERROR retrying connection: ${err}`);
-    } finally {
-      setActionRunning(null);
-      await runDiagnostics();
-    }
-  };
+    });
+
+  // ── Clipboard ──────────────────────────────────────────────────────
 
   const buildDiagnosticDump = (): string => {
     const lines = [
@@ -348,8 +362,17 @@ export function EngineRecoveryModal({
       "",
       "=== Diagnostic Steps ===",
       ...steps.map(
-        (s) => `  [${s.status.toUpperCase()}] ${s.label}${s.detail ? ` — ${s.detail}` : ""}`
+        (s) =>
+          `  [${s.status.toUpperCase()}] ${s.label}${s.detail ? ` — ${s.detail}` : ""}`
       ),
+      "",
+      "=== Port Scan ===",
+      ...ports
+        .filter((p) => p.status === "open")
+        .map((p) => `  ${p.port}: ${p.detail || "open"}`),
+      ports.filter((p) => p.status === "open").length === 0
+        ? "  No open ports found"
+        : "",
       "",
       "=== Recent Logs ===",
       ...logs.slice(-100),
@@ -371,6 +394,8 @@ export function EngineRecoveryModal({
     setTimeout(() => setLogsCopied(false), 2000);
   };
 
+  // ── Rendering helpers ──────────────────────────────────────────────
+
   const StepIcon = ({ status }: { status: StepStatus }) => {
     switch (status) {
       case "running":
@@ -389,144 +414,244 @@ export function EngineRecoveryModal({
   const isInTauri = isTauri();
   const isRunningAction = actionRunning !== null;
 
+  const tabs: { key: MonitorTab; label: string }[] = [
+    { key: "status", label: "Status" },
+    { key: "ports", label: "Ports" },
+    { key: "logs", label: "Logs" },
+  ];
+
   return (
-    <Dialog open={open} onOpenChange={() => { /* controlled externally */ }}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+        {/* Header */}
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-amber-500" />
-            Engine Connection Issue
-          </DialogTitle>
-          <DialogDescription>
-            The engine failed to start or cannot be reached. Use the tools below
-            to diagnose and fix the problem.
+          <div className="flex items-center justify-between">
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Cpu className="h-5 w-5 text-primary" />
+              Engine Monitor
+            </DialogTitle>
+            <div className="flex items-center gap-2 pr-8">
+              <Badge
+                variant={
+                  engineStatus === "connected"
+                    ? "success"
+                    : engineStatus === "error"
+                    ? "destructive"
+                    : "secondary"
+                }
+              >
+                {engineStatus}
+              </Badge>
+            </div>
+          </div>
+          <DialogDescription className="sr-only">
+            Live engine health monitor and diagnostics
           </DialogDescription>
         </DialogHeader>
 
         {/* Error banner */}
         {engineError && (
-          <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm text-red-400">
+            <AlertTriangle className="mr-1.5 inline h-4 w-4" />
             {engineError}
           </div>
         )}
 
-        {/* Diagnostic Steps */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium flex items-center gap-1.5">
-              <Cpu className="h-4 w-4 text-primary" />
-              Diagnostics
-            </h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={runDiagnostics}
-              disabled={isRunningAction}
-              className="h-7 px-2 text-xs"
+        {/* Tab bar */}
+        <div className="flex border-b border-border/50">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => {
+                setActiveTab(tab.key);
+                if (tab.key === "ports" && ports.length === 0) scanPorts();
+              }}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === tab.key
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
             >
-              <RefreshCw className="h-3 w-3" />
-              Re-run
-            </Button>
-          </div>
-          <div className="space-y-1.5 rounded-lg border border-border/50 bg-muted/30 p-3">
-            {steps.map((step, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <div className="mt-0.5">
-                  <StepIcon status={step.status} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm">{step.label}</div>
-                  {step.detail && (
-                    <div className="text-xs text-muted-foreground mt-0.5 break-words">
-                      {step.detail}
-                    </div>
-                  )}
-                </div>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Status Tab ──────────────────────────────────────── */}
+        {activeTab === "status" && (
+          <div className="flex-1 overflow-auto space-y-4">
+            {/* Diagnostic Steps */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium">Diagnostics</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={runDiagnostics}
+                  disabled={isRunningAction}
+                  className="h-7 px-2 text-xs"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Re-run
+                </Button>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="space-y-1.5 rounded-lg border border-border/50 bg-muted/30 p-3">
+                {steps.map((step, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <div className="mt-0.5">
+                      <StepIcon status={step.status} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm">{step.label}</div>
+                      {step.detail && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {step.detail}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-        {/* Action Buttons */}
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Actions</h3>
-          <div className="grid grid-cols-2 gap-2">
-            {isInTauri && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleStartEngine}
+            {/* Action Buttons */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">Actions</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {isInTauri && (
+                  <>
+                    <ActionButton
+                      label="Start Engine"
+                      icon={<Play className="h-4 w-4" />}
+                      onClick={handleStartEngine}
+                      disabled={isRunningAction}
+                      active={actionRunning === "Start Engine"}
+                    />
+                    <ActionButton
+                      label="Restart Engine"
+                      icon={<RotateCcw className="h-4 w-4" />}
+                      onClick={handleRestartEngine}
+                      disabled={isRunningAction}
+                      active={actionRunning === "Restart Engine"}
+                    />
+                    <ActionButton
+                      label="Kill Engine"
+                      icon={<Square className="h-4 w-4" />}
+                      onClick={handleKillEngine}
+                      disabled={isRunningAction}
+                      active={actionRunning === "Kill Engine"}
+                      className="text-red-400 hover:text-red-300"
+                    />
+                  </>
+                )}
+                <ActionButton
+                  label="Retry Connection"
+                  icon={<RefreshCw className="h-4 w-4" />}
+                  onClick={handleRetryConnection}
                   disabled={isRunningAction}
-                >
-                  {actionRunning === "start" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4" />
-                  )}
-                  Start Engine
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleRestartEngine}
-                  disabled={isRunningAction}
-                >
-                  {actionRunning === "restart" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RotateCcw className="h-4 w-4" />
-                  )}
-                  Restart Engine
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleKillEngine}
-                  disabled={isRunningAction}
-                  className="text-red-400 hover:text-red-300"
-                >
-                  {actionRunning === "kill" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Square className="h-4 w-4" />
-                  )}
-                  Kill Engine
-                </Button>
-              </>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRetryConnection}
-              disabled={isRunningAction}
-            >
-              {actionRunning === "retry" ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
+                  active={actionRunning === "Retry Connection"}
+                />
+              </div>
+              {!isInTauri && (
+                <p className="text-xs text-muted-foreground">
+                  Start/Restart/Kill available in desktop app only.
+                  Dev: <code className="text-xs">uv run python run.py</code>
+                </p>
               )}
-              Retry Connection
-            </Button>
+            </div>
+
+            {/* Copy buttons */}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCopyDiagnostics}
+                className="flex-1 text-xs"
+              >
+                {copied ? (
+                  <CheckCheck className="h-3 w-3 text-emerald-500" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+                Copy Full Report
+              </Button>
+            </div>
           </div>
-          {!isInTauri && (
-            <p className="text-xs text-muted-foreground">
-              Start/Restart/Kill are only available in the desktop app.
-              In dev mode, start the Python engine manually: <code className="text-xs">uv run python run.py</code>
-            </p>
-          )}
-        </div>
+        )}
 
-        <Separator />
+        {/* ── Ports Tab ───────────────────────────────────────── */}
+        {activeTab === "ports" && (
+          <div className="flex-1 overflow-auto space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium flex items-center gap-1.5">
+                <Network className="h-4 w-4 text-primary" />
+                Port Scan (22140–22159)
+              </h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={scanPorts}
+                disabled={portScanning}
+                className="h-7 px-2 text-xs"
+              >
+                {portScanning ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+                Scan
+              </Button>
+            </div>
+            <ScrollArea className="h-[340px]">
+              <div className="space-y-1">
+                {ports.map((p) => (
+                  <div
+                    key={p.port}
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-md text-sm ${
+                      p.status === "open"
+                        ? "bg-emerald-500/10 border border-emerald-500/20"
+                        : p.status === "scanning"
+                        ? "bg-muted/30"
+                        : "bg-transparent"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {p.status === "open" ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                      ) : p.status === "scanning" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5 text-zinc-600" />
+                      )}
+                      <span className="font-mono text-xs">{p.port}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {p.status === "open"
+                        ? p.detail || "Open"
+                        : p.status === "scanning"
+                        ? "Scanning..."
+                        : "Closed"}
+                    </span>
+                  </div>
+                ))}
+                {ports.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    Click "Scan" to check ports 22140–22159
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
 
-        {/* Log Console */}
-        <div className="flex-1 min-h-0 space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium flex items-center gap-1.5">
-              <Terminal className="h-4 w-4 text-primary" />
-              Engine Output
-            </h3>
-            <div className="flex items-center gap-1">
+        {/* ── Logs Tab ────────────────────────────────────────── */}
+        {activeTab === "logs" && (
+          <div className="flex-1 min-h-0 space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium flex items-center gap-1.5">
+                <Terminal className="h-4 w-4 text-primary" />
+                Engine Output
+              </h3>
               <Button
                 variant="ghost"
                 size="sm"
@@ -538,72 +663,69 @@ export function EngineRecoveryModal({
                 ) : (
                   <Copy className="h-3 w-3" />
                 )}
-                Copy Logs
+                Copy
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleCopyDiagnostics}
-                className="h-7 px-2 text-xs"
-              >
-                {copied ? (
-                  <CheckCheck className="h-3 w-3 text-emerald-500" />
-                ) : (
-                  <Copy className="h-3 w-3" />
+            </div>
+            <ScrollArea className="h-[380px] rounded-lg border border-border/50 bg-zinc-950 p-3">
+              <div className="font-mono text-xs text-zinc-400 space-y-0.5">
+                {logs.length === 0 && (
+                  <div className="text-zinc-600 italic">
+                    Waiting for engine output...
+                  </div>
                 )}
-                Copy Full Report
-              </Button>
-            </div>
+                {logs.map((line, i) => (
+                  <div
+                    key={i}
+                    className={`break-words leading-relaxed ${
+                      line.includes("[stderr]") || line.includes("ERROR")
+                        ? "text-red-400"
+                        : line.includes("[terminated]")
+                        ? "text-amber-400"
+                        : line.includes("[pass]") || line.includes("complete")
+                        ? "text-emerald-400"
+                        : ""
+                    }`}
+                  >
+                    {line}
+                  </div>
+                ))}
+                <div ref={logEndRef} />
+              </div>
+            </ScrollArea>
           </div>
-          <ScrollArea className="h-48 rounded-lg border border-border/50 bg-zinc-950 p-3">
-            <div className="font-mono text-xs text-zinc-400 space-y-0.5">
-              {logs.length === 0 && (
-                <div className="text-zinc-600 italic">
-                  Waiting for engine output... (sidecar stdout/stderr will appear here)
-                </div>
-              )}
-              {logs.map((line, i) => (
-                <div
-                  key={i}
-                  className={`break-words leading-relaxed ${
-                    line.includes("[stderr]") || line.includes("ERROR")
-                      ? "text-red-400"
-                      : line.includes("[terminated]")
-                      ? "text-amber-400"
-                      : ""
-                  }`}
-                >
-                  {line}
-                </div>
-              ))}
-              <div ref={logEndRef} />
-            </div>
-          </ScrollArea>
-        </div>
-
-        {/* Status badge */}
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Engine status:</span>
-            <Badge
-              variant={
-                engineStatus === "connected"
-                  ? "success"
-                  : engineStatus === "error"
-                  ? "destructive"
-                  : "secondary"
-              }
-            >
-              {engineStatus}
-            </Badge>
-          </div>
-          {engineStatus === "connected" && (
-            <span className="text-xs text-emerald-500">
-              ✓ Connected — this dialog will close automatically
-            </span>
-          )}
-        </div>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Sub-components ──────────────────────────────────────────────────
+
+function ActionButton({
+  label,
+  icon,
+  onClick,
+  disabled,
+  active,
+  className = "",
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  disabled: boolean;
+  active: boolean;
+  className?: string;
+}) {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      disabled={disabled}
+      className={className}
+    >
+      {active ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
+      {label}
+    </Button>
   );
 }

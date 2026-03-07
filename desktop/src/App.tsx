@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -22,7 +22,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/hooks/use-theme";
 import { useNotifications } from "@/hooks/use-notifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { EngineRecoveryModal } from "@/components/EngineRecoveryModal";
+import { EngineMonitor } from "@/components/EngineRecoveryModal";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { Loader2 } from "lucide-react";
 
@@ -67,22 +67,23 @@ export default function App() {
   // Keep only the 3 most recent for the toast stack
   const toasts = notif.notifications.slice(0, 3);
 
-  // Track whether recovery modal was manually dismissed (so we don't re-show
-  // until status cycles back to connected and then fails again).
-  const [recoveryDismissed, setRecoveryDismissed] = useState(false);
+  // Engine Monitor — user-controlled but auto-opens on error
+  const [monitorOpen, setMonitorOpen] = useState(false);
+  const prevStatusRef = useRef(status);
 
-  // Auto-reset the dismissed flag when engine becomes connected
+  // Auto-open the monitor when engine enters error state (not on initial load)
   useEffect(() => {
-    if (status === "connected") {
-      setRecoveryDismissed(false);
+    if (
+      auth.isAuthenticated &&
+      status === "error" &&
+      prevStatusRef.current !== "error"
+    ) {
+      setMonitorOpen(true);
     }
-  }, [status]);
+    prevStatusRef.current = status;
+  }, [status, auth.isAuthenticated]);
 
-  // Show recovery modal when auth is done but engine is broken
-  const showRecoveryModal =
-    auth.isAuthenticated &&
-    !recoveryDismissed &&
-    (status === "error" || status === "disconnected");
+  const handleOpenMonitor = useCallback(() => setMonitorOpen(true), []);
 
   // Allow /auth/callback to render before auth loads — it handles its own
   // loading state and must be reachable immediately after OAuth redirect.
@@ -141,6 +142,7 @@ export default function App() {
                   onMarkAllRead={notif.markAllRead}
                   onDismissNotification={notif.dismiss}
                   onClearAllNotifications={notif.clearAll}
+                  onOpenMonitor={handleOpenMonitor}
                 />
               }>
                 <Route
@@ -234,8 +236,9 @@ export default function App() {
           </Routes>
         </HashRouter>
         <NotificationToastContainer toasts={toasts} onDismiss={notif.dismiss} />
-        <EngineRecoveryModal
-          open={showRecoveryModal}
+        <EngineMonitor
+          open={monitorOpen}
+          onOpenChange={setMonitorOpen}
           engineStatus={status}
           engineError={engineError}
           onRestartEngine={restartEngine}

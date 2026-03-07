@@ -11,6 +11,7 @@ interface AppLayoutProps {
   engineUrl: string | null;
   engineVersion?: string;
   onRefresh: () => void;
+  onOpenMonitor?: () => void;
   user: User | null;
   onSignOut: () => void;
   notifications: AppNotification[];
@@ -26,6 +27,7 @@ export function AppLayout({
   engineUrl,
   engineVersion,
   onRefresh,
+  onOpenMonitor,
   user,
   onSignOut,
   notifications,
@@ -58,6 +60,7 @@ export function AppLayout({
           engineUrl={engineUrl}
           engineVersion={engineVersion}
           onRefresh={onRefresh}
+          onOpenMonitor={onOpenMonitor}
         />
       </div>
     </div>

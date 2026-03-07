@@ -9,6 +9,7 @@ interface StatusBarProps {
   engineUrl: string | null;
   engineVersion?: string;
   onRefresh?: () => void;
+  onOpenMonitor?: () => void;
 }
 
 const statusVariants: Record<
@@ -30,14 +31,13 @@ const statusText: Record<EngineStatus, string> = {
   error: "Error",
 };
 
-export function StatusBar({ engineStatus, engineUrl, engineVersion, onRefresh }: StatusBarProps) {
+export function StatusBar({ engineStatus, engineUrl, engineVersion, onRefresh, onOpenMonitor }: StatusBarProps) {
   const [spinning, setSpinning] = useState(false);
 
   const handleRefresh = async () => {
     if (!onRefresh || spinning) return;
     setSpinning(true);
     onRefresh();
-    // Keep spinning for at least 1.5s so the click feels responsive
     setTimeout(() => setSpinning(false), 1500);
   };
 
@@ -45,7 +45,12 @@ export function StatusBar({ engineStatus, engineUrl, engineVersion, onRefresh }:
 
   return (
     <footer className="no-select glass flex h-8 items-center justify-between border-t px-4">
-      <div className="flex items-center gap-2">
+      {/* Left side — clickable status indicator → opens Engine Monitor */}
+      <button
+        onClick={onOpenMonitor}
+        className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+        title="Open Engine Monitor"
+      >
         <div
           className={cn(
             "h-1.5 w-1.5 rounded-full",
@@ -64,14 +69,15 @@ export function StatusBar({ engineStatus, engineUrl, engineVersion, onRefresh }:
             {engineUrl.replace("http://", "")}
           </span>
         )}
-      </div>
+      </button>
+
+      {/* Right side — version + reconnect */}
       <div className="flex items-center gap-2">
         {engineVersion && (
           <span className="text-[10px] text-muted-foreground">
             v{engineVersion}
           </span>
         )}
-        {/* Show refresh button whenever engine is not connected */}
         {notConnected && onRefresh && (
           <button
             onClick={handleRefresh}
