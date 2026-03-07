@@ -14,6 +14,7 @@ from app.core.fetcher.models import FetchResponse
 from app.core.parser.parser import ParseResult, UnifiedParser
 from app.core.search import BraveSearchClient, extract_urls_from_search_results
 from app.db.queries.failure_log import log_failure
+from app.db.queries.retry_queue import enqueue_retry
 from app.domain_config.config_store import DomainConfigStore
 from app.extractors.content_extractors import (
     extract_text_content,
@@ -123,6 +124,12 @@ class ScrapeOrchestrator:
                     status_code=fetch_response.status_code,
                     error_log=str(fetch_response.failed_reasons),
                     proxy_used=fetch_response.proxy_used,
+                )
+                await enqueue_retry(
+                    pool=self._pool,
+                    target_url=url,
+                    failure_reason=primary_reason.value,
+                    tier="desktop",
                 )
             return ScrapeResult(
                 status="error",

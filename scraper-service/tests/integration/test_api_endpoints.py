@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
 
-from tests.conftest import auth_headers
+from tests.conftest import TEST_API_KEY, auth_headers
 
 
 @pytest.mark.asyncio
@@ -174,3 +175,50 @@ async def test_research_validation(app_client: AsyncClient) -> None:
         headers=auth_headers(),
     )
     assert resp.status_code == 422
+
+
+# --- JWT Auth Tests ---
+
+
+@pytest.mark.asyncio
+async def test_jwt_auth_valid_token(jwt_app_client: AsyncClient) -> None:
+    mock_key = MagicMock()
+    mock_key.key = "test-public-key"
+
+    mock_jwk_client = MagicMock()
+    mock_jwk_client.get_signing_key_from_jwt = MagicMock(return_value=mock_key)
+
+    fake_jwt = "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.fake.token"
+    fake_payload = {"sub": "user-123", "role": "authenticated"}
+
+    with (
+        patch("app.api.auth._get_jwk_client", return_value=mock_jwk_client),
+        patch("app.api.auth._validate_jwt_sync", return_value=fake_payload),
+    ):
+        resp = await jwt_app_client.post(
+            "/api/v1/scrape",
+            json={"urls": ["https://example.com"]},
+            headers={"Authorization": f"Bearer {fake_jwt}"},
+        )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_jwt_auth_invalid_token_falls_through(jwt_app_client: AsyncClient) -> None:
+    with patch("app.api.auth._validate_jwt_sync", side_effect=Exception("bad token")):
+        resp = await jwt_app_client.post(
+            "/api/v1/scrape",
+            json={"urls": ["https://example.com"]},
+            headers={"Authorization": "Bearer invalid-jwt-token"},
+        )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_api_key_still_works_with_jwt_enabled(jwt_app_client: AsyncClient) -> None:
+    resp = await jwt_app_client.post(
+        "/api/v1/scrape",
+        json={"urls": ["https://example.com"]},
+        headers={"Authorization": f"Bearer {TEST_API_KEY}"},
+    )
+    assert resp.status_code == 200

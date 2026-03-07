@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+import time
 from typing import Any, AsyncGenerator, Optional
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -18,6 +20,7 @@ from app.models.enums import ContentType, Firewall
 
 
 TEST_API_KEY = "test-api-key-123"
+TEST_JWKS_URL = "https://example.supabase.co/auth/v1/.well-known/jwks.json"
 
 
 class _MockAcquireContext:
@@ -31,13 +34,14 @@ class _MockAcquireContext:
         pass
 
 
-def _make_settings() -> Settings:
+def _make_settings(*, jwks_url: str = "") -> Settings:
     return Settings(
         API_KEY=TEST_API_KEY,
         DATABASE_URL="postgresql://test:test@localhost:5433/test",
         BRAVE_API_KEY="brave-test-key",
         BRAVE_API_KEY_AI="brave-ai-test-key",
         PLAYWRIGHT_POOL_SIZE=1,
+        SUPABASE_JWKS_URL=jwks_url,
     )
 
 
@@ -126,3 +130,59 @@ async def app_client() -> AsyncGenerator[AsyncClient, None]:
 
 def auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {TEST_API_KEY}"}
+
+
+def _build_jwt_client_app(settings: Settings) -> Any:
+    from app.main import create_app as _create
+
+    app = _create()
+
+    mock_conn = AsyncMock()
+    mock_conn.fetchval = AsyncMock(return_value=1)
+    mock_conn.fetch = AsyncMock(return_value=[])
+    mock_conn.fetchrow = AsyncMock(return_value=None)
+    mock_conn.execute = AsyncMock()
+
+    mock_pool = MagicMock()
+    mock_pool.acquire = MagicMock(return_value=_MockAcquireContext(mock_conn))
+
+    mock_fetcher = MagicMock(spec=UnifiedFetcher)
+    mock_fetcher.fetch_with_retry = AsyncMock(return_value=_make_mock_fetch_response())
+
+    mock_domain_store = MagicMock(spec=DomainConfigStore)
+    mock_domain_store.is_scrape_allowed = MagicMock(return_value=True)
+    mock_domain_store.all_domains = []
+
+    mock_cache = MagicMock(spec=PageCache)
+    mock_cache.get = AsyncMock(return_value=None)
+    mock_cache.set = AsyncMock()
+
+    mock_search_client = MagicMock(spec=BraveSearchClient)
+
+    orchestrator = ScrapeOrchestrator(
+        fetcher=mock_fetcher,
+        settings=settings,
+        db_pool=mock_pool,
+        page_cache=mock_cache,
+        domain_config_store=mock_domain_store,
+        search_client=mock_search_client,
+    )
+
+    app.state.db_pool = mock_pool
+    app.state.settings = settings
+    app.state.browser_pool = None
+    app.state.fetcher = mock_fetcher
+    app.state.domain_config_store = mock_domain_store
+    app.state.page_cache = mock_cache
+    app.state.search_client = mock_search_client
+    app.state.orchestrator = orchestrator
+    return app
+
+
+@pytest_asyncio.fixture
+async def jwt_app_client() -> AsyncGenerator[AsyncClient, None]:
+    settings = _make_settings(jwks_url=TEST_JWKS_URL)
+    app = _build_jwt_client_app(settings)
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8001
 
+    # Supabase JWT (optional — enables JWT auth alongside API key)
+    SUPABASE_JWKS_URL: str = ""
+
     # Database
     DATABASE_URL: str
 
