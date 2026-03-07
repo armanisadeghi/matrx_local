@@ -102,22 +102,28 @@ else
     if [[ "$local_tree" == "$remote_tree" ]]; then
         echo "scraper-service/ is already up to date."
     else
-        changed_files="$(git diff-tree --name-only -r HEAD:scraper-service FETCH_HEAD:scraper-service)"
-        echo "Files to update:"
-        echo "$changed_files" | sed 's/^/  /'
+        # --diff-filter=d excludes files deleted from remote (local-only files like .cursorignore won't appear)
+        changed_files="$(git diff-tree --name-only --diff-filter=d -r HEAD:scraper-service FETCH_HEAD:scraper-service)"
 
-        echo "$changed_files" | while IFS= read -r f; do
-            dst="scraper-service/$f"
-            mkdir -p "$(dirname "$dst")"
-            if git cat-file -e "FETCH_HEAD:scraper-service/$f" 2>/dev/null; then
+        if [[ -z "$changed_files" ]]; then
+            echo "scraper-service/ is already up to date."
+        else
+            echo "Files to update:"
+            echo "$changed_files" | sed 's/^/  /'
+
+            echo "$changed_files" | while IFS= read -r f; do
+                dst="scraper-service/$f"
+                mkdir -p "$(dirname "$dst")"
                 git show "FETCH_HEAD:scraper-service/$f" > "$dst"
-            else
-                echo "  warning: $f not found in remote, skipping"
-            fi
-        done
+            done
 
-        git add scraper-service/
-        git commit -m "Update scraper-service from aidream ($(git rev-parse --short FETCH_HEAD))"
+            git add scraper-service/
+            if ! git diff --cached --quiet; then
+                git commit -m "Update scraper-service from aidream ($(git rev-parse --short FETCH_HEAD))"
+            else
+                echo "No changes to commit."
+            fi
+        fi
     fi
 fi
 
