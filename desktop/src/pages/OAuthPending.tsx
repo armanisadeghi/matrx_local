@@ -65,17 +65,25 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
     //   4. OS intercepted the aimatrx:// scheme → called Rust on_open_url handler
     //   5a. Rust stored the URL in PendingOAuthUrl app state (for the race case)
     //   5b. Rust emitted Tauri event "oauth-callback" with the full URL string
-    //   6. We receive via event (if mounted) OR via get_pending_oauth_url poll
+    //   6. We receive via event listener OR via the 500ms polling loop (whichever wins)
     //
-    // Race condition: on_open_url fires immediately when the OS activates the app.
-    // The React component may not have mounted yet. We handle both cases:
-    //   - Event listener catches it if we're already mounted.
-    //   - get_pending_oauth_url() Tauri command retrieves it if it arrived first.
+    // Why we need BOTH mechanisms:
+    //   - On second login (after logout on macOS), the window was visible when the deep
+    //     link arrived. Rust calls show_main_window() which can cause WebKit to briefly
+    //     lose focus and disrupt the JS event listener, silently dropping the event.
+    //   - The polling loop runs every 500ms as a parallel, defensive channel. It checks
+    //     get_pending_oauth_url() which Rust populates atomically regardless of whether
+    //     the event is delivered. Whichever channel delivers the code first wins;
+    //     the handled.current ref ensures exactly-once handling.
+    //
+    // On mount we first clear any stale PendingOAuthUrl from a prior login session
+    // to prevent an old code from immediately firing a new exchange.
     useEffect(() => {
         if (handled.current) return;
 
         let tauriUnlisten: (() => void) | null = null;
         let wsOff: (() => void) | null = null;
+        let pollTimer: ReturnType<typeof setInterval> | null = null;
 
         function extractCode(urlStr: string): string | null {
             try {
@@ -91,6 +99,10 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
             handled.current = true;
             tauriUnlisten?.();
             wsOff?.();
+            if (pollTimer !== null) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
 
             console.log("[OAuthPending] exchanging code for tokens...");
             try {
@@ -110,25 +122,47 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
         }
 
         async function setup() {
-            // ── Step 1: Check if the deep-link arrived before we mounted ──
-            // Rust stores it in PendingOAuthUrl; get_pending_oauth_url() retrieves
-            // and clears it atomically. This is the fix for the race condition.
+            let invokeAvailable = false;
+
             try {
                 const { invoke } = await import("@tauri-apps/api/core");
-                const pendingUrl = await invoke<string | null>("get_pending_oauth_url");
-                if (pendingUrl) {
-                    console.log("[OAuthPending] found pending URL from before mount:", pendingUrl);
-                    const code = extractCode(pendingUrl);
-                    if (code) {
-                        handleCode(code);
-                        return; // handled — don't set up listeners
+                invokeAvailable = true;
+
+                // ── Step 1: Clear any stale URL from a prior login session ──
+                // This prevents a code from a previous (already-consumed) OAuth round
+                // from immediately triggering a new exchange on re-login.
+                await invoke<string | null>("get_pending_oauth_url");
+                // (result is intentionally ignored — we just drain the stale value)
+
+                // ── Step 2: Set up defensive polling loop ──────────────────
+                // Polls every 500ms for the URL stored by Rust's on_open_url handler.
+                // This is the primary fix for the second-login problem: if the deep link
+                // arrives while the window is visible, Rust's show_main_window() can cause
+                // WebKit to drop the event listener below. Polling always retrieves it.
+                pollTimer = setInterval(async () => {
+                    if (handled.current) {
+                        if (pollTimer !== null) clearInterval(pollTimer);
+                        return;
                     }
-                }
+                    try {
+                        const pendingUrl = await invoke<string | null>("get_pending_oauth_url");
+                        if (pendingUrl) {
+                            console.log("[OAuthPending] poll found URL:", pendingUrl);
+                            const code = extractCode(pendingUrl);
+                            if (code) handleCode(code);
+                        }
+                    } catch {
+                        // ignore — Tauri may transiently unavailable during focus change
+                    }
+                }, 500);
+
             } catch {
-                // Not in Tauri (e.g., web dev) — skip
+                // Not in Tauri (e.g., web dev) — skip invoke/polling
             }
 
-            // ── Step 2: Set up event listener for URLs arriving after mount ──
+            // ── Step 3: Set up event listener (primary path, may be disrupted) ──
+            // Listening for the Tauri event is faster than polling (instant delivery),
+            // so we keep it as the primary path. Polling is the backstop.
             try {
                 const { listen } = await import("@tauri-apps/api/event");
                 const unlisten = await listen<string>("oauth-callback", (event) => {
@@ -142,9 +176,14 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
             } catch {
                 // Not in Tauri or event API unavailable
             }
+
+            // Suppress unused-variable warning if invoke wasn't available
+            void invokeAvailable;
         }
 
-        // Fallback: WebSocket broadcast (for testing with localhost:22140 redirect)
+        // ── Fallback: WebSocket broadcast ───────────────────────────────────
+        // Used when testing with a localhost:22140 redirect URI instead of the
+        // aimatrx:// deep link (e.g. when VITE_DEV_WS_AUTH=1 is set).
         wsOff = engine.on("message", (data: unknown) => {
             const msg = data as Record<string, string>;
             if (msg?.type !== "oauth-callback" || !msg.code) return;
@@ -156,6 +195,7 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
         return () => {
             tauriUnlisten?.();
             wsOff?.();
+            if (pollTimer !== null) clearInterval(pollTimer);
         };
     }, [completeOAuthExchange, onCancel]);
 

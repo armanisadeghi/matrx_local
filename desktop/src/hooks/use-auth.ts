@@ -295,6 +295,14 @@ export function useAuth() {
     } finally {
       clearOAuthState();
       clearOAuthPending();
+      // Best-effort: drain any stale Rust PendingOAuthUrl so the next login
+      // attempt doesn't pick up a code from this session.
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("get_pending_oauth_url"); // drain — result intentionally ignored
+      } catch {
+        // Not in Tauri (web dev) or invoke unavailable — safe to ignore
+      }
       update({
         loading: false,
         oauthPending: false,
