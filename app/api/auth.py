@@ -41,6 +41,15 @@ _PUBLIC_PATHS = frozenset(
         "/version",
         "/ports",
         "/cloud/heartbeat",
+        # ── Bootstrap endpoints ──────────────────────────────────────────────
+        # These are called by the frontend immediately after login to hand the
+        # JWT to the engine. They MUST be public: the JWT is the credential
+        # being *given* to the engine (inside the request body), not a token
+        # the engine can validate before accepting the call. Blocking these
+        # with a 401 creates a deadlock — auth can never be established.
+        "/cloud/configure",
+        "/cloud/reconfigure",
+        "/settings",  # PUT /settings is called in parallel with /cloud/configure
         # OAuth callback — the external browser delivers this with no token.
         # Auth is completed inside the Tauri webview after the code is forwarded.
         "/auth/callback",
