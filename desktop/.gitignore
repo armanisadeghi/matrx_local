@@ -3,5 +3,6 @@ dist/
 dist-node/
 src-tauri/target/
 src-tauri/sidecar/
+!src-tauri/sidecar/sidecar.entitlements.plist
 src-tauri/gen/
 *.tsbuildinfo
