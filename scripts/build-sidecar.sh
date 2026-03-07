@@ -300,48 +300,74 @@ if [[ -n "${TESSDATA_PATH:-}" && -d "$TESSDATA_PATH" ]]; then
     export TESSDATA_PATH_ARG="$TESSDATA_PATH:tessdata"
 fi
 
-# ── macOS code signing: tell PyInstaller to sign all bundled dylibs ────
-# APPLE_SIGNING_IDENTITY is set by CI (from secrets) or by the developer
-# locally. When set, PyInstaller signs every .dylib/.so before packing
-# them into the one-file archive, preventing the "different Team IDs"
-# error on macOS.
+# ── macOS code signing: re-sign Python dylibs AT SOURCE before PyInstaller ──
+#
+# ROOT CAUSE FIX: codesign --deep on a PyInstaller --onefile binary cannot
+# reach inside the compressed archive to re-sign embedded dylibs. The dylibs
+# are compressed data inside the EXE, not separate files. When they are
+# extracted to /tmp at runtime, they still carry Python.org's original team ID.
+#
+# The ONLY correct fix: re-sign the dylibs in the Python installation BEFORE
+# PyInstaller collects and packs them. PyInstaller then bakes in the already-
+# correctly-signed copy, so macOS sees our Team ID when it's extracted.
+#
 ENTITLEMENTS_FILE="$PROJECT_ROOT/desktop/src-tauri/sidecar/sidecar.entitlements.plist"
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && "$(uname -s)" == "Darwin" ]]; then
-    echo "  → Code signing enabled: $APPLE_SIGNING_IDENTITY"
-    export APPLE_SIGNING_IDENTITY
+    echo ""
+    echo "=== Pre-Build: Re-signing Python dylibs at source ==="
+    echo "  Identity: $APPLE_SIGNING_IDENTITY"
+
+    # Find the Python prefix (base install dir, not the venv)
+    PYTHON_PREFIX="$("$PYTHON_CMD" -c 'import sys; print(sys.base_prefix)')"
+    echo "  Python prefix: $PYTHON_PREFIX"
+
+    # Build codesign base args
+    SIGN_BASE=(codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp --options runtime)
     if [[ -f "$ENTITLEMENTS_FILE" ]]; then
-        export SIDECAR_ENTITLEMENTS="$ENTITLEMENTS_FILE"
-        echo "  → Entitlements: $ENTITLEMENTS_FILE"
+        SIGN_BASE+=(--entitlements "$ENTITLEMENTS_FILE")
+        echo "  Entitlements: $ENTITLEMENTS_FILE"
     fi
+
+    # Re-sign every .dylib and .so in the Python installation.
+    # This ensures libpython3.13.dylib and any extension modules packed by
+    # PyInstaller carry our Team ID before they are added to the archive.
+    SIGNED_COUNT=0
+    while IFS= read -r -d '' dylib; do
+        "${SIGN_BASE[@]}" "$dylib" 2>/dev/null && (( SIGNED_COUNT++ )) || true
+    done < <(find "$PYTHON_PREFIX" \( -name "*.dylib" -o -name "*.so" \) -print0 2>/dev/null)
+
+    # Also sign dylibs in the venv itself (compiled extensions installed by uv/pip)
+    VENV_DIR="$PROJECT_ROOT/.venv"
+    if [[ -d "$VENV_DIR" ]]; then
+        while IFS= read -r -d '' dylib; do
+            "${SIGN_BASE[@]}" "$dylib" 2>/dev/null && (( SIGNED_COUNT++ )) || true
+        done < <(find "$VENV_DIR" \( -name "*.dylib" -o -name "*.so" \) -print0 2>/dev/null)
+    fi
+
+    echo "  ✅ Re-signed $SIGNED_COUNT dylib/so files"
+    echo ""
+
+    # Export so the .spec file can also pass codesign_identity to PyInstaller
+    # (this signs the outer EXE, which is correct)
+    export APPLE_SIGNING_IDENTITY
+    [[ -f "$ENTITLEMENTS_FILE" ]] && export SIDECAR_ENTITLEMENTS="$ENTITLEMENTS_FILE"
 else
-    echo "  → Code signing: skipped (not macOS or APPLE_SIGNING_IDENTITY not set)"
+    echo "  → Pre-build signing: skipped (not macOS or APPLE_SIGNING_IDENTITY not set)"
 fi
 
 "$PYTHON_CMD" "$PYINSTALLER_CMD_FILE"
 rm -f "$PYINSTALLER_CMD_FILE"
 
-# ── Post-build: deep-sign and verify (macOS only) ─────────────────────
-# Belt-and-suspenders: re-sign the final binary with hardened runtime +
-# entitlements, then verify. This catches any signing problems at build
-# time rather than at runtime on the user's machine.
+# ── Post-build: verify the outer binary is signed (macOS only) ────────
+# Note: codesign --verify only checks the outer EXE signature, not the
+# embedded dylibs (which are compressed data). The real check happens
+# at runtime — if the pre-build step above worked, the engine will start.
 BUILT_BINARY="dist/aimatrx-engine-$TARGET"
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && "$(uname -s)" == "Darwin" && -f "$BUILT_BINARY" ]]; then
     echo ""
-    echo "=== Post-Build Code Signing ==="
-
-    SIGN_ARGS=(codesign --deep --force --options runtime
-               --sign "$APPLE_SIGNING_IDENTITY")
-    if [[ -f "$ENTITLEMENTS_FILE" ]]; then
-        SIGN_ARGS+=(--entitlements "$ENTITLEMENTS_FILE")
-    fi
-    SIGN_ARGS+=("$BUILT_BINARY")
-
-    echo "  → Signing: ${SIGN_ARGS[*]}"
-    "${SIGN_ARGS[@]}"
-
-    echo "  → Verifying signature..."
+    echo "=== Post-Build: Verifying outer binary signature ==="
     codesign --verify --verbose "$BUILT_BINARY"
-    echo "  ✅ Code signature valid"
+    echo "  ✅ Outer binary signature valid"
 fi
 
 # Copy to sidecar directory
