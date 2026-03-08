@@ -14,6 +14,7 @@ from app.api.document_routes import router as document_router  # notes — local
 from app.api.proxy_routes import router as proxy_router
 from app.api.cloud_sync_routes import router as cloud_sync_router
 from app.api.chat_routes import router as chat_router, build_ai_sub_app
+from app.api.data_routes import router as data_router
 from app.api.permissions_routes import router as permissions_router
 from app.api.capabilities_routes import router as capabilities_router
 from app.api.auth import AuthMiddleware, auth_router
@@ -28,6 +29,8 @@ from app.services.proxy.server import get_proxy_server
 from app.services.tunnel.manager import get_tunnel_manager
 from app.services.cloud_sync.settings_sync import get_settings_sync
 from app.services.ai.engine import initialize_matrx_ai, load_tools_and_register
+from app.services.local_db.database import get_db
+from app.services.local_db.sync_engine import get_sync_engine
 from app.tools.tools.scheduler import restore_scheduled_tasks
 import app.services.scraper.retry_queue as retry_queue
 from app.websocket_manager import WebSocketManager
@@ -182,18 +185,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         "[app/main.py] ── Matrx Local startup ─────────────────────────────────────"
     )
 
-    # Phase 0: Ensure Playwright browsers are installed (auto-installs if missing).
+    # Phase 0a: Open local SQLite database (offline-first data store).
+    # This MUST be the first phase — all data reads come from SQLite.
+    # The database lives at ~/.matrx/matrx.db (outside the app folder) so it
+    # survives reinstalls and updates.
+    logger.info("[app/main.py] Phase 0a: Opening local database...")
+    try:
+        local_db = get_db()
+        await local_db.connect()
+        logger.info("[app/main.py] Phase 0a: Local database ready ✓ (%s)", local_db.path)
+    except Exception:
+        logger.error(
+            "[app/main.py] Phase 0a: Local database FAILED — data endpoints will use fallbacks",
+            exc_info=True,
+        )
+
+    # Phase 0b: Ensure Playwright browsers are installed (auto-installs if missing).
     # Browsers are NOT bundled in the PyInstaller binary (bundling causes macOS
     # codesign failures with Chrome's nested framework structure). They are
     # downloaded on first startup to PLAYWRIGHT_BROWSERS_PATH (~/.matrx/playwright-browsers
     # when running as a frozen binary, or the default Playwright cache in development).
-    logger.info("[app/main.py] Phase 0: Checking Playwright browsers...")
+    logger.info("[app/main.py] Phase 0b: Checking Playwright browsers...")
     try:
         await _ensure_playwright_browsers()
-        logger.info("[app/main.py] Phase 0: Playwright browsers ready ✓")
+        logger.info("[app/main.py] Phase 0b: Playwright browsers ready ✓")
     except Exception:
         logger.warning(
-            "[app/main.py] Phase 0: Playwright browser check failed — browser automation may not work",
+            "[app/main.py] Phase 0b: Playwright browser check failed — browser automation may not work",
             exc_info=True,
         )
 
@@ -234,6 +252,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.error(
             "[app/main.py] Phase 2: Tool registration FAILED — AI may not have tool access",
+            exc_info=True,
+        )
+
+    # Phase 2b: Start background sync engine (cloud → local SQLite).
+    # This pulls models, agents, and tools from Supabase into the local DB
+    # so all /data/* endpoints respond instantly from SQLite.
+    logger.info("[app/main.py] Phase 2b: Starting background data sync...")
+    try:
+        sync_engine = get_sync_engine()
+        sync_engine.start()
+        logger.info("[app/main.py] Phase 2b: Background sync started ✓")
+    except Exception:
+        logger.error(
+            "[app/main.py] Phase 2b: Background sync FAILED to start — local data may be stale",
             exc_info=True,
         )
 
@@ -338,6 +370,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(
         "[app/main.py] ── Matrx Local shutdown ────────────────────────────────────"
     )
+    # Stop background sync
+    try:
+        get_sync_engine().stop()
+    except Exception:
+        pass
+
     retry_queue.stop()
     heartbeat_task.cancel()
     try:
@@ -374,6 +412,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "[app/main.py] Scraper engine failed to stop cleanly", exc_info=True
         )
 
+    # Close local SQLite database
+    try:
+        await get_db().close()
+    except Exception:
+        pass
+
 
 app = FastAPI(
     title="Matrx Local",
@@ -391,6 +435,7 @@ app.include_router(document_router, prefix="/notes")
 app.include_router(proxy_router)
 app.include_router(cloud_sync_router)
 app.include_router(chat_router)
+app.include_router(data_router)
 app.include_router(permissions_router)
 app.include_router(capabilities_router)
 app.include_router(fetch_proxy_router)
