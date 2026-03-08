@@ -16,6 +16,7 @@ import { OAuthPending } from "@/pages/OAuthPending";
 import { AuthCallback } from "@/pages/AuthCallback";
 import { AiMatrx } from "@/pages/AiMatrx";
 import { BrowserLab } from "@/pages/BrowserLab";
+import { Voice } from "@/pages/Voice";
 import { TauriFetchBrowser } from "@/pages/TauriFetchBrowser";
 import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
@@ -216,6 +217,7 @@ export default function App() {
                     <Devices engineStatus={status} engineUrl={url} />
                   }
                 />
+                <Route path="voice" element={<Voice />} />
                 <Route path="aimatrx" element={<AiMatrx />} />
                 <Route path="browser" element={<BrowserLab />} />
                 <Route path="browser/tauri" element={<TauriFetchBrowser />} />

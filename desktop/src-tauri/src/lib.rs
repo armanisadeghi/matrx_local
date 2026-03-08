@@ -11,6 +11,9 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
+mod transcription;
+use transcription::commands::*;
+
 // ── proxy_fetch types ────────────────────────────────────────────────────────
 #[derive(Serialize)]
 struct FetchResponse {
@@ -400,6 +403,8 @@ pub fn run() {
         })
         .manage(CloseToTray(AtomicBool::new(true)))
         .manage(PendingOAuthUrl(Mutex::new(None)))
+        .manage(TranscriptionState(Mutex::new(None)))
+        .manage(RecordingState(Arc::new(Mutex::new(false))))
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
@@ -410,6 +415,19 @@ pub fn run() {
             check_for_updates,
             proxy_fetch,
             get_pending_oauth_url,
+            // Transcription commands
+            detect_hardware,
+            download_whisper_model,
+            download_vad_model,
+            init_transcription,
+            check_model_exists,
+            get_active_model,
+            list_downloaded_models,
+            delete_model,
+            start_transcription,
+            stop_transcription,
+            list_audio_input_devices,
+            get_voice_setup_status,
         ])
         .setup(|app| {
             // Register the deep-link listener for OAuth callbacks.

@@ -123,9 +123,23 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Migration script** -- `migrations/002_app_instances_settings.sql` run in Supabase ✓ (per ARMAN_TASKS)
 - **Integration guides** -- `docs/proxy-integration-guide.md` + `docs/proxy-testing-guide.md`
 
+### Voice Transcription (Latest)
+- **whisper-cpp-plus** -- Local Whisper transcription via whisper.cpp Rust bindings (v0.1.4)
+- **Hardware detection** -- Auto-detects RAM, CPU threads, CUDA GPUs, Apple Silicon/Metal
+- **Adaptive model selection** -- Recommends tiny/base/small model based on system capabilities
+- **Model download** -- On-demand GGML model download from HuggingFace with progress events
+- **One-click setup** -- Hardware detect + model download + init in a single button click
+- **Live transcription** -- Real-time microphone capture (cpal) → Whisper inference → UI segments
+- **Voice page** -- New `/voice` tab with Setup, Transcribe, Models, and Audio Devices sub-tabs
+- **12 Tauri commands** -- detect_hardware, download_whisper_model, download_vad_model, init_transcription, check_model_exists, get_active_model, list_downloaded_models, delete_model, start_transcription, stop_transcription, list_audio_input_devices, get_voice_setup_status
+- **Persistent config** -- Selected model saved to `transcription.json` in app data dir
+- **Future** -- Custom wake words for triggering AI agents automatically
+
 ### Still Needs Work
 - **Rate limiting** -- No per-user rate limiting on scraper server
 - **Cloud sync 404** -- If `app_settings` returns 404 despite migration 002 run, verify table exists and RLS in Supabase (see AGENT_TASKS Investigation section)
+- **Voice: CDN mirror** -- Models download from HuggingFace directly; S3/CloudFront mirror not yet set up
+- **Voice: cmake requirement** -- whisper-cpp-plus requires cmake at build time (not at runtime)
 
 ---
 
@@ -196,6 +210,12 @@ npm run tauri:dev
 | Proxy testing guide | `docs/proxy-testing-guide.md` |
 | Local settings file | `~/.matrx/settings.json` |
 | Instance ID file | `~/.matrx/instance.json` |
+| Transcription module (Rust) | `desktop/src-tauri/src/transcription/*.rs` |
+| Transcription types (TS) | `desktop/src/lib/transcription/types.ts` |
+| Transcription hook | `desktop/src/hooks/use-transcription.ts` |
+| Voice page | `desktop/src/pages/Voice.tsx` |
+| Transcription config | `~/{app_data}/transcription.json` |
+| Whisper models | `~/{app_data}/models/*.bin` |
 | Architecture docs | `ARCHITECTURE.md` |
 | Task tracker | `AGENT_TASKS.md` |
 | Backlog | `BACKLOG.md` |

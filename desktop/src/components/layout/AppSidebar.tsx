@@ -16,6 +16,7 @@ import {
   LogOut,
   Sparkles,
   MonitorSmartphone,
+  Mic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -43,6 +44,7 @@ const navItems = [
   { to: "/activity", icon: Radio, label: "Activity" },
   { to: "/ports", icon: Network, label: "Ports" },
   { to: "/devices", icon: Cpu, label: "Devices" },
+  { to: "/voice", icon: Mic, label: "Voice" },
   { to: "/aimatrx", icon: Sparkles, label: "AiMatrx" },
   { to: "/browser", icon: MonitorSmartphone, label: "Browser" },
   { to: "/settings", icon: Settings, label: "Settings" },
