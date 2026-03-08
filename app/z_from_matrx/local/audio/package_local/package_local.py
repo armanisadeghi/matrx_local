@@ -55,11 +55,9 @@ class Microphone(AudioSource):
     """
     Creates a new ``Microphone`` instance, which represents a physical microphone on the computer. Subclass of ``AudioSource``.
 
-    This will throw an ``AttributeError`` if you don't have PyAudio 0.2.11 or later installed.
-
     If ``device_index`` is unspecified or ``None``, the default microphone is used as the audio source. Otherwise, ``device_index`` should be the index of the device to use for audio input.
 
-    A device index is an integer between 0 and ``pyaudio.get_device_count() - 1`` (assume we have used ``import pyaudio`` beforehand) inclusive. It represents an audio device such as a microphone or speaker. See the `PyAudio documentation <http://people.csail.mit.edu/hubert/pyaudio/docs/>`__ for more details.
+    A device index is an integer between 0 and ``len(sounddevice.query_devices()) - 1`` inclusive. It represents an audio device such as a microphone or speaker. See the `sounddevice documentation <https://python-sounddevice.readthedocs.io/>`__ for more details.
 
     The microphone audio is recorded in chunks of ``chunk_size`` samples, at a rate of ``sample_rate`` samples per second (Hertz). If not specified, the value of ``sample_rate`` is determined automatically from the system's microphone settings.
 
@@ -73,41 +71,27 @@ class Microphone(AudioSource):
         assert sample_rate is None or (isinstance(sample_rate, int) and sample_rate > 0), "Sample rate must be None or a positive integer"
         assert isinstance(chunk_size, int) and chunk_size > 0, "Chunk size must be a positive integer"
 
-        # set up PyAudio
-        self.pyaudio_module = self.get_pyaudio()
-        audio = self.pyaudio_module.PyAudio()
-        try:
-            count = audio.get_device_count()  # obtain device count
-            if device_index is not None:  # ensure device index is in range
-                assert 0 <= device_index < count, "Device index out of range ({} devices available; device index should be between 0 and {} inclusive)".format(count, count - 1)
-            if sample_rate is None:  # automatically set the sample rate to the hardware's default sample rate if not specified
-                device_info = audio.get_device_info_by_index(device_index) if device_index is not None else audio.get_default_input_device_info()
-                assert (
-                    isinstance(device_info.get("defaultSampleRate"), (float, int)) and device_info["defaultSampleRate"] > 0
-                ), "Invalid device info returned from PyAudio: {}".format(device_info)
-                sample_rate = int(device_info["defaultSampleRate"])
-        finally:
-            audio.terminate()
+        import sounddevice as _sd
+
+        self._sd = _sd
+        devices = _sd.query_devices()
+
+        if device_index is not None:
+            assert 0 <= device_index < len(devices), "Device index out of range ({} devices available; device index should be between 0 and {} inclusive)".format(len(devices), len(devices) - 1)
+
+        if sample_rate is None:
+            if device_index is not None:
+                device_info = devices[device_index]
+            else:
+                device_info = _sd.query_devices(kind="input")
+            sample_rate = int(device_info["default_samplerate"])
 
         self.device_index = device_index
-        self.format = self.pyaudio_module.paInt16  # 16-bit int sampling
-        self.SAMPLE_WIDTH = self.pyaudio_module.get_sample_size(self.format)  # size of each sample
-        self.SAMPLE_RATE = sample_rate  # sampling rate in Hertz
-        self.CHUNK = chunk_size  # number of frames stored in each buffer
+        self.SAMPLE_WIDTH = 2  # 16-bit int sampling = 2 bytes per sample
+        self.SAMPLE_RATE = sample_rate
+        self.CHUNK = chunk_size
 
-        self.audio = None
-        self.stream = None
-
-    @staticmethod
-    def get_pyaudio():
-        """
-        Imports the pyaudio module and checks its version. Throws exceptions if pyaudio can't be found or a wrong version is installed
-        """
-        try:
-            import pyaudio
-        except ImportError:
-            raise AttributeError("Could not find PyAudio; check installation")
-        return pyaudio
+        self._stream = None
 
     @staticmethod
     def list_microphone_names():
@@ -116,15 +100,8 @@ class Microphone(AudioSource):
 
         The index of each microphone's name in the returned list is the same as its device index when creating a ``Microphone`` instance - if you want to use the microphone at index 3 in the returned list, use ``Microphone(device_index=3)``.
         """
-        audio = Microphone.get_pyaudio().PyAudio()
-        try:
-            result = []
-            for i in range(audio.get_device_count()):
-                device_info = audio.get_device_info_by_index(i)
-                result.append(device_info.get("name"))
-        finally:
-            audio.terminate()
-        return result
+        import sounddevice as _sd
+        return [d["name"] for d in _sd.query_devices()]
 
     @staticmethod
     def list_working_microphones():
@@ -133,33 +110,18 @@ class Microphone(AudioSource):
 
         Each key in the returned dictionary can be passed to the ``Microphone`` constructor to use that microphone. For example, if the return value is ``{3: "HDA Intel PCH: ALC3232 Analog (hw:1,0)"}``, you can do ``Microphone(device_index=3)`` to use that microphone.
         """
-        pyaudio_module = Microphone.get_pyaudio()
-        audio = pyaudio_module.PyAudio()
-        try:
-            result = {}
-            for device_index in range(audio.get_device_count()):
-                device_info = audio.get_device_info_by_index(device_index)
-                device_name = device_info.get("name")
-                assert (
-                    isinstance(device_info.get("defaultSampleRate"), (float, int)) and device_info["defaultSampleRate"] > 0
-                ), "Invalid device info returned from PyAudio: {}".format(device_info)
-                try:
-                    # read audio
-                    pyaudio_stream = audio.open(
-                        input_device_index=device_index,
-                        channels=1,
-                        format=pyaudio_module.paInt16,
-                        rate=int(device_info["defaultSampleRate"]),
-                        input=True,
-                    )
-                    try:
-                        buffer = pyaudio_stream.read(1024)
-                        if not pyaudio_stream.is_stopped():
-                            pyaudio_stream.stop_stream()
-                    finally:
-                        pyaudio_stream.close()
-                except Exception:
-                    continue
+        import sounddevice as _sd
+        import numpy as _np
+
+        result = {}
+        for device_index, device_info in enumerate(_sd.query_devices()):
+            if device_info.get("max_input_channels", 0) < 1:
+                continue
+            try:
+                sr = int(device_info["default_samplerate"])
+                recording = _sd.rec(1024, samplerate=sr, channels=1, dtype="int16", device=device_index)
+                _sd.wait()
+                buffer = recording.tobytes()
 
                 # compute RMS of debiased audio
                 energy = -audioop.rms(buffer, 2)
@@ -167,50 +129,50 @@ class Microphone(AudioSource):
                 debiased_energy = audioop.rms(audioop.add(buffer, energy_bytes * (len(buffer) // 2), 2), 2)
 
                 if debiased_energy > 30:  # probably actually audio
-                    result[device_index] = device_name
-        finally:
-            audio.terminate()
+                    result[device_index] = device_info.get("name")
+            except Exception:
+                continue
         return result
 
     def __enter__(self):
-        assert self.stream is None, "This audio source is already inside a context manager"
-        self.audio = self.pyaudio_module.PyAudio()
-        try:
-            self.stream = Microphone.MicrophoneStream(
-                self.audio.open(
-                    input_device_index=self.device_index,
-                    channels=1,
-                    format=self.format,
-                    rate=self.SAMPLE_RATE,
-                    frames_per_buffer=self.CHUNK,
-                    input=True,
-                )
-            )
-        except Exception:
-            self.audio.terminate()
+        assert self._stream is None, "This audio source is already inside a context manager"
+        import sounddevice as _sd
+
+        self._input_stream = _sd.RawInputStream(
+            samplerate=self.SAMPLE_RATE,
+            blocksize=self.CHUNK,
+            device=self.device_index,
+            channels=1,
+            dtype="int16",
+        )
+        self._input_stream.start()
+        self._stream = Microphone.MicrophoneStream(self._input_stream)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         try:
-            self.stream.close()
+            self._stream.close()
         finally:
-            self.stream = None
-            self.audio.terminate()
+            self._stream = None
+
+    @property
+    def stream(self):
+        return self._stream
 
     class MicrophoneStream(object):
-        def __init__(self, pyaudio_stream):
-            self.pyaudio_stream = pyaudio_stream
+        def __init__(self, sd_stream):
+            self.sd_stream = sd_stream
 
         def read(self, size):
-            return self.pyaudio_stream.read(size, exception_on_overflow=False)
+            data, overflowed = self.sd_stream.read(size)
+            return bytes(data)
 
         def close(self):
             try:
-                # sometimes, if the stream isn't stopped, closing the stream throws an exception
-                if not self.pyaudio_stream.is_stopped():
-                    self.pyaudio_stream.stop_stream()
+                if self.sd_stream.active:
+                    self.sd_stream.stop()
             finally:
-                self.pyaudio_stream.close()
+                self.sd_stream.close()
 
 
 class AudioFile(AudioSource):

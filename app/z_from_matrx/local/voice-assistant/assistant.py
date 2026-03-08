@@ -10,7 +10,8 @@ import speech_recognition as sr
 import PIL.Image
 import cv2
 import pyperclip
-import pyaudio
+import sounddevice as sd
+import numpy as np
 import os
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -144,8 +145,8 @@ def get_clipboard_text():
 
 
 def speak(text):
-    player_stream = pyaudio.PyAudio().open(format=pyaudio.paInt16, channels=1, rate=24000, output=True)
-    stream_start = False
+    sample_rate = 24000
+    audio_chunks = []
 
     with openai_client.audio.speech.with_streaming_response.create(
         model="tts-1",
@@ -154,13 +155,20 @@ def speak(text):
         input=text,
     ) as response:
         silence_threshold = 0.01
+        stream_start = False
         for chunk in response.iter_bytes(chunk_size=1024):
             if stream_start:
-                player_stream.write(chunk)
+                audio_chunks.append(chunk)
             else:
                 if max(chunk) > silence_threshold:
-                    player_stream.write(chunk)
+                    audio_chunks.append(chunk)
                     stream_start = True
+
+    if audio_chunks:
+        raw = b"".join(audio_chunks)
+        samples = np.frombuffer(raw, dtype=np.int16)
+        sd.play(samples, samplerate=sample_rate)
+        sd.wait()
 
 
 def wav_to_text(audio_path):

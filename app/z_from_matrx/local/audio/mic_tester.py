@@ -1,5 +1,6 @@
 import speech_recognition as sr
-import pyaudio
+import sounddevice as sd
+import numpy as np
 import wave
 import os
 
@@ -33,24 +34,13 @@ def record_and_playback(mic_index):
         wf.writeframes(audio.get_raw_data())
 
     print("Playing back the recorded audio...")
-    p = pyaudio.PyAudio()
     wf = wave.open(wav_file, "rb")
-    stream = p.open(
-        format=p.get_format_from_width(wf.getsampwidth()),
-        channels=wf.getnchannels(),
-        rate=wf.getframerate(),
-        output=True,
-    )
-
-    chunk_size = 1024
-    data = wf.readframes(chunk_size)
-    while data:
-        stream.write(data)
-        data = wf.readframes(chunk_size)
-
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
+    frames = wf.readframes(wf.getnframes())
+    samples = np.frombuffer(frames, dtype=np.int16)
+    if wf.getnchannels() > 1:
+        samples = samples.reshape(-1, wf.getnchannels())
+    sd.play(samples, samplerate=wf.getframerate())
+    sd.wait()
     wf.close()
     os.remove(wav_file)
 

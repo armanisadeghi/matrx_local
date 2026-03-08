@@ -35,7 +35,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Python dependencies
-        run: uv sync --extra all
+        run: uv sync --extra transcription
 
       - name: Import Apple certificate for code signing
         if: matrix.platform == 'macos-15'

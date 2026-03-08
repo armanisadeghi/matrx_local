@@ -87,7 +87,7 @@ Replaced the legacy route-based API with a unified tool dispatcher. All capabili
 - **`UploadFile`** — Upload local files to any endpoint via multipart form
 
 ### Dependency Cleanup
-- `pyaudio`, `sounddevice`, `numpy` moved to `[project.optional-dependencies] audio` — no longer blocks installation
+- `sounddevice`, `numpy` are core dependencies; `pyaudio` removed entirely (sounddevice covers same functionality without requiring system portaudio)
 - `playwright` is in optional `browser` extra — only installed when needed
 - Added `httpx`, `pyperclip`, `plyer`, `pydantic` to core dependencies
 

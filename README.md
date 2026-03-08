@@ -191,7 +191,6 @@ cp .env.example .env
 ```bash
 uv sync                              # Everything needed (Playwright, psutil, audio, etc.)
 uv sync --extra transcription        # + openai-whisper local AI model (TranscribeAudio, ~2GB)
-uv sync --extra all                  # Same as transcription (all extras)
 ```
 
 ---

@@ -97,8 +97,8 @@ detect_venv_python() {
 PYTHON="$(detect_venv_python)"
 if [[ -z "$PYTHON" ]]; then
     if command -v uv &>/dev/null; then
-        echo "  → .venv not found — running 'uv sync --extra all' first..."
-        uv sync --extra all
+        echo "  → .venv not found — running 'uv sync --extra transcription' first..."
+        uv sync --extra transcription
     else
         echo "ERROR: .venv not found. Run 'uv sync' first."
         exit 1
