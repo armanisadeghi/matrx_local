@@ -15,7 +15,7 @@ impl HardwareProfile {
     pub fn detect() -> Self {
         let mut sys = System::new();
         sys.refresh_memory();
-        sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
+        sys.refresh_cpu_list(sysinfo::CpuRefreshKind::new());
 
         let total_ram_mb = sys.total_memory() / 1024 / 1024;
         let cpu_threads = sys.cpus().len();
