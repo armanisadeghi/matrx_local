@@ -457,7 +457,7 @@ The engine starts with whatever resources are available:
 ```bash
 ./scripts/update-scraper.sh --local   # From local aidream repo
 ./scripts/update-scraper.sh           # From GitHub
-uv sync --extra browser               # If scraper deps changed
+uv sync                                # If scraper deps changed
 ```
 
 ---
@@ -670,7 +670,7 @@ The scraper engine uses `asyncpg` (PostgreSQL only). Without `DATABASE_URL`, the
 # Terminal 1: Python engine
 cd /path/to/matrx_local
 cp .env.example .env   # Configure API_KEY, optionally DATABASE_URL
-uv sync --extra browser
+uv sync
 uv run playwright install chromium
 API_KEY=local-dev uv run python run.py
 

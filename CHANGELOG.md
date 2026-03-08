@@ -82,13 +82,13 @@ Replaced the legacy route-based API with a unified tool dispatcher. All capabili
 - **`ClipboardRead`** / **`ClipboardWrite`** — Cross-platform clipboard via pyperclip
 - **`Notify`** — Native OS notifications (macOS Notification Center, Windows Toast, Linux libnotify) via plyer
 - **`FetchUrl`** — HTTP requests from the user's residential IP via httpx. Full request/response passthrough with realistic browser User-Agent.
-- **`FetchWithBrowser`** — Playwright headless Chromium for JS-rendered pages. Supports `wait_for` selectors and text extraction mode. Optional dependency (`uv sync --extra browser`).
+- **`FetchWithBrowser`** — Playwright headless Chromium for JS-rendered pages. Supports `wait_for` selectors and text extraction mode.
 - **`DownloadFile`** — Streaming chunked download from any URL to local filesystem
 - **`UploadFile`** — Upload local files to any endpoint via multipart form
 
 ### Dependency Cleanup
-- `sounddevice`, `numpy` are core dependencies; `pyaudio` removed entirely (sounddevice covers same functionality without requiring system portaudio)
-- `playwright` is in optional `browser` extra — only installed when needed
+- `sounddevice`, `numpy`, `playwright` are core dependencies
+- `pyaudio` removed entirely (sounddevice covers same functionality without requiring system portaudio)
 - Added `httpx`, `pyperclip`, `plyer`, `pydantic` to core dependencies
 
 ### PyInstaller Spec (`matrx_local.spec`)

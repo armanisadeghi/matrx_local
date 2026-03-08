@@ -129,4 +129,4 @@ fi
 
 echo ""
 echo "Done! scraper-service/ is up to date."
-echo "Run 'uv sync --extra browser' to update dependencies if pyproject.toml changed."
+echo "Run 'uv sync' to update dependencies if pyproject.toml changed."

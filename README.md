@@ -317,7 +317,7 @@ When the scraper-service is updated in the `aidream` repo:
 ./scripts/update-scraper.sh
 
 # Then update dependencies if scraper-service pyproject.toml changed
-uv sync --extra browser
+uv sync
 ```
 
 This merges upstream changes into `scraper-service/` without touching the integration layer.
