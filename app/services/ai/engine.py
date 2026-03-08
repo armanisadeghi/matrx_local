@@ -33,6 +33,7 @@ logger = get_logger()
 
 _ai_initialized = False
 _tools_loaded = False
+_db_registered = False  # True only when 'supabase_automation_matrix' was successfully registered
 
 
 def initialize_matrx_ai() -> None:
@@ -44,7 +45,7 @@ def initialize_matrx_ai() -> None:
 
     Call this from the FastAPI lifespan handler BEFORE the async phase.
     """
-    global _ai_initialized
+    global _ai_initialized, _db_registered
     if _ai_initialized:
         return
 
@@ -67,6 +68,7 @@ def initialize_matrx_ai() -> None:
                 db_additional_schemas=["auth"],
                 db_env_var_overrides={"NAME": "SUPABASE_MATRIX_DATABASE_NAME"},
             )
+            _db_registered = True
             logger.info("[engine] matrx-ai: initialized with database persistence ✓")
         except Exception:
             logger.warning(
@@ -81,14 +83,26 @@ def initialize_matrx_ai() -> None:
             # registry load proceeds. AI provider calls work without a DB connection.
             matrx_ai._initialized = True
     else:
-        logger.info(
+        logger.warning(
             "[engine] matrx-ai: SUPABASE_MATRIX_HOST not set — "
-            "running without DB persistence. Set it in .env to enable conversation history."
+            "running WITHOUT cloud database. "
+            "AI model/agent data will not sync from Supabase. "
+            "Set SUPABASE_MATRIX_HOST (and related SUPABASE_MATRIX_* vars) in .env "
+            "to enable conversation history, model sync, and agent sync."
         )
         # Initialize without DB so matrx_ai._initialized is True and tool registry loads.
         matrx_ai._initialized = True
 
     _ai_initialized = True
+
+
+def has_db() -> bool:
+    """Return True if the 'supabase_automation_matrix' DB config was successfully registered.
+
+    Use this to guard any code that issues ORM queries — if False, those queries
+    will raise DatabaseConfigError and generate noisy tracebacks.
+    """
+    return _db_registered
 
 
 async def load_tools_and_register() -> None:

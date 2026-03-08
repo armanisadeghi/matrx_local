@@ -19,6 +19,7 @@ from typing import Any, Optional
 
 from app.common.system_logger import get_logger
 from app.services.local_db.database import get_db
+from app.services.ai.engine import has_db
 from app.services.local_db.repositories import (
     ModelsRepo,
     AgentsRepo,
@@ -124,6 +125,16 @@ class SyncEngine:
             )
             return
 
+        if not has_db():
+            logger.warning(
+                "[sync_engine] Skipping model sync — no cloud database connection. "
+                "Set SUPABASE_MATRIX_HOST in .env to enable AI model syncing from Supabase."
+            )
+            await self._sync_meta.set_last_sync(
+                "models", status="skipped", error_message="no database connection"
+            )
+            return
+
         try:
             from matrx_ai.db.custom.ai_models.ai_model_manager import AiModelManager
 
@@ -205,6 +216,16 @@ class SyncEngine:
             logger.debug("[sync_engine] matrx_ai not initialized — skipping agent sync")
             await self._sync_meta.set_last_sync(
                 "agents", status="skipped", error_message="matrx_ai not initialized"
+            )
+            return
+
+        if not has_db():
+            logger.warning(
+                "[sync_engine] Skipping agent sync — no cloud database connection. "
+                "Set SUPABASE_MATRIX_HOST in .env to enable AI agent syncing from Supabase."
+            )
+            await self._sync_meta.set_last_sync(
+                "agents", status="skipped", error_message="no database connection"
             )
             return
 

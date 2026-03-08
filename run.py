@@ -91,35 +91,81 @@ def _pid_is_alive(pid: int) -> bool:
 
 
 def _pids_on_port(port: int) -> list[int]:
-    """Return PIDs of all processes currently listening on *port* (localhost)."""
+    """Return PIDs of all processes currently listening on *port* (localhost).
+
+    Uses ``lsof`` on macOS/BSD and ``ss`` on Linux.  Falls back to the other
+    tool if the primary one is not found.
+    """
     pids: list[int] = []
-    try:
-        out = subprocess.check_output(
-            ["ss", "-tlnp", f"sport = :{port}"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-        for line in out.splitlines():
-            # ss output: ...users:(("prog",pid=1234,fd=5))
-            for chunk in line.split("pid=")[1:]:
-                pid_str = chunk.split(",")[0]
-                if pid_str.isdigit():
-                    pids.append(int(pid_str))
-    except Exception:
-        pass
+
+    def _try_lsof(p: int) -> list[int]:
+        result: list[int] = []
+        try:
+            out = subprocess.check_output(
+                ["lsof", "-ti", f"tcp:{p}"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            for line in out.splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    result.append(int(line))
+        except Exception:
+            pass
+        return result
+
+    def _try_ss(p: int) -> list[int]:
+        result: list[int] = []
+        try:
+            out = subprocess.check_output(
+                ["ss", "-tlnp", f"sport = :{p}"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            for line in out.splitlines():
+                for chunk in line.split("pid=")[1:]:
+                    pid_str = chunk.split(",")[0]
+                    if pid_str.isdigit():
+                        result.append(int(pid_str))
+        except Exception:
+            pass
+        return result
+
+    if sys.platform == "darwin":
+        pids = _try_lsof(port) or _try_ss(port)
+    else:
+        pids = _try_ss(port) or _try_lsof(port)
+
     return pids
 
 
-def _kill_stale_owner(port: int) -> bool:
-    """If the port is held by a dead or stale previous instance of ourselves,
-    kill it so we can reclaim our default port instead of drifting to +1, +2…
+def _is_matrx_pid(pid: int, stale_pid: int | None) -> bool:
+    """Return True if *pid* looks like a previous Matrx engine instance."""
+    if pid == stale_pid:
+        return True
+    # Check /proc cmdline (Linux) or ps (macOS/BSD)
+    try:
+        if sys.platform != "darwin" and Path(f"/proc/{pid}/cmdline").exists():
+            cmdline = Path(f"/proc/{pid}/cmdline").read_text().replace("\x00", " ")
+            return "run.py" in cmdline or "matrx" in cmdline.lower()
+        out = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "command="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        return "run.py" in out or "matrx" in out.lower()
+    except Exception:
+        return False
 
-    Returns True if the port was successfully reclaimed.
+
+def _kill_stale_instances() -> None:
+    """Kill ALL stale Matrx engine processes across the full port scan range.
+
+    Called once at startup before we try to bind a port.  This ensures that
+    if the user has accumulated 2-3 dead instances (e.g. from multiple dev
+    restarts without clean shutdown), they are all swept away and we always
+    reclaim the default port rather than drifting to +1, +2, ...
     """
-    if _is_port_available(port):
-        return True  # already free, nothing to do
-
-    # Read the last known PID we wrote to the discovery file
     stale_pid: int | None = None
     try:
         data = json.loads(DISCOVERY_FILE.read_text())
@@ -127,48 +173,74 @@ def _kill_stale_owner(port: int) -> bool:
     except Exception:
         pass
 
-    pids = _pids_on_port(port)
-    if not pids:
-        # OS-level TIME_WAIT — no process holds it, SO_REUSEADDR should handle it
-        return _is_port_available(port)
+    killed: list[int] = []
+    seen: set[int] = set()
 
-    our_script = Path(__file__).resolve()
-    for pid in pids:
-        if pid == os.getpid():
-            continue  # shouldn't happen, but be safe
-
-        # Only kill if it looks like a previous instance of us:
-        # either it matches our discovery-file PID, or it's running our script.
-        is_ours = pid == stale_pid
-        if not is_ours:
-            try:
-                cmdline_path = Path(f"/proc/{pid}/cmdline")
-                cmdline = (
-                    cmdline_path.read_text().replace("\x00", " ")
-                    if cmdline_path.exists()
-                    else ""
+    for offset in range(MAX_PORT_SCAN):
+        port = DEFAULT_PORT + offset
+        if _is_port_available(port):
+            continue
+        for pid in _pids_on_port(port):
+            if pid == os.getpid() or pid in seen:
+                continue
+            seen.add(pid)
+            if _is_matrx_pid(pid, stale_pid):
+                logger.warning(
+                    "Stale Matrx instance (pid=%d) holds port %d — terminating it",
+                    pid,
+                    port,
                 )
-                is_ours = str(our_script) in cmdline or "run.py" in cmdline
-            except Exception:
-                pass
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except Exception as exc:
+                    logger.debug("SIGTERM pid=%d failed: %s", pid, exc)
+                killed.append(pid)
 
-        if is_ours:
+    if killed:
+        import time
+        time.sleep(0.6)
+        for pid in killed:
+            if _pid_is_alive(pid):
+                logger.warning("pid=%d did not exit after SIGTERM — sending SIGKILL", pid)
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
+        time.sleep(0.2)
+        logger.info("Swept %d stale Matrx instance(s): %s", len(killed), killed)
+
+
+def _kill_stale_owner(port: int) -> bool:
+    """If the port is still held after the global sweep, try one more time.
+
+    Returns True if the port is now available.
+    """
+    if _is_port_available(port):
+        return True
+
+    stale_pid: int | None = None
+    try:
+        data = json.loads(DISCOVERY_FILE.read_text())
+        stale_pid = int(data.get("pid", 0)) or None
+    except Exception:
+        pass
+
+    for pid in _pids_on_port(port):
+        if pid == os.getpid():
+            continue
+        if _is_matrx_pid(pid, stale_pid):
             logger.warning(
-                "Stale Matrx instance (pid=%d) holds port %d — terminating it",
+                "Residual Matrx instance (pid=%d) still holds port %d — killing",
                 pid,
                 port,
             )
             try:
-                os.kill(pid, signal.SIGTERM)
-                import time
-
-                time.sleep(0.5)
-                if _pid_is_alive(pid):
-                    os.kill(pid, signal.SIGKILL)
-                    time.sleep(0.2)
+                os.kill(pid, signal.SIGKILL)
             except Exception as exc:
                 logger.debug("Could not kill pid %d: %s", pid, exc)
 
+    import time
+    time.sleep(0.2)
     return _is_port_available(port)
 
 
@@ -176,8 +248,11 @@ def find_available_port() -> int:
     """Find an available port for the server.
 
     If MATRX_PORT is set, uses that exact port (no fallback — user chose it).
-    Otherwise tries to reclaim DEFAULT_PORT (killing stale self-owned processes
-    if needed), then scans up to MAX_PORT_SCAN consecutive ports as a last resort.
+    Otherwise:
+      1. Sweeps the full scan range and kills ALL stale Matrx instances.
+      2. Tries to bind DEFAULT_PORT (should now be free in the common case).
+      3. Falls back to scanning consecutive ports if something else (not us)
+         is holding the default port.
     """
     env_port = os.environ.get("MATRX_PORT")
     if env_port:
@@ -187,16 +262,22 @@ def find_available_port() -> int:
         logger.error("MATRX_PORT=%d is already in use", port)
         raise SystemExit(f"Port {port} (from MATRX_PORT) is already in use")
 
-    # Try to reclaim the default port from a stale previous instance first
+    # Sweep all stale Matrx instances across the entire port range first.
+    _kill_stale_instances()
+
+    # After the sweep, the default port should be free in the common case.
+    if _is_port_available(DEFAULT_PORT):
+        return DEFAULT_PORT
+
+    # If it's still taken, try one targeted kill then fall back to scanning.
     if _kill_stale_owner(DEFAULT_PORT):
         return DEFAULT_PORT
 
-    # Fall back to scanning — but only if the blocker is something we don't own
     for offset in range(1, MAX_PORT_SCAN):
         candidate = DEFAULT_PORT + offset
         if _is_port_available(candidate):
             logger.warning(
-                "Default port %d is held by another process — using %d instead",
+                "Default port %d is held by a non-Matrx process — using %d instead",
                 DEFAULT_PORT,
                 candidate,
             )
