@@ -62,8 +62,17 @@ class SyncEngine:
             self._interval = interval
         self._running = True
         self._task = asyncio.create_task(self._sync_loop())
-        self._task.add_done_callback(lambda _: None)
+        self._task.add_done_callback(self._on_task_done)
         logger.info("[sync_engine] Background sync started (interval=%ds)", self._interval)
+
+    @staticmethod
+    def _on_task_done(task: asyncio.Task) -> None:
+        """Log unexpected crashes from the background task."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("[sync_engine] Background sync crashed: %s", exc, exc_info=exc)
 
     def stop(self) -> None:
         """Cancel the background sync loop."""
@@ -73,15 +82,27 @@ class SyncEngine:
         logger.info("[sync_engine] Background sync stopped")
 
     async def _sync_loop(self) -> None:
-        """Run a full sync on startup, then periodically."""
-        # Initial sync immediately
-        await self.sync_all()
+        """Run a full sync on startup, then periodically.
+
+        This loop NEVER raises — individual sync failures are logged and
+        retried on the next cycle.  The loop only exits when stopped.
+        """
+        try:
+            await self.sync_all()
+        except Exception:
+            logger.error("[sync_engine] Initial sync failed", exc_info=True)
 
         while self._running:
-            await asyncio.sleep(self._interval)
+            try:
+                await asyncio.sleep(self._interval)
+            except asyncio.CancelledError:
+                break
             if not self._running:
                 break
-            await self.sync_all()
+            try:
+                await self.sync_all()
+            except Exception:
+                logger.error("[sync_engine] Periodic sync failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Full sync
