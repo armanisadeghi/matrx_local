@@ -242,7 +242,9 @@ pub async fn start_transcription(
     let app_events = app.clone();
     let recording_flag = app.state::<RecordingState>().0.clone();
 
-    tokio::spawn(async move {
+    // AudioCapture holds a cpal::Stream which is !Send, so we run the
+    // capture + inference loop on a dedicated OS thread.
+    std::thread::spawn(move || {
         // Start audio capture
         let capture = match audio_capture::AudioCapture::start() {
             Ok(c) => c,
@@ -271,56 +273,36 @@ pub async fn start_transcription(
 
             // When we have enough audio, transcribe
             if accumulated.len() >= target_samples {
-                let audio_chunk = accumulated.clone();
-                accumulated.clear();
+                let audio_chunk = std::mem::take(&mut accumulated);
 
-                let ctx_clone = ctx.clone();
-                let app_clone = app_events.clone();
-                let threads = n_threads;
+                let params = TranscriptionParams::builder()
+                    .language("en")
+                    .n_threads(n_threads)
+                    .build();
 
-                // Run inference in a blocking thread
-                let result = tokio::task::spawn_blocking(move || {
-                    let params = TranscriptionParams::builder()
-                        .language("en")
-                        .n_threads(threads)
-                        .build();
-
-                    let transcription = ctx_clone
-                        .transcribe_with_params(&audio_chunk, params)
-                        .map_err(|e| format!("Transcription error: {}", e))?;
-
-                    let segments: Vec<serde_json::Value> = transcription
-                        .segments
-                        .iter()
-                        .map(|seg| {
-                            serde_json::json!({
-                                "text": seg.text.trim(),
-                                "start_sec": seg.start_seconds(),
-                                "end_sec": seg.end_seconds(),
-                            })
-                        })
-                        .collect();
-
-                    Ok::<_, String>(segments)
-                })
-                .await;
-
-                match result {
-                    Ok(Ok(segments)) => {
-                        for seg in segments {
-                            let _ = app_clone.emit("whisper-segment", seg);
+                match ctx.transcribe_with_params(&audio_chunk, params) {
+                    Ok(transcription) => {
+                        for seg in &transcription.segments {
+                            let _ = app_events.emit(
+                                "whisper-segment",
+                                serde_json::json!({
+                                    "text": seg.text.trim(),
+                                    "start_sec": seg.start_seconds(),
+                                    "end_sec": seg.end_seconds(),
+                                }),
+                            );
                         }
                     }
-                    Ok(Err(e)) => {
-                        let _ = app_clone.emit("whisper-error", e);
-                    }
                     Err(e) => {
-                        let _ = app_clone.emit("whisper-error", e.to_string());
+                        let _ = app_events.emit(
+                            "whisper-error",
+                            format!("Transcription error: {}", e),
+                        );
                     }
                 }
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
         *recording_flag.lock().unwrap() = false;
