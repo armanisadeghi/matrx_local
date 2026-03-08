@@ -27,6 +27,7 @@ import {
   MemoryStick,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { SetupWizard } from "@/components/SetupWizard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -202,6 +203,9 @@ export function Dashboard({
               </div>
             </CardContent>
           </Card>
+
+          {/* Setup Wizard */}
+          <SetupWizard engineStatus={engineStatus} onSetupComplete={onRefresh} />
 
           {/* Status Cards Row */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

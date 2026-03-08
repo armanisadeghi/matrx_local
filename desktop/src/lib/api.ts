@@ -1218,6 +1218,119 @@ class EngineAPI {
     if (!resp.ok) throw new Error(`System resources check failed: ${resp.status}`);
     return resp.json();
   }
+
+  // ── Setup / First-run ──────────────────────────────────────────────────
+
+  async getSetupStatus(): Promise<SetupStatus> {
+    return this.request<SetupStatus>("/setup/status");
+  }
+
+  /**
+   * Run the setup install and stream progress via SSE.
+   * Calls onProgress for each event, onComplete when done.
+   */
+  async runSetupInstall(callbacks: {
+    onProgress: (data: SetupProgressEvent) => void;
+    onComplete: (data: { message: string }) => void;
+    onError: (error: string) => void;
+    signal?: AbortSignal;
+  }): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/setup/install`, {
+      method: "POST",
+      headers,
+      signal: callbacks.signal,
+    });
+    if (!resp.ok) {
+      callbacks.onError(`Setup install failed: ${resp.status}`);
+      return;
+    }
+    const reader = resp.body?.getReader();
+    if (!reader) { callbacks.onError("No response body"); return; }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let receivedComplete = false;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      let eventType = "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (eventType === "progress") callbacks.onProgress(data);
+            else if (eventType === "complete") { receivedComplete = true; callbacks.onComplete(data); }
+            else if (eventType === "cancelled") { receivedComplete = true; callbacks.onError("Setup cancelled"); }
+            else if (eventType === "started") callbacks.onProgress({ component: "_system", status: "installing", message: data.message, percent: 0 });
+          } catch { /* skip malformed */ }
+          eventType = "";
+        }
+      }
+    }
+    // If the stream ended without a complete or error event, tell the caller
+    if (!receivedComplete) {
+      callbacks.onError("Setup stream ended unexpectedly — click Re-check to verify status");
+    }
+  }
+
+  /**
+   * Install the transcription model via SSE stream.
+   */
+  async runTranscriptionInstall(
+    model: string,
+    callbacks: {
+      onProgress: (data: SetupProgressEvent) => void;
+      onComplete: (data: { message: string }) => void;
+      onError: (error: string) => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    (headers as Record<string, string>)["Content-Type"] = "application/json";
+    const resp = await fetch(`${this.baseUrl}/setup/install-transcription`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model }),
+      signal: callbacks.signal,
+    });
+    if (!resp.ok) { callbacks.onError(`Transcription install failed: ${resp.status}`); return; }
+    const reader = resp.body?.getReader();
+    if (!reader) { callbacks.onError("No response body"); return; }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let receivedComplete = false;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      let eventType = "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (eventType === "progress") callbacks.onProgress(data);
+            else if (eventType === "complete") { receivedComplete = true; callbacks.onComplete(data); }
+            else if (eventType === "cancelled") { receivedComplete = true; callbacks.onError("Install cancelled"); }
+          } catch { /* skip malformed */ }
+          eventType = "";
+        }
+      }
+    }
+    if (!receivedComplete) {
+      callbacks.onError("Transcription install stream ended unexpectedly");
+    }
+  }
 }
 
 // ---- Document types ----
@@ -1502,6 +1615,34 @@ export interface EnginePaths {
     logs: string;
     config: string;
   };
+}
+
+// ---- Setup types ----
+
+export interface SetupComponentStatus {
+  id: string;
+  label: string;
+  description: string;
+  status: "ready" | "not_ready" | "installing" | "error" | "skipped";
+  detail: string | null;
+  optional: boolean;
+  size_hint: string | null;
+}
+
+export interface SetupStatus {
+  setup_complete: boolean;
+  components: SetupComponentStatus[];
+  platform: string;
+  architecture: string;
+  gpu_available: boolean;
+  gpu_name: string | null;
+}
+
+export interface SetupProgressEvent {
+  component: string;
+  status: string;
+  message: string;
+  percent: number;
 }
 
 // Singleton instance

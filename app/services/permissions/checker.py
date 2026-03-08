@@ -292,7 +292,41 @@ async def check_camera() -> PermissionResult:
 async def check_accessibility() -> PermissionResult:
     """Check accessibility / screen recording permissions (mostly macOS)."""
     if IS_MACOS:
-        # Test by trying a harmless AppleScript that requires accessibility
+        # Use AXIsProcessTrusted via ctypes — this checks the calling process
+        # directly, unlike osascript which spawns a child with a different TCC
+        # identity that can give misleading results.
+        try:
+            import ctypes
+            import ctypes.util
+
+            lib_path = ctypes.util.find_library("ApplicationServices")
+            if not lib_path:
+                lib_path = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+            app_services = ctypes.cdll.LoadLibrary(lib_path)
+            app_services.AXIsProcessTrusted.restype = ctypes.c_bool
+            trusted = app_services.AXIsProcessTrusted()
+
+            if trusted:
+                return PermissionResult(
+                    permission="accessibility",
+                    status=PermissionStatus.GRANTED,
+                    details="Accessibility access confirmed (AXIsProcessTrusted)",
+                    grant_instructions=_accessibility_instructions(),
+                    user_details="Automation and accessibility features are active",
+                    user_instructions="",
+                )
+            return PermissionResult(
+                permission="accessibility",
+                status=PermissionStatus.DENIED,
+                details="Accessibility access not granted",
+                grant_instructions=_accessibility_instructions(),
+                user_details="Automation features need permission",
+                user_instructions="Open System Settings to allow accessibility access",
+            )
+        except Exception:
+            pass
+
+        # Fallback: try osascript probe
         try:
             out, err, rc = await _run(
                 [
@@ -310,7 +344,6 @@ async def check_accessibility() -> PermissionResult:
                     user_details="Automation and accessibility features are active",
                     user_instructions="",
                 )
-            # Check for known permission error codes
             if (
                 "-1743" in err
                 or "-25211" in err
@@ -618,33 +651,86 @@ def _network_instructions() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _macos_screen_capture_functional_test() -> bool | None:
+    """Perform a quick functional test of screen capture on macOS.
+
+    Returns True if capture works, False if it fails, None if inconclusive.
+    Uses CGDisplayCreateImage which is the most reliable API on modern macOS.
+    """
+    try:
+        import Quartz
+
+        main_display = Quartz.CGMainDisplayID()
+        img = Quartz.CGDisplayCreateImage(main_display)
+        if img is None:
+            return False
+        w = Quartz.CGImageGetWidth(img)
+        h = Quartz.CGImageGetHeight(img)
+        if w > 0 and h > 0:
+            return True
+        return False
+    except Exception:
+        return None
+
+
 async def check_screen_recording() -> PermissionResult:
     """Check screen recording / screenshot permission."""
     if IS_MACOS:
-        # CGPreflightScreenCaptureAccess() reads the TCC database status without
-        # performing any screen capture and without triggering the system permission
-        # prompt. Using screencapture as a probe is incorrect: it spawns a child
-        # process with a different identity than the app bundle, causing macOS to
-        # re-prompt the user on every check even after they have granted permission.
+        # On modern macOS (especially 15+), CGPreflightScreenCaptureAccess()
+        # can return False even when capture actually works, because the TCC
+        # identity of the Python process may differ from the parent app.
+        # We use a functional test with CGDisplayCreateImage() as the primary
+        # check, falling back to CGPreflightScreenCaptureAccess() only when
+        # the functional test is inconclusive.
         try:
-            import Quartz  # pyobjc-framework-Quartz (already in the venv)
-            has_access: bool = Quartz.CGPreflightScreenCaptureAccess()
-            if has_access:
+            import Quartz
+
+            # Primary check: does capture actually work?
+            capture_works = _macos_screen_capture_functional_test()
+            if capture_works is True:
                 return PermissionResult(
                     permission="screen_recording",
                     status=PermissionStatus.GRANTED,
-                    details="Screen recording permission granted",
+                    details="Screen recording permission granted (verified via capture)",
                     grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
                     user_details="Screen capture is active",
                     user_instructions="",
                 )
+
+            if capture_works is False:
+                # Functional test definitively failed.
+                # Also try CGPreflightScreenCaptureAccess for confirmation.
+                preflight = Quartz.CGPreflightScreenCaptureAccess()
+                if preflight:
+                    # Preflight says granted but capture failed — unusual,
+                    # report as granted since the API says so.
+                    return PermissionResult(
+                        permission="screen_recording",
+                        status=PermissionStatus.GRANTED,
+                        details="Screen recording permission granted (preflight API)",
+                        grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
+                        user_details="Screen capture is active",
+                        user_instructions="",
+                    )
+                return PermissionResult(
+                    permission="screen_recording",
+                    status=PermissionStatus.DENIED,
+                    details="Screen recording permission not granted",
+                    grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
+                    user_details="Screen capture needs permission",
+                    user_instructions="Open System Settings to allow screen recording",
+                )
+
+            # Functional test was inconclusive — fall back to preflight API
+            preflight = Quartz.CGPreflightScreenCaptureAccess()
+            status = PermissionStatus.GRANTED if preflight else PermissionStatus.DENIED
             return PermissionResult(
                 permission="screen_recording",
-                status=PermissionStatus.DENIED,
-                details="Screen recording permission not granted",
+                status=status,
+                details="Screen recording permission " + ("granted" if preflight else "not granted"),
                 grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-                user_details="Screen capture needs permission",
-                user_instructions="Open System Settings to allow screen recording",
+                user_details="Screen capture is active" if preflight else "Screen capture needs permission",
+                user_instructions="" if preflight else "Open System Settings to allow screen recording",
             )
         except Exception:
             pass
@@ -725,27 +811,61 @@ async def check_location() -> PermissionResult:
 # ---------------------------------------------------------------------------
 
 
+def _avfoundation_auth_status(media_type: str) -> PermissionStatus | None:
+    """Check AVCaptureDevice authorization status via pyobjc.
+
+    media_type: "soun" for audio (microphone), "vide" for video (camera).
+    Returns PermissionStatus or None if AVFoundation is not available.
+    """
+    try:
+        import objc
+
+        # Load the AVFoundation framework so AVCaptureDevice becomes available.
+        # This works with just pyobjc-core — no pyobjc-framework-AVFoundation needed.
+        objc.loadBundle(
+            "AVFoundation",
+            bundle_path="/System/Library/Frameworks/AVFoundation.framework",
+            module_globals={},
+        )
+        AVCaptureDevice = objc.lookUpClass("AVCaptureDevice")
+        status_code = AVCaptureDevice.authorizationStatusForMediaType_(media_type)
+        # 0 = not_determined, 1 = restricted, 2 = denied, 3 = authorized
+        return {
+            0: PermissionStatus.NOT_DETERMINED,
+            1: PermissionStatus.RESTRICTED,
+            2: PermissionStatus.DENIED,
+            3: PermissionStatus.GRANTED,
+        }.get(status_code, PermissionStatus.UNKNOWN)
+    except Exception:
+        return None
+
+
 async def _macos_check_tcc(service: str, label: str) -> PermissionStatus:
     """Try to determine macOS TCC permission status.
 
-    Since reading the TCC database requires Full Disk Access, we use heuristic
-    probes instead.
+    Uses AVFoundation APIs for microphone and camera when available,
+    falling back to heuristic probes.
     """
-    # For microphone, try a quick sounddevice query
     if "Microphone" in label:
+        # Try AVFoundation first — this is the authoritative API
+        av_status = _avfoundation_auth_status("soun")
+        if av_status is not None:
+            return av_status
+        # Fallback: try a quick sounddevice query
         try:
             import sounddevice as sd
 
             sd.query_devices()
-            # If we can query devices, at minimum the driver is accessible.
-            # Actual recording permission may still require a grant, but
-            # device enumeration succeeding is a positive signal.
             return PermissionStatus.GRANTED
         except Exception:
             return PermissionStatus.UNKNOWN
 
-    # For camera, check if system_profiler can list cameras
     if "Camera" in label:
+        # Try AVFoundation first
+        av_status = _avfoundation_auth_status("vide")
+        if av_status is not None:
+            return av_status
+        # Fallback: check if system_profiler can list cameras
         try:
             out, _, rc = await _run(["system_profiler", "SPCameraDataType", "-json"])
             data = json.loads(out)

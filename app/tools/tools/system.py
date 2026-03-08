@@ -187,6 +187,89 @@ def _get_screen_geometry() -> list[dict]:
     return monitors
 
 
+def _grab_screenshot_quartz(
+    bbox: tuple[int, int, int, int] | None = None,
+    all_screens: bool = True,
+) -> "Image.Image":
+    """Capture a screenshot using Quartz APIs (macOS only).
+
+    This is more reliable than PIL.ImageGrab on modern macOS because ImageGrab
+    depends on the `screencapture` CLI tool which can fail on newer macOS versions.
+    Quartz CGDisplayCreateImage/CGWindowListCreateImage work directly via the
+    CoreGraphics framework.
+    """
+    import Quartz
+    from PIL import Image
+    import io
+
+    if bbox is not None:
+        # Capture a specific region (absolute screen coordinates)
+        x, y, w, h = bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]
+        rect = Quartz.CGRectMake(x, y, w, h)
+        cg_image = Quartz.CGWindowListCreateImage(
+            rect,
+            Quartz.kCGWindowListOptionOnScreenOnly,
+            Quartz.kCGNullWindowID,
+            Quartz.kCGWindowImageDefault,
+        )
+    elif all_screens:
+        # Capture all screens using CGWindowListCreateImage with infinite rect
+        # If that fails, fall back to main display only
+        rect = Quartz.CGRectInfinite
+        cg_image = Quartz.CGWindowListCreateImage(
+            rect,
+            Quartz.kCGWindowListOptionOnScreenOnly,
+            Quartz.kCGNullWindowID,
+            Quartz.kCGWindowImageDefault,
+        )
+        if cg_image is None:
+            # Fallback to main display
+            cg_image = Quartz.CGDisplayCreateImage(Quartz.CGMainDisplayID())
+    else:
+        # Primary display only
+        cg_image = Quartz.CGDisplayCreateImage(Quartz.CGMainDisplayID())
+
+    if cg_image is None:
+        raise OSError("Screen capture failed — screen recording permission may be required")
+
+    # Convert CGImage to PNG bytes, then to PIL Image
+    data = Quartz.CFDataCreateMutable(None, 0)
+    dest = Quartz.CGImageDestinationCreateWithData(data, "public.png", 1, None)
+    if dest is None:
+        raise OSError("Failed to create image destination for screenshot")
+    Quartz.CGImageDestinationAddImage(dest, cg_image, None)
+    if not Quartz.CGImageDestinationFinalize(dest):
+        raise OSError("Failed to finalize screenshot image")
+
+    png_bytes = bytes(data)
+    return Image.open(io.BytesIO(png_bytes))
+
+
+def _grab_screenshot(
+    bbox: tuple[int, int, int, int] | None = None,
+    all_screens: bool = True,
+) -> "Image.Image":
+    """Cross-platform screenshot capture with macOS Quartz fallback."""
+    if platform.system() == "Darwin":
+        # On macOS, prefer Quartz APIs — PIL.ImageGrab depends on the
+        # `screencapture` CLI tool which is broken on newer macOS versions.
+        try:
+            return _grab_screenshot_quartz(bbox=bbox, all_screens=all_screens)
+        except ImportError:
+            pass  # pyobjc-framework-Quartz not installed, fall through to PIL
+        except OSError:
+            pass  # Quartz capture failed, fall through to PIL
+
+    # Non-macOS or Quartz unavailable: use PIL ImageGrab
+    from PIL import ImageGrab
+
+    try:
+        return ImageGrab.grab(bbox=bbox, all_screens=all_screens)
+    except TypeError:
+        # Older Pillow versions don't have all_screens
+        return ImageGrab.grab(bbox=bbox)
+
+
 async def tool_list_screens(
     session: ToolSession,
 ) -> ToolResult:
@@ -228,11 +311,11 @@ async def tool_screenshot(
                 chosen monitor's top-left corner otherwise.
     """
     try:
-        from PIL import ImageGrab
+        from PIL import Image  # noqa: F401 – verify Pillow is available
     except ImportError:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output="Screenshot requires Pillow with ImageGrab support.",
+            output="Screenshot requires Pillow.",
         )
 
     bbox: tuple[int, int, int, int] | None = None
@@ -297,10 +380,7 @@ async def tool_screenshot(
         bbox = (rx, ry, rx + rw, ry + rh)
 
     try:
-        screenshot = ImageGrab.grab(bbox=bbox, all_screens=all_screens)
-    except TypeError:
-        # Older Pillow versions don't have all_screens
-        screenshot = ImageGrab.grab(bbox=bbox)
+        screenshot = _grab_screenshot(bbox=bbox, all_screens=all_screens)
     except OSError as e:
         return ToolResult(type=ToolResultType.ERROR, output=f"Screenshot failed: {e}")
 
