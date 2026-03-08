@@ -1,6 +1,6 @@
 /**
  * SetupWizard — First-run setup experience for Matrx Local.
- *
+ * 
  * Shows installation status, runs automatic setup (browser engine, storage dirs),
  * and offers optional configuration (transcription, preferences).
  *
