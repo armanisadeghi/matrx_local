@@ -234,6 +234,19 @@ MATRX_DATA_DIR = Path(os.getenv("MATRX_AGENT_DATA_DIR", str(MATRX_HOME_DIR / "da
 # TODO: remove after all references are updated to MATRX_NOTES_DIR
 DOCUMENTS_BASE_DIR = MATRX_NOTES_DIR
 
+# ---------------------------------------------------------------------------
+# Local SQLite database — offline-first data store
+#
+# Always lives under MATRX_HOME_DIR (user's home) so that data survives
+# app reinstalls and updates.  Never stored inside the application folder.
+#
+#   All platforms: ~/.matrx/matrx.db
+#
+# The engine reads all runtime data (models, agents, conversations, tools)
+# from this database.  Cloud data (Supabase) is synced in the background.
+# ---------------------------------------------------------------------------
+LOCAL_DB_PATH = Path(os.getenv("MATRX_LOCAL_DB", str(MATRX_HOME_DIR / "matrx.db")))
+
 LOG_VCPRINT = True
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG")

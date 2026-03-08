@@ -32,6 +32,7 @@ dependencies = [
     "pyinstaller",
     # Database
     "asyncpg",
+    "aiosqlite>=0.20.0",
     # Scraper engine (from scraper-service)
     "curl-cffi>=0.14.0",
     "beautifulsoup4>=4.14.3",
