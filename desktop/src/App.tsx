@@ -21,8 +21,10 @@ import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/hooks/use-theme";
 import { useNotifications } from "@/hooks/use-notifications";
+import { useAutoUpdate } from "@/hooks/use-auto-update";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EngineMonitor } from "@/components/EngineRecoveryModal";
+import { UpdateDialog } from "@/components/UpdateDialog";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { Loader2 } from "lucide-react";
 
@@ -63,6 +65,7 @@ export default function App() {
   } = useEngine(auth.isAuthenticated);
 
   const notif = useNotifications();
+  const [updateState, updateActions] = useAutoUpdate();
 
   // Keep only the 3 most recent for the toast stack
   const toasts = notif.notifications.slice(0, 3);
@@ -227,6 +230,8 @@ export default function App() {
                       auth={auth}
                       theme={themeCtx.theme}
                       setTheme={themeCtx.setTheme}
+                      updateState={updateState}
+                      updateActions={updateActions}
                     />
                   }
                 />
@@ -244,6 +249,7 @@ export default function App() {
           onRestartEngine={restartEngine}
           onRefresh={refresh}
         />
+        <UpdateDialog state={updateState} actions={updateActions} />
       </TooltipProvider>
     </ErrorBoundary>
   );

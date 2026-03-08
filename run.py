@@ -390,18 +390,6 @@ def main() -> None:
     if hasattr(signal, "SIGINT"):
         signal.signal(signal.SIGINT, _handle_exit)
 
-    try:
-        from app.updater import check_for_updates
-
-        needs_restart = check_for_updates()
-        if needs_restart:
-            logger.info("Update applied — restarting...")
-            remove_discovery_file()
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-            return
-    except Exception as e:
-        logger.debug("Update check skipped: %s", e)
-
     port = find_available_port()
     logger.info("Starting Matrx Local on port %d", port)
 

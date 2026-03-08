@@ -60,7 +60,8 @@ import type { useAuth } from "@/hooks/use-auth";
 import type { Theme } from "@/hooks/use-theme";
 
 declare const __APP_VERSION__: string;
-import { isTauri, checkForUpdates, restartApp, type UpdateStatus } from "@/lib/sidecar";
+import { isTauri } from "@/lib/sidecar";
+import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update";
 import {
   loadSettings,
   saveSetting,
@@ -79,6 +80,8 @@ interface SettingsProps {
   auth: AuthActions;
   theme: Theme;
   setTheme: (t: Theme) => void;
+  updateState?: AutoUpdateState;
+  updateActions?: AutoUpdateActions;
 }
 
 export function Settings({
@@ -89,12 +92,12 @@ export function Settings({
   auth,
   theme,
   setTheme,
+  updateState,
+  updateActions,
 }: SettingsProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [activeTab, setActiveTab] = useState("general");
   const [restarting, setRestarting] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [checking, setChecking] = useState(false);
 
   // Proxy state
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
@@ -253,17 +256,10 @@ export function Settings({
     } catch { /* ignore */ }
   }, []);
 
-  const handleCheckUpdate = async (install = false) => {
-    setChecking(true);
-    try {
-      const status = await checkForUpdates(install);
-      setUpdateStatus(status);
-    } catch {
-      setUpdateStatus({ status: "up_to_date" });
-    } finally {
-      setChecking(false);
-    }
-  };
+  // Update state is now managed by the useAutoUpdate hook in App.tsx.
+  // Derive convenience variables from the props.
+  const updateStatus = updateState?.status ?? null;
+  const checking = updateState?.busy ?? false;
 
   const updateSetting = <K extends keyof AppSettings>(
     key: K,
@@ -1532,29 +1528,68 @@ export function Settings({
                               ? `v${updateStatus.version} available`
                               : updateStatus?.status === "installed"
                                 ? "Update installed \u2014 restart to apply"
-                                : updateStatus?.status === "up_to_date"
-                                  ? "You're on the latest version"
-                                  : "Check for new releases"}
+                                : updateStatus?.status === "downloading"
+                                  ? "Downloading update..."
+                                  : updateStatus?.status === "up_to_date"
+                                    ? "You're on the latest version"
+                                    : "Check for new releases"}
                           </p>
                         </div>
                         <div className="flex gap-2">
                           {updateStatus?.status === "installed" ? (
-                            <Button size="sm" onClick={restartApp}>
+                            <Button size="sm" onClick={() => updateActions?.restart()}>
                               <RefreshCw className="h-4 w-4" /> Restart
                             </Button>
                           ) : updateStatus?.status === "available" ? (
-                            <Button size="sm" onClick={() => handleCheckUpdate(true)} disabled={checking}>
+                            <Button size="sm" onClick={() => updateActions?.openDialog()} disabled={checking}>
                               {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                               Install Update
                             </Button>
                           ) : (
-                            <Button variant="outline" size="sm" onClick={() => handleCheckUpdate(false)} disabled={checking}>
+                            <Button variant="outline" size="sm" onClick={() => updateActions?.check()} disabled={checking}>
                               {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : updateStatus?.status === "up_to_date" ? <CheckCircle2 className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
                               Check for Updates
                             </Button>
                           )}
                         </div>
                       </div>
+
+                      {settings && (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label htmlFor="auto-check-updates">Automatic Updates</Label>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Check for updates every {settings.updateCheckInterval >= 60 ? `${Math.round(settings.updateCheckInterval / 60)}h` : `${settings.updateCheckInterval}m`}
+                            </p>
+                          </div>
+                          <Switch
+                            id="auto-check-updates"
+                            checked={settings.autoCheckUpdates}
+                            onCheckedChange={(v) => updateSetting("autoCheckUpdates", v)}
+                          />
+                        </div>
+                      )}
+
+                      {settings?.autoCheckUpdates && (
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="update-interval">Check Interval</Label>
+                          <Select
+                            value={String(settings.updateCheckInterval)}
+                            onValueChange={(v) => updateSetting("updateCheckInterval", Number(v))}
+                          >
+                            <SelectTrigger className="w-32" id="update-interval">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="60">1 hour</SelectItem>
+                              <SelectItem value="240">4 hours</SelectItem>
+                              <SelectItem value="720">12 hours</SelectItem>
+                              <SelectItem value="1440">24 hours</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
                       <Separator />
                     </>
                   )}

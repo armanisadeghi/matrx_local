@@ -208,7 +208,7 @@ async fn proxy_fetch(url: String) -> Result<FetchResponse, String> {
     })
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Debug)]
 struct UpdateProgress {
     status: String,
     version: Option<String>,
@@ -218,6 +218,10 @@ struct UpdateProgress {
 }
 
 /// Check for app updates and optionally install them.
+///
+/// When `install` is true, downloads and installs the update, emitting
+/// `update-progress` events with cumulative byte counts so the frontend
+/// can render an accurate progress bar.
 #[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle, install: bool) -> Result<UpdateProgress, String> {
     let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
@@ -235,11 +239,16 @@ async fn check_for_updates(app: tauri::AppHandle, install: bool) -> Result<Updat
             if install {
                 let app_handle = app.clone();
                 let ver = version.clone();
+                let total_downloaded = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+                let dl = total_downloaded.clone();
 
-                // Download and install
                 update
                     .download_and_install(
-                        |chunk_length, content_length| {
+                        move |chunk_length, content_length| {
+                            let cumulative = dl.fetch_add(
+                                chunk_length as u64,
+                                std::sync::atomic::Ordering::Relaxed,
+                            ) + chunk_length as u64;
                             let _ = app_handle.emit(
                                 "update-progress",
                                 UpdateProgress {
@@ -247,33 +256,28 @@ async fn check_for_updates(app: tauri::AppHandle, install: bool) -> Result<Updat
                                     version: Some(ver.clone()),
                                     body: None,
                                     content_length,
-                                    downloaded: chunk_length as u64,
+                                    downloaded: cumulative,
                                 },
                             );
                         },
-                        || {
-                            let _ = app_handle.emit(
-                                "update-progress",
-                                UpdateProgress {
-                                    status: "installed".to_string(),
-                                    version: Some(ver.clone()),
-                                    body: None,
-                                    content_length: None,
-                                    downloaded: 0,
-                                },
-                            );
-                        },
+                        || {},
                     )
                     .await
                     .map_err(|e| format!("Update install failed: {}", e))?;
 
-                Ok(UpdateProgress {
+                let final_downloaded =
+                    total_downloaded.load(std::sync::atomic::Ordering::Relaxed);
+
+                let result = UpdateProgress {
                     status: "installed".to_string(),
                     version: Some(version),
                     body,
                     content_length: None,
-                    downloaded: 0,
-                })
+                    downloaded: final_downloaded,
+                };
+
+                let _ = app.emit("update-progress", result.clone());
+                Ok(result)
             } else {
                 Ok(UpdateProgress {
                     status: "available".to_string(),

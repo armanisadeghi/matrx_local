@@ -8,6 +8,9 @@ export interface AppSettings {
   launchOnStartup: boolean;
   minimizeToTray: boolean;
   theme: "dark" | "light" | "system";
+  // Updates
+  autoCheckUpdates: boolean;
+  updateCheckInterval: number; // minutes between automatic checks (minimum 60)
   // Scraping
   headlessScraping: boolean;
   scrapeDelay: string;
@@ -35,6 +38,8 @@ const DEFAULTS: AppSettings = {
   launchOnStartup: false,
   minimizeToTray: true,
   theme: "dark",
+  autoCheckUpdates: true,
+  updateCheckInterval: 240, // 4 hours
   headlessScraping: true,
   scrapeDelay: "1.0",
   proxyEnabled: true,
@@ -180,6 +185,8 @@ export function mergeCloudSettings(
     theme: (cloud.theme as AppSettings["theme"]) || local.theme,
     launchOnStartup: cloud.launch_on_startup !== undefined ? Boolean(cloud.launch_on_startup) : local.launchOnStartup,
     minimizeToTray: cloud.minimize_to_tray !== undefined ? Boolean(cloud.minimize_to_tray) : local.minimizeToTray,
+    autoCheckUpdates: cloud.auto_check_updates !== undefined ? Boolean(cloud.auto_check_updates) : local.autoCheckUpdates,
+    updateCheckInterval: cloud.update_check_interval !== undefined ? Math.max(60, Number(cloud.update_check_interval)) : local.updateCheckInterval,
     instanceName: (cloud.instance_name as string) || local.instanceName,
     notificationSound: cloud.notification_sound !== undefined ? Boolean(cloud.notification_sound) : local.notificationSound,
     notificationSoundStyle: (cloud.notification_sound_style as AppSettings["notificationSoundStyle"]) || local.notificationSoundStyle,
@@ -198,6 +205,8 @@ export function settingsToCloud(settings: AppSettings): Record<string, unknown> 
     theme: settings.theme,
     launch_on_startup: settings.launchOnStartup,
     minimize_to_tray: settings.minimizeToTray,
+    auto_check_updates: settings.autoCheckUpdates,
+    update_check_interval: settings.updateCheckInterval,
     instance_name: settings.instanceName,
     notification_sound: settings.notificationSound,
     notification_sound_style: settings.notificationSoundStyle,
