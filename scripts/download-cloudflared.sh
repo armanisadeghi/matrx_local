@@ -22,7 +22,7 @@ mkdir -p "$SIDECAR_DIR"
 # Falls back to a known-good version if the API is unreachable or rate-limited.
 CF_FALLBACK_VERSION="2026.2.0"
 resolve_cf_version() {
-    local curl_args=(-fsSL)
+    local curl_args=(-fsSL --connect-timeout 5 --max-time 10)
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
         curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
     fi
