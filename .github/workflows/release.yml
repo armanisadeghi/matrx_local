@@ -14,9 +14,9 @@ jobs:
       matrix:
         include:
           - platform: macos-15
-            args: --target aarch64-apple-darwin --bundles app,updater
+            args: --target aarch64-apple-darwin --bundles app,dmg,updater
           - platform: macos-15
-            args: --target x86_64-apple-darwin --bundles app,updater
+            args: --target x86_64-apple-darwin --bundles app,dmg,updater
           - platform: ubuntu-22.04
             args: --bundles deb
           - platform: windows-latest
@@ -213,12 +213,16 @@ jobs:
                 rename_asset "$ASSET" "${PREFIX}_macOS-Apple-Silicon.app.tar.gz" ;;
               *_aarch64.app.tar.gz.sig)
                 rename_asset "$ASSET" "${PREFIX}_macOS-Apple-Silicon.app.tar.gz.sig" ;;
+              *_aarch64.dmg)
+                rename_asset "$ASSET" "${PREFIX}_macOS-Apple-Silicon.dmg" ;;
 
               # ── macOS Intel ──
               *_x64.app.tar.gz)
                 rename_asset "$ASSET" "${PREFIX}_macOS-Intel.app.tar.gz" ;;
               *_x64.app.tar.gz.sig)
                 rename_asset "$ASSET" "${PREFIX}_macOS-Intel.app.tar.gz.sig" ;;
+              *_x64.dmg)
+                rename_asset "$ASSET" "${PREFIX}_macOS-Intel.dmg" ;;
 
               # ── Linux ──
               *_amd64.deb)

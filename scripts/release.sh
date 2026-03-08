@@ -251,7 +251,7 @@ monitor_build() {
                 echo ""
                 echo -e "  🔗 ${BOLD}${RELEASE_URL}${NC}"
                 echo ""
-                echo -e "  Mac Trick: ${CYAN}xattr -cr '/Applications/AI Matrx.app'${NC}"
+                echo -e "  macOS: ${CYAN}Open .dmg, drag to Applications. If blocked: xattr -cr '/Applications/AI Matrx.app'${NC}"
             fi
             echo ""
         else
@@ -451,7 +451,7 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo ""
 echo -e "  Monitor : ${CYAN}https://github.com/${GITHUB_REPO}/actions${NC}"
 echo -e "  Releases: ${CYAN}https://github.com/${GITHUB_REPO}/releases${NC}"
-echo -e "  Mac Trick: ${CYAN}Use: xattr -cr '/Applications/AI Matrx.app' after installation and putting it in Applications folder ${NC}"
+echo -e "  macOS: ${CYAN}Open .dmg, drag to Applications. If blocked: xattr -cr '/Applications/AI Matrx.app'${NC}"
 echo ""
 
 # ── Start monitor if requested ───────────────────────────────────────────────
