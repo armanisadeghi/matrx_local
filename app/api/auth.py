@@ -56,6 +56,8 @@ _PUBLIC_PATHS = frozenset(
         # Tunnel status — needed by mobile/remote clients before they have a
         # session to check if the tunnel is active without authenticating first.
         "/tunnel/status",
+        # Setup status — shown on the welcome screen before auth is established.
+        "/setup/status",
     }
 )
 
