@@ -76,10 +76,10 @@ else
 fi
 
 # ── 3. Python dependencies ────────────────────────────────────────────────────
-step "3 / 8  Python dependencies (uv sync --all-extras)"
+step "3 / 8  Python dependencies (uv sync)"
 
 info "Installing all Python dependencies (this may take a minute)..."
-if uv sync --extra monitoring --extra discovery --extra audio --extra transcription --extra browser; then
+if uv sync; then
     ok "Python dependencies installed"
 else
     fail "uv sync failed — check the output above."

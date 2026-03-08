@@ -24,7 +24,7 @@ Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Pytho
 
 1. **scraper-service/ is read-only in this repo** -- It's a git subtree from the `aidream` repo. Never edit files there directly. Use `./scripts/update-scraper.sh` to pull updates. The source repo is at `/Users/armanisadeghi/Code/aidream-current/scraper-service` and CAN be edited directly.
 2. **Module isolation** -- The scraper's `app/` is aliased as `scraper_app/` via `sys.modules` in `app/services/scraper/engine.py`. Do not create naming conflicts.
-3. **Graceful degradation** -- The engine works without PostgreSQL (memory cache), Playwright (curl-cffi fallback), or Brave API (search disabled). Never make these hard dependencies.
+3. **Graceful degradation** -- The engine works without PostgreSQL (memory cache) or Brave API (search disabled). Never make these hard dependencies. Playwright, psutil, and zeroconf are core dependencies and always available.
 4. **Port 22140** -- Default engine port. Auto-scans 22140-22159. Discovery file at `~/.matrx/local.json`.
 
 ---
@@ -134,7 +134,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 ```bash
 # Python engine (Terminal 1)
 cd /path/to/matrx_local
-uv sync --extra browser
+uv sync
 uv run python run.py
 
 # React frontend (Terminal 2)

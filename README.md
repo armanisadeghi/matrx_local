@@ -77,8 +77,8 @@ cd matrx_local
 # 1. Copy env file and fill in API_KEY (any value works for local dev)
 cp .env.example .env
 
-# 2. Install all Python dependencies (all optional extras included)
-uv sync --extra monitoring --extra discovery --extra audio --extra transcription --extra browser
+# 2. Install Python dependencies (all core tools included by default)
+uv sync
 
 # 3. Install Playwright's Chromium browser (for browser automation tools)
 uv run playwright install chromium
@@ -189,13 +189,9 @@ cp .env.example .env
 ### Dependency Groups
 
 ```bash
-uv sync                              # Core only
-uv sync --extra monitoring --extra discovery --extra audio --extra transcription --extra browser  # install all extras
-uv sync --extra discovery            # zeroconf (MDNSDiscover, NetworkScan)
-uv sync --extra browser              # Playwright (BrowserNavigate, FetchWithBrowser)
-uv sync --extra audio                # sounddevice + numpy (RecordAudio, PlayAudio)
-uv sync --extra transcription        # openai-whisper (TranscribeAudio)
-uv sync --extra all                  # Everything above
+uv sync                              # Everything needed (Playwright, psutil, audio, etc.)
+uv sync --extra transcription        # + openai-whisper local AI model (TranscribeAudio, ~2GB)
+uv sync --extra all                  # Same as transcription (all extras)
 ```
 
 ---

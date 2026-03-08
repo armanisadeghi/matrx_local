@@ -1212,10 +1212,10 @@ export function Settings({
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <Cpu className="h-4 w-4 text-primary" /> Optional Capabilities
+                  <Cpu className="h-4 w-4 text-primary" /> Capabilities
                 </CardTitle>
                 <p className="text-xs text-muted-foreground mt-1">
-                  These features are not bundled by default to keep the core app lean. Install only what you need.
+                  Most capabilities are bundled and ready to use. Only large AI models (e.g. Whisper) require separate installation.
                 </p>
               </CardHeader>
               <CardContent className="space-y-1 p-0">

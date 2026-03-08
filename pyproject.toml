@@ -51,35 +51,27 @@ dependencies = [
     # Media downloading & video processing
     "yt-dlp>=2024.1.0",
     "imageio-ffmpeg>=0.5.1",
+    # Browser automation
+    "playwright",
+    # System monitoring & process management
+    "psutil>=6.0.0",
+    # Network discovery (mDNS)
+    "zeroconf>=0.131.0",
+    # Audio hardware I/O
+    "sounddevice>=0.5.5",
+    "numpy>=2.4.2",
 ]
 
 [project.optional-dependencies]
 audio = [
     "pyaudio",
-    "sounddevice>=0.5.5",
-    "numpy>=2.4.2",
 ]
 transcription = [
     "openai-whisper",
 ]
-browser = [
-    "playwright",
-]
-monitoring = [
-    "psutil>=6.0.0",
-]
-discovery = [
-    "zeroconf>=0.131.0",
-]
 all = [
-    "sounddevice>=0.5.5",
-    "numpy>=2.4.2",
+    "pyaudio",
     "openai-whisper",
-    "playwright",
-    "psutil>=6.0.0",
-    "zeroconf>=0.131.0",
-    "yt-dlp>=2024.1.0",
-    "imageio-ffmpeg>=0.5.1",
 ]
 
 [dependency-groups]
