@@ -17,12 +17,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SIDECAR_DIR="$SCRIPT_DIR/../desktop/src-tauri/sidecar"
 mkdir -p "$SIDECAR_DIR"
 
-# Resolve the latest cloudflared version from GitHub API.
-# Passes GITHUB_TOKEN if set (avoids 60 req/hr rate limit on shared CI runners).
-# Falls back to a known-good version if the API is unreachable or rate-limited.
+# Lazy-resolved version — only fetched from GitHub API when a binary is actually missing.
 CF_FALLBACK_VERSION="2026.2.0"
-resolve_cf_version() {
-    local curl_args=(-fsSL --connect-timeout 5 --max-time 10)
+CF_VERSION=""
+CF_BASE=""
+
+ensure_cf_version() {
+    [[ -n "$CF_VERSION" ]] && return
+    local curl_args=(-fsSL --connect-timeout 5 --max-time 8)
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
         curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
     fi
@@ -30,16 +32,20 @@ resolve_cf_version() {
     response="$(curl "${curl_args[@]}" "https://api.github.com/repos/cloudflare/cloudflared/releases/latest" 2>/dev/null)" || true
     if [[ -z "$response" ]]; then
         echo "Warning: GitHub API unreachable, using fallback version ${CF_FALLBACK_VERSION}" >&2
-        echo "${CF_FALLBACK_VERSION}"
-        return
+        CF_VERSION="$CF_FALLBACK_VERSION"
+    else
+        local parsed
+        parsed="$(echo "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])" 2>/dev/null)" || true
+        if [[ -z "$parsed" ]]; then
+            echo "Warning: Could not parse GitHub API response, using fallback version ${CF_FALLBACK_VERSION}" >&2
+            CF_VERSION="$CF_FALLBACK_VERSION"
+        else
+            CF_VERSION="$parsed"
+        fi
     fi
-    python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])" <<< "$response" 2>/dev/null \
-        || { echo "Warning: Could not parse GitHub API response, using fallback version ${CF_FALLBACK_VERSION}" >&2; echo "${CF_FALLBACK_VERSION}"; }
+    CF_BASE="https://github.com/cloudflare/cloudflared/releases/download/${CF_VERSION}"
+    echo "  cloudflared version: ${CF_VERSION}"
 }
-
-CF_VERSION="$(resolve_cf_version)"
-CF_BASE="https://github.com/cloudflare/cloudflared/releases/download/${CF_VERSION}"
-echo "  cloudflared version: ${CF_VERSION}"
 
 # Returns the release asset filename for a given Tauri target triple.
 cf_asset_for_triple() {
@@ -65,6 +71,9 @@ download_target() {
         return
     fi
 
+    # Only resolve the version (and hit GitHub API) when we actually need to download.
+    ensure_cf_version
+
     local url="${CF_BASE}/${asset}"
     echo "  ↓ Downloading cloudflared ${CF_VERSION} for ${triple} ..."
 
@@ -72,13 +81,12 @@ download_target() {
         # macOS assets are tarballs containing a single `cloudflared` binary
         local tmp_dir
         tmp_dir="$(mktemp -d)"
-        curl -fsSL --progress-bar -o "$tmp_dir/cloudflared.tgz" "$url"
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 120 -o "$tmp_dir/cloudflared.tgz" "$url"
         tar -xzf "$tmp_dir/cloudflared.tgz" -C "$tmp_dir"
-        # The binary inside is named `cloudflared`
         mv "$tmp_dir/cloudflared" "$dest"
         rm -rf "$tmp_dir"
     else
-        curl -fsSL --progress-bar -o "$dest" "$url"
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 120 -o "$dest" "$url"
     fi
 
     [[ "$ext" != ".exe" ]] && chmod +x "$dest"
