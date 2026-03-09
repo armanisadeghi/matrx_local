@@ -9,7 +9,6 @@ import {
   Cpu,
   HardDrive,
   Download,
-  CheckCircle2,
   AlertCircle,
   Trash2,
   Play,
@@ -20,7 +19,6 @@ import {
   Server,
   Activity,
   Loader2,
-  ChevronRight,
   Info,
   Settings2,
   Wrench,
@@ -387,9 +385,9 @@ function ModelsTab({
           {allModels.map((model) => {
             const isDownloaded = downloadedFilenames.has(model.filename);
             const isActive =
-              state.serverStatus?.running &&
+              (state.serverStatus?.running &&
               state.serverStatus?.model_name ===
-                model.filename.replace(".gguf", "");
+                model.filename.replace(".gguf", "")) ?? false;
             const isRecommended =
               model.filename ===
               state.hardwareResult?.recommended_filename;
@@ -703,7 +701,6 @@ function HardwareTab({
 
 function InferenceTab({
   state,
-  actions,
 }: {
   state: LlmState;
   actions: LlmActions;
