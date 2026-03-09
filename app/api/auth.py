@@ -56,8 +56,12 @@ _PUBLIC_PATHS = frozenset(
         # Tunnel status — needed by mobile/remote clients before they have a
         # session to check if the tunnel is active without authenticating first.
         "/tunnel/status",
-        # Setup status — shown on the welcome screen before auth is established.
+        # Setup — all setup endpoints run before auth is established.
+        # The wizard checks system status, installs browsers/dirs, and downloads
+        # transcription models — none of these require user identity.
         "/setup/status",
+        "/setup/install",
+        "/setup/install-transcription",
     }
 )
 
@@ -186,6 +190,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             path in _PUBLIC_PATHS
             or path.startswith("/devices/")
             or path.startswith("/fetch-proxy")
+            or path.startswith("/setup/")
             or request.method == "OPTIONS"
         ):
             return await call_next(request)
