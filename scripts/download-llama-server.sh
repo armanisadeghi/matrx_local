@@ -45,14 +45,12 @@ ensure_llama_version() {
         fi
     fi
     LLAMA_BASE="https://github.com/${LLAMA_REPO}/releases/download/${LLAMA_VERSION}"
-    echo "  llama.cpp version: ${LLAMA_VERSION}"
+    echo "  llama.cpp version: ${LLAMA_VERSION}" >&2
 }
 
 # Returns the release asset filename for a given Tauri target triple.
+# IMPORTANT: Call ensure_llama_version BEFORE calling this in a $() subshell.
 llama_asset_for_triple() {
-    # Asset names use the version in the filename: llama-b{VERSION}-bin-{platform}.{ext}
-    # We need the version to construct the name, so ensure it's resolved.
-    ensure_llama_version
     local ver="$LLAMA_VERSION"
     case "$1" in
         aarch64-apple-darwin)       echo "llama-${ver}-bin-macos-arm64.tar.gz" ;;
@@ -126,6 +124,7 @@ case "$MODE" in
     --target)
         triple="${2:-}"
         [[ -n "$triple" ]] || { echo "ERROR: --target requires a target triple."; exit 1; }
+        ensure_llama_version
         asset="$(llama_asset_for_triple "$triple")"
         [[ -n "$asset" ]] || { echo "ERROR: Unknown target triple: $triple"; exit 1; }
         download_target "$triple" "$asset"
@@ -140,10 +139,12 @@ case "$MODE" in
             Linux-aarch64)  triple="aarch64-unknown-linux-gnu" ;;
             *) echo "ERROR: Unknown platform $OS-$ARCH"; exit 1 ;;
         esac
+        ensure_llama_version
         asset="$(llama_asset_for_triple "$triple")"
         download_target "$triple" "$asset"
         ;;
     all|"")
+        ensure_llama_version
         for triple in \
             aarch64-apple-darwin \
             x86_64-apple-darwin \
