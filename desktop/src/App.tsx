@@ -17,6 +17,7 @@ import { AuthCallback } from "@/pages/AuthCallback";
 import { AiMatrx } from "@/pages/AiMatrx";
 import { BrowserLab } from "@/pages/BrowserLab";
 import { Voice } from "@/pages/Voice";
+import { LocalModels } from "@/pages/LocalModels";
 import { TauriFetchBrowser } from "@/pages/TauriFetchBrowser";
 import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
@@ -218,6 +219,7 @@ export default function App() {
                   }
                 />
                 <Route path="voice" element={<Voice />} />
+                <Route path="local-models" element={<LocalModels />} />
                 <Route path="aimatrx" element={<AiMatrx />} />
                 <Route path="browser" element={<BrowserLab />} />
                 <Route path="browser/tauri" element={<TauriFetchBrowser />} />

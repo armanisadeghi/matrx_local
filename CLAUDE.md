@@ -135,11 +135,25 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Persistent config** -- Selected model saved to `transcription.json` in app data dir
 - **Future** -- Custom wake words for triggering AI agents automatically
 
+### Local LLM Inference (Latest)
+- **llama-server sidecar** -- Local text model inference via llama.cpp's official server binary
+- **Rust LLM module** -- `src-tauri/src/llm/` with config, model_selector, server, commands
+- **10 Tauri commands** -- start_llm_server, stop_llm_server, get_llm_server_status, check_llm_server_health, check_llm_model_exists, download_llm_model, list_llm_models, delete_llm_model, detect_llm_hardware, get_llm_setup_status
+- **Model catalog** -- 5 models: Qwen3-4B, Phi-4-mini, Qwen3-8B (default), Qwen2.5-14B, Mistral-Small-3.1-24B
+- **Hardware-adaptive** -- Auto-selects model tier based on RAM/GPU/Apple Silicon, auto-configures GPU layer offload
+- **OpenAI-compatible API** -- `/v1/chat/completions` with tool calling (`--jinja`), streaming, structured output
+- **TypeScript API client** -- `lib/llm/api.ts` with chatCompletion, streamCompletion, callWithTools, structuredOutput
+- **Admin page** -- `/local-models` with 5 tabs: Overview (quick setup), Models (download/load/delete), Server (status/health), Hardware (detection), Test (inference playground)
+- **Process lifecycle** -- Auto-kills on app quit, orphan detection via port scanning, health checks
+
 ### Still Needs Work
 - **Rate limiting** -- No per-user rate limiting on scraper server
 - **Cloud sync 404** -- If `app_settings` returns 404 despite migration 002 run, verify table exists and RLS in Supabase (see AGENT_TASKS Investigation section)
 - **Voice: CDN mirror** -- Models download from HuggingFace directly; S3/CloudFront mirror not yet set up
 - **Voice: cmake requirement** -- whisper-cpp-plus requires cmake at build time (not at runtime)
+- **LLM: binaries not bundled** -- llama-server pre-built binaries must be downloaded and placed in `src-tauri/binaries/` before the Tauri build will work
+- **LLM: CDN mirror** -- GGUF models download from HuggingFace; mirror to `assets.aimatrx.com` before shipping
+- **LLM: Cloud capability sync** -- Device's available local models should be synced to Supabase for web app visibility
 
 ---
 
@@ -216,6 +230,14 @@ npm run tauri:dev
 | Voice page | `desktop/src/pages/Voice.tsx` |
 | Transcription config | `~/{app_data}/transcription.json` |
 | Whisper models | `~/{app_data}/models/*.bin` |
+| LLM module (Rust) | `desktop/src-tauri/src/llm/*.rs` |
+| LLM types (TS) | `desktop/src/lib/llm/types.ts` |
+| LLM API client (TS) | `desktop/src/lib/llm/api.ts` |
+| LLM hook | `desktop/src/hooks/use-llm.ts` |
+| Local Models page | `desktop/src/pages/LocalModels.tsx` |
+| LLM config | `~/{app_data}/llm.json` |
+| GGUF models | `~/{app_data}/models/*.gguf` |
+| llama-server binaries | `desktop/src-tauri/binaries/llama-server-*` |
 | Architecture docs | `ARCHITECTURE.md` |
 | Task tracker | `AGENT_TASKS.md` |
 | Backlog | `BACKLOG.md` |

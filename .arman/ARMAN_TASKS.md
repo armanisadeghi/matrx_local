@@ -12,7 +12,17 @@ _Last updated: 2026-03-02_
 - [ ] **Enroll in Apple Developer** — Enable notarization. [HOWTO.md → Apple Setup](HOWTO.md#apple-developer-setup)
 - [ ] **Windows EV Cert** — Complete verification when token arrives. [HOWTO.md → Windows Signing](HOWTO.md#windows-code-signing)
 
-### 2. Manual Verification (Hardware)
+### 2. Local LLM (llama-server)
+- [ ] **Download llama-server binaries** — Go to `https://github.com/ggml-org/llama.cpp/releases/latest`, download the correct binary for each platform, rename and place in `desktop/src-tauri/binaries/`:
+  - macOS ARM: `llama-server-aarch64-apple-darwin`
+  - macOS Intel: `llama-server-x86_64-apple-darwin`
+  - Windows: `llama-server-x86_64-pc-windows-msvc.exe`
+  - Linux: `llama-server-x86_64-unknown-linux-gnu`
+- [ ] **Test quick setup flow** — Open the app, go to Local Models tab, click Quick Setup, verify model downloads and server starts.
+- [ ] **Mirror GGUF models to CDN** — Upload model files to `assets.aimatrx.com/llm-models/` for production use.
+- [ ] **Mirror llama-server binaries to CDN** — Upload to `assets.aimatrx.com/llama-server/` for auto-download.
+
+### 3. Manual Verification (Hardware)
 - [ ] **macOS / Windows / Linux** — Download releases, install, and confirm launch. [HOWTO.md → Releasing](HOWTO.md#releasing)
 - [ ] **Permissions** — Grant OS permissions (Screen, Mic, etc.). [HOWTO.md → macOS Permissions](HOWTO.md#macos-permissions)
 - [ ] **UI Toggles** — Test Launch on Startup, Minimize to Tray, and Headless Scraping in Settings.

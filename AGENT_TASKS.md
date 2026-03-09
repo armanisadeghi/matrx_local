@@ -14,6 +14,15 @@ _Last updated: 2026-03-05_
 ### P0 — Engine startup crash (blocks all features)
 - [x] **`matrx_ai` package crashes on import** — Fixed. Moved `app.mount("/chat/ai", build_ai_sub_app())` from module-level in `app/main.py` into the lifespan handler (Phase 1b), after `initialize_matrx_ai()` registers the `supabase_automation_matrix` DB config. The ORM auto-fetch triggered by `matrx_ai` module-level imports now finds the config already registered.
 
+### P1 — Local LLM Inference (llama-server sidecar)
+- [x] **Rust LLM module created** — `src-tauri/src/llm/` with `mod.rs`, `config.rs`, `model_selector.rs`, `server.rs`, `commands.rs`. 10 Tauri commands registered for server lifecycle, model management, hardware detection, and setup status.
+- [x] **Frontend integration** — `lib/llm/types.ts`, `lib/llm/api.ts` (chat completion, streaming, tool calling, structured output), `hooks/use-llm.ts`, `pages/LocalModels.tsx` with 5 admin tabs (Overview, Models, Server, Hardware, Test).
+- [x] **Tauri config updated** — `binaries/llama-server` added to `externalBin`, `shell:allow-kill` permission added.
+- [x] **Sidebar entry added** — "Local Models" with BrainCircuit icon at `/local-models`.
+- [ ] **llama-server binaries not yet bundled** — Need to download pre-built binaries from llama.cpp releases and place in `src-tauri/binaries/` with Tauri triple naming convention (`llama-server-aarch64-apple-darwin`, `llama-server-x86_64-pc-windows-msvc.exe`, `llama-server-x86_64-unknown-linux-gnu`). See ARMAN_TASKS.
+- [ ] **CDN mirror not set up** — GGUF models download directly from HuggingFace. Mirror to `assets.aimatrx.com` before production shipping.
+- [ ] **Cloud capability exposure** — System info and available models should be synced to Supabase so the web app knows each device's local LLM capabilities.
+
 ### P0 — Fix broken core features (ship blockers)
 - [x] **Auth was using wrong OAuth flow** — `signInWithOAuth({ provider: "google" })` used Supabase as a social auth passthrough (treating Supabase as the identity provider for THIS app), not our registered OAuth 2.1 client. Rewrote to use the proper OAuth 2.1 authorization code flow with PKCE: desktop app redirects user to `https://txzxabzwovsujtloxrus.supabase.co/auth/v1/oauth/authorize?client_id=af37ec97-3e0c-423c-a205-3d6c5adc5645&...`. User goes to our consent UI at `https://www.aimatrx.com/oauth/consent`, approves, and the code arrives at the registered redirect_uri. Token exchange is then done directly at the Supabase token endpoint — no provider credentials embedded in the binary. Affected files: `lib/oauth.ts` (new), `hooks/use-auth.ts`, `pages/OAuthPending.tsx`, `pages/AuthCallback.tsx`, `App.tsx`.
 - [ ] **App icon is default purple box** — Replace placeholder icons in `desktop/src-tauri/icons/` with the AI Matrx logo.

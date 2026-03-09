@@ -9,6 +9,7 @@ import {
   MessageSquare,
   Zap,
   Network,
+  BrainCircuit,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -28,6 +29,7 @@ const navItems = [
   { to: "/notes", icon: FileText, label: "Notes" },
   { to: "/scraping", icon: Globe, label: "Scraping" },
   { to: "/tools", icon: Wrench, label: "Tools" },
+  { to: "/local-models", icon: BrainCircuit, label: "Local Models" },
   { to: "/ports", icon: Network, label: "Port Manager" },
   { to: "/activity", icon: Activity, label: "Activity" },
   { to: "/settings", icon: Settings, label: "Settings" },

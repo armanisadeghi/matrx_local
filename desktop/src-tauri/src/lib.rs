@@ -14,6 +14,9 @@ use tauri_plugin_updater::UpdaterExt;
 mod transcription;
 use transcription::commands::*;
 
+mod llm;
+use llm::commands::*;
+
 // ── proxy_fetch types ────────────────────────────────────────────────────────
 #[derive(Serialize)]
 struct FetchResponse {
@@ -358,6 +361,13 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(child) = state.child.lock().unwrap().take() {
                     let _ = child.kill();
                 }
+                // Kill llama-server if running
+                let llm_state = app.state::<llm::commands::LlmServerState>();
+                if let Ok(mut server) = llm_state.try_lock() {
+                    if let Some(child) = server.take_process() {
+                        let _ = child.kill();
+                    }
+                }
                 app.exit(0);
             }
             _ => {}
@@ -405,6 +415,9 @@ pub fn run() {
         .manage(PendingOAuthUrl(Mutex::new(None)))
         .manage(TranscriptionState(Mutex::new(None)))
         .manage(RecordingState(Arc::new(Mutex::new(false))))
+        .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
+            llm::server::LlmServer::new(),
+        )) as llm::commands::LlmServerState)
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
@@ -428,6 +441,17 @@ pub fn run() {
             stop_transcription,
             list_audio_input_devices,
             get_voice_setup_status,
+            // LLM commands
+            start_llm_server,
+            stop_llm_server,
+            get_llm_server_status,
+            check_llm_server_health,
+            check_llm_model_exists,
+            download_llm_model,
+            list_llm_models,
+            delete_llm_model,
+            detect_llm_hardware,
+            get_llm_setup_status,
         ])
         .setup(|app| {
             // Register the deep-link listener for OAuth callbacks.
@@ -486,6 +510,14 @@ pub fn run() {
                     if let Some(state) = window.app_handle().try_state::<SidecarState>() {
                         if let Some(child) = state.child.lock().unwrap().take() {
                             let _ = child.kill();
+                        }
+                    }
+                    // Kill llama-server if running
+                    if let Some(llm_state) = window.app_handle().try_state::<llm::commands::LlmServerState>() {
+                        if let Ok(mut server) = llm_state.try_lock() {
+                            if let Some(child) = server.take_process() {
+                                let _ = child.kill();
+                            }
                         }
                     }
                     // Fall through: window closes normally, app exits when last window closes.

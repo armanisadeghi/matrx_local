@@ -41,7 +41,8 @@
     ],
     "externalBin": [
       "sidecar/aimatrx-engine",
-      "sidecar/cloudflared"
+      "sidecar/cloudflared",
+      "binaries/llama-server"
     ],
     "windows": {
       "wix": {
