@@ -176,3 +176,8 @@ automation_matrix/ai_apis/fireworks/_dev/fireworks_sample.py
 *.wav
 miniconda.sh
 /database/python_sql/temp_data/
+
+# Tauri sidecar binaries (downloaded at build time, not committed)
+desktop/src-tauri/sidecar/cloudflared-*
+desktop/src-tauri/sidecar/aimatrx-engine-*
+desktop/src-tauri/binaries/llama-server-*

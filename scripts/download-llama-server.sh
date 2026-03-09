@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+#
+# Download pre-built llama-server binaries from llama.cpp GitHub releases
+# and place them in desktop/src-tauri/binaries/ with the naming Tauri expects:
+#   llama-server-<rust-target-triple>[.exe]
+#
+# Run once before building, or in CI before `tauri build`.
+#
+# Usage:
+#   ./scripts/download-llama-server.sh                        # download all platforms
+#   ./scripts/download-llama-server.sh --current              # download only current platform
+#   ./scripts/download-llama-server.sh --target <triple>      # download one specific target
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BINARIES_DIR="$SCRIPT_DIR/../desktop/src-tauri/binaries"
+mkdir -p "$BINARIES_DIR"
+
+# llama.cpp release version — update when upgrading
+LLAMA_FALLBACK_VERSION="b8245"
+LLAMA_VERSION=""
+LLAMA_BASE=""
+LLAMA_REPO="ggml-org/llama.cpp"
+
+ensure_llama_version() {
+    [[ -n "$LLAMA_VERSION" ]] && return
+    local curl_args=(-fsSL --connect-timeout 5 --max-time 8)
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    fi
+    local response
+    response="$(curl "${curl_args[@]}" "https://api.github.com/repos/${LLAMA_REPO}/releases/latest" 2>/dev/null)" || true
+    if [[ -z "$response" ]]; then
+        echo "Warning: GitHub API unreachable, using fallback version ${LLAMA_FALLBACK_VERSION}" >&2
+        LLAMA_VERSION="$LLAMA_FALLBACK_VERSION"
+    else
+        local parsed
+        parsed="$(echo "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])" 2>/dev/null)" || true
+        if [[ -z "$parsed" ]]; then
+            echo "Warning: Could not parse GitHub API response, using fallback version ${LLAMA_FALLBACK_VERSION}" >&2
+            LLAMA_VERSION="$LLAMA_FALLBACK_VERSION"
+        else
+            LLAMA_VERSION="$parsed"
+        fi
+    fi
+    LLAMA_BASE="https://github.com/${LLAMA_REPO}/releases/download/${LLAMA_VERSION}"
+    echo "  llama.cpp version: ${LLAMA_VERSION}"
+}
+
+# Returns the release asset filename for a given Tauri target triple.
+llama_asset_for_triple() {
+    # Asset names use the version in the filename: llama-b{VERSION}-bin-{platform}.{ext}
+    # We need the version to construct the name, so ensure it's resolved.
+    ensure_llama_version
+    local ver="$LLAMA_VERSION"
+    case "$1" in
+        aarch64-apple-darwin)       echo "llama-${ver}-bin-macos-arm64.tar.gz" ;;
+        x86_64-apple-darwin)        echo "llama-${ver}-bin-macos-x64.tar.gz" ;;
+        x86_64-unknown-linux-gnu)   echo "llama-${ver}-bin-ubuntu-x64.tar.gz" ;;
+        aarch64-unknown-linux-gnu)  echo "llama-${ver}-bin-ubuntu-x64.tar.gz" ;;  # fallback — no ARM Linux build
+        x86_64-pc-windows-msvc)     echo "llama-${ver}-bin-win-cpu-x64.zip" ;;
+        *)                          echo "" ;;
+    esac
+}
+
+download_target() {
+    local triple="$1"
+    local asset="$2"
+    local ext=""
+    [[ "$triple" == *"windows"* ]] && ext=".exe"
+    local dest="$BINARIES_DIR/llama-server-${triple}${ext}"
+
+    if [[ -f "$dest" ]]; then
+        echo "  ✓ Already exists: $(basename "$dest")"
+        return
+    fi
+
+    # Ensure version is resolved
+    ensure_llama_version
+
+    local url="${LLAMA_BASE}/${asset}"
+    echo "  ↓ Downloading llama-server ${LLAMA_VERSION} for ${triple} ..."
+
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+
+    if [[ "$asset" == *.tar.gz ]]; then
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 -o "$tmp_dir/archive.tar.gz" "$url"
+        tar -xzf "$tmp_dir/archive.tar.gz" -C "$tmp_dir"
+        # Find llama-server in the extracted directory
+        local server_bin
+        server_bin="$(find "$tmp_dir" -name "llama-server" -type f | head -1)"
+        if [[ -z "$server_bin" ]]; then
+            rm -rf "$tmp_dir"
+            echo "  ✗ ERROR: llama-server not found in archive" >&2
+            return 1
+        fi
+        mv "$server_bin" "$dest"
+    elif [[ "$asset" == *.zip ]]; then
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 -o "$tmp_dir/archive.zip" "$url"
+        # Use unzip or python to extract
+        if command -v unzip &>/dev/null; then
+            unzip -q "$tmp_dir/archive.zip" -d "$tmp_dir/extracted"
+        else
+            python3 -c "import zipfile; zipfile.ZipFile('$tmp_dir/archive.zip').extractall('$tmp_dir/extracted')"
+        fi
+        local server_bin
+        server_bin="$(find "$tmp_dir/extracted" -name "llama-server.exe" -type f | head -1)"
+        if [[ -z "$server_bin" ]]; then
+            rm -rf "$tmp_dir"
+            echo "  ✗ ERROR: llama-server.exe not found in archive" >&2
+            return 1
+        fi
+        mv "$server_bin" "$dest"
+    fi
+
+    rm -rf "$tmp_dir"
+    [[ "$ext" != ".exe" ]] && chmod +x "$dest"
+    echo "  ✓ Saved: $(basename "$dest")"
+}
+
+MODE="${1:-all}"
+
+case "$MODE" in
+    --target)
+        triple="${2:-}"
+        [[ -n "$triple" ]] || { echo "ERROR: --target requires a target triple."; exit 1; }
+        asset="$(llama_asset_for_triple "$triple")"
+        [[ -n "$asset" ]] || { echo "ERROR: Unknown target triple: $triple"; exit 1; }
+        download_target "$triple" "$asset"
+        ;;
+    --current)
+        OS="$(uname -s)"
+        ARCH="$(uname -m)"
+        case "$OS-$ARCH" in
+            Darwin-arm64)   triple="aarch64-apple-darwin" ;;
+            Darwin-x86_64)  triple="x86_64-apple-darwin" ;;
+            Linux-x86_64)   triple="x86_64-unknown-linux-gnu" ;;
+            Linux-aarch64)  triple="aarch64-unknown-linux-gnu" ;;
+            *) echo "ERROR: Unknown platform $OS-$ARCH"; exit 1 ;;
+        esac
+        asset="$(llama_asset_for_triple "$triple")"
+        download_target "$triple" "$asset"
+        ;;
+    all|"")
+        for triple in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            x86_64-unknown-linux-gnu \
+            x86_64-pc-windows-msvc
+        do
+            asset="$(llama_asset_for_triple "$triple")"
+            download_target "$triple" "$asset"
+        done
+        ;;
+    *)
+        echo "Usage: $0 [--current | --target <triple> | all]"
+        exit 1
+        ;;
+esac
+
+echo ""
+echo "llama-server binaries in $BINARIES_DIR:"
+ls -lh "$BINARIES_DIR"/llama-server-* 2>/dev/null || echo "  (none)"

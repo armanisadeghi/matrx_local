@@ -324,6 +324,16 @@ else
     warn "scripts/download-cloudflared.sh not found — skipping cloudflared download."
 fi
 
+# ── Ensure llama-server sidecar binary exists for current platform ────────────
+info "Ensuring llama-server sidecar binary is present..."
+if [[ -f "scripts/download-llama-server.sh" ]]; then
+    chmod +x scripts/download-llama-server.sh
+    ./scripts/download-llama-server.sh --current
+    ok "llama-server sidecar ready."
+else
+    warn "scripts/download-llama-server.sh not found — skipping llama-server download."
+fi
+
 # ── TypeScript type-check ────────────────────────────────────────────────────
 info "Running TypeScript type-check (pnpm tsc --noEmit)..."
 if ! command -v pnpm &>/dev/null; then
