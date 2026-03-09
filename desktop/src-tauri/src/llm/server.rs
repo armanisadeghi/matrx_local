@@ -136,12 +136,10 @@ async fn wait_for_health(port: u16) -> Result<(), String> {
             Ok(resp) if resp.status().is_success() => return Ok(()),
             _ => {
                 if attempt == 59 {
-                    return Err(
-                        "llama-server did not become healthy within 30 seconds. \
+                    return Err("llama-server did not become healthy within 30 seconds. \
                          The model may be too large for available RAM, or the binary \
                          may not be compatible with this system."
-                            .to_string(),
-                    );
+                        .to_string());
                 }
             }
         }

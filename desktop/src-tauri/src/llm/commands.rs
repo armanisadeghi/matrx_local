@@ -34,7 +34,9 @@ pub async fn start_llm_server(
     let ctx = context_length.unwrap_or(8192);
 
     let mut server = state.lock().await;
-    server.start(&app, &model_path, gpu_layers, ctx, port).await?;
+    server
+        .start(&app, &model_path, gpu_layers, ctx, port)
+        .await?;
 
     // Persist config
     if let Ok(config_dir) = app.path().app_data_dir() {
@@ -73,9 +75,7 @@ pub async fn get_llm_server_status(
 
 /// Run a health check against the running server.
 #[tauri::command]
-pub async fn check_llm_server_health(
-    state: State<'_, LlmServerState>,
-) -> Result<bool, String> {
+pub async fn check_llm_server_health(state: State<'_, LlmServerState>) -> Result<bool, String> {
     let server = state.lock().await;
     Ok(server.health_check().await)
 }

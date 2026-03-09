@@ -131,7 +131,8 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         if total_ram_gb >= 8.0 {
             return (
                 LlmTier::Default,
-                "Apple Silicon with 8GB+ RAM — Qwen3-8B recommended with Metal acceleration".to_string(),
+                "Apple Silicon with 8GB+ RAM — Qwen3-8B recommended with Metal acceleration"
+                    .to_string(),
             );
         }
     }
@@ -141,13 +142,19 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         if gpu_vram_gb >= 8.0 {
             return (
                 LlmTier::High,
-                format!("NVIDIA GPU with {:.0}GB VRAM — can run larger models with full GPU offload", gpu_vram_gb),
+                format!(
+                    "NVIDIA GPU with {:.0}GB VRAM — can run larger models with full GPU offload",
+                    gpu_vram_gb
+                ),
             );
         }
         if gpu_vram_gb >= 4.0 {
             return (
                 LlmTier::Default,
-                format!("NVIDIA GPU with {:.0}GB VRAM — Qwen3-8B with partial GPU offload", gpu_vram_gb),
+                format!(
+                    "NVIDIA GPU with {:.0}GB VRAM — Qwen3-8B with partial GPU offload",
+                    gpu_vram_gb
+                ),
             );
         }
     }
@@ -156,13 +163,19 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
     if total_ram_gb < 6.0 {
         return (
             LlmTier::Low,
-            format!("Limited RAM ({:.0}GB) — using compact Qwen3-4B model", total_ram_gb),
+            format!(
+                "Limited RAM ({:.0}GB) — using compact Qwen3-4B model",
+                total_ram_gb
+            ),
         );
     }
     if total_ram_gb < 10.0 {
         return (
             LlmTier::Default,
-            format!("{:.0}GB RAM detected — Qwen3-8B recommended (CPU inference will be slower)", total_ram_gb),
+            format!(
+                "{:.0}GB RAM detected — Qwen3-8B recommended (CPU inference will be slower)",
+                total_ram_gb
+            ),
         );
     }
 
@@ -185,7 +198,12 @@ fn compute_gpu_layers(hw: &HardwareProfile, gpu_vram_gb: f32) -> i32 {
     0 // CPU only
 }
 
-fn can_upgrade_tier(tier: &LlmTier, total_ram_gb: f32, gpu_vram_gb: f32, is_apple_silicon: bool) -> bool {
+fn can_upgrade_tier(
+    tier: &LlmTier,
+    total_ram_gb: f32,
+    gpu_vram_gb: f32,
+    is_apple_silicon: bool,
+) -> bool {
     match tier {
         LlmTier::Low | LlmTier::LowAlt => total_ram_gb >= 6.5,
         LlmTier::Default => {
