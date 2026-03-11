@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { HashRouter, Routes, Route } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AppLayout } from "@/components/layout/AppLayout";
+import { AppLayout, type PageEntry } from "@/components/layout/AppLayout";
 import { Dashboard } from "@/pages/Dashboard";
 import { Documents } from "@/pages/Documents";
 import { Scraping } from "@/pages/Scraping";
@@ -91,6 +91,105 @@ export default function App() {
 
   const handleOpenMonitor = useCallback(() => setMonitorOpen(true), []);
 
+  // Build the persistent pages array — these elements are always mounted once
+  // the user is authenticated. AppLayout shows the active one and hides the
+  // rest via display:none so no page ever unmounts on navigation. Downloads,
+  // streams, and any ongoing work continue uninterrupted regardless of which
+  // tab the user is viewing.
+  //
+  // useMemo keys on the values that legitimately need to cause page re-renders
+  // (engine connection state, user identity, etc.). The page components
+  // themselves receive up-to-date props on every render via their own hooks,
+  // so this does not cause stale closures.
+  const appPages: PageEntry[] = useMemo(() => [
+    {
+      path: "/",
+      element: (
+        <Dashboard
+          engineStatus={status}
+          engineUrl={url}
+          tools={tools}
+          systemInfo={systemInfo}
+          browserStatus={browserStatus}
+          onRefresh={refresh}
+          user={auth.user}
+          onSignOut={auth.signOut}
+        />
+      ),
+    },
+    {
+      path: "/chat",
+      element: (
+        <Chat
+          engineStatus={status}
+          engineUrl={url}
+          tools={tools}
+        />
+      ),
+    },
+    {
+      path: "/notes",
+      element: (
+        <Documents
+          engineStatus={status}
+          userId={auth.user?.id ?? null}
+        />
+      ),
+    },
+    {
+      path: "/scraping",
+      element: <Scraping engineStatus={status} engineUrl={url} />,
+    },
+    {
+      path: "/tools",
+      element: (
+        <Tools
+          engineStatus={status}
+          engineUrl={url}
+          tools={tools}
+        />
+      ),
+    },
+    {
+      path: "/activity",
+      element: <Activity engineStatus={status} engineUrl={url} />,
+    },
+    {
+      path: "/ports",
+      element: <Ports engineStatus={status} engineUrl={url} />,
+    },
+    {
+      path: "/devices",
+      element: <Devices engineStatus={status} engineUrl={url} />,
+    },
+    { path: "/voice", element: <Voice /> },
+    { path: "/local-models", element: <LocalModels /> },
+    { path: "/aimatrx", element: <AiMatrx /> },
+    { path: "/browser", element: <BrowserLab /> },
+    { path: "/browser/tauri", element: <TauriFetchBrowser /> },
+    {
+      path: "/settings",
+      element: (
+        <Settings
+          engineStatus={status}
+          engineUrl={url}
+          engineVersion={engineVersion}
+          onRefresh={refresh}
+          auth={auth}
+          theme={themeCtx.theme}
+          setTheme={themeCtx.setTheme}
+          updateState={updateState}
+          updateActions={updateActions}
+        />
+      ),
+    },
+  ], [
+    status, url, tools, systemInfo, browserStatus,
+    refresh, auth, engineVersion,
+    themeCtx.theme, themeCtx.setTheme,
+    updateState, updateActions,
+  ]);
+
   // Allow /auth/callback to render before auth loads — it handles its own
   // loading state and must be reachable immediately after OAuth redirect.
   const isCallbackRoute =
@@ -125,123 +224,39 @@ export default function App() {
       <TooltipProvider>
         <HashRouter>
           <Routes>
-            {/* AuthCallback MUST be listed unconditionally — before the auth
-                check — so it renders regardless of authentication state.
-                After OAuth approval the user lands here with ?code= and is
-                not yet authenticated. */}
+            {/* AuthCallback must be unconditional — renders before auth loads */}
             <Route path="/auth/callback" element={<AuthCallback />} />
 
             {!auth.isAuthenticated ? (
               <Route path="*" element={<Login auth={auth} />} />
             ) : (
-              <Route element={
-                <AppLayout
-                  engineStatus={status}
-                  engineUrl={url}
-                  engineVersion={engineVersion}
-                  onRefresh={refresh}
-                  user={auth.user}
-                  onSignOut={auth.signOut}
-                  notifications={notif.notifications}
-                  unreadCount={notif.unreadCount}
-                  onMarkRead={notif.markRead}
-                  onMarkAllRead={notif.markAllRead}
-                  onDismissNotification={notif.dismiss}
-                  onClearAllNotifications={notif.clearAll}
-                  onOpenMonitor={handleOpenMonitor}
-                />
-              }>
+              <>
+                {/* AppLayout owns all page rendering. Routes here exist only
+                    so that useLocation() and Link navigation work correctly.
+                    No route renders content — AppLayout shows the right page
+                    based on location.pathname while keeping all others mounted. */}
                 <Route
-                  index
+                  path="/*"
                   element={
-                    <Dashboard
-                      engineStatus={status}
-                      engineUrl={url}
-                      tools={tools}
-                      systemInfo={systemInfo}
-                      browserStatus={browserStatus}
-                      onRefresh={refresh}
-                      user={auth.user}
-                      onSignOut={auth.signOut}
-                    />
-                  }
-                />
-                <Route
-                  path="chat"
-                  element={
-                    <Chat
-                      engineStatus={status}
-                      engineUrl={url}
-                      tools={tools}
-                    />
-                  }
-                />
-                <Route
-                  path="notes"
-                  element={
-                    <Documents
-                      engineStatus={status}
-                      userId={auth.user?.id ?? null}
-                    />
-                  }
-                />
-                <Route
-                  path="scraping"
-                  element={
-                    <Scraping engineStatus={status} engineUrl={url} />
-                  }
-                />
-                <Route
-                  path="tools"
-                  element={
-                    <Tools
-                      engineStatus={status}
-                      engineUrl={url}
-                      tools={tools}
-                    />
-                  }
-                />
-                <Route
-                  path="activity"
-                  element={
-                    <Activity engineStatus={status} engineUrl={url} />
-                  }
-                />
-                <Route
-                  path="ports"
-                  element={
-                    <Ports engineStatus={status} engineUrl={url} />
-                  }
-                />
-                <Route
-                  path="devices"
-                  element={
-                    <Devices engineStatus={status} engineUrl={url} />
-                  }
-                />
-                <Route path="voice" element={<Voice />} />
-                <Route path="local-models" element={<LocalModels />} />
-                <Route path="aimatrx" element={<AiMatrx />} />
-                <Route path="browser" element={<BrowserLab />} />
-                <Route path="browser/tauri" element={<TauriFetchBrowser />} />
-                <Route
-                  path="settings"
-                  element={
-                    <Settings
+                    <AppLayout
                       engineStatus={status}
                       engineUrl={url}
                       engineVersion={engineVersion}
                       onRefresh={refresh}
-                      auth={auth}
-                      theme={themeCtx.theme}
-                      setTheme={themeCtx.setTheme}
-                      updateState={updateState}
-                      updateActions={updateActions}
+                      user={auth.user}
+                      onSignOut={auth.signOut}
+                      notifications={notif.notifications}
+                      unreadCount={notif.unreadCount}
+                      onMarkRead={notif.markRead}
+                      onMarkAllRead={notif.markAllRead}
+                      onDismissNotification={notif.dismiss}
+                      onClearAllNotifications={notif.clearAll}
+                      onOpenMonitor={handleOpenMonitor}
+                      pages={appPages}
                     />
                   }
                 />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Route>
+              </>
             )}
           </Routes>
         </HashRouter>

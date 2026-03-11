@@ -1,10 +1,17 @@
-import { Outlet } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { StatusBar } from "./StatusBar";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { AppNotification } from "@/hooks/use-notifications";
 import type { User } from "@supabase/supabase-js";
+
+export interface PageEntry {
+  /** The hash path this page owns, e.g. "/" or "/voice" */
+  path: string;
+  /** The fully constructed React element to keep alive */
+  element: React.ReactNode;
+}
 
 interface AppLayoutProps {
   engineStatus: EngineStatus;
@@ -20,6 +27,18 @@ interface AppLayoutProps {
   onMarkAllRead: () => void;
   onDismissNotification: (id: string) => void;
   onClearAllNotifications: () => void;
+  /** All app pages — rendered permanently, shown/hidden by route */
+  pages: PageEntry[];
+}
+
+/**
+ * Returns true when the current pathname matches a page's registered path.
+ * The root "/" only matches exactly; all others use prefix matching so that
+ * sub-routes (e.g. "/browser/tauri") remain visible under their parent.
+ */
+function pageIsActive(pagePath: string, currentPathname: string): boolean {
+  if (pagePath === "/") return currentPathname === "/";
+  return currentPathname === pagePath || currentPathname.startsWith(pagePath + "/");
 }
 
 export function AppLayout({
@@ -36,7 +55,10 @@ export function AppLayout({
   onMarkAllRead,
   onDismissNotification,
   onClearAllNotifications,
+  pages,
 }: AppLayoutProps) {
+  const location = useLocation();
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <AppSidebar engineStatus={engineStatus} user={user} onSignOut={onSignOut} />
@@ -53,7 +75,15 @@ export function AppLayout({
           />
         </div>
         <main className="flex flex-1 flex-col overflow-hidden">
-          <Outlet />
+          {pages.map(({ path, element }) => (
+            <div
+              key={path}
+              className="flex h-full flex-col overflow-hidden"
+              style={{ display: pageIsActive(path, location.pathname) ? "contents" : "none" }}
+            >
+              {element}
+            </div>
+          ))}
         </main>
         <StatusBar
           engineStatus={engineStatus}

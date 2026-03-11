@@ -98,16 +98,18 @@ export function EngineMonitor({
   const [copied, setCopied] = useState(false);
   const [logsCopied, setLogsCopied] = useState(false);
   const [portScanning, setPortScanning] = useState(false);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const logScrollRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((line: string) => {
     const ts = new Date().toLocaleTimeString();
     setLogs((prev) => [...prev.slice(-200), `[${ts}] ${line}`]);
   }, []);
 
-  // Auto-scroll logs
+  // Auto-scroll logs — scroll only within the log container, never the page
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (logScrollRef.current) {
+      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
+    }
   }, [logs]);
 
   // Subscribe to sidecar-log Tauri events for live output
@@ -666,7 +668,7 @@ export function EngineMonitor({
                 Copy
               </Button>
             </div>
-            <ScrollArea className="h-[380px] rounded-lg border border-border/50 bg-zinc-950 p-3">
+            <div ref={logScrollRef} className="h-[380px] overflow-y-auto rounded-lg border border-border/50 bg-zinc-950 p-3">
               <div className="font-mono text-xs text-zinc-400 space-y-0.5">
                 {logs.length === 0 && (
                   <div className="text-zinc-600 italic">
@@ -689,9 +691,8 @@ export function EngineMonitor({
                     {line}
                   </div>
                 ))}
-                <div ref={logEndRef} />
               </div>
-            </ScrollArea>
+            </div>
           </div>
         )}
       </DialogContent>

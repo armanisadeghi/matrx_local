@@ -14,7 +14,6 @@ import {
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import type { EngineStatus } from "@/hooks/use-engine";
@@ -86,7 +85,7 @@ function AccessLogTab({
   const [entries, setEntries] = useState<AccessEntry[]>([]);
   const [filter, setFilter] = useState("");
   const [autoScroll, setAutoScroll] = useState(true);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const esRef = useRef<EventSource | null>(null);
 
   // Load recent entries on mount
@@ -137,10 +136,10 @@ function AccessLogTab({
   const pausedRef = useRef(paused);
   useEffect(() => { pausedRef.current = paused; }, [paused]);
 
-  // Auto-scroll
+  // Auto-scroll — scroll only within the container, never the page
   useEffect(() => {
-    if (autoScroll && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [entries, autoScroll]);
 
@@ -213,7 +212,7 @@ function AccessLogTab({
       </div>
 
       {/* Log rows */}
-      <ScrollArea className="flex-1">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="px-1 py-1 space-y-0.5 font-mono">
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
@@ -256,9 +255,8 @@ function AccessLogTab({
               </div>
             ))
           )}
-          <div ref={bottomRef} />
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -273,7 +271,7 @@ function SystemLogTab({
 }) {
   const [lines, setLines] = useState<string[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(paused);
   useEffect(() => { pausedRef.current = paused; }, [paused]);
 
@@ -292,9 +290,10 @@ function SystemLogTab({
     return () => { es?.close(); };
   }, [engineUrl]);
 
+  // Auto-scroll — scroll only within the container, never the page
   useEffect(() => {
-    if (autoScroll && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [lines, autoScroll]);
 
@@ -325,7 +324,7 @@ function SystemLogTab({
           </Button>
         </div>
       </div>
-      <ScrollArea className="flex-1 bg-zinc-950/40">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto bg-zinc-950/40">
         <div className="px-4 py-2 font-mono text-[11px] space-y-0.5">
           {lines.length === 0 ? (
             <p className="text-muted-foreground py-8 text-center">
@@ -347,9 +346,8 @@ function SystemLogTab({
               );
             })
           )}
-          <div ref={bottomRef} />
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

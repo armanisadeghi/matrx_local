@@ -125,7 +125,7 @@ export function DebugTerminal({
 }: DebugTerminalProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const prevLogCount = useRef(0);
 
   // Auto-expand when new logs arrive (during active operations)
@@ -136,10 +136,10 @@ export function DebugTerminal({
     prevLogCount.current = logs.length;
   }, [logs.length, open]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom — scroll only within the terminal container, never the page
   useEffect(() => {
-    if (open) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (open && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [logs, open]);
 
@@ -226,6 +226,7 @@ export function DebugTerminal({
       {/* Log pane */}
       {open && (
         <div
+          ref={scrollRef}
           className="overflow-y-auto font-mono text-[11px] leading-relaxed p-2 space-y-0.5"
           style={{ maxHeight }}
         >
@@ -257,7 +258,6 @@ export function DebugTerminal({
               </span>
             </div>
           ))}
-          <div ref={bottomRef} />
         </div>
       )}
     </div>

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Copy, Check, RotateCcw, ThumbsUp, ThumbsDown } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ChatMessage } from "@/hooks/use-chat";
 import { ChatToolCall } from "./ChatToolCall";
 
@@ -203,10 +202,11 @@ export function TypingIndicator() {
 
 export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
   }, [messages, isStreaming]);
 
   if (messages.length === 0) {
@@ -214,7 +214,7 @@ export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
   }
 
   return (
-    <ScrollArea className="h-full" ref={scrollRef}>
+    <div ref={scrollRef} className="h-full overflow-y-auto">
       <div className="py-2">
         {messages.map((msg) =>
           msg.role === "user" ? (
@@ -223,8 +223,7 @@ export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
             <AssistantMessage key={msg.id} message={msg} />
           )
         )}
-        <div ref={bottomRef} />
       </div>
-    </ScrollArea>
+    </div>
   );
 }
