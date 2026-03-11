@@ -189,8 +189,8 @@ def get_structure_with_common_configs(root_directory, project_root, common_confi
 
 if __name__ == "__main__":
     config = {
-        "root_directory": r"D:\app_dev\ai-matrx-admin\providers\ContextMenu",
-        "project_root": r"D:\app_dev\ai-matrx-admin",
+        "root_directory": r"/Users/armanisadeghi/code/matrx-local",
+        "project_root": r"/Users/armanisadeghi/code/matrx-local",
         "ignore_directories": [
             ".", "_dev", ".history", "notes", "templates", "venv", "external libraries",
             "scratches", "consoles", ".git", "node_modules", "__pycache__", ".github",
@@ -207,7 +207,7 @@ if __name__ == "__main__":
         "root_save_path": os.path.join(TEMP_DIR, 'dir_structure'),
         "include_text_output": True,
         "alias_map": {
-            "@": r"D:\app_dev\ai-matrx-admin",
+            "@": r"/Users/armanisadeghi/code/matrx-local",
         },
     }
 

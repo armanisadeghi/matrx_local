@@ -19,8 +19,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "@/lib/sidecar";
 import supabase from "@/lib/supabase";
 import { streamCompletion } from "@/lib/llm/api";
 
@@ -310,10 +309,13 @@ export function useChat({ engineUrl }: UseChatOptions) {
 
         // Check if llama-server is already running and inject local model
         let serverStatus: { running: boolean; port: number; model_name: string } | null = null;
-        try {
-          serverStatus = await invoke("get_llm_server_status");
-        } catch {
-          // Tauri not available (dev server without native context) — ignore
+        if (isTauri()) {
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            serverStatus = await invoke("get_llm_server_status");
+          } catch {
+            // Tauri invoke unavailable — ignore
+          }
         }
         const merged = mergeLocalModel(mapped, serverStatus);
         setAvailableModels(merged);
@@ -329,35 +331,43 @@ export function useChat({ engineUrl }: UseChatOptions) {
 
   // Listen for llama-server lifecycle events to dynamically add/remove local model
   useEffect(() => {
+    if (!isTauri()) return;
+
     let mounted = true;
     const unlistenPromises: Array<Promise<() => void>> = [];
 
-    unlistenPromises.push(
-      listen<{ running: boolean; port: number; model_name: string }>(
-        "llm-server-ready",
-        (event) => {
-          if (!mounted) return;
-          setAvailableModels((prev) => {
-            const cloud = prev.filter((m) => m.provider !== "local");
-            return mergeLocalModel(cloud, event.payload);
-          });
-        }
-      )
-    );
+    const setup = async () => {
+      const { listen } = await import("@tauri-apps/api/event");
 
-    unlistenPromises.push(
-      listen("llm-server-stopped", () => {
-        if (!mounted) return;
-        setAvailableModels((prev) => prev.filter((m) => m.provider !== "local"));
-        // If a local model was selected, fall back to first cloud model
-        setModel((prev) => {
-          if (prev.startsWith(LOCAL_MODEL_PREFIX)) {
-            return cloudModelsRef.current[0]?.id ?? FALLBACK_MODELS[0].id;
+      unlistenPromises.push(
+        listen<{ running: boolean; port: number; model_name: string }>(
+          "llm-server-ready",
+          (event) => {
+            if (!mounted) return;
+            setAvailableModels((prev) => {
+              const cloud = prev.filter((m) => m.provider !== "local");
+              return mergeLocalModel(cloud, event.payload);
+            });
           }
-          return prev;
-        });
-      })
-    );
+        )
+      );
+
+      unlistenPromises.push(
+        listen("llm-server-stopped", () => {
+          if (!mounted) return;
+          setAvailableModels((prev) => prev.filter((m) => m.provider !== "local"));
+          // If a local model was selected, fall back to first cloud model
+          setModel((prev) => {
+            if (prev.startsWith(LOCAL_MODEL_PREFIX)) {
+              return cloudModelsRef.current[0]?.id ?? FALLBACK_MODELS[0].id;
+            }
+            return prev;
+          });
+        })
+      );
+    };
+
+    setup();
 
     return () => {
       mounted = false;

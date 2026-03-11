@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { isTauri } from "@/lib/sidecar";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   HardwareDetectionResult,
   WhisperSegment,
@@ -8,6 +8,16 @@ import type {
   VoiceSetupStatus,
   AudioDeviceInfo,
 } from "@/lib/transcription/types";
+
+async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd, args);
+}
+
+async function tauriListen<T>(event: string, handler: (e: { payload: T }) => void): Promise<UnlistenFn> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<T>(event, handler);
+}
 
 export interface TranscriptionState {
   // Setup
@@ -83,12 +93,13 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
 
   // Load initial setup status
   useEffect(() => {
-    refreshSetupStatus();
+    if (isTauri()) refreshSetupStatus();
   }, []);
 
   const refreshSetupStatus = useCallback(async () => {
+    if (!isTauri()) return;
     try {
-      const status = await invoke<VoiceSetupStatus>("get_voice_setup_status");
+      const status = await tauriInvoke<VoiceSetupStatus>("get_voice_setup_status");
       setSetupStatus(status);
       if (status.selected_model) {
         setActiveModel(status.selected_model);
@@ -102,7 +113,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     setIsDetecting(true);
     setError(null);
     try {
-      const result = await invoke<HardwareDetectionResult>("detect_hardware");
+      const result = await tauriInvoke<HardwareDetectionResult>("detect_hardware");
       setHardwareResult(result);
       return result;
     } catch (e) {
@@ -119,8 +130,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     setDownloadProgress(null);
     setError(null);
 
-    // Listen for progress events
-    const unlisten = await listen<DownloadProgress>(
+    const unlisten = await tauriListen<DownloadProgress>(
       "whisper-download-progress",
       (event) => {
         setDownloadProgress(event.payload);
@@ -128,7 +138,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     );
 
     try {
-      await invoke("download_whisper_model", { filename });
+      await tauriInvoke("download_whisper_model", { filename });
       setDownloadProgress(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -145,8 +155,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     setDownloadProgress(null);
     setError(null);
 
-    // Register progress listener so VAD download progress flows to state
-    const unlisten = await listen<DownloadProgress>(
+    const unlisten = await tauriListen<DownloadProgress>(
       "whisper-download-progress",
       (event) => {
         setDownloadProgress(event.payload);
@@ -154,7 +163,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     );
 
     try {
-      await invoke("download_vad_model");
+      await tauriInvoke("download_vad_model");
       setDownloadProgress(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -170,7 +179,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     setIsInitializing(true);
     setError(null);
     try {
-      await invoke("init_transcription", { filename });
+      await tauriInvoke("init_transcription", { filename });
       setActiveModel(filename);
       await refreshSetupStatus();
     } catch (e) {
@@ -186,15 +195,14 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     setError(null);
     setSegments([]);
 
-    // Set up event listeners for segments and errors
-    const segmentUnlisten = await listen<WhisperSegment>(
+    const segmentUnlisten = await tauriListen<WhisperSegment>(
       "whisper-segment",
       (event) => {
         setSegments((prev) => [...prev, event.payload]);
       }
     );
 
-    const errorUnlisten = await listen<string>("whisper-error", (event) => {
+    const errorUnlisten = await tauriListen<string>("whisper-error", (event) => {
       setError(event.payload);
       setIsRecording(false);
     });
@@ -202,7 +210,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     unlistenersRef.current.push(segmentUnlisten, errorUnlisten);
 
     try {
-      await invoke("start_transcription");
+      await tauriInvoke("start_transcription");
       setIsRecording(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -214,32 +222,31 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
 
   const stopRecording = useCallback(async () => {
     try {
-      await invoke("stop_transcription");
+      await tauriInvoke("stop_transcription");
     } catch {
       // Ignore — the recording may have already stopped
     }
     setIsRecording(false);
 
-    // Clean up segment/error listeners
     unlistenersRef.current.forEach((fn) => fn());
     unlistenersRef.current = [];
   }, []);
 
   const checkModelExists = useCallback(async (filename: string) => {
-    return invoke<boolean>("check_model_exists", { filename });
+    return tauriInvoke<boolean>("check_model_exists", { filename });
   }, []);
 
   const listDownloadedModels = useCallback(async () => {
-    return invoke<string[]>("list_downloaded_models");
+    return tauriInvoke<string[]>("list_downloaded_models");
   }, []);
 
   const deleteModel = useCallback(async (filename: string) => {
-    await invoke("delete_model", { filename });
+    await tauriInvoke("delete_model", { filename });
     await refreshSetupStatus();
   }, [refreshSetupStatus]);
 
   const listAudioDevices = useCallback(async () => {
-    const devices = await invoke<AudioDeviceInfo[]>("list_audio_input_devices");
+    const devices = await tauriInvoke<AudioDeviceInfo[]>("list_audio_input_devices");
     setAudioDevices(devices);
     return devices;
   }, []);

@@ -46,7 +46,7 @@ import {
   ChevronRight,
   AlertTriangle,
 } from "lucide-react";
-import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { isTauri } from "@/lib/sidecar";
 import type { PermissionKey, PermissionState, PermissionStatus } from "@/hooks/use-permissions";
 import { usePermissions } from "@/hooks/use-permissions";
 
@@ -404,11 +404,14 @@ export function PermissionsModal({
             Permissions are stored by macOS and can be revoked any time in{" "}
             <button
               className="underline underline-offset-2 hover:text-foreground"
-              onClick={() =>
-                openUrl("x-apple.systempreferences:com.apple.preference.security?Privacy")
-                  .then(() => {})
-                  .catch(() => {})
-              }
+              onClick={() => {
+                const url = "x-apple.systempreferences:com.apple.preference.security?Privacy";
+                if (isTauri()) {
+                  import("@tauri-apps/plugin-shell").then(({ open }) => open(url)).catch(() => {});
+                } else {
+                  window.open(url, "_blank");
+                }
+              }}
             >
               System Settings → Privacy & Security
             </button>

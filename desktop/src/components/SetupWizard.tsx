@@ -9,9 +9,8 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-shell";
+import { isTauri } from "@/lib/sidecar";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   CheckCircle2, Circle, Loader2, AlertCircle, ChevronRight,
   Chrome, FolderOpen, Shield, Mic, Cpu, Sparkles, Settings2,
@@ -104,6 +103,8 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
   // ── Load Tauri optional status ─────────────────────────────────────────
 
   const loadTauriStatus = useCallback(async () => {
+    if (!isTauri()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
     try {
       const v = await invoke<VoiceSetupStatus>("get_voice_setup_status");
       setVoiceStatus(v);
@@ -361,6 +362,9 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
     logLine("info", `Starting LLM model download: ${filename}`);
     logLine("cmd", `Parts: ${urls.length} — ${urls[0]}${urls.length > 1 ? ` (+${urls.length - 1} more)` : ""}`);
 
+    const { invoke } = await import("@tauri-apps/api/core");
+    const { listen } = await import("@tauri-apps/api/event");
+
     const unlisten = await listen<LlmDownloadProgress>("llm-download-progress", (event) => {
       const p = event.payload;
       setLlmDownloadProgress(p);
@@ -428,7 +432,12 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
   const openDeepLink = useCallback(async (link: string) => {
     try {
       logLine("cmd", `Opening settings: ${link}`);
-      await open(link);
+      if (isTauri()) {
+        const { open } = await import("@tauri-apps/plugin-shell");
+        await open(link);
+      } else {
+        window.open(link, "_blank");
+      }
     } catch (e) {
       logLine("error", `Could not open settings link: ${e}`);
     }

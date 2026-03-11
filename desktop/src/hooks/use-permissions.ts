@@ -32,22 +32,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  checkAccessibilityPermission,
-  checkCameraPermission,
-  checkFullDiskAccessPermission,
-  checkInputMonitoringPermission,
-  checkMicrophonePermission,
-  checkScreenRecordingPermission,
-  requestAccessibilityPermission,
-  requestCameraPermission,
-  requestFullDiskAccessPermission,
-  requestInputMonitoringPermission,
-  requestMicrophonePermission,
-  requestScreenRecordingPermission,
-} from "tauri-plugin-macos-permissions-api";
-import { open } from "@tauri-apps/plugin-shell";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "@/lib/sidecar";
 import { engine } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -281,19 +266,21 @@ export function usePermissions(): UsePermissionsReturn {
    */
   const checkPluginPermission = useCallback(
     async (key: PermissionKey): Promise<PermissionStatus> => {
+      if (!isTauri()) return "unavailable";
       try {
+        const perms = await import("tauri-plugin-macos-permissions-api");
         let granted: boolean;
         switch (key) {
           case "microphone":
-            granted = await checkMicrophonePermission();
+            granted = await perms.checkMicrophonePermission();
             return granted ? "granted" : "not_determined";
 
           case "camera":
-            granted = await checkCameraPermission();
+            granted = await perms.checkCameraPermission();
             return granted ? "granted" : "not_determined";
 
           case "screen_recording": {
-            granted = await checkScreenRecordingPermission();
+            granted = await perms.checkScreenRecordingPermission();
             if (granted) return "granted";
             // Preflight lied — do a functional cross-check via the engine
             try {
@@ -306,15 +293,15 @@ export function usePermissions(): UsePermissionsReturn {
           }
 
           case "accessibility":
-            granted = await checkAccessibilityPermission();
+            granted = await perms.checkAccessibilityPermission();
             return granted ? "granted" : "not_determined";
 
           case "full_disk_access":
-            granted = await checkFullDiskAccessPermission();
+            granted = await perms.checkFullDiskAccessPermission();
             return granted ? "granted" : "not_determined";
 
           case "input_monitoring":
-            granted = await checkInputMonitoringPermission();
+            granted = await perms.checkInputMonitoringPermission();
             return granted ? "granted" : "not_determined";
 
           default:
@@ -386,8 +373,12 @@ export function usePermissions(): UsePermissionsReturn {
 
   const openSettings = useCallback(async (key: PermissionKey) => {
     const meta = PERMISSION_META[key];
-    if (meta.settingsUrl) {
+    if (!meta.settingsUrl) return;
+    if (isTauri()) {
+      const { open } = await import("@tauri-apps/plugin-shell");
       await open(meta.settingsUrl);
+    } else {
+      window.open(meta.settingsUrl, "_blank");
     }
   }, []);
 
@@ -407,47 +398,55 @@ export function usePermissions(): UsePermissionsReturn {
         // Screen Recording (first-ever): CGRequestScreenCaptureAccess → modal dialog.
         // In all cases the plugin call returns before the user responds,
         // so we wait POST_REQUEST_DELAY_MS before re-checking.
-        try {
-          switch (key) {
-            case "microphone":
-              await requestMicrophonePermission();
-              break;
-            case "camera":
-              await requestCameraPermission();
-              break;
-            case "screen_recording":
-              await requestScreenRecordingPermission();
-              // CGRequestScreenCaptureAccess shows a one-time dialog; on macOS
-              // 12+ if already denied it just opens System Settings instead.
-              // Either way, wait then re-check.
-              break;
+        if (isTauri()) {
+          try {
+            const perms = await import("tauri-plugin-macos-permissions-api");
+            switch (key) {
+              case "microphone":
+                await perms.requestMicrophonePermission();
+                break;
+              case "camera":
+                await perms.requestCameraPermission();
+                break;
+              case "screen_recording":
+                await perms.requestScreenRecordingPermission();
+                // CGRequestScreenCaptureAccess shows a one-time dialog; on macOS
+                // 12+ if already denied it just opens System Settings instead.
+                // Either way, wait then re-check.
+                break;
+            }
+          } catch {
+            // Ignore — will re-check below
           }
-        } catch {
-          // Ignore — will re-check below
+          // Wait for the OS dialog and AVFoundation callback to settle
+          await delay(POST_REQUEST_DELAY_MS);
+          await check(key);
         }
-        // Wait for the OS dialog and AVFoundation callback to settle
-        await delay(POST_REQUEST_DELAY_MS);
-        await check(key);
       } else {
         // Accessibility, Full Disk Access, Input Monitoring:
         // These CANNOT be prompted programmatically — macOS only allows granting
         // them via the System Settings toggle. The plugin's request functions
         // open System Settings to the correct pane.
-        try {
-          switch (key) {
-            case "accessibility":
-              await requestAccessibilityPermission();
-              break;
-            case "full_disk_access":
-              await requestFullDiskAccessPermission();
-              break;
-            case "input_monitoring":
-              await requestInputMonitoringPermission();
-              break;
-            default:
-              await openSettings(key);
+        if (isTauri()) {
+          try {
+            const perms = await import("tauri-plugin-macos-permissions-api");
+            switch (key) {
+              case "accessibility":
+                await perms.requestAccessibilityPermission();
+                break;
+              case "full_disk_access":
+                await perms.requestFullDiskAccessPermission();
+                break;
+              case "input_monitoring":
+                await perms.requestInputMonitoringPermission();
+                break;
+              default:
+                await openSettings(key);
+            }
+          } catch {
+            await openSettings(key);
           }
-        } catch {
+        } else {
           await openSettings(key);
         }
         // Status re-checked via the window focus listener when user returns
@@ -465,17 +464,20 @@ export function usePermissions(): UsePermissionsReturn {
   // ── Re-check when app regains focus (user may have changed Settings) ───────
 
   useEffect(() => {
+    if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
 
-    getCurrentWindow()
-      .onFocusChanged(({ payload: focused }) => {
-        if (focused && checkAllRef.current) {
-          // 600 ms: TCC DB flush + CGPreflightScreenCaptureAccess cache clear
-          setTimeout(() => {
-            checkAllRef.current?.();
-          }, 600);
-        }
-      })
+    import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) =>
+        getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+          if (focused && checkAllRef.current) {
+            // 600 ms: TCC DB flush + CGPreflightScreenCaptureAccess cache clear
+            setTimeout(() => {
+              checkAllRef.current?.();
+            }, 600);
+          }
+        })
+      )
       .then((fn) => {
         unlisten = fn;
       })

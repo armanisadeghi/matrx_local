@@ -7,6 +7,23 @@ _Last updated: 2026-03-11_
 
 ---
 
+# NEW Tasks
+- Significant mumber of required packages are simply missing!!!!!!!
+  - Missing Video recording requires OpenCV (cv2). Install: pip install opencv-python
+  - Screen recording requires ffmpeg. Install: brew install ffmpeg (macOS) or sudo apt install ffmpeg (Linux)
+  - in addition to this, we MUST check for every other potential packagae we need for everything our system is designed to do! It doesn't make sense to have features that dont' have the proper tools and utilities to actualy work!
+- Devices & Permissions (Wifi Networks) - Shows as hidden network. If that's the case, then how are we supposed to interact with it?
+- Devices & Permissions (Connected Devices and/or network) - I know for a fact that this system has a printer connected to it, yet it's no where to be found so how can our application properly interface with the printer if we can't even see it?
+- Devices & Permissions (Location) - It says that permission is needed but here is no button or anything to click and have it request it so we can approve! Clicking 'get location' just gives an error instead of properly requesting permission and updating it.
+- Devices & Permissions (System Resources)
+  - CPU: Shows cpu usage but nothing more abou the cpu or capabilities of it.
+  - RAM: Shows 0.0/0 GB which clearly means we're not properly reading it
+  - Shows 12/3722 GB which makes no sense. I don't know if this means 12GB out of 3,722GB or if it's just garbage data
+
+- Voice Tab:
+  - if I go in and then go to "Transcribe" tab and click the pretty blue icon, it says "Transcription not initialized — call init_transcription first" but if that's the case and the system knows what the problem is, then why isn't it just doing it and telling the user to do it. How am I going to do that as a user???
+
+
 ## 🔴 AGENT PRIORITY QUEUE
 
 > Pick tasks from top to bottom. Each is self-contained.

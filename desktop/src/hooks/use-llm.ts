@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { isTauri } from "@/lib/sidecar";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   LlmHardwareResult,
   LlmServerStatus,
@@ -9,6 +9,16 @@ import type {
   LlmDownloadCancelledEvent,
   DownloadedLlmModel,
 } from "@/lib/llm/types";
+
+async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<T>(cmd, args);
+}
+
+async function tauriListen<T>(event: string, handler: (e: { payload: T }) => void): Promise<UnlistenFn> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<T>(event, handler);
+}
 
 export interface LlmState {
   // Setup
@@ -80,23 +90,25 @@ export function useLlm(): [LlmState, LlmActions] {
 
   // Load initial setup status and listen for server/cancel events
   useEffect(() => {
+    if (!isTauri()) return;
+
     refreshSetupStatus();
 
     let mounted = true;
     const setupListeners = async () => {
-      const unlistenReady = await listen<LlmServerStatus>(
+      const unlistenReady = await tauriListen<LlmServerStatus>(
         "llm-server-ready",
         (event) => {
           if (mounted) setServerStatus(event.payload);
         }
       );
-      const unlistenStopped = await listen("llm-server-stopped", () => {
+      const unlistenStopped = await tauriListen<void>("llm-server-stopped", () => {
         if (mounted)
           setServerStatus((prev) =>
             prev ? { ...prev, running: false, port: 0 } : null
           );
       });
-      const unlistenCancelled = await listen<LlmDownloadCancelledEvent>(
+      const unlistenCancelled = await tauriListen<LlmDownloadCancelledEvent>(
         "llm-download-cancelled",
         () => {
           if (mounted) {
@@ -116,8 +128,9 @@ export function useLlm(): [LlmState, LlmActions] {
   }, []);
 
   const refreshSetupStatus = useCallback(async () => {
+    if (!isTauri()) return;
     try {
-      const status = await invoke<LlmSetupStatus>("get_llm_setup_status");
+      const status = await tauriInvoke<LlmSetupStatus>("get_llm_setup_status");
       setSetupStatus(status);
       if (status.server_running) {
         setServerStatus({
@@ -129,7 +142,7 @@ export function useLlm(): [LlmState, LlmActions] {
           context_length: 0,
         });
       }
-      const models = await invoke<DownloadedLlmModel[]>("list_llm_models");
+      const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
       setDownloadedModels(models);
     } catch {
       // Not critical — LLM features may not be available
@@ -140,7 +153,7 @@ export function useLlm(): [LlmState, LlmActions] {
     setIsDetecting(true);
     setError(null);
     try {
-      const result = await invoke<LlmHardwareResult>("detect_llm_hardware");
+      const result = await tauriInvoke<LlmHardwareResult>("detect_llm_hardware");
       setHardwareResult(result);
       return result;
     } catch (e) {
@@ -159,7 +172,7 @@ export function useLlm(): [LlmState, LlmActions] {
       setDownloadCancelled(false);
       setError(null);
 
-      const unlisten = await listen<LlmDownloadProgress>(
+      const unlisten = await tauriListen<LlmDownloadProgress>(
         "llm-download-progress",
         (event) => {
           setDownloadProgress(event.payload);
@@ -167,9 +180,9 @@ export function useLlm(): [LlmState, LlmActions] {
       );
 
       try {
-        await invoke("download_llm_model", { filename, urls });
+        await tauriInvoke("download_llm_model", { filename, urls });
         setDownloadProgress(null);
-        const models = await invoke<DownloadedLlmModel[]>("list_llm_models");
+        const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
         setDownloadedModels(models);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -187,7 +200,7 @@ export function useLlm(): [LlmState, LlmActions] {
 
   const cancelDownload = useCallback(async () => {
     try {
-      await invoke("cancel_llm_download");
+      await tauriInvoke("cancel_llm_download");
     } catch {
       // Ignore errors — the flag is set regardless
     }
@@ -202,7 +215,7 @@ export function useLlm(): [LlmState, LlmActions] {
       setIsStarting(true);
       setError(null);
       try {
-        const status = await invoke<LlmServerStatus>("start_llm_server", {
+        const status = await tauriInvoke<LlmServerStatus>("start_llm_server", {
           modelFilename,
           gpuLayers,
           contextLength,
@@ -223,7 +236,7 @@ export function useLlm(): [LlmState, LlmActions] {
   const stopServer = useCallback(async () => {
     setError(null);
     try {
-      await invoke("stop_llm_server");
+      await tauriInvoke("stop_llm_server");
       setServerStatus((prev) =>
         prev ? { ...prev, running: false, port: 0 } : null
       );
@@ -234,13 +247,13 @@ export function useLlm(): [LlmState, LlmActions] {
   }, []);
 
   const getServerStatus = useCallback(async () => {
-    const status = await invoke<LlmServerStatus>("get_llm_server_status");
+    const status = await tauriInvoke<LlmServerStatus>("get_llm_server_status");
     setServerStatus(status);
     return status;
   }, []);
 
   const healthCheck = useCallback(async () => {
-    return invoke<boolean>("check_llm_server_health");
+    return tauriInvoke<boolean>("check_llm_server_health");
   }, []);
 
   const checkModelExists = useCallback((filename: string): boolean => {
@@ -249,7 +262,7 @@ export function useLlm(): [LlmState, LlmActions] {
   }, [downloadedModels]);
 
   const listModels = useCallback(async () => {
-    const models = await invoke<DownloadedLlmModel[]>("list_llm_models");
+    const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
     setDownloadedModels(models);
     return models;
   }, []);
@@ -258,8 +271,8 @@ export function useLlm(): [LlmState, LlmActions] {
     async (filename: string) => {
       setError(null);
       try {
-        await invoke("delete_llm_model", { filename });
-        const models = await invoke<DownloadedLlmModel[]>("list_llm_models");
+        await tauriInvoke("delete_llm_model", { filename });
+        const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
         setDownloadedModels(models);
         await refreshSetupStatus();
       } catch (e) {

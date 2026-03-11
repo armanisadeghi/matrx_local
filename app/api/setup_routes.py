@@ -72,23 +72,34 @@ def _browsers_path() -> str:
     )
 
 
+def _check_playwright_package() -> bool:
+    """Return True if the playwright Python package is importable."""
+    try:
+        __import__("playwright")
+        return True
+    except ImportError:
+        return False
+
+
 def _check_playwright_browsers() -> ComponentStatus:
-    """Check if Playwright browser binaries (Chromium at minimum) are installed."""
+    """Check that BOTH the Playwright Python package AND Chromium binary are present."""
+    has_package = _check_playwright_package()
+
     browsers_path = _browsers_path()
     markers = ("chromium-", "chromium_headless_shell-")
-    found = False
+    browser_found = False
     version = None
 
     if os.path.isdir(browsers_path):
         for entry in os.listdir(browsers_path):
             if any(entry.startswith(m) for m in markers):
-                found = True
+                browser_found = True
                 parts = entry.split("-", 1)
                 if len(parts) == 2:
                     version = parts[1]
                 break
 
-    if found:
+    if has_package and browser_found:
         detail = f"Chromium {version}" if version else "Chromium installed"
         return ComponentStatus(
             id="browser_engine",
@@ -97,12 +108,20 @@ def _check_playwright_browsers() -> ComponentStatus:
             status="ready",
             detail=detail,
         )
+
+    if not has_package and not browser_found:
+        detail = "Playwright package and Chromium not found — will be installed automatically"
+    elif not has_package:
+        detail = "Playwright package not installed — will be installed automatically"
+    else:
+        detail = "Chromium binary not found — will be downloaded automatically"
+
     return ComponentStatus(
         id="browser_engine",
         label="Browser Engine",
         description="Chromium browser for web automation, scraping, and remote browser control",
         status="not_ready",
-        detail="Chromium not found — will be downloaded automatically",
+        detail=detail,
         size_hint="~280 MB",
     )
 
@@ -372,15 +391,55 @@ def _build_playwright_cmd() -> list[str]:
 
 
 async def _install_playwright_browsers(browsers_path: str):
-    """Install Playwright Chromium browser, yielding SSE progress events."""
+    """Install Playwright Python package (if missing) then Chromium binary, yielding SSE events."""
     os.makedirs(browsers_path, exist_ok=True)
 
     yield await _sse_event("progress", {
         "component": "browser_engine",
         "status": "installing",
-        "message": "Preparing Chromium download...",
+        "message": "Preparing browser engine installation...",
         "percent": 0,
     })
+
+    # Step 1: Install the playwright Python package if it isn't importable yet.
+    if not _check_playwright_package():
+        yield await _sse_event("progress", {
+            "component": "browser_engine",
+            "status": "installing",
+            "message": "Installing Playwright Python package...",
+            "percent": 5,
+        })
+        try:
+            pkg_proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "pip", "install", "playwright",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            pkg_out, _ = await pkg_proc.communicate()
+            if pkg_proc.returncode != 0:
+                out_text = pkg_out.decode("utf-8", errors="replace").strip() if pkg_out else "(no output)"
+                yield await _sse_event("progress", {
+                    "component": "browser_engine",
+                    "status": "error",
+                    "message": f"Failed to install Playwright package: {out_text[-500:]}",
+                    "percent": 0,
+                })
+                return
+        except Exception as e:
+            yield await _sse_event("progress", {
+                "component": "browser_engine",
+                "status": "error",
+                "message": f"Could not run pip install playwright: {e}",
+                "percent": 0,
+            })
+            return
+
+        yield await _sse_event("progress", {
+            "component": "browser_engine",
+            "status": "installing",
+            "message": "Playwright package installed — downloading Chromium...",
+            "percent": 15,
+        })
 
     try:
         cmd = _build_playwright_cmd()
@@ -397,7 +456,7 @@ async def _install_playwright_browsers(browsers_path: str):
         "component": "browser_engine",
         "status": "installing",
         "message": f"Running: {' '.join(cmd[:3])} ... install chromium",
-        "percent": 5,
+        "percent": 20,
     })
 
     env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": browsers_path}
@@ -429,9 +488,9 @@ async def _install_playwright_browsers(browsers_path: str):
             text = line.decode("utf-8", errors="replace").strip()
             if text:
                 output_lines.append(text)
-                percent = 10
+                percent = 25
                 if "downloading" in text.lower():
-                    percent = 30
+                    percent = 40
                 if "%" in text:
                     m = _re.search(r"(\d+)%", text)
                     if m:
