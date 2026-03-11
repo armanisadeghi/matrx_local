@@ -28,7 +28,8 @@ export interface LlmState {
 
 export interface LlmActions {
   detectHardware: () => Promise<LlmHardwareResult>;
-  downloadModel: (filename: string, url: string) => Promise<void>;
+  /** Pass all part URLs in order. Single-file models have one URL; split models have multiple. */
+  downloadModel: (filename: string, urls: string[]) => Promise<void>;
   startServer: (
     modelFilename: string,
     gpuLayers: number,
@@ -138,33 +139,35 @@ export function useLlm(): [LlmState, LlmActions] {
     }
   }, []);
 
-  const downloadModel = useCallback(async (filename: string, url: string) => {
-    setIsDownloading(true);
-    setDownloadProgress(null);
-    setError(null);
-
-    const unlisten = await listen<LlmDownloadProgress>(
-      "llm-download-progress",
-      (event) => {
-        setDownloadProgress(event.payload);
-      }
-    );
-
-    try {
-      await invoke("download_llm_model", { filename, url });
+  const downloadModel = useCallback(
+    async (filename: string, urls: string[]) => {
+      setIsDownloading(true);
       setDownloadProgress(null);
-      // Refresh models list
-      const models = await invoke<DownloadedLlmModel[]>("list_llm_models");
-      setDownloadedModels(models);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      throw e;
-    } finally {
-      unlisten();
-      setIsDownloading(false);
-    }
-  }, []);
+      setError(null);
+
+      const unlisten = await listen<LlmDownloadProgress>(
+        "llm-download-progress",
+        (event) => {
+          setDownloadProgress(event.payload);
+        }
+      );
+
+      try {
+        await invoke("download_llm_model", { filename, urls });
+        setDownloadProgress(null);
+        const models = await invoke<DownloadedLlmModel[]>("list_llm_models");
+        setDownloadedModels(models);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        throw e;
+      } finally {
+        unlisten();
+        setIsDownloading(false);
+      }
+    },
+    []
+  );
 
   const startServer = useCallback(
     async (
@@ -253,7 +256,6 @@ export function useLlm(): [LlmState, LlmActions] {
 
       const exists = await checkModelExists(hw.recommended_filename);
       if (!exists) {
-        // Find the model info to get download URL
         const modelInfo = hw.all_models.find(
           (m) => m.filename === hw.recommended_filename
         );
@@ -262,7 +264,10 @@ export function useLlm(): [LlmState, LlmActions] {
             `Model info not found for ${hw.recommended_filename}`
           );
         }
-        await downloadModel(hw.recommended_filename, modelInfo.hf_url);
+        await downloadModel(
+          hw.recommended_filename,
+          modelInfo.all_part_urls
+        );
       }
 
       await startServer(

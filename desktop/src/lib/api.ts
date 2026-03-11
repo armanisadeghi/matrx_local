@@ -88,6 +88,25 @@ export interface SystemInfo {
   home_dir: string;
 }
 
+/**
+ * Thrown by invokeToolGuarded() when a required macOS permission is not granted.
+ * The UI layer catches this and shows the PermissionsModal or PermissionDeniedBanner.
+ */
+export class PermissionRequiredError extends Error {
+  constructor(
+    public readonly permissionKey: string,
+    public readonly permissionLabel: string,
+    public readonly permissionDescription: string,
+    public readonly tool: string,
+  ) {
+    super(
+      `"${tool}" requires ${permissionLabel} access. ` +
+        `Go to System Settings → Privacy & Security to grant it.`,
+    );
+    this.name = "PermissionRequiredError";
+  }
+}
+
 class EngineAPI {
   private baseUrl: string | null = null;
   private wsUrl: string | null = null;
@@ -239,6 +258,93 @@ class EngineAPI {
     });
     if (!resp.ok) throw new Error(`Tool invocation failed: ${resp.status}`);
     return resp.json();
+  }
+
+  /**
+   * Maps tool names to the macOS permission keys they require.
+   * Used by invokeToolGuarded() to perform pre-flight checks.
+   */
+  static readonly TOOL_PERMISSION_REQUIREMENTS: Readonly<Record<string, ReadonlyArray<string>>> = {
+    // Audio
+    RecordAudio: ["microphone"],
+    TranscribeAudio: ["microphone"],
+    ListAudioDevices: ["microphone"],
+    PlayAudio: ["microphone"],
+    // Screen
+    Screenshot: ["screen_recording"],
+    BrowserScreenshot: ["screen_recording"],
+    // Keyboard / mouse automation
+    TypeText: ["accessibility"],
+    Hotkey: ["accessibility"],
+    MouseClick: ["accessibility"],
+    MouseMove: ["accessibility"],
+    // Window management
+    ListWindows: ["accessibility"],
+    FocusWindow: ["accessibility"],
+    MoveWindow: ["accessibility"],
+    MinimizeWindow: ["accessibility"],
+    // App automation
+    LaunchApp: ["accessibility"],
+    FocusApp: ["accessibility"],
+    KillProcess: ["accessibility"],
+    // AppleScript — requires both accessibility and Apple Events
+    AppleScript: ["accessibility", "automation"],
+    PowerShellScript: ["automation"],
+    // File system (Full Disk Access for paths outside app sandbox)
+    ReadFile: ["full_disk_access"],
+    WriteFile: ["full_disk_access"],
+    DeleteFile: ["full_disk_access"],
+    ListDirectory: ["full_disk_access"],
+    SearchFiles: ["full_disk_access"],
+    WatchDirectory: ["full_disk_access"],
+    // Personal data
+    SearchContacts: ["contacts"],
+    GetContact: ["contacts"],
+    ListEvents: ["calendar"],
+    CreateEvent: ["calendar"],
+    SearchPhotos: ["photos"],
+    GetPhoto: ["photos"],
+    // Bluetooth / local network
+    BluetoothDevices: ["bluetooth"],
+    ConnectedDevices: ["bluetooth", "local_network"],
+    WifiNetworks: ["local_network"],
+    NetworkScan: ["local_network"],
+    MDNSDiscover: ["local_network"],
+    // Location
+    GetLocation: ["location"],
+    // Input monitoring
+    MonitorInput: ["input_monitoring"],
+  } as const;
+
+  /**
+   * Invoke a tool with pre-flight permission checking.
+   *
+   * If the required permission is already granted (or unknown), proceeds normally.
+   * If a required permission is denied or not_determined, throws a
+   * PermissionRequiredError instead of calling the engine.
+   *
+   * The caller (UI layer) should catch PermissionRequiredError and display the
+   * PermissionsModal or PermissionDeniedBanner.
+   *
+   * @param tool - Tool name matching TOOL_PERMISSION_REQUIREMENTS keys
+   * @param input - Tool parameters
+   * @param permissionSnapshot - Current permission states from usePermissions hook
+   */
+  async invokeToolGuarded(
+    tool: string,
+    input: Record<string, unknown>,
+    permissionSnapshot: Map<string, { status: string; label: string; description: string }>,
+  ): Promise<ToolResult> {
+    const required = EngineAPI.TOOL_PERMISSION_REQUIREMENTS[tool];
+    if (required) {
+      for (const key of required) {
+        const state = permissionSnapshot.get(key);
+        if (state && state.status !== "granted" && state.status !== "unknown") {
+          throw new PermissionRequiredError(key, state.label, state.description, tool);
+        }
+      }
+    }
+    return this.invokeTool(tool, input);
   }
 
   /** Connect via WebSocket for persistent, stateful sessions. */

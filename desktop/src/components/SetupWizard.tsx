@@ -16,7 +16,7 @@ import {
   CheckCircle2, Circle, Loader2, AlertCircle, ChevronRight,
   Chrome, FolderOpen, Shield, Mic, Cpu, Sparkles, Settings2,
   Download, Play, RotateCcw, ChevronDown, ChevronUp, X,
-  ExternalLink, BrainCircuit, AlertTriangle,
+  ExternalLink, BrainCircuit, AlertTriangle, ShieldCheck,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,8 @@ import { engine } from "@/lib/api";
 import type {
   SetupStatus, SetupComponentStatus, SetupProgressEvent, SetupCompleteEvent,
 } from "@/lib/api";
+import { PermissionsModal } from "@/components/PermissionsModal";
+import { usePermissions } from "@/hooks/use-permissions";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { VoiceSetupStatus } from "@/lib/transcription/types";
 import type { LlmSetupStatus, LlmHardwareResult, LlmDownloadProgress } from "@/lib/llm/types";
@@ -48,8 +50,6 @@ const COMPONENT_ICONS: Record<string, React.ReactNode> = {
 
 // Components that must be "ready" for setup to be considered complete
 const BLOCKING_IDS = new Set(["core_packages", "browser_engine", "storage_dirs"]);
-// Components that are advisory only (show warning style, never block)
-const ADVISORY_IDS = new Set(["permissions"]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,10 +93,13 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
   const [isDownloadingModel, setIsDownloadingModel] = useState(false);
   const [isDownloadingTranscription, setIsDownloadingTranscription] = useState(false);
 
+  const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
+
   const abortRef = useRef<AbortController | null>(null);
   const llmUnlistenRef = useRef<UnlistenFn | null>(null);
 
   const { logs, logLine, logData, clearLogs } = useDebugTerminal();
+  const { permissions: permissionStates } = usePermissions();
 
   // ── Load Tauri optional status ─────────────────────────────────────────
 
@@ -487,9 +490,6 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
   const requiredComponents = effectiveComponents.filter(
     (c) => BLOCKING_IDS.has(c.id)
   );
-  const advisoryComponents = effectiveComponents.filter(
-    (c) => ADVISORY_IDS.has(c.id)
-  );
   const optionalComponents = [
     ...effectiveComponents.filter((c) => c.optional),
     ...(llmComponent ? [llmComponent] : []),
@@ -611,32 +611,47 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
             </div>
           )}
 
-          {/* ── Advisory: Permissions ──────────────────────────── */}
-          {phase !== "checking" && advisoryComponents.length > 0 && (
+          {/* ── Permissions ────────────────────────────────────── */}
+          {phase !== "checking" && (
             <div className="space-y-1">
               <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide px-1 mb-1">
                 Permissions
               </p>
-              {advisoryComponents.map((comp) => {
-                const p = progress[comp.id];
-                const deepLink = p?.deep_link || comp.deep_link;
-                return (
-                  <div key={comp.id} className="space-y-1">
-                    <ComponentRow
-                      component={comp}
-                      progress={p}
-                      onOpenSettings={deepLink ? () => openDeepLink(deepLink) : undefined}
-                    />
-                  </div>
-                );
-              })}
-              <p className="text-[11px] text-muted-foreground/60 px-3 pt-1">
-                Permission checks run against the background engine process — some may show
-                as ungranted even when the app has access. Click "Open System Settings" to
-                verify or grant permissions.
-              </p>
+              <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-3 py-2.5">
+                <div className="flex items-center gap-2.5 text-sm">
+                  <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                  <span>
+                    {(() => {
+                      const granted = Array.from(permissionStates.values()).filter(
+                        (s) => s.status === "granted",
+                      ).length;
+                      const total = Array.from(permissionStates.values()).filter(
+                        (s) => s.status !== "unavailable" && s.status !== "loading",
+                      ).length;
+                      if (total === 0) return "Checking permissions…";
+                      return granted === total
+                        ? `All ${total} permissions granted`
+                        : `${granted} of ${total} permissions granted`;
+                    })()}
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={() => setPermissionsModalOpen(true)}
+                >
+                  <Shield className="h-3 w-3" />
+                  Review & Grant
+                </Button>
+              </div>
             </div>
           )}
+
+          <PermissionsModal
+            open={permissionsModalOpen}
+            onOpenChange={setPermissionsModalOpen}
+          />
 
           {/* ── Action buttons ─────────────────────────────────── */}
           {phase === "ready" && setupStatus && (

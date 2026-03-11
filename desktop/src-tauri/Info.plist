@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Info.plist for AI Matrx Desktop (Tauri merges this into the generated bundle).
+
+    All NS*UsageDescription values are shown to the user in the macOS permission
+    dialog. They must be specific and honest about what the app does with the data.
+    Apple's review guidelines require these descriptions for any app that accesses
+    the corresponding protected resource — even outside the App Store.
+-->
+<plist version="1.0">
+<dict>
+    <!-- ── Microphone ─────────────────────────────────────────────────────── -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>AI Matrx uses your microphone to record audio, transcribe speech locally using Whisper, and to invoke audio-related AI tools. Audio is processed on-device and never uploaded without your explicit action.</string>
+
+    <!-- ── Camera ─────────────────────────────────────────────────────────── -->
+    <key>NSCameraUsageDescription</key>
+    <string>AI Matrx can use your camera to capture images for AI vision tools and document scanning. Captured images are processed locally and are not transmitted externally unless you explicitly invoke a cloud AI tool.</string>
+
+    <!-- ── Screen Recording ───────────────────────────────────────────────── -->
+    <!-- macOS 10.15+: required for CGWindowListCreateImage / screencapture -->
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>AI Matrx uses screen recording to capture screenshots for the Screenshot tool and to enable AI-assisted automation workflows. Captured content is only used when you invoke a screenshot or automation tool.</string>
+
+    <!-- ── Contacts ────────────────────────────────────────────────────────── -->
+    <key>NSContactsUsageDescription</key>
+    <string>AI Matrx can read your contacts when you use contact-related AI tools. Contact data is processed locally and is not sent to external servers unless you explicitly invoke a cloud AI tool.</string>
+
+    <!-- ── Calendar ────────────────────────────────────────────────────────── -->
+    <key>NSCalendarsUsageDescription</key>
+    <string>AI Matrx can read and create calendar events when you use calendar AI tools. Calendar data is processed locally and is not sent to external servers unless you explicitly invoke a cloud AI tool.</string>
+
+    <!-- ── Reminders ───────────────────────────────────────────────────────── -->
+    <key>NSRemindersUsageDescription</key>
+    <string>AI Matrx can read and create reminders when you use reminder AI tools. Data is processed locally and is not sent externally unless you explicitly invoke a cloud AI tool.</string>
+
+    <!-- ── Photos ──────────────────────────────────────────────────────────── -->
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>AI Matrx can access your photo library when you use image AI tools. Photos are processed locally and are not uploaded unless you explicitly invoke a cloud AI tool.</string>
+
+    <!-- ── Location ────────────────────────────────────────────────────────── -->
+    <key>NSLocationUsageDescription</key>
+    <string>AI Matrx can access your location when you use location-aware AI tools. Location data is only used for the tool you explicitly invoke and is not stored or transmitted without your consent.</string>
+
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>AI Matrx accesses your location only while the app is in the foreground and only when you invoke a location tool.</string>
+
+    <!-- ── Bluetooth ────────────────────────────────────────────────────────── -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>AI Matrx uses Bluetooth to discover nearby devices and report connected Bluetooth hardware when you use the Bluetooth discovery tools.</string>
+
+    <!-- ── Local Network ────────────────────────────────────────────────────── -->
+    <!-- macOS 14+ Bonjour / mDNS browsing triggers this prompt -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>AI Matrx browses your local network to discover devices and services when you use network discovery AI tools.</string>
+
+    <!-- ── Speech Recognition ───────────────────────────────────────────────── -->
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>AI Matrx can use Apple's speech recognition for voice-to-text when the local Whisper model is not available.</string>
+
+    <!-- ── Siri ─────────────────────────────────────────────────────────────── -->
+    <key>NSSiriUsageDescription</key>
+    <string>AI Matrx can integrate with Siri to enable voice-activated AI tool invocation.</string>
+
+    <!-- ── Apple Events / Automation ─────────────────────────────────────────── -->
+    <!-- Required for osascript-based keyboard, window, and app automation tools -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>AI Matrx sends Apple Events to other applications to automate keyboard input, window management, and UI interactions when you invoke automation AI tools.</string>
+</dict>
+</plist>

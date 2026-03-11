@@ -1,6 +1,6 @@
 # Matrx Local -- Task Tracker
 
-_Last updated: 2026-03-05_
+_Last updated: 2026-03-11_
 
 > Living document. Every discovered bug, missing feature, or architectural issue gets logged here immediately.
 > Check items off as they're resolved. Move completed items to the History section at the bottom.
@@ -20,6 +20,7 @@ _Last updated: 2026-03-05_
 - [x] **Tauri config updated** — `binaries/llama-server` added to `externalBin`, `shell:allow-kill` permission added.
 - [x] **Sidebar entry added** — "Local Models" with BrainCircuit icon at `/local-models`.
 - [ ] **llama-server binaries not yet bundled** — Need to download pre-built binaries from llama.cpp releases and place in `src-tauri/binaries/` with Tauri triple naming convention (`llama-server-aarch64-apple-darwin`, `llama-server-x86_64-pc-windows-msvc.exe`, `llama-server-x86_64-unknown-linux-gnu`). See ARMAN_TASKS.
+- [x] **Model download URLs fixed (2026-03-11)** — All 5 model URLs and filenames verified against live HuggingFace API + HEAD requests. Fixed: (1) `Phi-4-mini` repo didn't exist publicly — now uses `bartowski/microsoft_Phi-4-mini-instruct-GGUF` with correct filename `microsoft_Phi-4-mini-instruct-Q4_K_M.gguf`; (2) `Qwen2.5-14B` Q4_K_M single-file URL never existed — now downloads 3 split parts and concatenates them; (3) `Mistral-Small-3.1-24B` `bartowski` repo requires auth — now uses `lmstudio-community` (public, single file). Download command signature changed from `url: String` to `urls: Vec<String>` supporting both single and split models.
 - [ ] **CDN mirror not set up** — GGUF models download directly from HuggingFace. Mirror to `assets.aimatrx.com` before production shipping.
 - [ ] **Cloud capability exposure** — System info and available models should be synced to Supabase so the web app knows each device's local LLM capabilities.
 

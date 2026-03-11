@@ -92,13 +92,23 @@ pub fn check_llm_model_exists(app: AppHandle, filename: String) -> bool {
 }
 
 /// Download an LLM model from HuggingFace with progress events.
-/// Emits "llm-download-progress" events with { filename, bytes_downloaded, total_bytes, percent }.
+///
+/// For single-file models, pass `urls` with a single entry.
+/// For split models (e.g. Qwen2.5-14B), pass all part URLs in order — they will be
+/// downloaded sequentially and concatenated into a single `filename` file.
+///
+/// Emits "llm-download-progress" events:
+///   { filename, part, total_parts, bytes_downloaded, total_bytes, overall_percent }
 #[tauri::command]
 pub async fn download_llm_model(
     app: AppHandle,
     filename: String,
-    url: String,
+    urls: Vec<String>,
 ) -> Result<String, String> {
+    if urls.is_empty() {
+        return Err("No download URLs provided".to_string());
+    }
+
     let dest_dir = app
         .path()
         .app_data_dir()
@@ -116,37 +126,123 @@ pub async fn download_llm_model(
     }
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3600))
+        .timeout(std::time::Duration::from_secs(7200))
         .build()
         .map_err(|e| e.to_string())?;
 
-    // Retry up to 3 times with exponential backoff
-    let mut last_error = String::new();
-    for attempt in 0..3u32 {
-        if attempt > 0 {
-            let delay = std::time::Duration::from_secs(2u64.pow(attempt));
-            tokio::time::sleep(delay).await;
-        }
+    let total_parts = urls.len();
 
-        match try_download_llm(&client, &url, &dest_path, &filename, &app).await {
-            Ok(_) => {
-                if is_valid_gguf(&dest_path) {
-                    return Ok(dest_path.to_string_lossy().to_string());
-                }
-                last_error = "Downloaded file failed GGUF validation".to_string();
-                let _ = tokio::fs::remove_file(&dest_path).await;
+    if total_parts == 1 {
+        // Single-file: simple download with retry
+        let url = &urls[0];
+        let mut last_error = String::new();
+        for attempt in 0..3u32 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
             }
-            Err(e) => {
-                last_error = format!("Attempt {}: {}", attempt + 1, e);
-                let _ = tokio::fs::remove_file(&dest_path).await;
+            match try_download_part(&client, url, &dest_path, &filename, 1, 1, 0, 0, &app).await {
+                Ok(_) => {
+                    if is_valid_gguf(&dest_path) {
+                        return Ok(dest_path.to_string_lossy().to_string());
+                    }
+                    last_error = "Downloaded file failed GGUF validation".to_string();
+                    let _ = tokio::fs::remove_file(&dest_path).await;
+                }
+                Err(e) => {
+                    last_error = format!("Attempt {}: {}", attempt + 1, e);
+                    let _ = tokio::fs::remove_file(&dest_path).await;
+                }
             }
         }
+        return Err(format!(
+            "Download failed after 3 attempts. Last error: {}",
+            last_error
+        ));
     }
 
-    Err(format!(
-        "Download failed after 3 attempts. Last error: {}",
-        last_error
-    ))
+    // Multi-part: probe total sizes first for accurate overall progress
+    let mut part_sizes: Vec<u64> = Vec::with_capacity(total_parts);
+    for url in &urls {
+        let size = probe_content_length(&client, url).await.unwrap_or(0);
+        part_sizes.push(size);
+    }
+    let grand_total: u64 = part_sizes.iter().sum();
+
+    // Download each part into a temp file, then append to the final dest
+    // Clean up any previous partial assembly
+    let _ = tokio::fs::remove_file(&dest_path).await;
+
+    let mut bytes_before_this_part: u64 = 0;
+    for (i, url) in urls.iter().enumerate() {
+        let part_num = i + 1;
+        let part_filename = format!("{}.part{}", filename, part_num);
+        let part_path = dest_dir.join(&part_filename);
+
+        let mut last_error = String::new();
+        let mut success = false;
+
+        for attempt in 0..3u32 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
+            }
+            // Clean up any leftover partial part file
+            let _ = tokio::fs::remove_file(&part_path).await;
+
+            match try_download_part(
+                &client,
+                url,
+                &part_path,
+                &filename,
+                part_num,
+                total_parts,
+                bytes_before_this_part,
+                grand_total,
+                &app,
+            )
+            .await
+            {
+                Ok(_) => {
+                    success = true;
+                    break;
+                }
+                Err(e) => {
+                    last_error = format!("Part {} attempt {}: {}", part_num, attempt + 1, e);
+                    let _ = tokio::fs::remove_file(&part_path).await;
+                }
+            }
+        }
+
+        if !success {
+            // Clean up any already-assembled output
+            let _ = tokio::fs::remove_file(&dest_path).await;
+            return Err(format!(
+                "Failed to download part {}/{}: {}",
+                part_num, total_parts, last_error
+            ));
+        }
+
+        // Append this part to the final destination file
+        append_file(&part_path, &dest_path)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to append part {} to output file: {}",
+                    part_num, e
+                )
+            })?;
+
+        // Remove the temp part file immediately to free disk space
+        let _ = tokio::fs::remove_file(&part_path).await;
+
+        bytes_before_this_part += part_sizes[i];
+    }
+
+    if is_valid_gguf(&dest_path) {
+        Ok(dest_path.to_string_lossy().to_string())
+    } else {
+        let _ = tokio::fs::remove_file(&dest_path).await;
+        Err("Assembly complete but final file failed GGUF validation".to_string())
+    }
 }
 
 /// List all downloaded LLM models (GGUF files) in the models directory.
@@ -245,6 +341,9 @@ pub async fn detect_llm_hardware() -> Result<serde_json::Value, String> {
                 "speed": m.speed,
                 "description": m.description,
                 "hf_url": m.hf_url,
+                "hf_parts": m.hf_parts,
+                "is_split": m.is_split(),
+                "all_part_urls": m.all_part_urls(),
                 "context_length": m.context_length,
             })
         })
@@ -334,24 +433,60 @@ fn extract_stem(filename: &str) -> String {
         .to_string()
 }
 
-async fn try_download_llm(
+/// Probe the content-length of a URL without downloading it.
+/// Uses HEAD first; falls back to GET with immediate abort on redirect.
+async fn probe_content_length(client: &reqwest::Client, url: &str) -> Option<u64> {
+    // HuggingFace returns x-linked-size for LFS files via HEAD
+    let resp = client
+        .head(url)
+        .header("User-Agent", "matrx-local/1.0")
+        .send()
+        .await
+        .ok()?;
+    // Try standard Content-Length first
+    if let Some(len) = resp.content_length() {
+        if len > 0 {
+            return Some(len);
+        }
+    }
+    // HuggingFace puts the real LFS size in x-linked-size
+    resp.headers()
+        .get("x-linked-size")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+}
+
+/// Download a single URL into `dest`, emitting progress events that include
+/// part position and overall bytes for multi-part downloads.
+#[allow(clippy::too_many_arguments)]
+async fn try_download_part(
     client: &reqwest::Client,
     url: &str,
     dest: &std::path::Path,
     filename: &str,
+    part: usize,
+    total_parts: usize,
+    bytes_before: u64,
+    grand_total: u64,
     app: &AppHandle,
 ) -> Result<(), String> {
     use futures_util::StreamExt;
     use tokio::io::AsyncWriteExt;
 
-    let response = client.get(url).send().await.map_err(|e| e.to_string())?;
+    let response = client
+        .get(url)
+        .header("User-Agent", "matrx-local/1.0")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
 
     if !response.status().is_success() {
-        return Err(format!("HTTP {}", response.status()));
+        return Err(format!("HTTP {} for {}", response.status(), url));
     }
 
-    let total = response.content_length().unwrap_or(0);
-    let mut downloaded: u64 = 0;
+    let part_total = response.content_length().unwrap_or(0);
+    let mut part_downloaded: u64 = 0;
+
     let mut file = tokio::fs::File::create(dest)
         .await
         .map_err(|e| e.to_string())?;
@@ -360,24 +495,56 @@ async fn try_download_llm(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| e.to_string())?;
         file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as u64;
+        part_downloaded += chunk.len() as u64;
+
+        let overall_downloaded = bytes_before + part_downloaded;
+        let overall_percent = if grand_total > 0 {
+            (overall_downloaded as f64 / grand_total as f64) * 100.0
+        } else if part_total > 0 {
+            (part_downloaded as f64 / part_total as f64) * 100.0
+        } else {
+            0.0
+        };
 
         let _ = app.emit(
             "llm-download-progress",
             serde_json::json!({
                 "filename": filename,
-                "bytes_downloaded": downloaded,
-                "total_bytes": total,
-                "percent": if total > 0 {
-                    (downloaded as f32 / total as f32) * 100.0
-                } else {
-                    0.0
-                },
+                "part": part,
+                "total_parts": total_parts,
+                "part_bytes_downloaded": part_downloaded,
+                "part_total_bytes": part_total,
+                "bytes_downloaded": overall_downloaded,
+                "total_bytes": grand_total,
+                "percent": overall_percent,
             }),
         );
     }
 
     file.flush().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Append the contents of `src` to `dest` (creating `dest` if it doesn't exist).
+async fn append_file(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut src_file = tokio::fs::File::open(src)
+        .await
+        .map_err(|e| format!("open src: {}", e))?;
+
+    let mut dest_file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dest)
+        .await
+        .map_err(|e| format!("open dest: {}", e))?;
+
+    tokio::io::copy(&mut src_file, &mut dest_file)
+        .await
+        .map_err(|e| format!("copy: {}", e))?;
+
+    dest_file.flush().await.map_err(|e| format!("flush: {}", e))?;
     Ok(())
 }
 

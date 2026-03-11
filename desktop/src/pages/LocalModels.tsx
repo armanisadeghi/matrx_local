@@ -73,12 +73,12 @@ export function LocalModels() {
     }
   }, [actions, logLine, logData]);
 
-  const wrappedDownloadModel = useCallback(async (filename: string, url: string) => {
+  const wrappedDownloadModel = useCallback(async (filename: string, urls: string[]) => {
     logLine("cmd", `invoke download_llm_model: ${filename}`);
-    logLine("info", `Source URL: ${url}`);
+    logLine("info", `Parts: ${urls.length} — ${urls[0]}${urls.length > 1 ? ` (+${urls.length - 1} more)` : ""}`);
     logLine("info", "Download started — progress events will appear below");
     try {
-      await actions.downloadModel(filename, url);
+      await actions.downloadModel(filename, urls);
       logLine("success", `Model downloaded and validated: ${filename}`);
     } catch (e) {
       logLine("error", `download_llm_model failed: ${e}`);
@@ -454,7 +454,7 @@ function ModelsTab({
   const handleDownload = async (model: LlmModelInfo) => {
     setDownloadingFile(model.filename);
     try {
-      await actions.downloadModel(model.filename, model.hf_url);
+      await actions.downloadModel(model.filename, model.all_part_urls);
     } finally {
       setDownloadingFile(null);
     }

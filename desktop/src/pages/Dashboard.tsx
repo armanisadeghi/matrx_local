@@ -36,6 +36,8 @@ import { engine } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { SystemInfo, BrowserStatus, PermissionInfo } from "@/lib/api";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { PermissionsModal } from "@/components/PermissionsModal";
+import { usePermissions } from "@/hooks/use-permissions";
 
 interface DashboardProps {
   engineStatus: EngineStatus;
@@ -76,6 +78,10 @@ export function Dashboard({
   const resourceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [installingBrowser, setInstallingBrowser] = useState(false);
   const [browserInstallMessage, setBrowserInstallMessage] = useState<string | null>(null);
+  const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
+
+  // Tauri-plugin-backed permission states (authoritative TCC identity for the .app bundle)
+  const { permissions: nativePermissions, isLoading: nativePermsLoading } = usePermissions();
 
   const loadPermissions = useCallback(async () => {
     if (engineStatus !== "connected") return;
@@ -134,8 +140,16 @@ export function Dashboard({
     }
   }, [onRefresh]);
 
-  const grantedCount = permissions.filter((p) => p.status === "granted").length;
-  const totalCount = permissions.length;
+  // Use native permissions from the Tauri plugin as source of truth for counts
+  const nativeGrantedCount = Array.from(nativePermissions.values()).filter(
+    (p) => p.status === "granted",
+  ).length;
+  const nativeTotalCount = Array.from(nativePermissions.values()).filter(
+    (p) => p.status !== "unavailable" && p.status !== "loading",
+  ).length;
+  // Keep engine-checked counts as fallback when native check hasn't run yet
+  const grantedCount = nativeTotalCount > 0 ? nativeGrantedCount : permissions.filter((p) => p.status === "granted").length;
+  const totalCount = nativeTotalCount > 0 ? nativeTotalCount : permissions.length;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -374,16 +388,67 @@ export function Dashboard({
                     <Shield className="h-4 w-4 text-primary" />
                     Device Access
                   </span>
-                  <Link to="/devices">
-                    <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
-                      Manage
-                      <ArrowRight className="h-3 w-3" />
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-7 text-xs gap-1"
+                      onClick={() => setPermissionsModalOpen(true)}
+                    >
+                      Review & Grant
                     </Button>
-                  </Link>
+                    <Link to="/devices">
+                      <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+                        Manage
+                        <ArrowRight className="h-3 w-3" />
+                      </Button>
+                    </Link>
+                  </div>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {permissions.length > 0 ? (
+                {nativePermsLoading && nativeTotalCount === 0 ? (
+                  <p className="text-sm text-muted-foreground">Checking permissions…</p>
+                ) : nativeTotalCount > 0 ? (
+                  <>
+                    {Array.from(nativePermissions.values())
+                      .filter((p) => p.status !== "unavailable")
+                      .slice(0, 8)
+                      .map((p) => (
+                        <div
+                          key={p.key}
+                          className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors cursor-pointer"
+                          onClick={() => setPermissionsModalOpen(true)}
+                        >
+                          <span className="text-muted-foreground">
+                            {p.status === "granted" ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                            ) : p.status === "denied" ? (
+                              <XCircle className="h-3.5 w-3.5 text-red-500" />
+                            ) : p.status === "loading" ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
+                            ) : (
+                              <HelpCircle className="h-3.5 w-3.5 text-zinc-400" />
+                            )}
+                          </span>
+                          <span className="flex-1 text-sm">{p.label}</span>
+                          {p.status !== "granted" && p.status !== "loading" && (
+                            <span className="text-xs text-amber-500">
+                              {p.status === "denied" ? "Denied" : "Not Granted"}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    {nativeTotalCount > 8 && (
+                      <button
+                        className="w-full text-xs text-muted-foreground hover:text-foreground pt-1 text-center"
+                        onClick={() => setPermissionsModalOpen(true)}
+                      >
+                        View all {nativeTotalCount} permissions →
+                      </button>
+                    )}
+                  </>
+                ) : permissions.length > 0 ? (
                   <>
                     {permissions.map((p) => (
                       <DeviceStatusRow key={p.permission} perm={p} />
@@ -398,6 +463,11 @@ export function Dashboard({
                 )}
               </CardContent>
             </Card>
+
+            <PermissionsModal
+              open={permissionsModalOpen}
+              onOpenChange={setPermissionsModalOpen}
+            />
 
             {/* Tools Overview */}
             <Card className="lg:col-span-2">

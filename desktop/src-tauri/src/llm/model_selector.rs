@@ -10,79 +10,123 @@ pub enum LlmTier {
     HighAlt,
 }
 
+/// Describes how a model is hosted on HuggingFace.
+/// Single-file models have one URL. Split models have multiple part URLs
+/// that must be downloaded sequentially and concatenated to produce the
+/// final GGUF file (llama.cpp reads split files natively when the first
+/// part is passed, but concatenation is simpler for our use case and avoids
+/// any version-specific split-file support requirements in llama-server).
 #[derive(Debug, Clone, Serialize)]
 pub struct LlmModelInfo {
     pub tier: LlmTier,
     pub name: &'static str,
+    /// Final assembled filename stored on disk (always a single .gguf).
     pub filename: &'static str,
     pub disk_size_gb: f32,
     pub ram_required_gb: f32,
     pub tool_calling_rating: u8,
     pub speed: &'static str,
     pub description: &'static str,
+    /// Primary URL (first part for split models, full file for single-file models).
     pub hf_url: &'static str,
+    /// Additional part URLs for split models. Empty slice = single-file model.
+    pub hf_parts: &'static [&'static str],
     pub context_length: u32,
 }
 
+impl LlmModelInfo {
+    /// Returns true if this model is distributed as multiple split files.
+    pub fn is_split(&self) -> bool {
+        !self.hf_parts.is_empty()
+    }
+
+    /// Returns all download URLs in order (part 1 first).
+    pub fn all_part_urls(&self) -> Vec<&'static str> {
+        let mut urls = vec![self.hf_url];
+        urls.extend_from_slice(self.hf_parts);
+        urls
+    }
+}
+
+// Verified 2026-03-11 against HuggingFace API + HEAD requests.
+// Single-file status confirmed by checking x-linked-size response headers.
+// Split-file part names confirmed against repository siblings list.
 pub const LLM_MODELS: &[LlmModelInfo] = &[
     LlmModelInfo {
         tier: LlmTier::Low,
         name: "Qwen3-4B-Instruct",
+        // Single file — 2.49 GB. Verified present in Qwen/Qwen3-4B-GGUF repo.
         filename: "Qwen3-4B-Q4_K_M.gguf",
-        disk_size_gb: 2.7,
+        disk_size_gb: 2.5,
         ram_required_gb: 4.0,
         tool_calling_rating: 4,
         speed: "Fast",
         description: "Compact model with strong tool calling. Best for low-RAM machines.",
         hf_url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+        hf_parts: &[],
         context_length: 8192,
     },
     LlmModelInfo {
         tier: LlmTier::LowAlt,
         name: "Phi-4-mini-Instruct",
-        filename: "Phi-4-mini-instruct-Q4_K_M.gguf",
-        disk_size_gb: 2.3,
+        // Single file — 2.49 GB. Hosted by bartowski (official Phi-4-mini GGUF provider).
+        // microsoft/Phi-4-mini-instruct-gguf does not exist as a public repo.
+        filename: "microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
+        disk_size_gb: 2.5,
         ram_required_gb: 3.5,
         tool_calling_rating: 4,
         speed: "Very fast",
         description: "Microsoft's compact model. Fastest option for low-resource systems.",
-        hf_url: "https://huggingface.co/microsoft/Phi-4-mini-instruct-gguf/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
+        hf_url: "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
+        hf_parts: &[],
         context_length: 8192,
     },
     LlmModelInfo {
         tier: LlmTier::Default,
         name: "Qwen3-8B-Instruct",
+        // Single file — 5.03 GB. Verified present in Qwen/Qwen3-8B-GGUF repo.
         filename: "Qwen3-8B-Q4_K_M.gguf",
-        disk_size_gb: 5.2,
+        disk_size_gb: 5.1,
         ram_required_gb: 6.5,
         tool_calling_rating: 5,
         speed: "Medium",
         description: "Recommended default. Best balance of quality and speed for tool calling.",
         hf_url: "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+        hf_parts: &[],
         context_length: 8192,
     },
     LlmModelInfo {
         tier: LlmTier::High,
         name: "Qwen2.5-14B-Instruct",
-        filename: "Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+        // SPLIT: 3 parts totaling ~9 GB. The single-file URL does NOT exist in this repo.
+        // Parts verified: 00001 (3.99 GB) + 00002 (3.99 GB) + 00003 (1.01 GB).
+        // Downloaded parts are concatenated into the single filename below.
+        filename: "qwen2.5-14b-instruct-q4_k_m.gguf",
         disk_size_gb: 9.0,
         ram_required_gb: 10.0,
         tool_calling_rating: 5,
         speed: "Slow (GPU recommended)",
         description: "High-quality reasoning. Requires 10GB+ RAM or dedicated GPU.",
-        hf_url: "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/Qwen2.5-14B-Instruct-Q4_K_M.gguf",
+        hf_url: "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf",
+        hf_parts: &[
+            "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00002-of-00003.gguf",
+            "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00003-of-00003.gguf",
+        ],
         context_length: 8192,
     },
     LlmModelInfo {
         tier: LlmTier::HighAlt,
         name: "Mistral-Small-3.1-24B",
+        // Single file — 14.33 GB. bartowski repo requires auth; using lmstudio-community
+        // which hosts the same quantization as a public single file.
         filename: "Mistral-Small-3.1-24B-Instruct-2503-Q4_K_M.gguf",
-        disk_size_gb: 14.0,
+        disk_size_gb: 14.4,
         ram_required_gb: 16.0,
         tool_calling_rating: 5,
         speed: "GPU required",
         description: "Largest supported model. Requires 16GB+ RAM and GPU acceleration.",
-        hf_url: "https://huggingface.co/bartowski/Mistral-Small-3.1-24B-Instruct-2503-GGUF/resolve/main/Mistral-Small-3.1-24B-Instruct-2503-Q4_K_M.gguf",
+        hf_url: "https://huggingface.co/lmstudio-community/Mistral-Small-3.1-24B-Instruct-2503-GGUF/resolve/main/Mistral-Small-3.1-24B-Instruct-2503-Q4_K_M.gguf",
+        hf_parts: &[],
         context_length: 4096,
     },
 ];

@@ -12,6 +12,12 @@ export interface LlmModelInfo {
   speed: string;
   description: string;
   hf_url: string;
+  /** Additional part URLs for split models (empty for single-file models). */
+  hf_parts: string[];
+  /** True when the model is distributed as multiple split files. */
+  is_split: boolean;
+  /** All part URLs in download order (hf_url + hf_parts). */
+  all_part_urls: string[];
   context_length: number;
 }
 
@@ -60,8 +66,19 @@ export interface LlmSetupStatus {
 
 export interface LlmDownloadProgress {
   filename: string;
+  /** Current part index (1-based). */
+  part: number;
+  /** Total number of parts. */
+  total_parts: number;
+  /** Bytes downloaded for the current part. */
+  part_bytes_downloaded: number;
+  /** Total bytes for the current part (0 if unknown). */
+  part_total_bytes: number;
+  /** Total bytes downloaded across all parts. */
   bytes_downloaded: number;
+  /** Grand total bytes across all parts (0 if unknown). */
   total_bytes: number;
+  /** Overall download percentage (0–100). */
   percent: number;
 }
 

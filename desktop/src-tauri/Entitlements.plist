@@ -2,41 +2,36 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!--
-        Hardened-runtime entitlements for the PyInstaller engine sidecar.
-
-        These cover two categories:
-        1. PyInstaller / ctypes / cffi compatibility (unsigned memory, dylib loading)
-        2. Device + automation access — macOS does NOT automatically inherit Screen
-           Recording or Full Disk Access from the parent Tauri process; each signed
-           binary must declare these entitlements and be approved individually in TCC.
-    -->
-
-    <!-- ── PyInstaller / ctypes / cffi compatibility ─────────────────────── -->
+    <!-- ── Hardened Runtime: PyInstaller / ctypes / cffi compatibility ─────── -->
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
 
     <!-- ── Hardware devices ───────────────────────────────────────────────── -->
-    <!-- Required for sounddevice / PortAudio microphone recording in Python -->
+    <!-- Microphone: audio recording, TranscribeAudio, RecordAudio, live transcription -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
-    <!-- Required for any future camera access from Python tools -->
+    <!-- Camera: future camera capture tools -->
     <key>com.apple.security.device.camera</key>
     <true/>
 
     <!-- ── Automation / Apple Events ─────────────────────────────────────── -->
-    <!-- Required for osascript calls from input_automation.py, window_manager.py,
-         app_integration.py. Without this, AppleScript sends get error -1743. -->
+    <!-- Required for osascript / System Events keyboard & window automation -->
     <key>com.apple.security.automation.apple-events</key>
     <true/>
 
-    <!-- ── Network ────────────────────────────────────────────────────────── -->
-    <!-- Engine binds to 127.0.0.1 and connects outbound to Supabase/scrapers -->
-    <key>com.apple.security.network.client</key>
+    <!-- ── Personal information ───────────────────────────────────────────── -->
+    <key>com.apple.security.personal-information.addressbook</key>
     <true/>
-    <key>com.apple.security.network.server</key>
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+    <key>com.apple.security.personal-information.photos-library</key>
+    <true/>
+
+    <!-- ── Network ────────────────────────────────────────────────────────── -->
+    <!-- Outbound network connections (API calls, engine discovery) -->
+    <key>com.apple.security.network.client</key>
     <true/>
 </dict>
 </plist>
