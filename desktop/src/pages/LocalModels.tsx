@@ -54,11 +54,6 @@ function formatBytes(bytes: number): string {
   return `${mb.toFixed(1)} MB`;
 }
 
-function formatSpeed(bps: number): string {
-  const mbps = bps / (1024 * 1024);
-  return `${mbps.toFixed(1)} MB/s`;
-}
-
 function ToolCallRating({ rating }: { rating: number }) {
   return (
     <div className="flex gap-0.5">
@@ -676,7 +671,6 @@ function InferenceTab() {
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(0.8);
   const [maxTokens, setMaxTokens] = useState(1024);
-  const [enableThinking, setEnableThinking] = useState(false);
 
   // Server override controls
   const [gpuLayersOverride, setGpuLayersOverride] = useState(99);
@@ -796,7 +790,7 @@ function InferenceTab() {
     if (!selectedModel && downloadedModels.length === 0) return;
     const modelToLoad = selectedModel || downloadedModels[0]?.filename;
     try {
-      const hw = hardwareResult ?? (await detectHardware());
+      if (!hardwareResult) await detectHardware();
       await startServer(modelToLoad, gpuLayersOverride, contextLengthOverride);
       setError(null);
     } catch (e) {
@@ -1195,7 +1189,7 @@ function ServerTab() {
     const model = selectedModel || downloadedModels[0]?.filename;
     if (!model) return;
     try {
-      const hw = hardwareResult ?? (await detectHardware());
+      if (!hardwareResult) await detectHardware();
       await startServer(model, gpuLayers, contextLen);
     } catch (e) {
       setLocalError(e instanceof Error ? e.message : String(e));
@@ -1542,7 +1536,7 @@ function HardwareTab() {
 
 // ── Page Root ─────────────────────────────────────────────────────────────
 
-export default function LocalModels() {
+export function LocalModels() {
   return (
     <div className="p-6 h-full flex flex-col">
       <div className="mb-6">
