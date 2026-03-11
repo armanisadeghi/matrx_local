@@ -33,12 +33,14 @@ sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 cpal = "0.15"
 futures-util = "0.3"
 tokio = { version = "1", features = ["full"] }
-rubato = "1.0.1"
+rubato = "1"
+audioadapter-buffers = "2.0.0"
 
 [features]
-# Enable Metal GPU acceleration on macOS by default (Apple Silicon + discrete GPU).
-# Remove "metal" from default if building for non-macOS or if cmake is unavailable.
-default = ["metal"]
+# No features are enabled by default — acceleration is opt-in per platform.
+# macOS builds pass --features metal via the CI workflow.
+# Windows/Linux builds can pass --features cuda or --features openblas.
+default = []
 cuda = ["whisper-cpp-plus/cuda"]
 metal = ["whisper-cpp-plus/metal"]
 openblas = ["whisper-cpp-plus/openblas"]

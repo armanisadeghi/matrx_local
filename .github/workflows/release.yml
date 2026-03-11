@@ -14,9 +14,9 @@ jobs:
       matrix:
         include:
           - platform: macos-15
-            args: --target aarch64-apple-darwin --bundles app,updater
+            args: --target aarch64-apple-darwin --bundles app,updater --features metal
           - platform: macos-15
-            args: --target x86_64-apple-darwin --bundles app,updater
+            args: --target x86_64-apple-darwin --bundles app,updater --features metal
           - platform: ubuntu-22.04
             args: --bundles deb
           - platform: windows-latest

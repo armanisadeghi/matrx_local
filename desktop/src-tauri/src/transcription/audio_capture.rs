@@ -1,5 +1,6 @@
+use audioadapter_buffers::direct::InterleavedSlice;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use rubato::{FastFixedIn, PolynomialDegree, Resampler};
+use rubato::{Async, FixedAsync, Indexing, PolynomialDegree, Resampler};
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
@@ -56,7 +57,6 @@ impl AudioCapture {
             TARGET_SAMPLE_RATE as usize * 5,
         )));
 
-        // Decide whether to request 16kHz directly or use native rate + resample.
         let (stream, actual_rate) = if native_rate == TARGET_SAMPLE_RATE && native_channels == 1 {
             // Perfect match — no conversion needed.
             let cfg = cpal::StreamConfig {
@@ -65,20 +65,19 @@ impl AudioCapture {
                 buffer_size: cpal::BufferSize::Default,
             };
             let buf = Arc::clone(&buffer);
-            let stream = build_mono_passthrough_stream(&device, &cfg, buf)
+            let stream = build_passthrough_stream(&device, &cfg, buf)
                 .map_err(|e| format!("Failed to open stream: {}", e))?;
             (stream, TARGET_SAMPLE_RATE)
         } else {
-            // Native rate/channels differ from 16kHz mono — use resampling pipeline.
+            // Native rate/channels differ from 16kHz mono — resample in real time.
             eprintln!(
                 "[audio_capture] Device '{}' native: {}Hz {}ch → resampling to {}Hz mono",
                 device_name, native_rate, native_channels, TARGET_SAMPLE_RATE
             );
-
             let cfg: cpal::StreamConfig = supported_config.into();
             let buf = Arc::clone(&buffer);
             let stream = build_resampling_stream(&device, &cfg, native_channels, native_rate, buf)
-                .map_err(|e| format!("Failed to open stream with resampling: {}", e))?;
+                .map_err(|e| format!("Failed to open resampling stream: {}", e))?;
             (stream, native_rate)
         };
 
@@ -115,7 +114,7 @@ impl AudioCapture {
 // ── Stream builders ────────────────────────────────────────────────────────
 
 /// Build a 16kHz mono passthrough stream (no resampling required).
-fn build_mono_passthrough_stream(
+fn build_passthrough_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     buffer: Arc<Mutex<Vec<f32>>>,
@@ -136,7 +135,13 @@ fn build_mono_passthrough_stream(
 }
 
 /// Build a stream that captures at the device's native rate/channels and
-/// resamples to 16kHz mono in real time using the rubato resampler.
+/// resamples to 16kHz mono in real time using the rubato 1.x resampler.
+///
+/// Strategy:
+///  1. Audio callback downmixes interleaved multi-channel frames to mono.
+///  2. Raw mono samples are pushed into a thread-safe staging ring buffer.
+///  3. A dedicated resampling function is called in the callback to drain the
+///     staging buffer in fixed-size chunks and write 16kHz output.
 fn build_resampling_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -144,20 +149,23 @@ fn build_resampling_stream(
     native_rate: u32,
     output_buffer: Arc<Mutex<Vec<f32>>>,
 ) -> Result<cpal::Stream, String> {
-    // Ring buffer for raw samples before resampling (held across callbacks).
-    let raw: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(native_rate as usize)));
+    // Staging buffer: raw mono samples at native rate, accumulated between callback calls.
+    let staging: Arc<Mutex<Vec<f32>>> =
+        Arc::new(Mutex::new(Vec::with_capacity(native_rate as usize)));
 
-    // Rubato resampler: FastFixedIn processes fixed-size input chunks.
-    // chunk_size = ~10ms at native rate, giving low latency.
+    // Rubato 1.x: Async<f32> with polynomial interpolation, fixed input size.
+    // chunk_size = ~10ms of native-rate audio (one resampling block per callback).
     let chunk_size = (native_rate as usize) / 100; // ~10ms
     let ratio = TARGET_SAMPLE_RATE as f64 / native_rate as f64;
 
-    let resampler = FastFixedIn::<f32>::new(
+    // new_poly(ratio, max_relative_ratio, degree, chunk_size, channels, fixed_end)
+    let resampler = Async::<f32>::new_poly(
         ratio,
-        1.0, // max_resample_ratio_relative (no dynamic rate changes)
+        1.0, // fixed ratio — no dynamic adjustment
         PolynomialDegree::Septic,
         chunk_size,
-        1, // mono output
+        1, // 1 channel (mono input and output)
+        FixedAsync::Input,
     )
     .map_err(|e| format!("Failed to create resampler: {}", e))?;
 
@@ -168,25 +176,47 @@ fn build_resampling_stream(
         .build_input_stream(
             config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                // Step 1: Downmix to mono by averaging all channels.
+                // Step 1: downmix interleaved frames to mono.
                 let mono: Vec<f32> = data
                     .chunks_exact(channels)
                     .map(|frame| frame.iter().sum::<f32>() / channels as f32)
                     .collect();
 
-                let mut raw_buf = raw.lock().unwrap();
-                raw_buf.extend_from_slice(&mono);
+                let mut stage = staging.lock().unwrap();
+                stage.extend_from_slice(&mono);
 
-                // Step 2: Resample in chunk_size blocks.
+                // Step 2: resample all complete chunks from the staging buffer.
                 let mut rs = resampler.lock().unwrap();
-                while raw_buf.len() >= chunk_size {
-                    let input_chunk: Vec<f32> = raw_buf.drain(0..chunk_size).collect();
-                    match rs.process(&[input_chunk], None) {
-                        Ok(resampled_channels) => {
-                            let resampled = &resampled_channels[0];
+                while stage.len() >= chunk_size {
+                    // Drain exactly chunk_size mono frames from the staging buffer.
+                    let input_chunk: Vec<f32> = stage.drain(0..chunk_size).collect();
+
+                    // Allocate output scratch buffer sized for this chunk's output.
+                    let out_frames = rs.output_frames_next();
+                    let mut output_scratch = vec![0.0f32; out_frames]; // 1 channel × out_frames
+
+                    // rubato 1.x uses audioadapter buffer types.
+                    // InterleavedSlice wraps a flat slice as (channels, frames) interleaved.
+                    let input_adapter =
+                        InterleavedSlice::new(&input_chunk, 1, chunk_size).unwrap();
+                    let mut output_adapter =
+                        InterleavedSlice::new_mut(&mut output_scratch, 1, out_frames).unwrap();
+
+                    let indexing = Indexing {
+                        input_offset: 0,
+                        output_offset: 0,
+                        active_channels_mask: None,
+                        partial_len: None,
+                    };
+
+                    match rs.process_into_buffer(
+                        &input_adapter,
+                        &mut output_adapter,
+                        Some(&indexing),
+                    ) {
+                        Ok((_in_used, out_written)) => {
                             let mut out = output_buffer.lock().unwrap();
-                            out.extend_from_slice(resampled);
-                            // Keep output buffer bounded.
+                            out.extend_from_slice(&output_scratch[..out_written]);
                             if out.len() > MAX_SAMPLES {
                                 let drain_count = out.len() - MAX_SAMPLES;
                                 out.drain(0..drain_count);
