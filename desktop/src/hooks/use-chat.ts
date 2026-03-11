@@ -19,7 +19,10 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import supabase from "@/lib/supabase";
+import { streamCompletion } from "@/lib/llm/api";
 
 // ---- Types ----
 
@@ -85,13 +88,18 @@ export interface ToolSchema {
 export interface ModelOption {
   id: string;           // API model name — sent as ai_model_id in requests
   label: string;        // Display name
-  provider: string;     // anthropic | openai | google | groq | together | xai | cerebras
+  provider: string;     // anthropic | openai | google | groq | together | xai | cerebras | local
   default?: boolean;
   is_primary?: boolean;
   is_premium?: boolean;
   capabilities?: string[];
   context_window?: number;
+  /** For local models: the llama-server port to call directly. */
+  local_port?: number;
 }
+
+/** Local model ID prefix — identifies models served by llama-server. */
+export const LOCAL_MODEL_PREFIX = "local::" as const;
 
 // ---- Constants ----
 
@@ -250,6 +258,27 @@ export function useChat({ engineUrl }: UseChatOptions) {
   const [availableModels, setAvailableModels] = useState<ModelOption[]>(FALLBACK_MODELS);
   const [toolSchemas, setToolSchemas] = useState<ToolSchema[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const cloudModelsRef = useRef<ModelOption[]>(FALLBACK_MODELS);
+
+  /** Merge cloud models with any running local model. */
+  const mergeLocalModel = useCallback(
+    (
+      cloudModels: ModelOption[],
+      serverStatus: { running: boolean; port: number; model_name: string } | null
+    ) => {
+      if (!serverStatus?.running || !serverStatus.model_name) return cloudModels;
+      const localId = `${LOCAL_MODEL_PREFIX}${serverStatus.model_name}`;
+      const localEntry: ModelOption = {
+        id: localId,
+        label: `${serverStatus.model_name} (Local)`,
+        provider: "local",
+        local_port: serverStatus.port,
+      };
+      // Remove any stale local entries, then prepend the new one
+      return [localEntry, ...cloudModels.filter((m) => m.provider !== "local")];
+    },
+    []
+  );
 
   // Load live models from DB via engine
   useEffect(() => {
@@ -277,16 +306,64 @@ export function useChat({ engineUrl }: UseChatOptions) {
           default: i === 0,
         }));
 
-        setAvailableModels(mapped);
+        cloudModelsRef.current = mapped;
+
+        // Check if llama-server is already running and inject local model
+        let serverStatus: { running: boolean; port: number; model_name: string } | null = null;
+        try {
+          serverStatus = await invoke("get_llm_server_status");
+        } catch {
+          // Tauri not available (dev server without native context) — ignore
+        }
+        const merged = mergeLocalModel(mapped, serverStatus);
+        setAvailableModels(merged);
         // If current model isn't in the new list, switch to first
-        setModel((prev) => mapped.find((m) => m.id === prev) ? prev : mapped[0].id);
+        setModel((prev) => merged.find((m) => m.id === prev) ? prev : merged[0].id);
       } catch {
         // Keep fallback models if engine unreachable
       }
     };
 
     load();
-  }, [engineUrl]);
+  }, [engineUrl, mergeLocalModel]);
+
+  // Listen for llama-server lifecycle events to dynamically add/remove local model
+  useEffect(() => {
+    let mounted = true;
+    const unlistenPromises: Array<Promise<() => void>> = [];
+
+    unlistenPromises.push(
+      listen<{ running: boolean; port: number; model_name: string }>(
+        "llm-server-ready",
+        (event) => {
+          if (!mounted) return;
+          setAvailableModels((prev) => {
+            const cloud = prev.filter((m) => m.provider !== "local");
+            return mergeLocalModel(cloud, event.payload);
+          });
+        }
+      )
+    );
+
+    unlistenPromises.push(
+      listen("llm-server-stopped", () => {
+        if (!mounted) return;
+        setAvailableModels((prev) => prev.filter((m) => m.provider !== "local"));
+        // If a local model was selected, fall back to first cloud model
+        setModel((prev) => {
+          if (prev.startsWith(LOCAL_MODEL_PREFIX)) {
+            return cloudModelsRef.current[0]?.id ?? FALLBACK_MODELS[0].id;
+          }
+          return prev;
+        });
+      })
+    );
+
+    return () => {
+      mounted = false;
+      unlistenPromises.forEach((p) => p.then((fn) => fn()).catch(() => {}));
+    };
+  }, [mergeLocalModel]);
 
   useEffect(() => {
     saveConversations(conversations);
@@ -353,7 +430,12 @@ export function useChat({ engineUrl }: UseChatOptions) {
       if (!hasAgent && !trimmed) return;
       if (hasAgent && !trimmed && !hasVars) return;
       if (isStreaming) return;
-      if (!engineUrl) return;
+
+      // Check if a local model is selected — it bypasses the engine entirely
+      const selectedModelEntry = availableModels.find((m) => m.id === model);
+      const isLocalModel = model.startsWith(LOCAL_MODEL_PREFIX) && selectedModelEntry?.local_port;
+
+      if (!isLocalModel && !engineUrl) return;
 
       abortRef.current?.abort();
       const abort = new AbortController();
@@ -475,13 +557,40 @@ export function useChat({ engineUrl }: UseChatOptions) {
       let accumulated = "";
 
       try {
+        // ── Local Model Path ──────────────────────────────────────────────
+        if (isLocalModel && selectedModelEntry?.local_port) {
+          const port = selectedModelEntry.local_port;
+          const allMessages = userMsg ? [...existingMessages, userMsg] : existingMessages;
+          const llmMessages = allMessages
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+          try {
+            const gen = streamCompletion(port, llmMessages);
+            for await (const token of gen) {
+              if (abort.signal.aborted) break;
+              accumulated += token;
+              updateAssistant({ content: accumulated, isStreaming: true });
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : "Local inference error";
+            updateAssistant({ content: accumulated || msg, isStreaming: false, error: msg });
+            setIsStreaming(false);
+            return;
+          }
+          updateAssistant({ content: accumulated, isStreaming: false });
+          setIsStreaming(false);
+          return;
+        }
+
+        // ── Cloud / Engine Path ───────────────────────────────────────────
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token ?? import.meta.env.VITE_ENGINE_API_KEY ?? "";
 
         const allMessages = userMsg ? [...existingMessages, userMsg] : existingMessages;
 
         const { url, body } = buildRequest(
-          engineUrl,
+          engineUrl!,
           convSnapshot,
           trimmed,
           model,
@@ -589,7 +698,7 @@ export function useChat({ engineUrl }: UseChatOptions) {
         setIsStreaming(false);
       }
     },
-    [activeConversationId, createConversation, engineUrl, isStreaming, model]
+    [activeConversationId, availableModels, createConversation, engineUrl, isStreaming, model]
   );
 
   const stopStreaming = useCallback(() => {

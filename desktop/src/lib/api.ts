@@ -1325,6 +1325,110 @@ class EngineAPI {
     return resp.json();
   }
 
+  /** List cameras. */
+  async getCameraDevices(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/devices/camera`, {
+      headers,
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`Camera probe failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** List all connected screens/monitors. */
+  async getScreens(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/devices/screens`, {
+      headers,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`Screens probe failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Take a screenshot (optionally for a specific monitor index or "all"/"primary"). */
+  async takeScreenshot(monitor: string | number = "all"): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/devices/screenshot?monitor=${encodeURIComponent(String(monitor))}`, {
+      headers,
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`Screenshot failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Get device location (lat/lon if permission granted). */
+  async getLocation(): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/devices/location`, {
+      headers,
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!resp.ok) throw new Error(`Location probe failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Record audio from microphone and return base64 WAV. */
+  async recordAudio(opts: { device_index?: number; duration_seconds?: number }): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/devices/record-audio`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+      signal: AbortSignal.timeout((opts.duration_seconds ?? 5) * 1000 + 10000),
+    });
+    if (!resp.ok) throw new Error(`Audio recording failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Capture a photo from webcam and return base64 JPEG. */
+  async capturePhoto(opts: { device_index?: number }): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/devices/capture-photo`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`Photo capture failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Record a short video from webcam and return base64 MP4. */
+  async recordVideo(opts: { device_index?: number; duration_seconds?: number }): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/devices/record-video`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+      signal: AbortSignal.timeout((opts.duration_seconds ?? 5) * 1000 + 10000),
+    });
+    if (!resp.ok) throw new Error(`Video recording failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Record screen video and return base64 MP4. */
+  async recordScreen(opts: { screen_index?: number; duration_seconds?: number }): Promise<DeviceProbeResult> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/devices/record-screen`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+      signal: AbortSignal.timeout((opts.duration_seconds ?? 5) * 1000 + 30000),
+    });
+    if (!resp.ok) throw new Error(`Screen recording failed: ${resp.status}`);
+    return resp.json();
+  }
+
   // ── Setup / First-run ──────────────────────────────────────────────────
 
   async getSetupStatus(): Promise<SetupStatus> {

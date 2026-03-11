@@ -4,9 +4,10 @@ import {
   Square,
   Plus,
   ChevronDown,
+  Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ChatMode } from "@/hooks/use-chat";
+import { LOCAL_MODEL_PREFIX, type ChatMode } from "@/hooks/use-chat";
 import type { AgentInfo } from "@/types/agents";
 
 interface ChatInputProps {
@@ -100,6 +101,7 @@ export function ChatInput({
   );
 
   const selectedModel = availableModels.find((m) => m.id === model);
+  const isLocalModel = model.startsWith(LOCAL_MODEL_PREFIX);
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-2 md:px-8">
@@ -229,6 +231,9 @@ export function ChatInput({
                 onClick={() => setShowModelDropdown(!showModelDropdown)}
                 className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
+                {isLocalModel && (
+                  <Cpu className="h-3 w-3 text-blue-500 shrink-0" />
+                )}
                 <span className="max-w-[140px] truncate">
                   {selectedModel?.label ?? "Select model"}
                 </span>
@@ -236,14 +241,56 @@ export function ChatInput({
               </button>
 
               {showModelDropdown && (
-                <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[240px] max-h-80 overflow-y-auto rounded-lg p-1.5">
+                <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[260px] max-h-80 overflow-y-auto rounded-lg p-1.5">
+                  {/* Local Models group — shown first if any exist */}
+                  {availableModels.some((m) => m.provider === "local") && (
+                    <div>
+                      <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
+                        <Cpu className="h-3 w-3 text-blue-500" />
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-500/80">
+                          Local Models
+                        </span>
+                        <span className="ml-1 rounded-full bg-green-500/20 px-1.5 py-0.5 text-[9px] font-medium text-green-600">
+                          On-device
+                        </span>
+                      </div>
+                      {availableModels
+                        .filter((m) => m.provider === "local")
+                        .map((m) => (
+                          <button
+                            key={m.id}
+                            onClick={() => {
+                              onModelChange(m.id);
+                              setShowModelDropdown(false);
+                            }}
+                            className={cn(
+                              "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
+                              model === m.id
+                                ? "bg-accent text-accent-foreground"
+                                : "text-foreground hover:bg-accent/50"
+                            )}
+                          >
+                            <Cpu className="h-3 w-3 text-blue-500 mr-2 shrink-0" />
+                            <span className="font-medium">{m.label}</span>
+                            <span className="ml-auto text-[10px] text-blue-500">local</span>
+                          </button>
+                        ))}
+                      {availableModels.some((m) => m.provider !== "local") && (
+                        <div className="my-1.5 border-t border-border/50" />
+                      )}
+                    </div>
+                  )}
+
+                  {/* Cloud Models grouped by provider */}
                   {Object.entries(
-                    availableModels.reduce<Record<string, typeof availableModels>>((acc, m) => {
-                      const p = m.provider ?? "other";
-                      if (!acc[p]) acc[p] = [];
-                      acc[p].push(m);
-                      return acc;
-                    }, {})
+                    availableModels
+                      .filter((m) => m.provider !== "local")
+                      .reduce<Record<string, typeof availableModels>>((acc, m) => {
+                        const p = m.provider ?? "other";
+                        if (!acc[p]) acc[p] = [];
+                        acc[p].push(m);
+                        return acc;
+                      }, {})
                   ).map(([provider, models]) => (
                     <div key={provider}>
                       <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">

@@ -19,6 +19,8 @@ export interface LlmModelInfo {
   /** All part URLs in download order (hf_url + hf_parts). */
   all_part_urls: string[];
   context_length: number;
+  /** Expected assembled file size in bytes. Used to detect partial downloads. */
+  expected_size_bytes: number;
 }
 
 export interface LlmHardwareResult {
@@ -80,6 +82,12 @@ export interface LlmDownloadProgress {
   total_bytes: number;
   /** Overall download percentage (0–100). */
   percent: number;
+  /** Lifecycle status hint from the backend. */
+  status?: "downloading" | "already_complete";
+}
+
+export interface LlmDownloadCancelledEvent {
+  reason: "user_cancelled" | "stalled" | string;
 }
 
 // ── Downloaded Model Info ─────────────────────────────────────────────────

@@ -451,7 +451,7 @@ async def _bluetooth_linux(scan_duration: int) -> ToolResult:
 async def tool_connected_devices(
     session: ToolSession,
 ) -> ToolResult:
-    """List all connected peripheral devices (USB, Bluetooth, etc.)."""
+    """List all connected peripheral devices (USB, Bluetooth, monitors, etc.)."""
     try:
         if IS_MACOS:
             return await _connected_macos()
@@ -464,61 +464,130 @@ async def tool_connected_devices(
 
 
 async def _connected_macos() -> ToolResult:
-    """List connected devices on macOS."""
-    proc = await asyncio.create_subprocess_exec(
-        "system_profiler", "SPUSBDataType", "SPBluetoothDataType", "-json",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+    """List connected devices on macOS including monitors."""
+    devices = []
 
+    # USB devices
     try:
+        proc = await asyncio.create_subprocess_exec(
+            "system_profiler", "SPUSBDataType", "-json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
         data = json.loads(stdout.decode())
-        devices = []
 
-        # Parse USB devices
-        def _parse_usb_items(items, parent=""):
+        def _parse_usb_items(items: list, depth: int = 0) -> None:
             if not isinstance(items, list):
                 return
             for item in items:
-                if isinstance(item, dict):
-                    name = item.get("_name", "")
-                    if name:
-                        devices.append({
-                            "name": name,
-                            "type": "USB",
-                            "vendor": item.get("manufacturer", ""),
-                            "serial": item.get("serial_num", ""),
-                            "bus_power": item.get("bus_power", ""),
-                        })
-                    # Recurse into sub-items
-                    for key in item:
-                        if isinstance(item[key], list):
-                            _parse_usb_items(item[key], name)
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("_name", "")
+                if name:
+                    devices.append({
+                        "name": name,
+                        "category": "usb",
+                        "type": "USB",
+                        "vendor": item.get("manufacturer", ""),
+                        "serial": item.get("serial_num", ""),
+                        "vendor_id": item.get("vendor_id", ""),
+                        "product_id": item.get("product_id", ""),
+                        "speed": item.get("device_speed", ""),
+                    })
+                for key, val in item.items():
+                    if isinstance(val, list):
+                        _parse_usb_items(val, depth + 1)
 
-        usb_data = data.get("SPUSBDataType", [])
-        _parse_usb_items(usb_data)
+        _parse_usb_items(data.get("SPUSBDataType", []))
+    except Exception:
+        pass
 
-        lines = [f"Connected devices ({len(devices)}):", ""]
-        for d in devices:
-            vendor = f" ({d['vendor']})" if d['vendor'] else ""
-            lines.append(f"  [{d['type']}] {d['name']}{vendor}")
-
-        return ToolResult(
-            output="\n".join(lines),
-            metadata={"devices": devices, "count": len(devices)},
+    # Displays / monitors
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "system_profiler", "SPDisplaysDataType", "-json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        disp_data = json.loads(stdout.decode())
+        for gpu in disp_data.get("SPDisplaysDataType", []):
+            for disp in gpu.get("spdisplays_ndrvs", []):
+                name = disp.get("_name", "Unknown Display")
+                res = disp.get("spdisplays_resolution", "")
+                disp_type = disp.get("spdisplays_display_type", "")
+                connection = disp.get("spdisplays_connection_type", "")
+                pixel_res = disp.get("spdisplays_pixelresolution", "")
+                devices.append({
+                    "name": name,
+                    "category": "display",
+                    "type": "Display",
+                    "resolution": res or pixel_res,
+                    "display_type": disp_type,
+                    "connection": connection,
+                    "vendor": gpu.get("spdisplays_vendor", ""),
+                    "gpu": gpu.get("sppci_model", ""),
+                })
+    except Exception:
+        pass
 
-    except (json.JSONDecodeError, KeyError):
-        return ToolResult(output=f"Devices:\n{stdout.decode()[:5000]}")
+    # Bluetooth connected devices
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "system_profiler", "SPBluetoothDataType", "-json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        bt_data = json.loads(stdout.decode())
+        bt_section = bt_data.get("SPBluetoothDataType", [{}])[0]
+        for item in bt_section.get("device_connected", []):
+            if isinstance(item, dict):
+                for name, info in item.items():
+                    devices.append({
+                        "name": name,
+                        "category": "bluetooth",
+                        "type": "Bluetooth",
+                        "address": info.get("device_address", ""),
+                        "device_type": info.get("device_minorType", ""),
+                        "battery": info.get("device_batteryLevelMain", ""),
+                        "connected": True,
+                    })
+    except Exception:
+        pass
+
+    lines = [f"Connected devices ({len(devices)}):", ""]
+    categories = {}
+    for d in devices:
+        cat = d.get("category", "other")
+        categories.setdefault(cat, []).append(d)
+
+    for cat, devs in categories.items():
+        lines.append(f"  {cat.upper()} ({len(devs)}):")
+        for d in devs:
+            detail = ""
+            if d.get("vendor"):
+                detail += f" — {d['vendor']}"
+            if d.get("resolution"):
+                detail += f" [{d['resolution']}]"
+            if d.get("battery"):
+                detail += f" 🔋{d['battery']}%"
+            lines.append(f"    {d['name']}{detail}")
+        lines.append("")
+
+    return ToolResult(
+        output="\n".join(lines),
+        metadata={"devices": devices, "count": len(devices)},
+    )
 
 
 async def _connected_windows() -> ToolResult:
     ps_script = """
 Get-PnpDevice -PresentOnly | Where-Object {
-    $_.Class -in @('USB', 'Bluetooth', 'HIDClass', 'Monitor', 'DiskDrive') -and $_.Status -eq 'OK'
-} | Select-Object FriendlyName, Class, Status | Sort-Object Class, FriendlyName |
-ForEach-Object { "$($_.Class)|||$($_.FriendlyName)|||$($_.Status)" }
+    $_.Class -in @('USB', 'Bluetooth', 'HIDClass', 'Monitor', 'DiskDrive', 'Camera', 'AudioEndpoint', 'Net') -and $_.Status -eq 'OK'
+} | Select-Object FriendlyName, Class, Status, InstanceId | Sort-Object Class, FriendlyName |
+ForEach-Object { "$($_.Class)|||$($_.FriendlyName)|||$($_.Status)|||$($_.InstanceId)" }
 """
     proc = await asyncio.create_subprocess_exec(
         "powershell.exe", "-NoProfile", "-Command", ps_script,
@@ -527,23 +596,66 @@ ForEach-Object { "$($_.Class)|||$($_.FriendlyName)|||$($_.Status)" }
     )
     stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
 
+    CLASS_CATEGORY = {
+        "Monitor": "display",
+        "USB": "usb",
+        "Bluetooth": "bluetooth",
+        "HIDClass": "input",
+        "DiskDrive": "storage",
+        "Camera": "camera",
+        "AudioEndpoint": "audio",
+        "Net": "network",
+    }
+
     devices = []
     for line in stdout.decode().strip().split("\n"):
         parts = line.split("|||")
         if len(parts) >= 2:
+            cls = parts[0].strip()
             devices.append({
-                "type": parts[0].strip(),
+                "type": cls,
+                "category": CLASS_CATEGORY.get(cls, "other"),
                 "name": parts[1].strip(),
                 "status": parts[2].strip() if len(parts) > 2 else "",
             })
 
+    # Also get display info via WMI
+    ps_disp = """
+Get-WmiObject -Class Win32_DesktopMonitor | Select-Object Name, ScreenWidth, ScreenHeight, MonitorManufacturer |
+ForEach-Object { "$($_.Name)|||$($_.ScreenWidth)x$($_.ScreenHeight)|||$($_.MonitorManufacturer)" }
+"""
+    try:
+        proc2 = await asyncio.create_subprocess_exec(
+            "powershell.exe", "-NoProfile", "-Command", ps_disp,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
+        for line in stdout2.decode().strip().split("\n"):
+            parts = line.split("|||")
+            if len(parts) >= 1 and parts[0].strip():
+                devices.append({
+                    "name": parts[0].strip(),
+                    "category": "display",
+                    "type": "Display",
+                    "resolution": parts[1].strip() if len(parts) > 1 else "",
+                    "vendor": parts[2].strip() if len(parts) > 2 else "",
+                })
+    except Exception:
+        pass
+
     lines = [f"Connected devices ({len(devices)}):", ""]
-    current_type = ""
+    categories: dict[str, list] = {}
     for d in devices:
-        if d["type"] != current_type:
-            current_type = d["type"]
-            lines.append(f"  {current_type}:")
-        lines.append(f"    {d['name']}")
+        cat = d.get("category", "other")
+        categories.setdefault(cat, []).append(d)
+
+    for cat, devs in sorted(categories.items()):
+        lines.append(f"  {cat.upper()} ({len(devs)}):")
+        for d in devs:
+            detail = f" [{d['resolution']}]" if d.get("resolution") else ""
+            lines.append(f"    {d['name']}{detail}")
+        lines.append("")
 
     return ToolResult(
         output="\n".join(lines),
@@ -552,35 +664,77 @@ ForEach-Object { "$($_.Class)|||$($_.FriendlyName)|||$($_.Status)" }
 
 
 async def _connected_linux() -> ToolResult:
-    proc = await asyncio.create_subprocess_exec(
-        "lsusb",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    devices = []
 
-    if proc.returncode != 0:
+    # USB devices
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "lsusb",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode == 0:
+            for line in stdout.decode().strip().split("\n"):
+                m = re.match(r"Bus\s+(\d+)\s+Device\s+(\d+):\s+ID\s+([\da-f:]+)\s+(.*)", line, re.I)
+                if m:
+                    devices.append({
+                        "type": "USB",
+                        "category": "usb",
+                        "bus": m.group(1),
+                        "device": m.group(2),
+                        "id": m.group(3),
+                        "name": m.group(4),
+                    })
+    except FileNotFoundError:
+        pass
+
+    # Displays via xrandr
+    import shutil
+    if shutil.which("xrandr"):
+        try:
+            proc2 = await asyncio.create_subprocess_exec(
+                "xrandr", "--query",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=5)
+            for line in stdout2.decode().split("\n"):
+                if " connected" in line:
+                    parts = line.split()
+                    name = parts[0]
+                    res = next((p for p in parts if "x" in p and "+" in p), "")
+                    if res:
+                        res = res.split("+")[0]
+                    devices.append({
+                        "name": name,
+                        "category": "display",
+                        "type": "Display",
+                        "resolution": res,
+                    })
+        except Exception:
+            pass
+
+    if not devices:
         return ToolResult(
             type=ToolResultType.ERROR,
-            output=f"lsusb not found. Install: apt install usbutils",
+            output="No devices found. Install: apt install usbutils",
         )
 
-    devices = []
-    for line in stdout.decode().strip().split("\n"):
-        # Format: Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub
-        match = re.match(r"Bus\s+(\d+)\s+Device\s+(\d+):\s+ID\s+([\da-f:]+)\s+(.*)", line, re.I)
-        if match:
-            devices.append({
-                "type": "USB",
-                "bus": match.group(1),
-                "device": match.group(2),
-                "id": match.group(3),
-                "name": match.group(4),
-            })
-
-    lines = [f"Connected USB devices ({len(devices)}):", ""]
+    lines = [f"Connected devices ({len(devices)}):", ""]
+    categories: dict[str, list] = {}
     for d in devices:
-        lines.append(f"  Bus {d['bus']} Dev {d['device']}: {d['name']}")
+        cat = d.get("category", "usb")
+        categories.setdefault(cat, []).append(d)
+
+    for cat, devs in sorted(categories.items()):
+        lines.append(f"  {cat.upper()} ({len(devs)}):")
+        for d in devs:
+            detail = f" [{d['resolution']}]" if d.get("resolution") else (
+                f" Bus {d['bus']} Dev {d['device']}" if d.get("bus") else ""
+            )
+            lines.append(f"    {d['name']}{detail}")
+        lines.append("")
 
     return ToolResult(
         output="\n".join(lines),

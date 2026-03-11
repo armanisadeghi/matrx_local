@@ -1,5 +1,5 @@
 import { ExternalLink, RefreshCw } from "lucide-react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import supabase from "@/lib/supabase";
 
 const WEB_ORIGIN = "https://www.aimatrx.com";
@@ -7,69 +7,50 @@ const TARGET_PATH = "/demos/local-tools";
 const HANDOFF_PATH = "/auth/desktop-handoff";
 
 /**
- * Build the initial URL the iframe loads.
+ * Build the iframe src URL.
  *
- * We always load the handoff page first. It signals READY, we send tokens,
- * and it redirects to TARGET_PATH automatically. On manual reload we do the
- * same thing — re-establishing a fresh session on every load.
+ * Passes the user's access_token and refresh_token directly in the URL so
+ * the handoff page can call supabase.setSession() on first load — no
+ * postMessage round-trip needed. The handoff page then does a hard redirect
+ * to TARGET_PATH with a valid server-side session cookie in place.
+ *
+ * If we can't get a session (should never happen since auth is required to
+ * reach this page), fall back to loading the target directly and let the
+ * web app's own auth handle it.
  */
-function buildHandoffUrl(): string {
-    const redirect = encodeURIComponent(TARGET_PATH);
-    return `${WEB_ORIGIN}${HANDOFF_PATH}?redirect=${redirect}`;
+async function buildIframeSrc(): Promise<string> {
+    // Try to refresh first so we hand off a fresh token
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    const session = refreshError
+        ? (await supabase.auth.getSession()).data.session
+        : refreshData.session;
+
+    if (!session) {
+        // No session available — load target directly (will hit web app login)
+        return `${WEB_ORIGIN}${TARGET_PATH}`;
+    }
+
+    const params = new URLSearchParams({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+        redirect: TARGET_PATH,
+    });
+
+    return `${WEB_ORIGIN}${HANDOFF_PATH}?${params.toString()}`;
 }
 
 export function AiMatrx() {
-    const [key, setKey] = useState(0);
-    const iframeRef = useRef<HTMLIFrameElement>(null);
-
-    /**
-     * Listen for MATRX_HANDOFF_READY from the iframe.
-     * When received, read the desktop session and post tokens back.
-     *
-     * We re-register on every `key` change (i.e. every reload) so a fresh
-     * listener is attached for each new iframe load.
-     */
-    const handleMessage = useCallback(async (event: MessageEvent) => {
-        if (event.origin !== WEB_ORIGIN) return;
-        if (
-            typeof event.data !== "object" ||
-            event.data === null ||
-            event.data.type !== "MATRX_HANDOFF_READY"
-        ) return;
-
-        try {
-            // Refresh the session first so we never hand off a near-expired token
-            const { data: refreshData, error: refreshError } =
-                await supabase.auth.refreshSession();
-
-            const session = refreshError
-                ? (await supabase.auth.getSession()).data.session
-                : refreshData.session;
-
-            if (!session) {
-                console.warn("[AiMatrx] No active session — cannot complete handoff");
-                return;
-            }
-
-            iframeRef.current?.contentWindow?.postMessage(
-                {
-                    type: "MATRX_HANDOFF_TOKENS",
-                    access_token: session.access_token,
-                    refresh_token: session.refresh_token,
-                },
-                WEB_ORIGIN
-            );
-        } catch (err) {
-            console.error("[AiMatrx] Handoff failed:", err);
-        }
-    }, []);
+    const [iframeSrc, setIframeSrc] = useState<string | null>(null);
+    const [reloadKey, setReloadKey] = useState(0);
 
     useEffect(() => {
-        window.addEventListener("message", handleMessage);
-        return () => window.removeEventListener("message", handleMessage);
-    }, [handleMessage]);
+        buildIframeSrc().then(setIframeSrc);
+    }, [reloadKey]);
 
-    const reload = () => setKey((k) => k + 1);
+    const reload = () => {
+        setIframeSrc(null);
+        setReloadKey((k) => k + 1);
+    };
 
     return (
         <div className="flex h-full flex-col">
@@ -96,16 +77,17 @@ export function AiMatrx() {
                 </a>
             </div>
 
-            {/* iframe fills remaining space */}
-            <iframe
-                key={key}
-                ref={iframeRef}
-                src={buildHandoffUrl()}
-                title="AiMatrx Local Tools"
-                className="flex-1 w-full border-0"
-                allow="camera; microphone; clipboard-read; clipboard-write"
-                sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
-            />
+            {/* iframe fills remaining space — only rendered once src is ready */}
+            {iframeSrc && (
+                <iframe
+                    key={reloadKey}
+                    src={iframeSrc}
+                    title="AiMatrx Local Tools"
+                    className="flex-1 w-full border-0"
+                    allow="camera; microphone; clipboard-read; clipboard-write"
+                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+                />
+            )}
         </div>
     );
 }

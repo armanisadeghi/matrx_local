@@ -1,1256 +1,1602 @@
-import { useState, useEffect, useCallback } from "react";
-import { PageHeader } from "@/components/layout/PageHeader";
-import { SubTabBar } from "@/components/layout/SubTabBar";
-import { useLlm, type LlmState, type LlmActions } from "@/hooks/use-llm";
-import { Button } from "@/components/ui/button";
-import { DownloadProgress } from "@/components/DownloadProgress";
-import { Badge } from "@/components/ui/badge";
+"use client";
+
+import { useState, useRef, useCallback } from "react";
+import { useLlm } from "@/hooks/use-llm";
 import {
-  Cpu,
-  HardDrive,
   Download,
-  AlertCircle,
-  CheckCircle2,
   Trash2,
   Play,
   Square,
-  RefreshCw,
+  RotateCcw,
   Zap,
-  Monitor,
-  Server,
+  Cpu,
+  HardDrive,
   Activity,
-  Loader2,
-  Info,
-  Settings2,
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  MessageSquare,
   Wrench,
+  Code,
+  Server,
+  Settings,
+  X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { DebugTerminal, useDebugTerminal } from "@/components/DebugTerminal";
-import type { LlmModelInfo, LlmTier } from "@/lib/llm/types";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { streamCompletion, callWithTools } from "@/lib/llm/api";
+import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
 
-const TABS = [
-  { value: "overview", label: "Overview" },
-  { value: "models", label: "Models" },
-  { value: "server", label: "Server" },
-  { value: "hardware", label: "Hardware" },
-  { value: "inference", label: "Test" },
-];
+// ── Helpers ──────────────────────────────────────────────────────────────
 
-export function LocalModels() {
-  const [tab, setTab] = useState("overview");
-  const [state, actions] = useLlm();
-  const { logs, logLine, logData, clearLogs } = useDebugTerminal();
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const gb = bytes / (1024 * 1024 * 1024);
+  if (gb >= 1) return `${gb.toFixed(2)} GB`;
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(1)} MB`;
+}
 
-  // Wire state changes to the terminal
-  useEffect(() => {
-    if (state.downloadProgress) {
-      logData("[llm] download-progress", state.downloadProgress);
-    }
-  }, [state.downloadProgress, logData]);
+function formatSpeed(bps: number): string {
+  const mbps = bps / (1024 * 1024);
+  return `${mbps.toFixed(1)} MB/s`;
+}
 
-  useEffect(() => {
-    if (state.error) {
-      logLine("error", `[llm] ERROR: ${state.error}`);
-    }
-  }, [state.error, logLine]);
-
-  useEffect(() => {
-    if (state.serverStatus) {
-      logData("[llm] server-status", state.serverStatus);
-    }
-  }, [state.serverStatus, logData]);
-
-  // Wrapped actions with full terminal logging
-  const wrappedDetectHardware = useCallback(async () => {
-    logLine("cmd", "invoke detect_llm_hardware");
-    try {
-      const result = await actions.detectHardware();
-      logData("[llm] hardware-result", result);
-      logLine("success", `Hardware: ${result.hardware.is_apple_silicon ? "Apple Silicon" : `${result.hardware.total_ram_mb}MB RAM`} — recommended: ${result.recommended_filename}`);
-      return result;
-    } catch (e) {
-      logLine("error", `detect_llm_hardware failed: ${e}`);
-      throw e;
-    }
-  }, [actions, logLine, logData]);
-
-  const wrappedDownloadModel = useCallback(async (filename: string, urls: string[]) => {
-    logLine("cmd", `invoke download_llm_model: ${filename}`);
-    logLine("info", `Parts: ${urls.length} — ${urls[0]}${urls.length > 1 ? ` (+${urls.length - 1} more)` : ""}`);
-    logLine("info", "Download started — progress events will appear below");
-    try {
-      await actions.downloadModel(filename, urls);
-      logLine("success", `Model downloaded and validated: ${filename}`);
-    } catch (e) {
-      logLine("error", `download_llm_model failed: ${e}`);
-      throw e;
-    }
-  }, [actions, logLine]);
-
-  const wrappedStartServer = useCallback(async (modelFilename: string, gpuLayers: number, contextLength?: number) => {
-    logLine("cmd", `invoke start_llm_server: ${modelFilename} gpu_layers=${gpuLayers} ctx=${contextLength ?? 8192}`);
-    try {
-      const result = await actions.startServer(modelFilename, gpuLayers, contextLength);
-      logData("[llm] server-started", result);
-      logLine("success", `Server running on port ${result.port}`);
-      return result;
-    } catch (e) {
-      logLine("error", `start_llm_server failed: ${e}`);
-      throw e;
-    }
-  }, [actions, logLine, logData]);
-
-  const wrappedStopServer = useCallback(async () => {
-    logLine("cmd", "invoke stop_llm_server");
-    try {
-      await actions.stopServer();
-      logLine("success", "Server stopped");
-    } catch (e) {
-      logLine("error", `stop_llm_server failed: ${e}`);
-      throw e;
-    }
-  }, [actions, logLine]);
-
-  const wrappedDeleteModel = useCallback(async (filename: string) => {
-    logLine("cmd", `invoke delete_llm_model: ${filename}`);
-    try {
-      await actions.deleteModel(filename);
-      logLine("success", `Model deleted: ${filename}`);
-    } catch (e) {
-      logLine("error", `delete_llm_model failed: ${e}`);
-    }
-  }, [actions, logLine]);
-
-  const wrappedHealthCheck = useCallback(async () => {
-    logLine("cmd", "invoke check_llm_server_health");
-    try {
-      const ok = await actions.healthCheck();
-      logLine(ok ? "success" : "warn", `Health check: ${ok ? "healthy" : "not healthy"}`);
-      return ok;
-    } catch (e) {
-      logLine("error", `health check failed: ${e}`);
-      return false;
-    }
-  }, [actions, logLine]);
-
-  const wrappedQuickSetup = useCallback(async () => {
-    logLine("info", "=== Starting LLM Quick Setup ===");
-    try {
-      await actions.quickSetup();
-      logLine("success", "=== LLM Quick Setup complete ===");
-    } catch (e) {
-      logLine("error", `Quick setup failed: ${e}`);
-    }
-  }, [actions, logLine]);
-
-  const wrappedActions: LlmActions = {
-    ...actions,
-    detectHardware: wrappedDetectHardware,
-    downloadModel: wrappedDownloadModel,
-    startServer: wrappedStartServer,
-    stopServer: wrappedStopServer,
-    deleteModel: wrappedDeleteModel,
-    healthCheck: wrappedHealthCheck,
-    quickSetup: wrappedQuickSetup,
-  };
-
+function ToolCallRating({ rating }: { rating: number }) {
   return (
-    <div className="flex h-full flex-col">
-      <PageHeader
-        title="Local Models"
-        description="Manage local LLM inference with llama-server"
-      />
-      <SubTabBar tabs={TABS} value={tab} onValueChange={setTab} />
-      <div className="flex-1 overflow-y-auto p-6">
-        {tab === "overview" && (
-          <OverviewTab state={state} actions={wrappedActions} logs={logs} onClearLogs={clearLogs} />
-        )}
-        {tab === "models" && (
-          <ModelsTab state={state} actions={wrappedActions} logs={logs} onClearLogs={clearLogs} />
-        )}
-        {tab === "server" && <ServerTab state={state} actions={wrappedActions} />}
-        {tab === "hardware" && (
-          <HardwareTab state={state} actions={wrappedActions} />
-        )}
-        {tab === "inference" && (
-          <InferenceTab state={state} actions={wrappedActions} />
-        )}
-      </div>
+    <div className="flex gap-0.5">
+      {Array.from({ length: 5 }, (_, i) => (
+        <div
+          key={i}
+          className={`h-2 w-2 rounded-full ${i < rating ? "bg-blue-500" : "bg-muted"}`}
+        />
+      ))}
     </div>
   );
 }
 
-// ── Overview Tab ──────────────────────────────────────────────────────────
+function CopyButton({ text, label }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <Button variant="ghost" size="sm" className="h-7 px-2 gap-1" onClick={copy}>
+      <Copy className="h-3 w-3" />
+      {copied ? "Copied!" : label ?? "Copy"}
+    </Button>
+  );
+}
 
-function OverviewTab({
-  state,
-  actions,
-  logs,
-  onClearLogs,
-}: {
-  state: LlmState;
-  actions: LlmActions;
-  logs: import("@/components/DebugTerminal").LogLine[];
-  onClearLogs: () => void;
-}) {
-  const isSetup = state.setupStatus?.setup_complete ?? false;
-  const isRunning = state.serverStatus?.running ?? false;
-  const isActive = state.isDetecting || state.isDownloading || state.isStarting;
+// ── Setup Tab ─────────────────────────────────────────────────────────────
+
+function SetupTab() {
+  const [state, actions] = useLlm();
+  const {
+    hardwareResult,
+    downloadProgress,
+    isDetecting,
+    isDownloading,
+    isStarting,
+    downloadCancelled,
+    downloadedModels,
+    serverStatus,
+    error,
+  } = state;
+  const { detectHardware, quickSetup, cancelDownload, clearError } = actions;
+
+  const isModelDownloaded = hardwareResult
+    ? downloadedModels.some((m) => m.filename === hardwareResult.recommended_filename)
+    : false;
+
+  const handleQuickSetup = async () => {
+    clearError();
+    await quickSetup();
+  };
+
+  const progressPercent = downloadProgress?.percent ?? 0;
+  const partLabel =
+    downloadProgress && downloadProgress.total_parts > 1
+      ? ` — Part ${downloadProgress.part} of ${downloadProgress.total_parts}`
+      : "";
+  const bytesLabel = downloadProgress
+    ? `${formatBytes(downloadProgress.bytes_downloaded)} / ${formatBytes(downloadProgress.total_bytes || (hardwareResult?.all_models.find(m => m.filename === downloadProgress.filename)?.expected_size_bytes ?? 0))}`
+    : "";
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {/* Quick Setup Card */}
-      <div className="rounded-xl border bg-card p-6">
-        <div className="flex items-start gap-4">
-          <div
-            className={cn(
-              "flex h-12 w-12 items-center justify-center rounded-xl",
-              isRunning
-                ? "bg-emerald-500/15 text-emerald-500"
-                : isSetup
-                  ? "bg-amber-500/15 text-amber-500"
-                  : "bg-primary/15 text-primary"
-            )}
-          >
-            {isRunning ? (
-              <Server className="h-6 w-6" />
-            ) : (
-              <Zap className="h-6 w-6" />
-            )}
+    <div className="space-y-6 max-w-2xl">
+      {/* Hardware Detection Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Cpu className="h-4 w-4 text-blue-500" />
+              Hardware Profile
+            </CardTitle>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isDetecting}
+              onClick={detectHardware}
+            >
+              {isDetecting ? "Detecting…" : hardwareResult ? "Re-detect" : "Detect Hardware"}
+            </Button>
           </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold">
-              {isRunning
-                ? "LLM Server Running"
-                : isSetup
-                  ? "Model Ready"
-                  : "Set Up Local LLM"}
-            </h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              {isRunning
-                ? `${state.serverStatus?.model_name} on port ${state.serverStatus?.port}`
-                : isSetup
-                  ? `${state.setupStatus?.selected_model} downloaded. Start the server to begin inference.`
-                  : "Detect your hardware, download a model, and start running AI locally."}
-            </p>
-
-            {state.error && (
-              <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-400">
-                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>{state.error}</span>
+        </CardHeader>
+        {hardwareResult && (
+          <CardContent className="pt-0">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-muted-foreground text-xs">RAM</p>
+                <p className="font-medium">
+                  {(hardwareResult.hardware.total_ram_mb / 1024).toFixed(0)} GB
+                </p>
               </div>
-            )}
-
-            <DownloadProgress
-              progress={state.downloadProgress}
-              isDownloading={state.isDownloading}
-              error={state.error}
-              className="mt-3"
-            />
-
-            <div className="mt-4 flex gap-2 flex-wrap">
-              {!isSetup && !isRunning && (
-                <Button
-                  onClick={() => actions.quickSetup()}
-                  disabled={
-                    state.isDetecting ||
-                    state.isDownloading ||
-                    state.isStarting
-                  }
-                >
-                  {state.isDetecting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Detecting Hardware...
-                    </>
-                  ) : state.isDownloading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Downloading Model...
-                    </>
-                  ) : state.isStarting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Starting Server...
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="mr-2 h-4 w-4" />
-                      Quick Setup
-                    </>
-                  )}
-                </Button>
-              )}
-
-              {isSetup && !isRunning && (
-                <Button
-                  onClick={async () => {
-                    const hw = await actions.detectHardware();
-                    await actions.startServer(
-                      state.setupStatus!.selected_model!,
-                      hw.recommended_gpu_layers,
-                      8192
-                    );
-                  }}
-                  disabled={state.isStarting}
-                >
-                  {state.isStarting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Starting...
-                    </>
-                  ) : (
-                    <>
-                      <Play className="mr-2 h-4 w-4" />
-                      Start Server
-                    </>
-                  )}
-                </Button>
-              )}
-
-              {isRunning && (
-                <Button variant="destructive" onClick={actions.stopServer}>
-                  <Square className="mr-2 h-4 w-4" />
-                  Stop Server
-                </Button>
-              )}
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={actions.refreshSetupStatus}
-              >
-                <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                Refresh
-              </Button>
-
-              {state.error && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={actions.clearError}
-                >
-                  Dismiss Error
-                </Button>
-              )}
+              <div>
+                <p className="text-muted-foreground text-xs">CPU Threads</p>
+                <p className="font-medium">{hardwareResult.hardware.cpu_threads}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">GPU</p>
+                <p className="font-medium">
+                  {hardwareResult.hardware.is_apple_silicon
+                    ? "Apple Silicon (Metal)"
+                    : hardwareResult.hardware.supports_cuda
+                    ? `CUDA — ${((hardwareResult.hardware.gpu_vram_mb ?? 0) / 1024).toFixed(0)} GB VRAM`
+                    : "CPU only"}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground text-xs">Recommended</p>
+                <p className="font-medium text-blue-500">{hardwareResult.recommended_name}</p>
+              </div>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Status Cards */}
-      <div className="grid grid-cols-3 gap-4">
-        <StatusCard
-          icon={<HardDrive className="h-5 w-5" />}
-          label="Models Downloaded"
-          value={String(state.downloadedModels.length)}
-          detail={
-            state.downloadedModels.length > 0
-              ? state.downloadedModels.map((m) => m.name).join(", ")
-              : "No models downloaded"
-          }
-        />
-        <StatusCard
-          icon={<Server className="h-5 w-5" />}
-          label="Server Status"
-          value={isRunning ? "Running" : "Stopped"}
-          detail={
-            isRunning
-              ? `Port ${state.serverStatus?.port}`
-              : "Not active"
-          }
-          variant={isRunning ? "success" : "muted"}
-        />
-        <StatusCard
-          icon={<Cpu className="h-5 w-5" />}
-          label="GPU Offload"
-          value={
-            state.serverStatus?.running
-              ? state.serverStatus.gpu_layers > 0
-                ? `${state.serverStatus.gpu_layers} layers`
-                : "CPU only"
-              : "N/A"
-          }
-          detail={
-            state.hardwareResult?.hardware.is_apple_silicon
-              ? "Apple Silicon (Metal)"
-              : state.hardwareResult?.hardware.supports_cuda
-                ? "NVIDIA CUDA"
-                : "CPU inference"
-          }
-        />
-      </div>
-
-      {/* API Endpoint Info */}
-      {isRunning && (
-        <div className="rounded-xl border bg-card p-6">
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <Wrench className="h-4 w-4" />
-            API Endpoint
-          </h3>
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <code className="flex-1 rounded bg-muted px-3 py-2 text-sm font-mono">
-                http://127.0.0.1:{state.serverStatus?.port}/v1/chat/completions
-              </code>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              OpenAI-compatible endpoint. Supports tool calling, structured
-              output, and streaming.
+            <p className="text-xs text-muted-foreground mt-3 bg-muted/40 rounded px-3 py-2">
+              {hardwareResult.reason}
             </p>
+          </CardContent>
+        )}
+      </Card>
+
+      {/* Quick Setup Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Zap className="h-4 w-4 text-yellow-500" />
+            Quick Setup
+          </CardTitle>
+          <CardDescription>
+            One click to download the recommended model and start inference.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {hardwareResult && (
+            <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+              <div className="flex-1">
+                <p className="font-medium text-sm">{hardwareResult.recommended_name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {hardwareResult.recommended_size_gb.toFixed(1)} GB •{" "}
+                  {hardwareResult.recommended_gpu_layers === 99
+                    ? "Full GPU offload"
+                    : hardwareResult.recommended_gpu_layers === 0
+                    ? "CPU inference"
+                    : `${hardwareResult.recommended_gpu_layers} GPU layers`}
+                </p>
+              </div>
+              {isModelDownloaded ? (
+                <Badge className="bg-green-500/20 text-green-600 border-green-500/30">
+                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                  Downloaded
+                </Badge>
+              ) : (
+                <Badge variant="outline">Not downloaded</Badge>
+              )}
+            </div>
+          )}
+
+          {/* Download progress */}
+          {isDownloading && downloadProgress && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span className="font-medium">
+                  Downloading{partLabel}
+                </span>
+                <span>{bytesLabel}</span>
+              </div>
+              <Progress value={progressPercent} className="h-2" />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  {progressPercent.toFixed(1)}%
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2 text-xs text-destructive border-destructive/30"
+                  onClick={cancelDownload}
+                >
+                  <X className="h-3 w-3 mr-1" />
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {downloadCancelled && (
+            <div className="text-xs text-amber-500 flex items-center gap-2">
+              <AlertCircle className="h-3 w-3" />
+              Download cancelled. Partial files have been cleaned up.
+            </div>
+          )}
+
+          {serverStatus?.running && (
+            <div className="flex items-center gap-2 text-sm text-green-600">
+              <CheckCircle2 className="h-4 w-4" />
+              Server running on port {serverStatus.port} — model: {serverStatus.model_name}
+            </div>
+          )}
+
+          {error && (
+            <div className="text-xs text-destructive flex items-start gap-2 bg-destructive/10 rounded px-3 py-2">
+              <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <Button
+            className="w-full"
+            disabled={isDetecting || isDownloading || isStarting || !hardwareResult}
+            onClick={handleQuickSetup}
+          >
+            {isDetecting
+              ? "Detecting hardware…"
+              : isDownloading
+              ? "Downloading…"
+              : isStarting
+              ? "Starting server…"
+              : serverStatus?.running && isModelDownloaded
+              ? "Restart with Recommended Model"
+              : isModelDownloaded
+              ? "Start Inference Server"
+              : "Download & Start"}
+          </Button>
+          {!hardwareResult && !isDetecting && (
+            <p className="text-xs text-center text-muted-foreground">
+              Detect hardware first to get a recommendation.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── Model Card ────────────────────────────────────────────────────────────
+
+function ModelCard({
+  model,
+  isDownloaded,
+  isServerRunning,
+  downloadingFilename,
+  downloadProgress,
+  onDownload,
+  onDownloadAndRun,
+  onLoad,
+  onDelete,
+  onCancel,
+}: {
+  model: LlmModelInfo;
+  isDownloaded: boolean;
+  isServerRunning: boolean;
+  downloadingFilename: string | null;
+  downloadProgress: { percent: number; part: number; total_parts: number; bytes_downloaded: number } | null;
+  onDownload: (model: LlmModelInfo) => void;
+  onDownloadAndRun: (model: LlmModelInfo) => void;
+  onLoad: (model: LlmModelInfo) => void;
+  onDelete: (filename: string) => void;
+  onCancel: () => void;
+}) {
+  const isDownloadingThis = downloadingFilename === model.filename;
+
+  return (
+    <Card className={isDownloaded ? "border-green-500/30" : ""}>
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <CardTitle className="text-sm">{model.name}</CardTitle>
+              {model.is_split && (
+                <Badge variant="outline" className="text-xs">
+                  {model.hf_parts.length + 1} parts
+                </Badge>
+              )}
+              {model.tier === "Default" && (
+                <Badge className="text-xs bg-blue-500/20 text-blue-600 border-blue-500/30">
+                  Recommended
+                </Badge>
+              )}
+              {isDownloaded && (
+                <Badge className="text-xs bg-green-500/20 text-green-600 border-green-500/30">
+                  <CheckCircle2 className="h-3 w-3 mr-1" />
+                  Downloaded
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">{model.description}</p>
           </div>
         </div>
-      )}
+      </CardHeader>
+      <CardContent className="pt-0 space-y-4">
+        {/* Stats Grid */}
+        <div className="grid grid-cols-4 gap-3 text-xs">
+          <div className="rounded-lg bg-muted/40 px-3 py-2">
+            <p className="text-muted-foreground mb-1">Disk</p>
+            <p className="font-semibold">{model.disk_size_gb.toFixed(1)} GB</p>
+          </div>
+          <div className="rounded-lg bg-muted/40 px-3 py-2">
+            <p className="text-muted-foreground mb-1">RAM</p>
+            <p className="font-semibold">{model.ram_required_gb.toFixed(0)} GB</p>
+          </div>
+          <div className="rounded-lg bg-muted/40 px-3 py-2">
+            <p className="text-muted-foreground mb-1">Speed</p>
+            <p className="font-semibold">{model.speed}</p>
+          </div>
+          <div className="rounded-lg bg-muted/40 px-3 py-2">
+            <p className="text-muted-foreground mb-2">Tool Calling</p>
+            <ToolCallRating rating={model.tool_calling_rating} />
+          </div>
+        </div>
 
-      {/* Debug Terminal */}
-      <DebugTerminal
-        logs={logs}
-        onClear={onClearLogs}
-        title="LLM Operations Log"
-        defaultOpen={isActive}
-        maxHeight="260px"
-      />
-    </div>
+        {/* Download progress for this card */}
+        {isDownloadingThis && downloadProgress && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>
+                {downloadProgress.total_parts > 1
+                  ? `Part ${downloadProgress.part}/${downloadProgress.total_parts}`
+                  : "Downloading"}
+              </span>
+              <span>{formatBytes(downloadProgress.bytes_downloaded)}</span>
+            </div>
+            <Progress value={downloadProgress.percent} className="h-1.5" />
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                {downloadProgress.percent.toFixed(1)}%
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-5 px-1 text-xs text-destructive"
+                onClick={onCancel}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex flex-wrap gap-2">
+          {isDownloaded ? (
+            <>
+              {!isServerRunning && (
+                <Button
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => onLoad(model)}
+                >
+                  <Play className="h-3 w-3" />
+                  Load & Run
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+                onClick={() => onDelete(model.filename)}
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                size="sm"
+                className="gap-1"
+                disabled={isDownloadingThis}
+                onClick={() => onDownloadAndRun(model)}
+              >
+                <Zap className="h-3 w-3" />
+                Download & Run
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1"
+                disabled={isDownloadingThis}
+                onClick={() => onDownload(model)}
+              >
+                <Download className="h-3 w-3" />
+                Download Only
+              </Button>
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 // ── Models Tab ────────────────────────────────────────────────────────────
 
-function ModelsTab({
-  state,
-  actions,
-  logs,
-  onClearLogs,
-}: {
-  state: LlmState;
-  actions: LlmActions;
-  logs: import("@/components/DebugTerminal").LogLine[];
-  onClearLogs: () => void;
-}) {
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
+function ModelsTab() {
+  const [state, actions] = useLlm();
+  const {
+    hardwareResult,
+    downloadProgress,
+    isDownloading,
+    downloadedModels,
+    serverStatus,
+    error,
+  } = state;
+  const { detectHardware, downloadModel, startServer, deleteModel, cancelDownload } = actions;
 
-  const allModels = state.hardwareResult?.all_models ?? [];
-  const downloadedFilenames = new Set(
-    state.downloadedModels.map((m) => m.filename)
-  );
+  const [downloadingFilename, setDownloadingFilename] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!state.hardwareResult && !state.isDetecting) {
-      actions.detectHardware();
+  // Ensure hardware/models are loaded
+  const ensureHardware = useCallback(async () => {
+    if (!hardwareResult) {
+      return await detectHardware();
     }
-  }, []);
+    return hardwareResult;
+  }, [hardwareResult, detectHardware]);
 
-  const handleDownloadAndLoad = async (model: LlmModelInfo) => {
-    setDownloadingFile(model.filename);
+  const handleDownload = async (model: LlmModelInfo, andRun: boolean) => {
+    setLocalError(null);
+    setDownloadingFilename(model.filename);
     try {
-      const alreadyDownloaded = downloadedFilenames.has(model.filename);
-      if (!alreadyDownloaded) {
-        await actions.downloadModel(model.filename, model.all_part_urls);
+      await downloadModel(model.filename, model.all_part_urls);
+      if (andRun) {
+        const hw = await ensureHardware();
+        await startServer(model.filename, hw.recommended_gpu_layers, model.context_length);
       }
-      const hw = state.hardwareResult;
-      await actions.startServer(
-        model.filename,
-        hw ? hw.recommended_gpu_layers : 0,
-        model.context_length
-      );
-    } catch {
-      // error surfaced in state.error + terminal
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.toLowerCase().includes("cancel")) setLocalError(msg);
     } finally {
-      setDownloadingFile(null);
+      setDownloadingFilename(null);
     }
   };
 
-  const handleDownloadOnly = async (model: LlmModelInfo) => {
-    setDownloadingFile(model.filename);
+  const handleLoad = async (model: LlmModelInfo) => {
+    setLocalError(null);
     try {
-      await actions.downloadModel(model.filename, model.all_part_urls);
-    } catch {
-      // error surfaced in state.error + terminal
-    } finally {
-      setDownloadingFile(null);
+      const hw = await ensureHardware();
+      await startServer(model.filename, hw.recommended_gpu_layers, model.context_length);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setLocalError(msg);
     }
   };
 
   const handleDelete = async (filename: string) => {
-    setDeleting(filename);
+    setLocalError(null);
     try {
-      await actions.deleteModel(filename);
-    } finally {
-      setDeleting(null);
+      await deleteModel(filename);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setLocalError(msg);
     }
   };
 
-  const handleActivate = async (model: LlmModelInfo) => {
-    const hw = state.hardwareResult;
-    await actions.startServer(
-      model.filename,
-      hw ? hw.recommended_gpu_layers : 0,
-      model.context_length
-    );
-  };
-
-  const isAnyDownloading = state.isDownloading || downloadingFile !== null;
+  const allModels = hardwareResult?.all_models ?? [];
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <div className="rounded-xl border bg-card p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Available Models</h3>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => actions.detectHardware()}
-            disabled={state.isDetecting}
-          >
-            <RefreshCw className={cn("mr-1 h-3 w-3", state.isDetecting && "animate-spin")} />
-            {state.hardwareResult ? "Rescan" : "Detect"}
-          </Button>
+    <div className="space-y-4">
+      {(error || localError) && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          {error ?? localError}
         </div>
-        <p className="text-sm text-muted-foreground">
-          All models provide OpenAI-compatible tool calling — switching models only
-          changes capability and speed. Larger models require more RAM.
-        </p>
+      )}
 
-        {state.error && (
-          <ErrorBanner message={state.error} onDismiss={actions.clearError} />
-        )}
-
-        {/* Global download progress bar */}
-        <DownloadProgress
-          progress={state.downloadProgress}
-          isDownloading={state.isDownloading}
-        />
-
-        {state.isDetecting ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : allModels.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center space-y-3">
-            <Cpu className="h-10 w-10 text-muted-foreground/30" />
-            <p className="text-sm text-muted-foreground">
-              Click Detect to scan your hardware and see compatible models.
-            </p>
-            <Button onClick={() => actions.detectHardware()}>
-              <RefreshCw className="mr-2 h-4 w-4" />
+      {allModels.length === 0 && (
+        <Card>
+          <CardContent className="pt-6 text-center text-muted-foreground text-sm">
+            <Cpu className="h-8 w-8 mx-auto mb-3 opacity-30" />
+            <p>Run hardware detection first to see available models.</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-3"
+              onClick={detectHardware}
+            >
               Detect Hardware
             </Button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {allModels.map((model) => {
-              const isDownloaded = downloadedFilenames.has(model.filename);
-              const isActive =
-                (state.serverStatus?.running &&
-                  (state.serverStatus.model_name === model.filename ||
-                   state.serverStatus.model_name === model.filename.replace(".gguf", ""))) ?? false;
-              const isRecommended = model.filename === state.hardwareResult?.recommended_filename;
-              const isThisDownloading =
-                isAnyDownloading &&
-                (downloadingFile === model.filename ||
-                  state.downloadProgress?.filename === model.filename);
+          </CardContent>
+        </Card>
+      )}
 
-              return (
-                <div
-                  key={model.filename}
-                  className={cn(
-                    "rounded-lg border p-4 space-y-3 transition-colors",
-                    isActive && "border-emerald-500/50 bg-emerald-500/5",
-                    isRecommended && !isActive && "border-primary/30"
-                  )}
-                >
-                  {/* Header */}
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="space-y-1 flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-sm">{model.name}</span>
-                        {isRecommended && (
-                          <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                            Recommended
-                          </span>
-                        )}
-                        {isActive && (
-                          <span className="text-xs bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full">
-                            Active
-                          </span>
-                        )}
-                        <TierBadge tier={model.tier} />
-                        {model.is_split && (
-                          <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
-                            {model.all_part_urls.length} parts
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-sm text-muted-foreground">{model.description}</p>
-                    </div>
-                  </div>
+      <div className="space-y-3">
+        {allModels.map((model) => {
+          const isDownloaded = downloadedModels.some(
+            (m) => m.filename === model.filename
+          );
+          return (
+            <ModelCard
+              key={model.filename}
+              model={model}
+              isDownloaded={isDownloaded}
+              isServerRunning={!!serverStatus?.running}
+              downloadingFilename={isDownloading ? downloadingFilename : null}
+              downloadProgress={
+                downloadingFilename === model.filename ? downloadProgress : null
+              }
+              onDownload={(m) => handleDownload(m, false)}
+              onDownloadAndRun={(m) => handleDownload(m, true)}
+              onLoad={handleLoad}
+              onDelete={handleDelete}
+              onCancel={cancelDownload}
+            />
+          );
+        })}
+      </div>
 
-                  {/* Stats grid */}
-                  <div className="grid grid-cols-4 gap-2 text-xs">
-                    <ModelStat label="Download" value={`${model.disk_size_gb} GB`} />
-                    <ModelStat label="RAM Needed" value={`${model.ram_required_gb} GB`} />
-                    <ModelStat label="Speed" value={model.speed} />
-                    <ModelStat
-                      label="Tool Calling"
-                      value={"★".repeat(model.tool_calling_rating) + "☆".repeat(5 - model.tool_calling_rating)}
-                    />
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {isActive ? (
-                      <>
-                        <span className="text-xs text-emerald-500 flex items-center gap-1">
-                          <CheckCircle2 className="h-3 w-3" />
-                          Currently active
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="ml-auto"
-                          onClick={actions.stopServer}
-                        >
-                          <Square className="mr-1 h-3 w-3" />
-                          Stop Server
-                        </Button>
-                      </>
-                    ) : isThisDownloading ? (
-                      <Button size="sm" disabled>
-                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                        {state.downloadProgress
-                          ? `${Math.round(state.downloadProgress.percent)}%${
-                              state.downloadProgress.total_parts && state.downloadProgress.total_parts > 1
-                                ? ` — Part ${state.downloadProgress.part}/${state.downloadProgress.total_parts}`
-                                : ""
-                            }`
-                          : "Downloading…"}
-                      </Button>
-                    ) : isDownloaded ? (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => handleActivate(model)}
-                          disabled={state.isStarting || isAnyDownloading}
-                        >
-                          {state.isStarting ? (
-                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                          ) : (
-                            <Play className="mr-1 h-3 w-3" />
-                          )}
-                          Load & Run
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleDelete(model.filename)}
-                          disabled={deleting === model.filename || isAnyDownloading}
-                          className="text-muted-foreground hover:text-red-500"
-                        >
-                          {deleting === model.filename ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3 w-3" />
-                          )}
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => handleDownloadAndLoad(model)}
-                          disabled={isAnyDownloading}
-                        >
-                          <Download className="mr-1 h-3 w-3" />
-                          Download & Run
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleDownloadOnly(model)}
-                          disabled={isAnyDownloading}
-                        >
-                          <Download className="mr-1 h-3 w-3" />
-                          Download Only
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Per-model download progress */}
-                  {isThisDownloading && (
-                    <DownloadProgress
-                      progress={state.downloadProgress}
-                      isDownloading={state.isDownloading}
-                    />
-                  )}
+      {/* Raw files section for downloaded models not in catalog */}
+      {downloadedModels.some(
+        (dm) => !allModels.some((m) => m.filename === dm.filename)
+      ) && (
+        <div className="mt-4">
+          <h3 className="text-sm font-medium text-muted-foreground mb-2">Custom Models</h3>
+          {downloadedModels
+            .filter((dm) => !allModels.some((m) => m.filename === dm.filename))
+            .map((dm) => (
+              <div
+                key={dm.filename}
+                className="flex items-center justify-between rounded-lg border px-4 py-3 text-sm"
+              >
+                <div>
+                  <p className="font-medium">{dm.name}</p>
+                  <p className="text-xs text-muted-foreground">{dm.size_gb} GB</p>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Technical notes */}
-      <div className="rounded-xl border bg-card p-6 space-y-3">
-        <h3 className="font-semibold text-sm">Technical Details</h3>
-        <div className="space-y-2 text-xs text-muted-foreground">
-          <p>
-            Models are GGUF format files running on llama-server, which exposes an
-            OpenAI-compatible <code className="bg-muted px-1 py-0.5 rounded">/v1/chat/completions</code> endpoint on localhost.
-          </p>
-          <p>
-            Split models (marked "X parts") are downloaded as separate files and assembled
-            automatically — no manual steps required.
-          </p>
-          <p>
-            GPU acceleration is applied automatically: Metal on Apple Silicon, CUDA on NVIDIA.
-            CPU-only inference is supported on all machines but is slower.
-          </p>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      startServer(dm.filename, 0, 4096)
+                    }
+                  >
+                    <Play className="h-3 w-3 mr-1" />
+                    Load
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive"
+                    onClick={() => handleDelete(dm.filename)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            ))}
         </div>
-      </div>
-
-      {/* Debug Terminal */}
-      <DebugTerminal
-        logs={logs}
-        onClear={onClearLogs}
-        title="Model Download Log"
-        defaultOpen={isAnyDownloading}
-        maxHeight="260px"
-      />
+      )}
     </div>
   );
 }
 
-function ModelStat({ label, value }: { label: string; value: string }) {
+// ── Inference / Playground Tab ────────────────────────────────────────────
+
+type InferenceMode = "chat" | "tools" | "raw";
+
+interface ConversationMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  isStreaming?: boolean;
+}
+
+function InferenceTab() {
+  const [state, actions] = useLlm();
+  const { serverStatus, isStarting, hardwareResult, downloadedModels } = state;
+  const { startServer, stopServer, detectHardware } = actions;
+
+  const [mode, setMode] = useState<InferenceMode>("chat");
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [showSystem, setShowSystem] = useState(false);
+  const [showSampling, setShowSampling] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Tool test mode state
+  const [toolDef, setToolDef] = useState(
+    JSON.stringify(
+      {
+        type: "function",
+        function: {
+          name: "get_weather",
+          description: "Get current weather for a location",
+          parameters: {
+            type: "object",
+            properties: {
+              location: { type: "string", description: "City name" },
+            },
+            required: ["location"],
+          },
+        },
+      },
+      null,
+      2
+    )
+  );
+  const [toolResult, setToolResult] = useState<string | null>(null);
+
+  // Raw JSON mode state
+  const [rawJson, setRawJson] = useState(
+    JSON.stringify(
+      {
+        model: "local",
+        messages: [{ role: "user", content: "Hello!" }],
+        max_tokens: 256,
+        temperature: 0.7,
+        stream: false,
+      },
+      null,
+      2
+    )
+  );
+  const [rawResult, setRawResult] = useState<string | null>(null);
+
+  // Sampling params
+  const [temperature, setTemperature] = useState(0.7);
+  const [topP, setTopP] = useState(0.8);
+  const [maxTokens, setMaxTokens] = useState(1024);
+  const [enableThinking, setEnableThinking] = useState(false);
+
+  // Server override controls
+  const [gpuLayersOverride, setGpuLayersOverride] = useState(99);
+  const [contextLengthOverride, setContextLengthOverride] = useState(8192);
+  const [selectedModel, setSelectedModel] = useState("");
+
+  const stopRef = useRef(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const port = serverStatus?.running ? serverStatus.port : null;
+
+  const scrollToBottom = () => {
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+  };
+
+  const handleSend = async () => {
+    if (!port || !input.trim() || isGenerating) return;
+    const userMsg = input.trim();
+    setInput("");
+    setError(null);
+    stopRef.current = false;
+
+    const chatMessages: ChatMessage[] = [
+      ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
+      ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      { role: "user" as const, content: userMsg },
+    ];
+
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: "user", content: userMsg },
+      { id: crypto.randomUUID(), role: "assistant", content: "", isStreaming: true },
+    ]);
+    setIsGenerating(true);
+    scrollToBottom();
+
+    let accumulated = "";
+    const assistantId = crypto.randomUUID();
+
+    setMessages((prev) => {
+      const copy = [...prev];
+      copy[copy.length - 1] = {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        isStreaming: true,
+      };
+      return copy;
+    });
+
+    try {
+      const stream = streamCompletion(port, chatMessages, { temperature, maxTokens });
+      for await (const token of stream) {
+        if (stopRef.current) break;
+        accumulated += token;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: accumulated } : m
+          )
+        );
+        scrollToBottom();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId ? { ...m, isStreaming: false } : m
+        )
+      );
+      setIsGenerating(false);
+    }
+  };
+
+  const handleToolTest = async () => {
+    if (!port || !input.trim()) return;
+    setError(null);
+    setToolResult(null);
+    setIsGenerating(true);
+    try {
+      const tool = JSON.parse(toolDef);
+      const result = await callWithTools(
+        port,
+        [{ role: "user", content: input }],
+        [tool]
+      );
+      setToolResult(JSON.stringify(result, null, 2));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleRawJson = async () => {
+    if (!port) return;
+    setError(null);
+    setRawResult(null);
+    setIsGenerating(true);
+    try {
+      const body = JSON.parse(rawJson);
+      const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      setRawResult(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleStartServer = async () => {
+    if (!selectedModel && downloadedModels.length === 0) return;
+    const modelToLoad = selectedModel || downloadedModels[0]?.filename;
+    try {
+      const hw = hardwareResult ?? (await detectHardware());
+      await startServer(modelToLoad, gpuLayersOverride, contextLengthOverride);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  if (!port) {
+    return (
+      <div className="space-y-6 max-w-2xl">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Server className="h-4 w-4" />
+              Start Inference Server
+            </CardTitle>
+            <CardDescription>
+              Load a model to enable the inference playground.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {downloadedModels.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No models downloaded yet. Go to the Models tab to download one.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-xs">Model</Label>
+                  <select
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={selectedModel || downloadedModels[0]?.filename}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                  >
+                    {downloadedModels.map((m) => (
+                      <option key={m.filename} value={m.filename}>
+                        {m.name} ({m.size_gb} GB)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs">GPU Layers</Label>
+                    <Input
+                      type="number"
+                      value={gpuLayersOverride}
+                      onChange={(e) => setGpuLayersOverride(parseInt(e.target.value) || 0)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Context Length</Label>
+                    <Input
+                      type="number"
+                      value={contextLengthOverride}
+                      onChange={(e) =>
+                        setContextLengthOverride(parseInt(e.target.value) || 4096)
+                      }
+                    />
+                  </div>
+                </div>
+                <Button
+                  className="w-full"
+                  disabled={isStarting}
+                  onClick={handleStartServer}
+                >
+                  {isStarting ? "Starting…" : "Start Server"}
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
-    <div className="text-center rounded-md bg-muted/30 py-2 px-1">
-      <p className="text-muted-foreground text-[10px] mb-0.5">{label}</p>
-      <p className="font-medium text-foreground text-xs leading-tight">{value}</p>
+    <div className="flex flex-col h-[calc(100vh-12rem)] gap-4">
+      {/* Header: mode + server status */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1 rounded-lg border p-1 bg-muted/30">
+          {(["chat", "tools", "raw"] as InferenceMode[]).map((m) => (
+            <Button
+              key={m}
+              size="sm"
+              variant={mode === m ? "default" : "ghost"}
+              className="h-7 px-3 text-xs gap-1"
+              onClick={() => setMode(m)}
+            >
+              {m === "chat" && <MessageSquare className="h-3 w-3" />}
+              {m === "tools" && <Wrench className="h-3 w-3" />}
+              {m === "raw" && <Code className="h-3 w-3" />}
+              {m.charAt(0).toUpperCase() + m.slice(1)}
+            </Button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-xs text-green-600">
+            <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+            Port {port}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={stopServer}
+          >
+            <Square className="h-3 w-3 mr-1" />
+            Stop
+          </Button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* Chat Mode */}
+      {mode === "chat" && (
+        <>
+          {/* Collapsible system prompt */}
+          <div className="rounded-lg border">
+            <button
+              className="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-muted/30 transition-colors"
+              onClick={() => setShowSystem((v) => !v)}
+            >
+              <span className="font-medium text-muted-foreground">System Prompt</span>
+              {showSystem ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </button>
+            {showSystem && (
+              <div className="px-4 pb-3">
+                <Textarea
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  placeholder="Optional system prompt…"
+                  className="text-sm resize-none h-20"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Sampling controls */}
+          <div className="rounded-lg border">
+            <button
+              className="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-muted/30 transition-colors"
+              onClick={() => setShowSampling((v) => !v)}
+            >
+              <span className="font-medium text-muted-foreground">Sampling Parameters</span>
+              {showSampling ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </button>
+            {showSampling && (
+              <div className="px-4 pb-4 grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <Label className="text-xs">Temperature</Label>
+                    <span className="text-xs text-muted-foreground">{temperature.toFixed(2)}</span>
+                  </div>
+                  <Slider
+                    min={0} max={2} step={0.05}
+                    value={[temperature]}
+                    onValueChange={([v]) => setTemperature(v)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <Label className="text-xs">Top-P</Label>
+                    <span className="text-xs text-muted-foreground">{topP.toFixed(2)}</span>
+                  </div>
+                  <Slider
+                    min={0} max={1} step={0.05}
+                    value={[topP]}
+                    onValueChange={([v]) => setTopP(v)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Max Tokens</Label>
+                  <Input
+                    type="number"
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(parseInt(e.target.value) || 256)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Conversation */}
+          <ScrollArea className="flex-1 rounded-lg border bg-muted/10">
+            <div className="p-4 space-y-4">
+              {messages.length === 0 && (
+                <p className="text-center text-sm text-muted-foreground py-8">
+                  Start a conversation with the local model.
+                </p>
+              )}
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[80%] rounded-xl px-4 py-3 text-sm ${
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted/60"
+                    }`}
+                  >
+                    <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
+                    {msg.isStreaming && (
+                      <span className="inline-block h-3.5 w-0.5 bg-current opacity-70 animate-pulse ml-0.5" />
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={bottomRef} />
+            </div>
+          </ScrollArea>
+
+          {/* Input */}
+          <div className="flex gap-2">
+            {isGenerating && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => (stopRef.current = true)}
+              >
+                <Square className="h-4 w-4" />
+              </Button>
+            )}
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+              className="text-sm resize-none h-20 flex-1"
+              disabled={isGenerating}
+            />
+            <div className="flex flex-col gap-2">
+              <Button
+                size="sm"
+                disabled={isGenerating || !input.trim()}
+                onClick={handleSend}
+                className="h-full"
+              >
+                Send
+              </Button>
+              {messages.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setMessages([])}
+                  title="Clear chat"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Tool Test Mode */}
+      {mode === "tools" && (
+        <div className="flex-1 overflow-auto space-y-4">
+          <div className="grid grid-cols-2 gap-4 h-full">
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Tool Definition (JSON)</Label>
+              <Textarea
+                value={toolDef}
+                onChange={(e) => setToolDef(e.target.value)}
+                className="font-mono text-xs h-48 resize-none"
+              />
+              <Label className="text-sm font-medium">User Prompt</Label>
+              <Textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="What is the weather in San Francisco?"
+                className="text-sm resize-none h-24"
+              />
+              <Button
+                disabled={isGenerating || !input.trim()}
+                onClick={handleToolTest}
+                className="w-full"
+              >
+                {isGenerating ? "Running…" : "Run Tool Call"}
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">Response</Label>
+                {toolResult && <CopyButton text={toolResult} />}
+              </div>
+              {toolResult ? (
+                <ScrollArea className="h-80 rounded-lg border bg-muted/30">
+                  <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{toolResult}</pre>
+                </ScrollArea>
+              ) : (
+                <div className="h-80 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
+                  Response will appear here
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Raw JSON Mode */}
+      {mode === "raw" && (
+        <div className="flex-1 overflow-auto space-y-4">
+          <div className="grid grid-cols-2 gap-4 h-full">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">Request Body</Label>
+                <span className="text-xs text-muted-foreground font-mono">
+                  POST /v1/chat/completions
+                </span>
+              </div>
+              <Textarea
+                value={rawJson}
+                onChange={(e) => setRawJson(e.target.value)}
+                className="font-mono text-xs h-64 resize-none"
+              />
+              <Button
+                disabled={isGenerating}
+                onClick={handleRawJson}
+                className="w-full"
+              >
+                {isGenerating ? "Running…" : "Send Request"}
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">Raw Response</Label>
+                {rawResult && <CopyButton text={rawResult} />}
+              </div>
+              {rawResult ? (
+                <ScrollArea className="h-80 rounded-lg border bg-muted/30">
+                  <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{rawResult}</pre>
+                </ScrollArea>
+              ) : (
+                <div className="h-80 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
+                  Response will appear here
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Server Tab ────────────────────────────────────────────────────────────
 
-function ServerTab({
-  state,
-  actions,
-}: {
-  state: LlmState;
-  actions: LlmActions;
-}) {
-  const [healthStatus, setHealthStatus] = useState<boolean | null>(null);
-  const [checking, setChecking] = useState(false);
-  const isRunning = state.serverStatus?.running ?? false;
+function ServerTab() {
+  const [state, actions] = useLlm();
+  const { serverStatus, isStarting, downloadedModels, hardwareResult } = state;
+  const { startServer, stopServer, getServerStatus, healthCheck, detectHardware } = actions;
+
+  const [healthOk, setHealthOk] = useState<boolean | null>(null);
+  const [healthLatency, setHealthLatency] = useState<number | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [gpuLayers, setGpuLayers] = useState(99);
+  const [contextLen, setContextLen] = useState(8192);
+  const [selectedModel, setSelectedModel] = useState(
+    downloadedModels[0]?.filename ?? ""
+  );
 
   const runHealthCheck = async () => {
-    setChecking(true);
+    setLocalError(null);
+    const start = Date.now();
+    const ok = await healthCheck();
+    setHealthOk(ok);
+    setHealthLatency(Date.now() - start);
+  };
+
+  const handleStart = async () => {
+    setLocalError(null);
+    const model = selectedModel || downloadedModels[0]?.filename;
+    if (!model) return;
     try {
-      const ok = await actions.healthCheck();
-      setHealthStatus(ok);
-    } catch {
-      setHealthStatus(false);
-    } finally {
-      setChecking(false);
+      const hw = hardwareResult ?? (await detectHardware());
+      await startServer(model, gpuLayers, contextLen);
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : String(e));
     }
   };
 
+  const handleStop = async () => {
+    await stopServer();
+  };
+
+  const handleRefresh = async () => {
+    await getServerStatus();
+  };
+
+  const endpointUrl = serverStatus?.running
+    ? `http://127.0.0.1:${serverStatus.port}/v1`
+    : null;
+
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {state.error && (
-        <ErrorBanner message={state.error} onDismiss={actions.clearError} />
+    <div className="space-y-4 max-w-2xl">
+      {localError && (
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          {localError}
+        </div>
       )}
 
-      {/* Server Status */}
-      <div className="rounded-xl border bg-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Server className="h-5 w-5" />
-            llama-server
-          </h3>
-          <Badge variant={isRunning ? "default" : "secondary"}>
-            {isRunning ? "Running" : "Stopped"}
-          </Badge>
-        </div>
-
-        {isRunning && state.serverStatus && (
-          <div className="space-y-3">
-            <InfoRow label="Model" value={state.serverStatus.model_name} />
-            <InfoRow
-              label="Port"
-              value={String(state.serverStatus.port)}
-            />
-            <InfoRow
-              label="GPU Layers"
-              value={
-                state.serverStatus.gpu_layers > 0
-                  ? `${state.serverStatus.gpu_layers} (GPU offload)`
-                  : "0 (CPU only)"
-              }
-            />
-            <InfoRow
-              label="Context Length"
-              value={`${state.serverStatus.context_length} tokens`}
-            />
-            <InfoRow
-              label="Endpoint"
-              value={`http://127.0.0.1:${state.serverStatus.port}/v1/chat/completions`}
-              mono
-            />
-
-            <div className="flex gap-2 pt-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={runHealthCheck}
-                disabled={checking}
-              >
-                {checking ? (
-                  <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Activity className="mr-2 h-3.5 w-3.5" />
-                )}
-                Health Check
-              </Button>
-              {healthStatus !== null && (
-                <Badge variant={healthStatus ? "default" : "destructive"}>
-                  {healthStatus ? "Healthy" : "Unhealthy"}
-                </Badge>
-              )}
-            </div>
-          </div>
-        )}
-
-        {!isRunning && (
-          <p className="text-sm text-muted-foreground">
-            The llama-server is not running. Start it from the Overview or
-            Models tab.
-          </p>
-        )}
-
-        <div className="flex gap-2 mt-4 pt-4 border-t">
-          {isRunning ? (
-            <Button variant="destructive" onClick={actions.stopServer}>
-              <Square className="mr-2 h-4 w-4" />
-              Stop Server
+      {/* Status Card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Server Status
+            </CardTitle>
+            <Button variant="ghost" size="sm" onClick={handleRefresh}>
+              <RotateCcw className="h-4 w-4" />
             </Button>
-          ) : (
-            state.setupStatus?.selected_model && (
-              <Button
-                onClick={async () => {
-                  const hw = await actions.detectHardware();
-                  await actions.startServer(
-                    state.setupStatus!.selected_model!,
-                    hw.recommended_gpu_layers,
-                    8192
-                  );
-                }}
-                disabled={state.isStarting}
-              >
-                {state.isStarting ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="mr-2 h-4 w-4" />
-                )}
-                Start Server
-              </Button>
-            )
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={actions.refreshSetupStatus}
-          >
-            <RefreshCw className="mr-2 h-3.5 w-3.5" />
-            Refresh Status
-          </Button>
-        </div>
-      </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-4">
+          {serverStatus?.running ? (
+            <>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-muted-foreground text-xs">Status</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <div className="h-2 w-2 rounded-full bg-green-500" />
+                    <p className="font-medium text-green-600">Running</p>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Port</p>
+                  <p className="font-medium">{serverStatus.port}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Model</p>
+                  <p className="font-medium truncate">{serverStatus.model_name}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">GPU Layers</p>
+                  <p className="font-medium">{serverStatus.gpu_layers}</p>
+                </div>
+              </div>
 
-      {/* Server Configuration Info */}
-      <div className="rounded-xl border bg-card p-6">
-        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-          <Settings2 className="h-4 w-4" />
-          Configuration Details
-        </h3>
-        <div className="space-y-2 text-sm text-muted-foreground">
-          <p>
-            The llama-server runs as a sidecar process, providing an
-            OpenAI-compatible API on localhost.
-          </p>
-          <ul className="list-disc list-inside space-y-1 ml-2">
-            <li>
-              Tool calling enabled via <code>--jinja</code> flag
-            </li>
-            <li>
-              Flash attention enabled for faster inference
-            </li>
-            <li>Port auto-selected from range 11434-11533</li>
-            <li>
-              Supports Qwen3, Phi-4, and Mistral model families
-            </li>
-          </ul>
-        </div>
-      </div>
+              {endpointUrl && (
+                <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2">
+                  <code className="text-xs flex-1 overflow-hidden text-ellipsis">
+                    {endpointUrl}
+                  </code>
+                  <CopyButton text={endpointUrl} label="Copy URL" />
+                </div>
+              )}
+
+              {/* Health check */}
+              <div className="flex items-center gap-3">
+                <Button size="sm" variant="outline" onClick={runHealthCheck}>
+                  Check Health
+                </Button>
+                {healthOk !== null && (
+                  <span
+                    className={`text-sm flex items-center gap-1.5 ${
+                      healthOk ? "text-green-600" : "text-destructive"
+                    }`}
+                  >
+                    {healthOk ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4" />
+                    )}
+                    {healthOk ? `OK — ${healthLatency}ms` : "Unhealthy"}
+                  </span>
+                )}
+              </div>
+
+              <Separator />
+
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-destructive border-destructive/30"
+                  onClick={handleStop}
+                >
+                  <Square className="h-3 w-3 mr-1" />
+                  Stop Server
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="h-2 w-2 rounded-full bg-muted-foreground/40" />
+              Server not running
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Start Server Card */}
+      {!serverStatus?.running && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Start Server
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {downloadedModels.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No models downloaded. Go to the Models tab first.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-xs">Model</Label>
+                  <select
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={selectedModel || downloadedModels[0]?.filename}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                  >
+                    {downloadedModels.map((m) => (
+                      <option key={m.filename} value={m.filename}>
+                        {m.name} ({m.size_gb} GB)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <Label className="text-xs">GPU Layers</Label>
+                      <span className="text-xs text-muted-foreground">{gpuLayers}</span>
+                    </div>
+                    <Slider
+                      min={0} max={99} step={1}
+                      value={[gpuLayers]}
+                      onValueChange={([v]) => setGpuLayers(v)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      99 = full GPU offload
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Context Length</Label>
+                    <select
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={contextLen}
+                      onChange={(e) => setContextLen(parseInt(e.target.value))}
+                    >
+                      <option value={2048}>2048</option>
+                      <option value={4096}>4096</option>
+                      <option value={8192}>8192</option>
+                      <option value={16384}>16384</option>
+                      <option value={32768}>32768</option>
+                    </select>
+                  </div>
+                </div>
+                <Button
+                  className="w-full"
+                  disabled={isStarting}
+                  onClick={handleStart}
+                >
+                  {isStarting ? "Starting…" : "Start Server"}
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
 
 // ── Hardware Tab ──────────────────────────────────────────────────────────
 
-function HardwareTab({
-  state,
-  actions,
-}: {
-  state: LlmState;
-  actions: LlmActions;
-}) {
-  useEffect(() => {
-    if (!state.hardwareResult && !state.isDetecting) {
-      actions.detectHardware();
-    }
-  }, []);
-
-  const hw = state.hardwareResult?.hardware;
+function HardwareTab() {
+  const [state, actions] = useLlm();
+  const { hardwareResult, isDetecting } = state;
+  const { detectHardware } = actions;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="space-y-4 max-w-2xl">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">System Hardware</h3>
+        <h2 className="text-base font-medium">System Hardware</h2>
         <Button
-          variant="outline"
           size="sm"
-          onClick={() => actions.detectHardware()}
-          disabled={state.isDetecting}
+          variant="outline"
+          disabled={isDetecting}
+          onClick={detectHardware}
         >
-          <RefreshCw
-            className={cn(
-              "mr-2 h-3.5 w-3.5",
-              state.isDetecting && "animate-spin"
-            )}
-          />
-          Re-detect
+          {isDetecting ? "Detecting…" : "Refresh"}
         </Button>
       </div>
 
-      {state.isDetecting ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : hw ? (
+      {!hardwareResult ? (
+        <Card>
+          <CardContent className="pt-6 text-center text-muted-foreground text-sm">
+            <HardDrive className="h-8 w-8 mx-auto mb-3 opacity-30" />
+            <p>Click Refresh to detect your hardware capabilities.</p>
+          </CardContent>
+        </Card>
+      ) : (
         <>
           <div className="grid grid-cols-2 gap-4">
-            <HardwareCard
-              icon={<Monitor className="h-5 w-5" />}
-              label="Total RAM"
-              value={`${(hw.total_ram_mb / 1024).toFixed(1)} GB`}
-            />
-            <HardwareCard
-              icon={<Cpu className="h-5 w-5" />}
-              label="CPU Threads"
-              value={String(hw.cpu_threads)}
-            />
-            <HardwareCard
-              icon={<Cpu className="h-5 w-5" />}
-              label="GPU VRAM"
-              value={
-                hw.gpu_vram_mb
-                  ? `${(hw.gpu_vram_mb / 1024).toFixed(1)} GB`
-                  : "N/A"
-              }
-            />
-            <HardwareCard
-              icon={<Zap className="h-5 w-5" />}
-              label="GPU Acceleration"
-              value={
-                hw.is_apple_silicon
-                  ? "Metal (Apple Silicon)"
-                  : hw.supports_cuda
-                    ? "NVIDIA CUDA"
-                    : "CPU only"
-              }
-            />
-          </div>
-
-          {/* Recommendation */}
-          {state.hardwareResult && (
-            <div className="rounded-xl border bg-card p-6">
-              <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                <Info className="h-4 w-4" />
-                Recommendation
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {state.hardwareResult.reason}
-              </p>
-              <div className="mt-3 flex items-center gap-2">
-                <Badge>
-                  {state.hardwareResult.recommended_name}
-                </Badge>
-                <span className="text-xs text-muted-foreground">
-                  ({state.hardwareResult.recommended_size_gb} GB download)
-                </span>
-              </div>
-              {state.hardwareResult.can_upgrade && (
-                <p className="mt-2 text-xs text-amber-500">
-                  Your hardware can support a larger model. Check the Models
-                  tab for options.
-                </p>
-              )}
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="text-center py-12 text-muted-foreground">
-          <Cpu className="h-8 w-8 mx-auto mb-3 opacity-50" />
-          <p>Click "Re-detect" to scan your hardware</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Inference Test Tab ────────────────────────────────────────────────────
-
-function InferenceTab({
-  state,
-}: {
-  state: LlmState;
-  actions: LlmActions;
-}) {
-  const [prompt, setPrompt] = useState("");
-  const [response, setResponse] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [elapsed, setElapsed] = useState<number | null>(null);
-
-  const isRunning = state.serverStatus?.running ?? false;
-  const port = state.serverStatus?.port ?? 0;
-
-  const runInference = async () => {
-    if (!prompt.trim() || !isRunning) return;
-
-    setIsGenerating(true);
-    setResponse("");
-    setElapsed(null);
-    const start = Date.now();
-
-    try {
-      const res = await fetch(
-        `http://127.0.0.1:${port}/v1/chat/completions`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: "local",
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.7,
-            max_tokens: 1024,
-            stream: false,
-            chat_template_kwargs: { enable_thinking: false },
-          }),
-        }
-      );
-
-      if (!res.ok) {
-        const text = await res.text();
-        setResponse(`Error (${res.status}): ${text}`);
-        return;
-      }
-
-      const data = await res.json();
-      const content = data.choices?.[0]?.message?.content ?? "(empty response)";
-      setResponse(content.replace(/<think>[\s\S]*?<\/think>/g, "").trim());
-      setElapsed(Date.now() - start);
-    } catch (e) {
-      setResponse(`Error: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {!isRunning ? (
-        <div className="text-center py-12 text-muted-foreground">
-          <Server className="h-8 w-8 mx-auto mb-3 opacity-50" />
-          <p>Start the LLM server to test inference</p>
-        </div>
-      ) : (
-        <>
-          <div className="rounded-xl border bg-card p-6">
-            <h3 className="text-sm font-semibold mb-3">Test Prompt</h3>
-            <textarea
-              className="w-full rounded-lg border bg-background px-3 py-2 text-sm min-h-[100px] resize-y focus:outline-none focus:ring-2 focus:ring-primary/50"
-              placeholder="Enter a prompt to test the model..."
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  runInference();
-                }
-              }}
-            />
-            <div className="flex items-center gap-2 mt-3">
-              <Button
-                onClick={runInference}
-                disabled={!prompt.trim() || isGenerating}
-                size="sm"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Play className="mr-2 h-3.5 w-3.5" />
-                    Send
-                  </>
-                )}
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                {navigator.platform.includes("Mac") ? "Cmd" : "Ctrl"}+Enter to
-                send
-              </span>
-            </div>
-          </div>
-
-          {response && (
-            <div className="rounded-xl border bg-card p-6">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold">Response</h3>
-                {elapsed !== null && (
-                  <span className="text-xs text-muted-foreground">
-                    {(elapsed / 1000).toFixed(1)}s
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Memory</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Total RAM</span>
+                  <span className="font-medium">
+                    {(hardwareResult.hardware.total_ram_mb / 1024).toFixed(1)} GB
                   </span>
+                </div>
+                {hardwareResult.hardware.gpu_vram_mb && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">GPU VRAM</span>
+                    <span className="font-medium">
+                      {(hardwareResult.hardware.gpu_vram_mb / 1024).toFixed(1)} GB
+                    </span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Compute</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">CPU Threads</span>
+                  <span className="font-medium">{hardwareResult.hardware.cpu_threads}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Acceleration</span>
+                  <span className="font-medium">
+                    {hardwareResult.hardware.is_apple_silicon
+                      ? "Apple Metal"
+                      : hardwareResult.hardware.supports_cuda
+                      ? "CUDA"
+                      : "CPU only"}
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Model Recommendation</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">{hardwareResult.recommended_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {hardwareResult.recommended_size_gb.toFixed(1)} GB •{" "}
+                    {hardwareResult.recommended_gpu_layers === 99
+                      ? "Full GPU offload"
+                      : hardwareResult.recommended_gpu_layers === 0
+                      ? "CPU inference"
+                      : `${hardwareResult.recommended_gpu_layers} GPU layers`}
+                  </p>
+                </div>
+                {hardwareResult.can_upgrade && (
+                  <Badge variant="outline" className="text-xs">
+                    Can upgrade
+                  </Badge>
                 )}
               </div>
-              <div className="rounded-lg bg-muted/50 p-4 text-sm whitespace-pre-wrap">
-                {response}
+              <p className="text-xs text-muted-foreground bg-muted/40 rounded px-3 py-2">
+                {hardwareResult.reason}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">All Compatible Models</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="space-y-2">
+                {hardwareResult.all_models.map((m) => {
+                  const isRecommended = m.filename === hardwareResult.recommended_filename;
+                  const ramOk = hardwareResult.hardware.total_ram_mb / 1024 >= m.ram_required_gb;
+                  return (
+                    <div
+                      key={m.filename}
+                      className={`flex items-center justify-between py-2 text-sm ${
+                        !ramOk ? "opacity-50" : ""
+                      }`}
+                    >
+                      <div>
+                        <span className="font-medium">{m.name}</span>
+                        {isRecommended && (
+                          <Badge className="ml-2 text-xs bg-blue-500/20 text-blue-600 border-blue-500/30">
+                            Recommended
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <span>{m.disk_size_gb.toFixed(1)} GB</span>
+                        <span>{m.ram_required_gb.toFixed(0)} GB RAM</span>
+                        {!ramOk && (
+                          <Badge variant="outline" className="text-xs text-amber-500 border-amber-500/30">
+                            Low RAM
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          )}
+            </CardContent>
+          </Card>
         </>
       )}
     </div>
   );
 }
 
-// ── Reusable Components ───────────────────────────────────────────────────
+// ── Page Root ─────────────────────────────────────────────────────────────
 
-function StatusCard({
-  icon,
-  label,
-  value,
-  detail,
-  variant = "default",
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  detail?: string;
-  variant?: "default" | "success" | "muted";
-}) {
+export default function LocalModels() {
   return (
-    <div className="rounded-xl border bg-card p-4">
-      <div className="flex items-center gap-2 mb-2 text-muted-foreground">
-        {icon}
-        <span className="text-xs">{label}</span>
+    <div className="p-6 h-full flex flex-col">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <Cpu className="h-6 w-6 text-blue-500" />
+          Local Models
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Run AI models locally on your device using llama.cpp
+        </p>
       </div>
-      <p
-        className={cn(
-          "text-lg font-semibold",
-          variant === "success" && "text-emerald-500",
-          variant === "muted" && "text-muted-foreground"
-        )}
-      >
-        {value}
-      </p>
-      {detail && (
-        <p className="text-xs text-muted-foreground mt-1 truncate">{detail}</p>
-      )}
+
+      <Tabs defaultValue="setup" className="flex-1 flex flex-col">
+        <TabsList className="w-fit">
+          <TabsTrigger value="setup" className="gap-1.5">
+            <Zap className="h-3.5 w-3.5" />
+            Setup
+          </TabsTrigger>
+          <TabsTrigger value="models" className="gap-1.5">
+            <HardDrive className="h-3.5 w-3.5" />
+            Models
+          </TabsTrigger>
+          <TabsTrigger value="inference" className="gap-1.5">
+            <MessageSquare className="h-3.5 w-3.5" />
+            Inference
+          </TabsTrigger>
+          <TabsTrigger value="server" className="gap-1.5">
+            <Server className="h-3.5 w-3.5" />
+            Server
+          </TabsTrigger>
+          <TabsTrigger value="hardware" className="gap-1.5">
+            <Cpu className="h-3.5 w-3.5" />
+            Hardware
+          </TabsTrigger>
+        </TabsList>
+
+        <div className="flex-1 overflow-auto pt-6">
+          <TabsContent value="setup" className="m-0">
+            <SetupTab />
+          </TabsContent>
+          <TabsContent value="models" className="m-0">
+            <ModelsTab />
+          </TabsContent>
+          <TabsContent value="inference" className="m-0 h-full">
+            <InferenceTab />
+          </TabsContent>
+          <TabsContent value="server" className="m-0">
+            <ServerTab />
+          </TabsContent>
+          <TabsContent value="hardware" className="m-0">
+            <HardwareTab />
+          </TabsContent>
+        </div>
+      </Tabs>
     </div>
   );
 }
-
-function HardwareCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-xl border bg-card p-4">
-      <div className="flex items-center gap-2 mb-1 text-muted-foreground">
-        {icon}
-        <span className="text-xs">{label}</span>
-      </div>
-      <p className="text-lg font-semibold">{value}</p>
-    </div>
-  );
-}
-
-function InfoRow({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <span
-        className={cn("text-sm", mono && "font-mono text-xs bg-muted px-2 py-0.5 rounded")}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
-
-function ErrorBanner({
-  message,
-  onDismiss,
-}: {
-  message: string;
-  onDismiss: () => void;
-}) {
-  return (
-    <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/5 p-4">
-      <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-red-400" />
-      <div className="flex-1 text-sm text-red-400">{message}</div>
-      <Button variant="ghost" size="sm" onClick={onDismiss} className="shrink-0">
-        Dismiss
-      </Button>
-    </div>
-  );
-}
-
-function TierBadge({ tier }: { tier: LlmTier }) {
-  const labels: Record<LlmTier, string> = {
-    Low: "Low",
-    LowAlt: "Low",
-    Default: "Default",
-    High: "High",
-    HighAlt: "High",
-  };
-  const colors: Record<LlmTier, string> = {
-    Low: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-    LowAlt: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-    Default: "bg-primary/10 text-primary border-primary/20",
-    High: "bg-amber-500/10 text-amber-500 border-amber-500/20",
-    HighAlt: "bg-amber-500/10 text-amber-500 border-amber-500/20",
-  };
-  return (
-    <Badge variant="outline" className={cn("text-xs", colors[tier])}>
-      {labels[tier]}
-    </Badge>
-  );
-}
-

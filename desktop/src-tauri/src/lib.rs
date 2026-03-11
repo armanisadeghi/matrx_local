@@ -419,6 +419,7 @@ pub fn run() {
         .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
             llm::server::LlmServer::new(),
         )) as llm::commands::LlmServerState)
+        .manage(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)) as llm::commands::LlmDownloadCancelState)
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
@@ -449,6 +450,7 @@ pub fn run() {
             check_llm_server_health,
             check_llm_model_exists,
             download_llm_model,
+            cancel_llm_download,
             list_llm_models,
             delete_llm_model,
             detect_llm_hardware,

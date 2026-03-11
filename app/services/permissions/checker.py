@@ -570,29 +570,38 @@ async def check_bluetooth() -> PermissionResult:
 
 async def check_network() -> PermissionResult:
     """Check network interfaces and connectivity."""
+    import socket as _socket
+
     details_parts: list[str] = []
-    devices: list[dict[str, Any]] = []
+    interfaces: list[dict[str, Any]] = []
 
     try:
         import psutil
 
-        interfaces = psutil.net_if_addrs()
-        stats = psutil.net_if_stats()
+        if_addrs = psutil.net_if_addrs()
+        if_stats = psutil.net_if_stats()
 
-        for iface_name, addrs in interfaces.items():
-            stat = stats.get(iface_name)
-            if not stat or not stat.isup:
-                continue
-            iface_info: dict[str, Any] = {"name": iface_name, "is_up": True}
-            import socket
-
+        for iface_name, addrs in if_addrs.items():
+            stat = if_stats.get(iface_name)
+            iface_info: dict[str, Any] = {
+                "name": iface_name,
+                "is_up": stat.isup if stat else False,
+                "speed_mbps": stat.speed if stat else 0,
+                "type": _classify_iface(iface_name),
+            }
             for addr in addrs:
-                if addr.family == socket.AF_INET:
+                if addr.family == _socket.AF_INET:
                     iface_info["ipv4"] = addr.address
-            if "ipv4" in iface_info:
-                devices.append(iface_info)
+                elif addr.family == _socket.AF_INET6:
+                    iface_info.setdefault("ipv6", addr.address)
+                elif hasattr(_socket, "AF_LINK") and addr.family == _socket.AF_LINK:
+                    iface_info["mac"] = addr.address
+                elif addr.family == -1 or (hasattr(psutil, "AF_LINK") and addr.family == psutil.AF_LINK):
+                    iface_info["mac"] = addr.address
+            if iface_info["is_up"] or "ipv4" in iface_info:
+                interfaces.append(iface_info)
 
-        details_parts.append(f"{len(devices)} active interface(s)")
+        details_parts.append(f"{len(interfaces)} active interface(s)")
     except ImportError:
         details_parts.append("psutil not available")
     except Exception as e:
@@ -622,30 +631,31 @@ async def check_network() -> PermissionResult:
             details_parts.append(f"WiFi {'connected' if wifi_ok else 'available'}")
         except Exception:
             pass
+    details_parts.append(f"Internet {'reachable' if wifi_ok else 'status unknown'}")
 
     # Basic internet check
+    internet_ok = False
     try:
-        import socket
-
-        sock = socket.create_connection(("1.1.1.1", 53), timeout=3)
+        sock = _socket.create_connection(("1.1.1.1", 53), timeout=3)
         sock.close()
-        details_parts.append("Internet reachable")
+        internet_ok = True
+        details_parts[-1] = "Internet reachable"
     except Exception:
-        details_parts.append("Internet unreachable")
+        details_parts[-1] = "Internet unreachable"
 
-    status = PermissionStatus.GRANTED if devices else PermissionStatus.DENIED
+    status = PermissionStatus.GRANTED if interfaces else PermissionStatus.DENIED
     _net_fixable = "psutil not available" in ", ".join(details_parts)
     return PermissionResult(
         permission="network",
         status=status,
         details=", ".join(details_parts),
-        devices=devices,
+        devices=interfaces,  # list of interface dicts (NOT WiFi networks)
         grant_instructions=_network_instructions(),
-        user_details=f"Network is active — {len(devices)} interface(s) connected"
-        if devices
+        user_details=f"Network is active — {len(interfaces)} interface(s), internet {'reachable' if internet_ok else 'unreachable'}"
+        if interfaces
         else "Network monitoring is limited",
         user_instructions=""
-        if devices
+        if interfaces
         else (
             "Click Fix It to enable full network monitoring"
             if _net_fixable
@@ -656,6 +666,26 @@ async def check_network() -> PermissionResult:
     )
 
 
+def _classify_iface(name: str) -> str:
+    """Return a human-readable interface type from its name."""
+    n = name.lower()
+    if n.startswith("lo"):
+        return "Loopback"
+    if n.startswith("en") or n.startswith("eth") or n.startswith("eno") or n.startswith("enp"):
+        return "Ethernet/WiFi"
+    if n.startswith("wl") or n.startswith("wlan") or n.startswith("wifi"):
+        return "WiFi"
+    if n.startswith("utun") or n.startswith("tun") or n.startswith("tap"):
+        return "VPN/Tunnel"
+    if n.startswith("bridge") or n.startswith("br"):
+        return "Bridge"
+    if n.startswith("vmnet") or n.startswith("veth"):
+        return "Virtual"
+    if n.startswith("llw"):
+        return "Low Latency WiFi"
+    return "Network"
+
+
 def _network_instructions() -> str:
     if IS_MACOS:
         return "System Settings > Privacy & Security > Local Network > Enable for Matrx Local"
@@ -664,6 +694,188 @@ def _network_instructions() -> str:
     return (
         "Ensure NetworkManager is running: sudo systemctl enable --now NetworkManager"
     )
+
+
+# ---------------------------------------------------------------------------
+# WiFi (separate from network interfaces)
+# ---------------------------------------------------------------------------
+
+
+async def check_wifi() -> PermissionResult:
+    """Scan and return available WiFi networks."""
+    networks: list[dict[str, Any]] = []
+    details = ""
+
+    try:
+        if IS_MACOS:
+            networks, details = await _wifi_scan_macos()
+        elif IS_WINDOWS:
+            networks, details = await _wifi_scan_windows()
+        else:
+            networks, details = await _wifi_scan_linux()
+    except Exception as e:
+        details = f"WiFi scan failed: {e}"
+
+    wifi_on = len(networks) > 0 or details.startswith("WiFi")
+    status = PermissionStatus.GRANTED if networks else PermissionStatus.NOT_DETERMINED
+
+    return PermissionResult(
+        permission="wifi",
+        status=status,
+        details=details or f"{len(networks)} networks found",
+        devices=networks,
+        grant_instructions=_wifi_instructions(),
+        user_details=f"WiFi active — {len(networks)} network(s) visible"
+        if networks
+        else "No WiFi networks found",
+        user_instructions=""
+        if networks
+        else "Enable WiFi and click Scan to discover networks",
+    )
+
+
+async def _wifi_scan_macos() -> tuple[list[dict[str, Any]], str]:
+    """Scan WiFi networks on macOS via airport or system_profiler."""
+    import re as _re
+
+    airport = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
+    try:
+        out, _, rc = await _run([airport, "-s"], timeout=15)
+        if rc == 0:
+            lines = out.strip().split("\n")
+            bssid_pat = _re.compile(r"([0-9a-f]{2}:){5}[0-9a-f]{2}", _re.IGNORECASE)
+            networks: list[dict[str, Any]] = []
+            for line in lines[1:]:
+                m = bssid_pat.search(line)
+                if m:
+                    ssid = line[: m.start()].strip()
+                    rest = line[m.end():].strip().split()
+                    if len(rest) >= 4:
+                        networks.append({
+                            "ssid": ssid or "(hidden)",
+                            "bssid": m.group(0),
+                            "rssi": int(rest[0]) if rest[0].lstrip("-").isdigit() else 0,
+                            "channel": rest[1],
+                            "security": " ".join(rest[3:]),
+                            "connected": False,
+                        })
+            if networks:
+                networks.sort(key=lambda n: n.get("rssi", -100), reverse=True)
+                return networks, f"{len(networks)} networks found via airport"
+    except (FileNotFoundError, Exception):
+        pass
+
+    # Fallback: system_profiler
+    try:
+        out, _, _ = await _run(["system_profiler", "SPAirPortDataType", "-json"], timeout=20)
+        data = json.loads(out)
+        networks = []
+        sec_labels = {
+            "spairport_security_mode_wpa3_transition": "WPA3/WPA2",
+            "spairport_security_mode_wpa3_personal": "WPA3",
+            "spairport_security_mode_wpa2_personal": "WPA2",
+            "spairport_security_mode_wpa_personal": "WPA",
+            "spairport_security_mode_none": "Open",
+            "spairport_security_mode_wpa2_enterprise": "WPA2-Ent",
+        }
+        seen_current: str | None = None
+        for iface_group in data.get("SPAirPortDataType", []):
+            for iface in iface_group.get("spairport_airport_interfaces", []):
+                cur = iface.get("spairport_current_network_information")
+                if cur:
+                    seen_current = cur.get("_name", "")
+                    rssi_raw = cur.get("spairport_signal_noise", "")
+                    rssi = 0
+                    try:
+                        rssi = int(str(rssi_raw).split()[0])
+                    except Exception:
+                        pass
+                    raw_sec = cur.get("spairport_security_mode", "")
+                    networks.append({
+                        "ssid": seen_current or "(hidden)",
+                        "rssi": rssi,
+                        "channel": str(cur.get("spairport_network_channel", "")),
+                        "security": sec_labels.get(raw_sec, raw_sec.replace("spairport_security_mode_", "").replace("_", "-")),
+                        "connected": True,
+                    })
+                for net in iface.get("spairport_other_local_wireless_networks", []):
+                    ssid = net.get("_name", "")
+                    if ssid == seen_current:
+                        continue
+                    rssi_raw = net.get("spairport_signal_noise", "")
+                    rssi = 0
+                    try:
+                        rssi = int(str(rssi_raw).split()[0])
+                    except Exception:
+                        pass
+                    raw_sec = net.get("spairport_security_mode", "")
+                    networks.append({
+                        "ssid": ssid or "(hidden)",
+                        "rssi": rssi,
+                        "channel": str(net.get("spairport_network_channel", "")),
+                        "security": sec_labels.get(raw_sec, raw_sec.replace("spairport_security_mode_", "").replace("_", "-")),
+                        "connected": False,
+                    })
+        networks.sort(key=lambda n: (not n.get("connected", False), -(n.get("rssi") or 0)))
+        return networks, f"{len(networks)} networks found via system_profiler"
+    except Exception as e:
+        return [], f"WiFi scan failed: {e}"
+
+
+async def _wifi_scan_windows() -> tuple[list[dict[str, Any]], str]:
+    out, _, _ = await _run(["netsh", "wlan", "show", "networks", "mode=bssid"], timeout=10)
+    networks: list[dict[str, Any]] = []
+    current: dict[str, Any] = {}
+    for line in out.split("\n"):
+        line = line.strip()
+        if line.startswith("SSID") and "BSSID" not in line:
+            if current:
+                networks.append(current)
+            ssid = line.split(":", 1)[1].strip() if ":" in line else ""
+            current = {"ssid": ssid}
+        elif "Signal" in line:
+            val = line.split(":", 1)[1].strip().replace("%", "")
+            current["signal_percent"] = int(val) if val.isdigit() else 0
+        elif "Authentication" in line:
+            current["security"] = line.split(":", 1)[1].strip()
+        elif "Channel" in line:
+            current["channel"] = line.split(":", 1)[1].strip()
+        elif "BSSID" in line:
+            current["bssid"] = line.split(":", 1)[1].strip()
+    if current and "ssid" in current:
+        networks.append(current)
+    networks.sort(key=lambda n: n.get("signal_percent", 0), reverse=True)
+    return networks, f"{len(networks)} networks found"
+
+
+async def _wifi_scan_linux() -> tuple[list[dict[str, Any]], str]:
+    out, stderr, rc = await _run(
+        ["nmcli", "-t", "-f", "SSID,BSSID,SIGNAL,CHAN,SECURITY", "device", "wifi", "list"],
+        timeout=10,
+    )
+    if rc != 0:
+        return [], f"nmcli error: {stderr}"
+    networks: list[dict[str, Any]] = []
+    for line in out.strip().split("\n"):
+        parts = line.split(":")
+        if len(parts) >= 5:
+            networks.append({
+                "ssid": parts[0],
+                "bssid": parts[1],
+                "signal_percent": int(parts[2]) if parts[2].isdigit() else 0,
+                "channel": parts[3],
+                "security": parts[4],
+            })
+    networks.sort(key=lambda n: n.get("signal_percent", 0), reverse=True)
+    return networks, f"{len(networks)} networks found"
+
+
+def _wifi_instructions() -> str:
+    if IS_MACOS:
+        return "Ensure WiFi is enabled in System Settings > Network > WiFi"
+    elif IS_WINDOWS:
+        return "Enable WiFi in Settings > Network & internet > WiFi"
+    return "Enable WiFi: nmcli radio wifi on"
 
 
 # ---------------------------------------------------------------------------
@@ -914,6 +1126,7 @@ async def check_all_permissions() -> list[dict[str, Any]]:
         check_accessibility(),
         check_bluetooth(),
         check_network(),
+        check_wifi(),
         check_screen_recording(),
         check_location(),
         return_exceptions=True,
@@ -926,6 +1139,7 @@ async def check_all_permissions() -> list[dict[str, Any]]:
         "accessibility",
         "bluetooth",
         "network",
+        "wifi",
         "screen_recording",
         "location",
     ]

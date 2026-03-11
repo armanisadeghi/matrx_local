@@ -32,6 +32,9 @@ pub struct LlmModelInfo {
     /// Additional part URLs for split models. Empty slice = single-file model.
     pub hf_parts: &'static [&'static str],
     pub context_length: u32,
+    /// Expected assembled file size in bytes, verified via x-linked-size HTTP headers.
+    /// Used to detect partial/corrupted downloads on startup and reject false-valid files.
+    pub expected_size_bytes: u64,
 }
 
 impl LlmModelInfo {
@@ -51,11 +54,12 @@ impl LlmModelInfo {
 // Verified 2026-03-11 against HuggingFace API + HEAD requests.
 // Single-file status confirmed by checking x-linked-size response headers.
 // Split-file part names confirmed against repository siblings list.
+// expected_size_bytes values from verified x-linked-size headers.
 pub const LLM_MODELS: &[LlmModelInfo] = &[
     LlmModelInfo {
         tier: LlmTier::Low,
         name: "Qwen3-4B-Instruct",
-        // Single file — 2.49 GB. Verified present in Qwen/Qwen3-4B-GGUF repo.
+        // Single file — 2,497,280,256 bytes (2.49 GB). Verified via x-linked-size.
         filename: "Qwen3-4B-Q4_K_M.gguf",
         disk_size_gb: 2.5,
         ram_required_gb: 4.0,
@@ -65,11 +69,12 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
         hf_parts: &[],
         context_length: 8192,
+        expected_size_bytes: 2_497_280_256,
     },
     LlmModelInfo {
         tier: LlmTier::LowAlt,
         name: "Phi-4-mini-Instruct",
-        // Single file — 2.49 GB. Hosted by bartowski (official Phi-4-mini GGUF provider).
+        // Single file — 2,491,874,688 bytes (2.49 GB). Hosted by bartowski.
         // microsoft/Phi-4-mini-instruct-gguf does not exist as a public repo.
         filename: "microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
         disk_size_gb: 2.5,
@@ -80,11 +85,12 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_url: "https://huggingface.co/bartowski/microsoft_Phi-4-mini-instruct-GGUF/resolve/main/microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
         hf_parts: &[],
         context_length: 8192,
+        expected_size_bytes: 2_491_874_688,
     },
     LlmModelInfo {
         tier: LlmTier::Default,
         name: "Qwen3-8B-Instruct",
-        // Single file — 5.03 GB. Verified present in Qwen/Qwen3-8B-GGUF repo.
+        // Single file — 5,027,783,488 bytes (5.03 GB). Verified via x-linked-size.
         filename: "Qwen3-8B-Q4_K_M.gguf",
         disk_size_gb: 5.1,
         ram_required_gb: 6.5,
@@ -94,13 +100,13 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_url: "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
         hf_parts: &[],
         context_length: 8192,
+        expected_size_bytes: 5_027_783_488,
     },
     LlmModelInfo {
         tier: LlmTier::High,
         name: "Qwen2.5-14B-Instruct",
-        // SPLIT: 3 parts totaling ~9 GB. The single-file URL does NOT exist in this repo.
-        // Parts verified: 00001 (3.99 GB) + 00002 (3.99 GB) + 00003 (1.01 GB).
-        // Downloaded parts are concatenated into the single filename below.
+        // SPLIT: 3 parts. Assembled size = 3,991,999,872 + 3,989,373,504 + 1,006,737,120 = 8,988,110,496 bytes.
+        // The single-file URL does NOT exist in this repo.
         filename: "qwen2.5-14b-instruct-q4_k_m.gguf",
         disk_size_gb: 9.0,
         ram_required_gb: 10.0,
@@ -113,12 +119,12 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
             "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00003-of-00003.gguf",
         ],
         context_length: 8192,
+        expected_size_bytes: 8_988_110_496,
     },
     LlmModelInfo {
         tier: LlmTier::HighAlt,
         name: "Mistral-Small-3.1-24B",
-        // Single file — 14.33 GB. bartowski repo requires auth; using lmstudio-community
-        // which hosts the same quantization as a public single file.
+        // Single file — 14,333,910,176 bytes (14.33 GB). lmstudio-community public repo.
         filename: "Mistral-Small-3.1-24B-Instruct-2503-Q4_K_M.gguf",
         disk_size_gb: 14.4,
         ram_required_gb: 16.0,
@@ -128,6 +134,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_url: "https://huggingface.co/lmstudio-community/Mistral-Small-3.1-24B-Instruct-2503-GGUF/resolve/main/Mistral-Small-3.1-24B-Instruct-2503-Q4_K_M.gguf",
         hf_parts: &[],
         context_length: 4096,
+        expected_size_bytes: 14_333_910_176,
     },
 ];
 

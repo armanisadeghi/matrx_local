@@ -6,6 +6,7 @@ import type {
   LlmServerStatus,
   LlmSetupStatus,
   LlmDownloadProgress,
+  LlmDownloadCancelledEvent,
   DownloadedLlmModel,
 } from "@/lib/llm/types";
 
@@ -17,6 +18,7 @@ export interface LlmState {
   isDetecting: boolean;
   isDownloading: boolean;
   isStarting: boolean;
+  downloadCancelled: boolean;
 
   // Server
   serverStatus: LlmServerStatus | null;
@@ -30,6 +32,8 @@ export interface LlmActions {
   detectHardware: () => Promise<LlmHardwareResult>;
   /** Pass all part URLs in order. Single-file models have one URL; split models have multiple. */
   downloadModel: (filename: string, urls: string[]) => Promise<void>;
+  /** Request cancellation of an in-flight download. */
+  cancelDownload: () => Promise<void>;
   startServer: (
     modelFilename: string,
     gpuLayers: number,
@@ -38,7 +42,7 @@ export interface LlmActions {
   stopServer: () => Promise<void>;
   getServerStatus: () => Promise<LlmServerStatus>;
   healthCheck: () => Promise<boolean>;
-  checkModelExists: (filename: string) => Promise<boolean>;
+  checkModelExists: (filename: string) => boolean;
   listModels: () => Promise<DownloadedLlmModel[]>;
   deleteModel: (filename: string) => Promise<void>;
   refreshSetupStatus: () => Promise<void>;
@@ -55,6 +59,7 @@ export function useLlm(): [LlmState, LlmActions] {
   const [isDetecting, setIsDetecting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [downloadCancelled, setDownloadCancelled] = useState(false);
   const [serverStatus, setServerStatus] = useState<LlmServerStatus | null>(
     null
   );
@@ -73,11 +78,10 @@ export function useLlm(): [LlmState, LlmActions] {
     };
   }, []);
 
-  // Load initial setup status and listen for server events
+  // Load initial setup status and listen for server/cancel events
   useEffect(() => {
     refreshSetupStatus();
 
-    // Listen for server lifecycle events
     let mounted = true;
     const setupListeners = async () => {
       const unlistenReady = await listen<LlmServerStatus>(
@@ -92,7 +96,17 @@ export function useLlm(): [LlmState, LlmActions] {
             prev ? { ...prev, running: false, port: 0 } : null
           );
       });
-      unlistenRef.current.push(unlistenReady, unlistenStopped);
+      const unlistenCancelled = await listen<LlmDownloadCancelledEvent>(
+        "llm-download-cancelled",
+        () => {
+          if (mounted) {
+            setDownloadCancelled(true);
+            setIsDownloading(false);
+            setDownloadProgress(null);
+          }
+        }
+      );
+      unlistenRef.current.push(unlistenReady, unlistenStopped, unlistenCancelled);
     };
     setupListeners();
 
@@ -115,7 +129,6 @@ export function useLlm(): [LlmState, LlmActions] {
           context_length: 0,
         });
       }
-      // Refresh downloaded models list
       const models = await invoke<DownloadedLlmModel[]>("list_llm_models");
       setDownloadedModels(models);
     } catch {
@@ -143,6 +156,7 @@ export function useLlm(): [LlmState, LlmActions] {
     async (filename: string, urls: string[]) => {
       setIsDownloading(true);
       setDownloadProgress(null);
+      setDownloadCancelled(false);
       setError(null);
 
       const unlisten = await listen<LlmDownloadProgress>(
@@ -159,7 +173,9 @@ export function useLlm(): [LlmState, LlmActions] {
         setDownloadedModels(models);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        setError(msg);
+        if (!msg.toLowerCase().includes("cancel")) {
+          setError(msg);
+        }
         throw e;
       } finally {
         unlisten();
@@ -168,6 +184,14 @@ export function useLlm(): [LlmState, LlmActions] {
     },
     []
   );
+
+  const cancelDownload = useCallback(async () => {
+    try {
+      await invoke("cancel_llm_download");
+    } catch {
+      // Ignore errors — the flag is set regardless
+    }
+  }, []);
 
   const startServer = useCallback(
     async (
@@ -219,9 +243,10 @@ export function useLlm(): [LlmState, LlmActions] {
     return invoke<boolean>("check_llm_server_health");
   }, []);
 
-  const checkModelExists = useCallback(async (filename: string) => {
-    return invoke<boolean>("check_llm_model_exists", { filename });
-  }, []);
+  const checkModelExists = useCallback((filename: string): boolean => {
+    // Synchronous check against downloaded models list (already loaded from Rust)
+    return downloadedModels.some((m) => m.filename === filename);
+  }, [downloadedModels]);
 
   const listModels = useCallback(async () => {
     const models = await invoke<DownloadedLlmModel[]>("list_llm_models");
@@ -246,7 +271,10 @@ export function useLlm(): [LlmState, LlmActions] {
     [refreshSetupStatus]
   );
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => {
+    setError(null);
+    setDownloadCancelled(false);
+  }, []);
 
   // One-click setup: detect hardware, download recommended model, start server
   const quickSetup = useCallback(async () => {
@@ -254,8 +282,10 @@ export function useLlm(): [LlmState, LlmActions] {
     try {
       const hw = await detectHardware();
 
-      const exists = await checkModelExists(hw.recommended_filename);
-      if (!exists) {
+      const alreadyDownloaded = downloadedModels.some(
+        (m) => m.filename === hw.recommended_filename
+      );
+      if (!alreadyDownloaded) {
         const modelInfo = hw.all_models.find(
           (m) => m.filename === hw.recommended_filename
         );
@@ -264,10 +294,7 @@ export function useLlm(): [LlmState, LlmActions] {
             `Model info not found for ${hw.recommended_filename}`
           );
         }
-        await downloadModel(
-          hw.recommended_filename,
-          modelInfo.all_part_urls
-        );
+        await downloadModel(hw.recommended_filename, modelInfo.all_part_urls);
       }
 
       await startServer(
@@ -277,10 +304,12 @@ export function useLlm(): [LlmState, LlmActions] {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(`Setup failed: ${msg}`);
+      if (!msg.toLowerCase().includes("cancel")) {
+        setError(`Setup failed: ${msg}`);
+      }
       throw e;
     }
-  }, [detectHardware, checkModelExists, downloadModel, startServer]);
+  }, [detectHardware, downloadedModels, downloadModel, startServer]);
 
   const state: LlmState = {
     setupStatus,
@@ -289,6 +318,7 @@ export function useLlm(): [LlmState, LlmActions] {
     isDetecting,
     isDownloading,
     isStarting,
+    downloadCancelled,
     serverStatus,
     downloadedModels,
     error,
@@ -297,6 +327,7 @@ export function useLlm(): [LlmState, LlmActions] {
   const actions: LlmActions = {
     detectHardware,
     downloadModel,
+    cancelDownload,
     startServer,
     stopServer,
     getServerStatus,
