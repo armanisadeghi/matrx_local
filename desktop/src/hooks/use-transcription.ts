@@ -141,13 +141,28 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   }, []);
 
   const downloadVadModel = useCallback(async () => {
+    setIsDownloading(true);
+    setDownloadProgress(null);
     setError(null);
+
+    // Register progress listener so VAD download progress flows to state
+    const unlisten = await listen<DownloadProgress>(
+      "whisper-download-progress",
+      (event) => {
+        setDownloadProgress(event.payload);
+      }
+    );
+
     try {
       await invoke("download_vad_model");
+      setDownloadProgress(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       throw e;
+    } finally {
+      unlisten();
+      setIsDownloading(false);
     }
   }, []);
 

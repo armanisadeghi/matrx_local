@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useLlm, type LlmState, type LlmActions } from "@/hooks/use-llm";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
+import { DownloadProgress } from "@/components/DownloadProgress";
 import { Badge } from "@/components/ui/badge";
 import {
   Cpu,
@@ -240,23 +240,12 @@ function OverviewTab({
               </div>
             )}
 
-            {state.downloadProgress && (
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">
-                    Downloading {state.downloadProgress.filename}
-                  </span>
-                  <span className="font-mono text-xs">
-                    {state.downloadProgress.percent.toFixed(1)}%
-                  </span>
-                </div>
-                <Progress value={state.downloadProgress.percent} />
-                <p className="text-xs text-muted-foreground">
-                  {formatBytes(state.downloadProgress.bytes_downloaded)} /{" "}
-                  {formatBytes(state.downloadProgress.total_bytes)}
-                </p>
-              </div>
-            )}
+            <DownloadProgress
+              progress={state.downloadProgress}
+              isDownloading={state.isDownloading}
+              error={state.error}
+              className="mt-3"
+            />
 
             <div className="mt-4 flex gap-2 flex-wrap">
               {!isSetup && !isRunning && (
@@ -500,21 +489,10 @@ function ModelsTab({
         <ErrorBanner message={state.error} onDismiss={actions.clearError} />
       )}
 
-      {state.downloadProgress && (
-        <div className="rounded-xl border bg-card p-4 space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span>Downloading {state.downloadProgress.filename}</span>
-            <span className="font-mono text-xs">
-              {state.downloadProgress.percent.toFixed(1)}%
-            </span>
-          </div>
-          <Progress value={state.downloadProgress.percent} />
-          <p className="text-xs text-muted-foreground">
-            {formatBytes(state.downloadProgress.bytes_downloaded)} /{" "}
-            {formatBytes(state.downloadProgress.total_bytes)}
-          </p>
-        </div>
-      )}
+      <DownloadProgress
+        progress={state.downloadProgress}
+        isDownloading={state.isDownloading}
+      />
 
       {state.isDetecting ? (
         <div className="flex items-center justify-center py-12">
@@ -1206,9 +1184,3 @@ function TierBadge({ tier }: { tier: LlmTier }) {
   );
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
-}

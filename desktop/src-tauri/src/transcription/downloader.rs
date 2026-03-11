@@ -6,8 +6,15 @@ use tokio::io::AsyncWriteExt;
 const HF_WHISPER_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 const HF_VAD_BASE: &str = "https://huggingface.co/ggml-org/whisper-vad/resolve/main";
 
-/// GGML magic bytes — first 4 bytes of a valid model file.
-const GGML_MAGIC: &[u8; 4] = b"ggml";
+/// All known valid magic byte sequences for whisper.cpp model files.
+/// - "ggml" (0x67 0x67 0x6D 0x6C) — classic GGML format
+/// - "GGUF" (0x47 0x47 0x55 0x46) — GGUF format (whisper.cpp ≥ 1.5.x)
+/// - LE ggml (0x6C 0x6D 0x67 0x67) — little-endian GGML magic in some builds
+const VALID_WHISPER_MAGIC: &[[u8; 4]] = &[
+    *b"ggml",
+    *b"GGUF",
+    [0x6c, 0x6d, 0x67, 0x67],
+];
 
 /// VAD model required for streaming transcription.
 pub const VAD_MODEL_FILENAME: &str = "ggml-silero-v6.2.0.bin";
@@ -116,39 +123,81 @@ async fn try_download(
     }
 
     file.flush().await.map_err(|e| e.to_string())?;
+    // sync_all guarantees the OS flushes kernel buffers to the storage device
+    // before we return. Without this, is_valid_model's synchronous File::open
+    // may read stale/empty data on macOS, causing a spurious validation failure.
+    file.sync_all().await.map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Check if a model file exists and appears valid.
-/// Validates file size > 1MB and checks for GGML magic bytes.
+///
+/// For Whisper models: validates size > 1MB and checks first 4 bytes against all
+/// known GGML/GGUF magic sequences. Logs the actual bytes on failure to aid diagnosis.
+///
+/// For Silero VAD: the binary format has no GGML header — validated by size only (> 50KB).
 pub fn is_valid_model(path: &Path) -> bool {
     if !path.exists() {
         return false;
     }
     let meta = match std::fs::metadata(path) {
         Ok(m) => m,
-        Err(_) => return false,
+        Err(e) => {
+            eprintln!("[downloader] is_valid_model: metadata error for {:?}: {}", path, e);
+            return false;
+        }
     };
+
+    let is_vad = path.to_string_lossy().contains("silero");
+
+    if is_vad {
+        // Silero VAD is an ONNX-derived binary — no GGML header, validate by size only.
+        let valid = meta.len() > 50_000;
+        if !valid {
+            eprintln!(
+                "[downloader] is_valid_model: VAD file too small — got {} bytes, need > 50000",
+                meta.len()
+            );
+        }
+        return valid;
+    }
+
+    // Whisper models must be at least 1MB
     if meta.len() < 1_000_000 {
+        eprintln!(
+            "[downloader] is_valid_model: file too small — got {} bytes, need > 1000000",
+            meta.len()
+        );
         return false;
     }
 
-    // Check GGML magic bytes
+    // Read and check magic bytes
     let mut file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return false,
+        Err(e) => {
+            eprintln!("[downloader] is_valid_model: open error for {:?}: {}", path, e);
+            return false;
+        }
     };
     let mut magic = [0u8; 4];
     use std::io::Read;
-    if file.read_exact(&mut magic).is_err() {
+    if let Err(e) = file.read_exact(&mut magic) {
+        eprintln!("[downloader] is_valid_model: read error for {:?}: {}", path, e);
         return false;
     }
-    // GGML files can start with "ggml" or other valid signatures
-    // For silero VAD, the format is different — just check size
-    if path.to_string_lossy().contains("silero") {
-        return meta.len() > 100_000;
+
+    // Accept any known whisper.cpp magic — exact 4-byte matches or "gg" prefix
+    let is_valid_magic = VALID_WHISPER_MAGIC.iter().any(|m| &magic == m)
+        || magic[0..2] == [0x67, 0x67];
+
+    if !is_valid_magic {
+        eprintln!(
+            "[downloader] is_valid_model: unrecognised magic bytes for {:?}: [{:#04x}, {:#04x}, {:#04x}, {:#04x}]",
+            path, magic[0], magic[1], magic[2], magic[3]
+        );
     }
-    &magic == GGML_MAGIC || magic[0..2] == [0x67, 0x67] // "gg" prefix covers ggml variants
+
+    is_valid_magic
 }
 
 /// List all downloaded model files in the models directory.

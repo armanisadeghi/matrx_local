@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
+import { DownloadProgress } from "@/components/DownloadProgress";
 import {
   Mic,
   MicOff,
@@ -93,30 +93,15 @@ export function Voice() {
 
   const wrappedQuickSetup = useCallback(async () => {
     logLine("info", "=== Starting Voice Quick Setup ===");
-    logLine("cmd", "Step 1: detect_hardware");
-    try {
-      const hw = await actions.detectHardware();
-      logData("[whisper] hardware", hw);
-      logLine("success", `Hardware detected — recommended: ${hw?.recommended_filename ?? "unknown"}`);
-    } catch (e) {
-      logLine("error", `Hardware detection failed: ${e}`);
-    }
-    logLine("cmd", "Step 2: download_vad_model");
-    try {
-      await actions.downloadVadModel();
-      logLine("success", "VAD model ready");
-    } catch (e) {
-      logLine("warn", `VAD model download failed (non-critical): ${e}`);
-    }
-    // The quickSetup action handles the rest internally — trigger it
-    logLine("cmd", "Step 3: quickSetup (download + init)");
+    // quickSetup handles: detect hardware → download model → download VAD → init
+    logLine("cmd", "quickSetup (detect + download + VAD + init)");
     try {
       await actions.quickSetup();
       logLine("success", "=== Voice Quick Setup complete ===");
     } catch (e) {
       logLine("error", `Quick setup failed: ${e}`);
     }
-  }, [actions, logLine, logData]);
+  }, [actions, logLine]);
 
   const wrappedDeleteModel = useCallback(async (filename: string) => {
     logLine("cmd", `invoke delete_model: ${filename}`);
@@ -248,23 +233,12 @@ function SetupTab({
         </div>
 
         {/* Download progress */}
-        {state.downloadProgress && (
-          <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">
-                Downloading {state.downloadProgress.filename}
-              </span>
-              <span className="font-mono text-xs">
-                {formatBytes(state.downloadProgress.bytes_downloaded)} /{" "}
-                {formatBytes(state.downloadProgress.total_bytes)}
-              </span>
-            </div>
-            <Progress value={state.downloadProgress.percent} className="h-2" />
-            <p className="text-xs text-muted-foreground text-right tabular-nums">
-              {state.downloadProgress.percent.toFixed(1)}%
-            </p>
-          </div>
-        )}
+        <DownloadProgress
+          progress={state.downloadProgress}
+          isDownloading={state.isDownloading}
+          error={state.error}
+          className="mt-4"
+        />
       </div>
 
       {/* Error display */}
@@ -707,10 +681,10 @@ function ModelsTab({
                 </div>
 
                 {/* Download progress for this model */}
-                {isDownloading && state.downloadProgress && (
-                  <Progress
-                    value={state.downloadProgress.percent}
-                    className="h-1.5"
+                {isDownloading && (
+                  <DownloadProgress
+                    progress={state.downloadProgress}
+                    isDownloading={state.isDownloading}
                   />
                 )}
               </div>
@@ -880,14 +854,6 @@ function tierLabel(tier: WhisperModelTier): string {
     case "High":
       return "Small (Accurate)";
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const mb = bytes / (1024 * 1024);
-  if (mb >= 1) return `${mb.toFixed(1)} MB`;
-  const kb = bytes / 1024;
-  return `${kb.toFixed(0)} KB`;
 }
 
 function formatRam(mb: number): string {
