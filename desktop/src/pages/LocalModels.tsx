@@ -10,6 +10,7 @@ import {
   HardDrive,
   Download,
   AlertCircle,
+  CheckCircle2,
   Trash2,
   Play,
   Square,
@@ -440,10 +441,32 @@ function ModelsTab({
     }
   }, []);
 
-  const handleDownload = async (model: LlmModelInfo) => {
+  const handleDownloadAndLoad = async (model: LlmModelInfo) => {
+    setDownloadingFile(model.filename);
+    try {
+      const alreadyDownloaded = downloadedFilenames.has(model.filename);
+      if (!alreadyDownloaded) {
+        await actions.downloadModel(model.filename, model.all_part_urls);
+      }
+      const hw = state.hardwareResult;
+      await actions.startServer(
+        model.filename,
+        hw ? hw.recommended_gpu_layers : 0,
+        model.context_length
+      );
+    } catch {
+      // error surfaced in state.error + terminal
+    } finally {
+      setDownloadingFile(null);
+    }
+  };
+
+  const handleDownloadOnly = async (model: LlmModelInfo) => {
     setDownloadingFile(model.filename);
     try {
       await actions.downloadModel(model.filename, model.all_part_urls);
+    } catch {
+      // error surfaced in state.error + terminal
     } finally {
       setDownloadingFile(null);
     }
@@ -458,89 +481,252 @@ function ModelsTab({
     }
   };
 
-  const handleLoadModel = async (filename: string, model?: LlmModelInfo) => {
+  const handleActivate = async (model: LlmModelInfo) => {
     const hw = state.hardwareResult;
-    const gpuLayers = hw ? hw.recommended_gpu_layers : 0;
-    const ctx = model?.context_length ?? 8192;
-    await actions.startServer(filename, gpuLayers, ctx);
+    await actions.startServer(
+      model.filename,
+      hw ? hw.recommended_gpu_layers : 0,
+      model.context_length
+    );
   };
 
+  const isAnyDownloading = state.isDownloading || downloadingFile !== null;
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Available Models</h3>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => actions.detectHardware()}
-          disabled={state.isDetecting}
-        >
-          <RefreshCw
-            className={cn(
-              "mr-2 h-3.5 w-3.5",
-              state.isDetecting && "animate-spin"
-            )}
-          />
-          Refresh
-        </Button>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <div className="rounded-xl border bg-card p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Available Models</h3>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => actions.detectHardware()}
+            disabled={state.isDetecting}
+          >
+            <RefreshCw className={cn("mr-1 h-3 w-3", state.isDetecting && "animate-spin")} />
+            {state.hardwareResult ? "Rescan" : "Detect"}
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          All models provide OpenAI-compatible tool calling — switching models only
+          changes capability and speed. Larger models require more RAM.
+        </p>
+
+        {state.error && (
+          <ErrorBanner message={state.error} onDismiss={actions.clearError} />
+        )}
+
+        {/* Global download progress bar */}
+        <DownloadProgress
+          progress={state.downloadProgress}
+          isDownloading={state.isDownloading}
+        />
+
+        {state.isDetecting ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : allModels.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-center space-y-3">
+            <Cpu className="h-10 w-10 text-muted-foreground/30" />
+            <p className="text-sm text-muted-foreground">
+              Click Detect to scan your hardware and see compatible models.
+            </p>
+            <Button onClick={() => actions.detectHardware()}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Detect Hardware
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {allModels.map((model) => {
+              const isDownloaded = downloadedFilenames.has(model.filename);
+              const isActive =
+                (state.serverStatus?.running &&
+                  (state.serverStatus.model_name === model.filename ||
+                   state.serverStatus.model_name === model.filename.replace(".gguf", ""))) ?? false;
+              const isRecommended = model.filename === state.hardwareResult?.recommended_filename;
+              const isThisDownloading =
+                isAnyDownloading &&
+                (downloadingFile === model.filename ||
+                  state.downloadProgress?.filename === model.filename);
+
+              return (
+                <div
+                  key={model.filename}
+                  className={cn(
+                    "rounded-lg border p-4 space-y-3 transition-colors",
+                    isActive && "border-emerald-500/50 bg-emerald-500/5",
+                    isRecommended && !isActive && "border-primary/30"
+                  )}
+                >
+                  {/* Header */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-sm">{model.name}</span>
+                        {isRecommended && (
+                          <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                            Recommended
+                          </span>
+                        )}
+                        {isActive && (
+                          <span className="text-xs bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full">
+                            Active
+                          </span>
+                        )}
+                        <TierBadge tier={model.tier} />
+                        {model.is_split && (
+                          <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                            {model.all_part_urls.length} parts
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground">{model.description}</p>
+                    </div>
+                  </div>
+
+                  {/* Stats grid */}
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    <ModelStat label="Download" value={`${model.disk_size_gb} GB`} />
+                    <ModelStat label="RAM Needed" value={`${model.ram_required_gb} GB`} />
+                    <ModelStat label="Speed" value={model.speed} />
+                    <ModelStat
+                      label="Tool Calling"
+                      value={"★".repeat(model.tool_calling_rating) + "☆".repeat(5 - model.tool_calling_rating)}
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {isActive ? (
+                      <>
+                        <span className="text-xs text-emerald-500 flex items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Currently active
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="ml-auto"
+                          onClick={actions.stopServer}
+                        >
+                          <Square className="mr-1 h-3 w-3" />
+                          Stop Server
+                        </Button>
+                      </>
+                    ) : isThisDownloading ? (
+                      <Button size="sm" disabled>
+                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                        {state.downloadProgress
+                          ? `${Math.round(state.downloadProgress.percent)}%${
+                              state.downloadProgress.total_parts && state.downloadProgress.total_parts > 1
+                                ? ` — Part ${state.downloadProgress.part}/${state.downloadProgress.total_parts}`
+                                : ""
+                            }`
+                          : "Downloading…"}
+                      </Button>
+                    ) : isDownloaded ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => handleActivate(model)}
+                          disabled={state.isStarting || isAnyDownloading}
+                        >
+                          {state.isStarting ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Play className="mr-1 h-3 w-3" />
+                          )}
+                          Load & Run
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleDelete(model.filename)}
+                          disabled={deleting === model.filename || isAnyDownloading}
+                          className="text-muted-foreground hover:text-red-500"
+                        >
+                          {deleting === model.filename ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3 w-3" />
+                          )}
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => handleDownloadAndLoad(model)}
+                          disabled={isAnyDownloading}
+                        >
+                          <Download className="mr-1 h-3 w-3" />
+                          Download & Run
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleDownloadOnly(model)}
+                          disabled={isAnyDownloading}
+                        >
+                          <Download className="mr-1 h-3 w-3" />
+                          Download Only
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Per-model download progress */}
+                  {isThisDownloading && (
+                    <DownloadProgress
+                      progress={state.downloadProgress}
+                      isDownloading={state.isDownloading}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {state.error && (
-        <ErrorBanner message={state.error} onDismiss={actions.clearError} />
-      )}
-
-      <DownloadProgress
-        progress={state.downloadProgress}
-        isDownloading={state.isDownloading}
-      />
-
-      {state.isDetecting ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      {/* Technical notes */}
+      <div className="rounded-xl border bg-card p-6 space-y-3">
+        <h3 className="font-semibold text-sm">Technical Details</h3>
+        <div className="space-y-2 text-xs text-muted-foreground">
+          <p>
+            Models are GGUF format files running on llama-server, which exposes an
+            OpenAI-compatible <code className="bg-muted px-1 py-0.5 rounded">/v1/chat/completions</code> endpoint on localhost.
+          </p>
+          <p>
+            Split models (marked "X parts") are downloaded as separate files and assembled
+            automatically — no manual steps required.
+          </p>
+          <p>
+            GPU acceleration is applied automatically: Metal on Apple Silicon, CUDA on NVIDIA.
+            CPU-only inference is supported on all machines but is slower.
+          </p>
         </div>
-      ) : (
-        <div className="space-y-3">
-          {allModels.map((model) => {
-            const isDownloaded = downloadedFilenames.has(model.filename);
-            const isActive =
-              (state.serverStatus?.running &&
-              state.serverStatus?.model_name ===
-                model.filename.replace(".gguf", "")) ?? false;
-            const isRecommended =
-              model.filename ===
-              state.hardwareResult?.recommended_filename;
-
-            return (
-              <ModelCard
-                key={model.filename}
-                model={model}
-                isDownloaded={isDownloaded}
-                isActive={isActive}
-                isRecommended={isRecommended}
-                isDownloading={
-                  (state.isDownloading || downloadingFile === model.filename) &&
-                  (state.downloadProgress?.filename === model.filename || downloadingFile === model.filename)
-                }
-                isStarting={state.isStarting}
-                isDeleting={deleting === model.filename}
-                onDownload={() => handleDownload(model)}
-                onDelete={() => handleDelete(model.filename)}
-                onLoad={() => handleLoadModel(model.filename, model)}
-                onStop={actions.stopServer}
-              />
-            );
-          })}
-        </div>
-      )}
+      </div>
 
       {/* Debug Terminal */}
       <DebugTerminal
         logs={logs}
         onClear={onClearLogs}
         title="Model Download Log"
-        defaultOpen={state.isDownloading || downloadingFile !== null}
+        defaultOpen={isAnyDownloading}
         maxHeight="260px"
       />
+    </div>
+  );
+}
+
+function ModelStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="text-center rounded-md bg-muted/30 py-2 px-1">
+      <p className="text-muted-foreground text-[10px] mb-0.5">{label}</p>
+      <p className="font-medium text-foreground text-xs leading-tight">{value}</p>
     </div>
   );
 }
@@ -951,122 +1137,6 @@ function InferenceTab({
 }
 
 // ── Reusable Components ───────────────────────────────────────────────────
-
-function ModelCard({
-  model,
-  isDownloaded,
-  isActive,
-  isRecommended,
-  isDownloading,
-  isStarting,
-  isDeleting,
-  onDownload,
-  onDelete,
-  onLoad,
-  onStop,
-}: {
-  model: LlmModelInfo;
-  isDownloaded: boolean;
-  isActive: boolean;
-  isRecommended: boolean;
-  isDownloading: boolean;
-  isStarting: boolean;
-  isDeleting: boolean;
-  onDownload: () => void;
-  onDelete: () => void;
-  onLoad: () => void;
-  onStop: () => void;
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-xl border bg-card p-4 transition-colors",
-        isActive && "border-emerald-500/50 bg-emerald-500/5",
-        isRecommended && !isActive && "border-primary/30"
-      )}
-    >
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h4 className="font-semibold text-sm">{model.name}</h4>
-            {isRecommended && (
-              <Badge variant="outline" className="text-xs">
-                Recommended
-              </Badge>
-            )}
-            {isActive && (
-              <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/30 text-xs">
-                Active
-              </Badge>
-            )}
-            <TierBadge tier={model.tier} />
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            {model.description}
-          </p>
-          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
-            <span>{model.disk_size_gb} GB download</span>
-            <span>{model.ram_required_gb} GB RAM required</span>
-            <span>{model.speed}</span>
-            <span>
-              {"★".repeat(model.tool_calling_rating)}
-              {"☆".repeat(5 - model.tool_calling_rating)} Tools
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 ml-4">
-          {!isDownloaded ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onDownload}
-              disabled={isDownloading}
-            >
-              {isDownloading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="h-3.5 w-3.5" />
-              )}
-            </Button>
-          ) : isActive ? (
-            <Button size="sm" variant="destructive" onClick={onStop}>
-              <Square className="h-3.5 w-3.5" />
-            </Button>
-          ) : (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onLoad}
-                disabled={isStarting}
-              >
-                {isStarting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="h-3.5 w-3.5" />
-                )}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={onDelete}
-                disabled={isDeleting}
-                className="text-muted-foreground hover:text-red-400"
-              >
-                {isDeleting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="h-3.5 w-3.5" />
-                )}
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function StatusCard({
   icon,

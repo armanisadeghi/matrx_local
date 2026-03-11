@@ -10,6 +10,10 @@ export interface DownloadProgressData {
   bytes_downloaded: number;
   total_bytes: number;
   percent: number;
+  /** Part index (1-based). Present only for multi-part (split) LLM downloads. */
+  part?: number;
+  /** Total number of parts. Present only for multi-part downloads. */
+  total_parts?: number;
 }
 
 // ── Speed tracking ─────────────────────────────────────────────────────────
@@ -190,6 +194,10 @@ export function DownloadProgress({
   const filename = label ?? progress?.filename ?? "Downloading…";
   const shortName =
     filename.length > 40 ? `…${filename.slice(-37)}` : filename;
+  const partLabel =
+    progress?.total_parts && progress.total_parts > 1
+      ? ` — Part ${progress.part ?? 1} of ${progress.total_parts}`
+      : "";
 
   return (
     <div
@@ -209,7 +217,7 @@ export function DownloadProgress({
           <Loader2 className="h-4 w-4 text-primary animate-spin flex-shrink-0" />
         )}
         <span className="text-sm font-medium truncate flex-1" title={filename}>
-          {shortName}
+          {shortName}{partLabel}
         </span>
         <span
           className={cn(

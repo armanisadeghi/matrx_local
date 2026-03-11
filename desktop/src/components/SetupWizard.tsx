@@ -349,26 +349,29 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
   const downloadLlmModel = useCallback(async () => {
     if (!llmHardware) return;
     const filename = llmHardware.recommended_filename;
-    const url = llmHardware.all_models.find((m) => m.filename === filename)?.hf_url;
-    if (!url) {
-      logLine("error", `No download URL found for ${filename}`);
+    const modelInfo = llmHardware.all_models.find((m) => m.filename === filename);
+    if (!modelInfo) {
+      logLine("error", `No model info found for ${filename}`);
       return;
     }
+    const urls: string[] = modelInfo.all_part_urls;
 
     setIsDownloadingModel(true);
     setLlmDownloadProgress(null);
     logLine("info", `Starting LLM model download: ${filename}`);
-    logLine("cmd", `Source URL: ${url}`);
+    logLine("cmd", `Parts: ${urls.length} — ${urls[0]}${urls.length > 1 ? ` (+${urls.length - 1} more)` : ""}`);
 
-    // Listen for progress events from Tauri
     const unlisten = await listen<LlmDownloadProgress>("llm-download-progress", (event) => {
       const p = event.payload;
       setLlmDownloadProgress(p);
+      const mbDone = (p.bytes_downloaded / 1e6).toFixed(0);
+      const mbTotal = p.total_bytes > 0 ? `/ ${(p.total_bytes / 1e6).toFixed(0)} MB` : "";
+      const partNote = p.total_parts > 1 ? ` (part ${p.part}/${p.total_parts})` : "";
       setProgress((prev) => ({
         ...prev,
         local_llm: {
           status: "installing",
-          message: `Downloading ${p.filename}: ${(p.bytes_downloaded / 1e6).toFixed(0)} / ${(p.total_bytes / 1e6).toFixed(0)} MB`,
+          message: `Downloading${partNote}: ${mbDone} ${mbTotal}`,
           percent: Math.round(p.percent),
         },
       }));
@@ -378,7 +381,7 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
 
     try {
       logLine("cmd", `invoke download_llm_model: ${filename}`);
-      await invoke("download_llm_model", { filename, url });
+      await invoke("download_llm_model", { filename, urls });
       logLine("success", `LLM model downloaded: ${filename}`);
       setProgress((prev) => ({
         ...prev,

@@ -46,6 +46,7 @@ import {
   ChevronRight,
   AlertTriangle,
 } from "lucide-react";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { PermissionKey, PermissionState, PermissionStatus } from "@/hooks/use-permissions";
 import { usePermissions } from "@/hooks/use-permissions";
 
@@ -152,14 +153,12 @@ interface PermissionRowProps {
   state: PermissionState;
   isRequesting: boolean;
   onRequest: (key: PermissionKey) => void;
-  onOpenSettings: (key: PermissionKey) => void;
 }
 
 function PermissionRow({
   state,
   isRequesting,
   onRequest,
-  onOpenSettings,
 }: PermissionRowProps) {
   const isGranted = state.status === "granted";
   const isUnavailable = state.status === "unavailable";
@@ -204,7 +203,7 @@ function PermissionRow({
         {/* Non-promptable hint */}
         {!isGranted && !state.canPrompt && !isUnavailable && !isRestricted && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
-            Requires manual approval in System Settings — click Open Settings below.
+            Must be enabled manually in System Settings → Privacy & Security.
           </p>
         )}
       </div>
@@ -240,7 +239,7 @@ function PermissionRow({
         ) : (
           <Button
             size="sm"
-            variant="outline"
+            variant="default"
             disabled={isRequesting}
             onClick={() => onRequest(state.key)}
             className="h-8 gap-1.5 text-xs"
@@ -257,14 +256,6 @@ function PermissionRow({
               </>
             )}
           </Button>
-        )}
-        {!isGranted && !isUnavailable && state.settingsUrl && (
-          <button
-            onClick={() => onOpenSettings(state.key)}
-            className="text-xs text-muted-foreground/60 underline-offset-2 hover:text-muted-foreground hover:underline"
-          >
-            View in Settings
-          </button>
         )}
       </div>
     </div>
@@ -287,7 +278,7 @@ export function PermissionsModal({
   onOpenChange,
   focusKey: _focusKey,
 }: PermissionsModalProps) {
-  const { permissions, isLoading, checkAll, request, openSettings } = usePermissions();
+  const { permissions, isLoading, checkAll, request } = usePermissions();
   const [requestingKey, setRequestingKey] = useState<PermissionKey | null>(null);
 
   // Re-check all when the modal opens
@@ -307,13 +298,6 @@ export function PermissionsModal({
       }
     },
     [request],
-  );
-
-  const handleOpenSettings = useCallback(
-    async (key: PermissionKey) => {
-      await openSettings(key);
-    },
-    [openSettings],
   );
 
   // Compute stats
@@ -388,7 +372,6 @@ export function PermissionsModal({
                   state={state}
                   isRequesting={requestingKey === state.key}
                   onRequest={handleRequest}
-                  onOpenSettings={handleOpenSettings}
                 />
               ))}
 
@@ -406,7 +389,6 @@ export function PermissionsModal({
                       state={state}
                       isRequesting={false}
                       onRequest={handleRequest}
-                      onOpenSettings={handleOpenSettings}
                     />
                   ))}
               </>
@@ -423,7 +405,7 @@ export function PermissionsModal({
             <button
               className="underline underline-offset-2 hover:text-foreground"
               onClick={() =>
-                openSettings("accessibility")
+                openUrl("x-apple.systempreferences:com.apple.preference.security?Privacy")
                   .then(() => {})
                   .catch(() => {})
               }
