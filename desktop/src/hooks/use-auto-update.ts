@@ -99,15 +99,10 @@ export function useAutoUpdate(): [AutoUpdateState, AutoUpdateActions] {
     try {
       const result = await checkForUpdates(false);
       setStatus(result);
-
-      if (result.status === "available") {
-        // Only auto-show if user hasn't dismissed this version
-        const dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-        if (dismissedVersion !== result.version) {
-          setDialogOpen(true);
-          setDismissed(false);
-        }
-      }
+      // Do NOT auto-open the dialog on background checks — the UpdateBanner
+      // handles the non-disruptive notification. The dialog is only opened
+      // when the user explicitly clicks "Details" or triggers a manual check
+      // from Settings.
     } catch {
       // Network error or updater not available — fail silently
     } finally {

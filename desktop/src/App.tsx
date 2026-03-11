@@ -27,6 +27,7 @@ import { useAutoUpdate } from "@/hooks/use-auto-update";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EngineMonitor } from "@/components/EngineRecoveryModal";
 import { UpdateDialog } from "@/components/UpdateDialog";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { Loader2 } from "lucide-react";
 
@@ -253,6 +254,9 @@ export default function App() {
           onRestartEngine={restartEngine}
           onRefresh={refresh}
         />
+        {/* Soft persistent notification — shown on any page without interrupting */}
+        <UpdateBanner state={updateState} actions={updateActions} />
+        {/* Full dialog — only opens when user clicks Details/Install in the banner, or from Settings */}
         <UpdateDialog state={updateState} actions={updateActions} />
       </TooltipProvider>
     </ErrorBoundary>
