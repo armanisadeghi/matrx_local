@@ -54,10 +54,7 @@ pub async fn detect_hardware() -> Result<serde_json::Value, String> {
 /// Download a Whisper model with live progress events.
 /// Emits "whisper-download-progress" events to the frontend.
 #[tauri::command]
-pub async fn download_whisper_model(
-    app: AppHandle,
-    filename: String,
-) -> Result<String, String> {
+pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<String, String> {
     let models_dir = app
         .path()
         .app_data_dir()
@@ -164,18 +161,13 @@ pub fn check_model_exists(app: AppHandle, filename: String) -> bool {
 /// Get the currently active model filename.
 #[tauri::command]
 pub fn get_active_model(state: State<'_, TranscriptionState>) -> Option<String> {
-    state
-        .0
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|m| {
-            m.model_path()
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-        })
+    state.0.lock().unwrap().as_ref().map(|m| {
+        m.model_path()
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+    })
 }
 
 /// List all downloaded models in the models directory.
@@ -223,29 +215,27 @@ pub async fn start_transcription(
         }
     }
 
-    // Get thread count from hardware
+    // Get thread count from hardware — use up to half the CPUs, capped at 8
     let hw = HardwareProfile::detect();
     let n_threads = (hw.cpu_threads / 2).max(1).min(8) as i32;
 
-    // Clone what we need before entering the async block
+    // Clone the context arc before entering the spawned thread
     let manager_guard = state.0.lock().unwrap();
     let manager = manager_guard
         .as_ref()
         .ok_or("Transcription not initialized — call init_transcription first")?;
-
-    // We need the context arc to move into the spawned task
     let ctx = manager.context().clone();
 
-    // Mark as recording
+    // Mark as recording before spawning so the flag is set synchronously
     *recording.0.lock().unwrap() = true;
 
     let app_events = app.clone();
     let recording_flag = app.state::<RecordingState>().0.clone();
 
-    // AudioCapture holds a cpal::Stream which is !Send, so we run the
+    // AudioCapture holds a cpal::Stream which is !Send, so we run the entire
     // capture + inference loop on a dedicated OS thread.
     std::thread::spawn(move || {
-        // Start audio capture
+        // Start audio capture — always returns 16kHz mono after internal resampling
         let capture = match audio_capture::AudioCapture::start() {
             Ok(c) => c,
             Err(e) => {
@@ -255,25 +245,36 @@ pub async fn start_transcription(
             }
         };
 
-        // Process in a loop: accumulate ~3 seconds of audio then transcribe
-        let mut accumulated = Vec::<f32>::new();
-        let target_samples = 16000 * 3; // 3 seconds
+        // Whisper works best on 5-second chunks — long enough for sentence context,
+        // short enough for responsive output.
+        let sample_rate = capture.sample_rate(); // always 16000 after resampling
+        let target_samples = sample_rate as usize * 5; // 5 seconds
+
+        // RMS silence threshold: below this we skip inference to avoid hallucinations.
+        // ~-40 dB relative to full scale. Tuned for typical office environments.
+        let silence_threshold: f32 = 0.01;
+
+        let mut accumulated = Vec::<f32>::with_capacity(target_samples + 4096);
 
         loop {
-            // Check if we should stop
             if !*recording_flag.lock().unwrap() {
                 break;
             }
 
-            // Drain captured audio
             let samples = capture.drain();
             if !samples.is_empty() {
                 accumulated.extend_from_slice(&samples);
             }
 
-            // When we have enough audio, transcribe
             if accumulated.len() >= target_samples {
-                let audio_chunk = std::mem::take(&mut accumulated);
+                let audio_chunk = accumulated.drain(0..target_samples).collect::<Vec<f32>>();
+
+                // Gate on RMS energy — skip Whisper for silent/near-silent chunks to
+                // prevent hallucinated output ("Thanks for watching", "you", etc.)
+                let rms = rms_energy(&audio_chunk);
+                if rms < silence_threshold {
+                    continue;
+                }
 
                 let params = TranscriptionParams::builder()
                     .language("en")
@@ -283,10 +284,15 @@ pub async fn start_transcription(
                 match ctx.transcribe_with_params(&audio_chunk, params) {
                     Ok(transcription) => {
                         for seg in &transcription.segments {
+                            let text = seg.text.trim().to_string();
+                            // Skip empty and common hallucination strings
+                            if text.is_empty() || is_hallucination(&text) {
+                                continue;
+                            }
                             let _ = app_events.emit(
                                 "whisper-segment",
                                 serde_json::json!({
-                                    "text": seg.text.trim(),
+                                    "text": text,
                                     "start_sec": seg.start_seconds(),
                                     "end_sec": seg.end_seconds(),
                                 }),
@@ -294,21 +300,46 @@ pub async fn start_transcription(
                         }
                     }
                     Err(e) => {
-                        let _ = app_events.emit(
-                            "whisper-error",
-                            format!("Transcription error: {}", e),
-                        );
+                        let _ =
+                            app_events.emit("whisper-error", format!("Transcription error: {}", e));
                     }
                 }
             }
 
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
 
         *recording_flag.lock().unwrap() = false;
     });
 
     Ok(())
+}
+
+/// Root-mean-square energy of an audio buffer.
+fn rms_energy(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+    (sum_sq / samples.len() as f32).sqrt()
+}
+
+/// Common Whisper hallucination strings emitted when fed silence or noise.
+fn is_hallucination(text: &str) -> bool {
+    const HALLUCINATIONS: &[&str] = &[
+        "thanks for watching",
+        "thank you for watching",
+        "please subscribe",
+        "like and subscribe",
+        "you",
+        ".",
+        "...",
+        "[music]",
+        "[applause]",
+        "(music)",
+    ];
+    let lower = text.to_lowercase();
+    HALLUCINATIONS.iter().any(|h| lower == *h)
 }
 
 /// Stop the active transcription session.

@@ -695,7 +695,7 @@ function ScreenRecordingCard({ perm }: { perm: PermissionInfo | null }) {
               <Monitor className="h-3.5 w-3.5" />
               {String(m.name ?? `Monitor ${m.index}`)}
               <span className="text-[10px] text-muted-foreground">
-                {m.width}×{m.height}
+                {String(m.width ?? "")}×{String(m.height ?? "")}
                 {m.is_primary ? " (primary)" : ""}
               </span>
             </button>
@@ -1044,7 +1044,6 @@ function NetworkCard({ perm }: { perm: PermissionInfo | null }) {
     }
   }, []);
 
-  const activeIfaces = interfaces.filter((i) => i.is_up && i.ipv4);
   const allIfaces = interfaces;
 
   return (
@@ -1202,22 +1201,22 @@ function ConnectedDevicesCard() {
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium">{String(dev.name ?? "Unknown")}</p>
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                      {dev.resolution && (
+                      {!!dev.resolution && (
                         <span className="text-[10px] text-muted-foreground">{String(dev.resolution)}</span>
                       )}
-                      {dev.connection && (
+                      {!!dev.connection && (
                         <span className="text-[10px] text-muted-foreground">{String(dev.connection)}</span>
                       )}
-                      {dev.vendor && (
+                      {!!dev.vendor && (
                         <span className="text-[10px] text-muted-foreground">{String(dev.vendor)}</span>
                       )}
-                      {dev.serial && (
+                      {!!dev.serial && (
                         <span className="font-mono text-[10px] text-muted-foreground">S/N: {String(dev.serial)}</span>
                       )}
-                      {dev.speed && (
+                      {!!dev.speed && (
                         <span className="text-[10px] text-muted-foreground">{String(dev.speed)}</span>
                       )}
-                      {dev.battery && (
+                      {!!dev.battery && (
                         <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
                           <Battery className="h-2.5 w-2.5" />{String(dev.battery)}%
                         </span>

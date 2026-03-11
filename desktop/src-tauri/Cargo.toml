@@ -36,7 +36,9 @@ tokio = { version = "1", features = ["full"] }
 rubato = "1.0.1"
 
 [features]
-default = []
+# Enable Metal GPU acceleration on macOS by default (Apple Silicon + discrete GPU).
+# Remove "metal" from default if building for non-macOS or if cmake is unavailable.
+default = ["metal"]
 cuda = ["whisper-cpp-plus/cuda"]
 metal = ["whisper-cpp-plus/metal"]
 openblas = ["whisper-cpp-plus/openblas"]

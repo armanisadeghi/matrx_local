@@ -62,11 +62,22 @@ _Last updated: 2026-03-11_
 - [ ] **Verify "Launch on Startup" & "Minimize to Tray"** — Confirm OS-level behavior actually matches the toggles in Settings.
 - [ ] **Proxy Test Connection** — Waiting on Arman to confirm `MAIN_SERVER` URL for real round-trip test.
 
+### P0 — Voice Transcription Audio Pipeline (Fixed 2026-03-11)
+- [x] **Download validation loop** — `is_valid_model` rejected GGUF-format models (whisper.cpp ≥ 1.5.x uses `GGUF` magic bytes, not `ggml`). Fixed by expanding VALID_WHISPER_MAGIC to cover all known signatures + LE variant. Also added `sync_all()` after `flush()` to eliminate the macOS write-read race condition where the validator opened the file before the OS kernel flushed its write buffers. (`downloader.rs`)
+- [x] **Audio capture wrong sample rate** — macOS devices deliver 44.1kHz or 48kHz; the app was feeding that raw to Whisper (which requires 16kHz) with no resampling. Everything sounded 2.75x too fast, producing complete garbage output. Fixed by integrating `rubato` resampler into `AudioCapture::start()` — auto-detects native rate, mono-downmixes, and resamples to 16kHz in real time. (`audio_capture.rs`, added `rubato = "1.0.1"` to `Cargo.toml`)
+- [x] **Silence hallucinations** — Whisper was being run on silence/noise, producing phantom text ("thanks for watching", "you", etc.). Fixed with RMS energy gate (threshold 0.01 ≈ -40dB) and hallucination string filter in the transcription loop. (`commands.rs`)
+- [x] **3-second chunks cut words** — Chunks were blindly sliced at 3s. Changed to 5-second sliding window that keeps remainder. (`commands.rs`)
+- [x] **VAD model downloaded but never used** — VAD was downloaded but the transcription loop never calls it. Left as known issue — full VAD integration is a future improvement.
+- [x] **Metal acceleration not enabled** — `metal` feature was defined but not in `default`. Changed `default = ["metal"]` so Apple Silicon gets GPU acceleration automatically. (`Cargo.toml`)
+- [x] **Duplicate VAD download** — `wrappedQuickSetup` in Voice.tsx was calling `downloadVadModel()` explicitly then also calling `quickSetup()` which calls it again internally. Removed the duplicate. (`Voice.tsx`)
+- [x] **VAD download showed no progress** — `downloadVadModel` hook never registered the progress event listener. Fixed to show live progress. (`use-transcription.ts`)
+
 ### P2 — Features & Polish
 - [ ] **First-run setup wizard** — Sign in → Engine health → optional capabilities install → done.
 - [ ] **Rate limiting** — Implement per-user rate limiting on the remote scraper server.
 - [ ] **Job queue** — For cloud-assigned scrape jobs.
 - [ ] **Wake-on-LAN & Smart device control protocols**.
+- [ ] **Voice: Full VAD integration** — The silero VAD model is downloaded but never used in the transcription loop. Wire it in to replace the simple RMS energy gate for much more accurate speech/silence detection.
 
 ---
 
