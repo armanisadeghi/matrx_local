@@ -75,33 +75,40 @@ async def _ensure_playwright_browsers() -> None:
     )
     os.makedirs(browsers_path, exist_ok=True)
 
+    # Build the install command.  compute_driver_executable() returns a
+    # (node_binary, cli.js) tuple — str()-ing it produces a broken path string.
+    # Fall back to `sys.executable -m playwright install` for frozen binaries
+    # where the driver directory is not bundled.
+    import sys
+
     try:
         from playwright._impl._driver import compute_driver_executable  # type: ignore[import]
-
-        driver_exe = str(compute_driver_executable())
-    except Exception:
-        logger.warning(
-            "[app/main.py] Could not locate Playwright driver — skipping browser install"
+        node_exe, cli_js = compute_driver_executable()
+        # Verify the node binary actually exists; if not, use the Python fallback
+        if not os.path.isfile(node_exe):
+            raise FileNotFoundError(f"Playwright node binary not found: {node_exe}")
+        cmd = [node_exe, cli_js, "install", "chromium", "firefox", "webkit"]
+    except Exception as exc:
+        logger.info(
+            "[app/main.py] Playwright driver binary not available (%s) — "
+            "falling back to `python -m playwright install`",
+            exc,
         )
-        return
+        cmd = [sys.executable, "-m", "playwright", "install", "chromium", "firefox", "webkit"]
 
     env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": browsers_path}
 
     async def _install() -> None:
         try:
             proc = await asyncio.create_subprocess_exec(
-                driver_exe,
-                "install",
-                "chromium",
-                "firefox",
-                "webkit",
+                *cmd,
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
             stdout, _ = await proc.communicate()
             if proc.returncode == 0:
-                logger.info("[app/main.py] Playwright browsers installed ✓")
+                logger.info("[app/main.py] Playwright browsers installed successfully")
             else:
                 logger.warning(
                     "[app/main.py] Playwright browser install exited %d: %s",

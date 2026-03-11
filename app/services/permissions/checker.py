@@ -45,6 +45,9 @@ class PermissionResult:
     fix_capability_id: str | None = None
     devices: list[dict[str, Any]] = field(default_factory=list)
 
+    # macOS deep link for this permission's settings pane
+    deep_link: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "permission": self.permission,
@@ -55,6 +58,7 @@ class PermissionResult:
             "user_instructions": self.user_instructions,
             "fixable": self.fixable,
             "fix_capability_id": self.fix_capability_id,
+            "deep_link": self.deep_link,
         }
         if self.devices:
             d["devices"] = self.devices
@@ -127,6 +131,11 @@ async def check_microphone() -> PermissionResult:
     except Exception:
         pass
 
+    _MIC_DEEP_LINK = (
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        if IS_MACOS else ""
+    )
+
     if not devices:
         return PermissionResult(
             permission="microphone",
@@ -137,6 +146,7 @@ async def check_microphone() -> PermissionResult:
             user_instructions="Click Fix It to enable audio support",
             fixable=True,
             fix_capability_id="audio_recording",
+            deep_link=_MIC_DEEP_LINK,
         )
 
     # On macOS, try a quick non-blocking permission probe
@@ -153,7 +163,8 @@ async def check_microphone() -> PermissionResult:
             else "Microphone access needs permission",
             user_instructions=""
             if status == PermissionStatus.GRANTED
-            else "Open System Settings to allow microphone access",
+            else "Open System Settings > Privacy & Security > Microphone",
+            deep_link=_MIC_DEEP_LINK,
         )
 
     # On Linux/Windows, if devices are listed the OS generally allows access
@@ -215,7 +226,8 @@ async def check_camera() -> PermissionResult:
             else "Camera access needs permission",
             user_instructions=""
             if _cam_ok
-            else "Open System Settings to allow camera access",
+            else "Open System Settings > Privacy & Security > Camera",
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
         )
 
     elif IS_WINDOWS:
@@ -306,6 +318,7 @@ async def check_accessibility() -> PermissionResult:
             app_services.AXIsProcessTrusted.restype = ctypes.c_bool
             trusted = app_services.AXIsProcessTrusted()
 
+            _ax_deep_link = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
             if trusted:
                 return PermissionResult(
                     permission="accessibility",
@@ -314,6 +327,7 @@ async def check_accessibility() -> PermissionResult:
                     grant_instructions=_accessibility_instructions(),
                     user_details="Automation and accessibility features are active",
                     user_instructions="",
+                    deep_link=_ax_deep_link,
                 )
             return PermissionResult(
                 permission="accessibility",
@@ -321,10 +335,13 @@ async def check_accessibility() -> PermissionResult:
                 details="Accessibility access not granted",
                 grant_instructions=_accessibility_instructions(),
                 user_details="Automation features need permission",
-                user_instructions="Open System Settings to allow accessibility access",
+                user_instructions="Open System Settings > Privacy & Security > Accessibility",
+                deep_link=_ax_deep_link,
             )
         except Exception:
             pass
+
+        _ax_deep_link = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
 
         # Fallback: try osascript probe
         try:
@@ -343,6 +360,7 @@ async def check_accessibility() -> PermissionResult:
                     grant_instructions=_accessibility_instructions(),
                     user_details="Automation and accessibility features are active",
                     user_instructions="",
+                    deep_link=_ax_deep_link,
                 )
             if (
                 "-1743" in err
@@ -356,7 +374,8 @@ async def check_accessibility() -> PermissionResult:
                     details="Accessibility access denied by macOS",
                     grant_instructions=_accessibility_instructions(),
                     user_details="Automation features need permission",
-                    user_instructions="Open System Settings to allow accessibility access",
+                    user_instructions="Open System Settings > Privacy & Security > Accessibility",
+                    deep_link=_ax_deep_link,
                 )
         except Exception:
             pass
@@ -364,10 +383,11 @@ async def check_accessibility() -> PermissionResult:
         return PermissionResult(
             permission="accessibility",
             status=PermissionStatus.UNKNOWN,
-            details="Could not determine accessibility status",
+            details="Could not determine accessibility status (normal when running as background service)",
             grant_instructions=_accessibility_instructions(),
             user_details="Automation features status is unknown",
             user_instructions="Open System Settings to check accessibility permissions",
+            deep_link=_ax_deep_link,
         )
 
     elif IS_WINDOWS:
@@ -687,6 +707,8 @@ async def check_screen_recording() -> PermissionResult:
 
             # Primary check: does capture actually work?
             capture_works = _macos_screen_capture_functional_test()
+            _sr_deep_link = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+
             if capture_works is True:
                 return PermissionResult(
                     permission="screen_recording",
@@ -695,15 +717,12 @@ async def check_screen_recording() -> PermissionResult:
                     grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
                     user_details="Screen capture is active",
                     user_instructions="",
+                    deep_link=_sr_deep_link,
                 )
 
             if capture_works is False:
-                # Functional test definitively failed.
-                # Also try CGPreflightScreenCaptureAccess for confirmation.
                 preflight = Quartz.CGPreflightScreenCaptureAccess()
                 if preflight:
-                    # Preflight says granted but capture failed — unusual,
-                    # report as granted since the API says so.
                     return PermissionResult(
                         permission="screen_recording",
                         status=PermissionStatus.GRANTED,
@@ -711,6 +730,7 @@ async def check_screen_recording() -> PermissionResult:
                         grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
                         user_details="Screen capture is active",
                         user_instructions="",
+                        deep_link=_sr_deep_link,
                     )
                 return PermissionResult(
                     permission="screen_recording",
@@ -718,7 +738,8 @@ async def check_screen_recording() -> PermissionResult:
                     details="Screen recording permission not granted",
                     grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
                     user_details="Screen capture needs permission",
-                    user_instructions="Open System Settings to allow screen recording",
+                    user_instructions="Open System Settings > Privacy & Security > Screen Recording",
+                    deep_link=_sr_deep_link,
                 )
 
             # Functional test was inconclusive — fall back to preflight API
@@ -730,7 +751,8 @@ async def check_screen_recording() -> PermissionResult:
                 details="Screen recording permission " + ("granted" if preflight else "not granted"),
                 grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
                 user_details="Screen capture is active" if preflight else "Screen capture needs permission",
-                user_instructions="" if preflight else "Open System Settings to allow screen recording",
+                user_instructions="" if preflight else "Open System Settings > Privacy & Security > Screen Recording",
+                deep_link=_sr_deep_link,
             )
         except Exception:
             pass
@@ -742,6 +764,7 @@ async def check_screen_recording() -> PermissionResult:
             grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
             user_details="Screen capture status unknown",
             user_instructions="Open System Settings to check screen recording permissions",
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
         )
 
     elif IS_WINDOWS:

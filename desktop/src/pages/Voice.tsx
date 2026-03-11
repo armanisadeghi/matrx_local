@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
@@ -22,6 +22,7 @@ import {
   Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DebugTerminal, useDebugTerminal } from "@/components/DebugTerminal";
 import type {
   WhisperModelTier,
   HardwareDetectionResult,
@@ -38,6 +39,103 @@ const TABS = [
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const [state, actions] = useTranscription();
+  const { logs, logLine, logData, clearLogs } = useDebugTerminal();
+
+  // Wire Tauri events to the debug terminal
+  useEffect(() => {
+    // Log download progress events
+    if (state.downloadProgress) {
+      logData("[whisper] download-progress", state.downloadProgress);
+    }
+  }, [state.downloadProgress, logData]);
+
+  useEffect(() => {
+    if (state.error) {
+      logLine("error", `[whisper] ERROR: ${state.error}`);
+    }
+  }, [state.error, logLine]);
+
+  // Wrapped actions that also log to the terminal
+  const wrappedDetectHardware = useCallback(async () => {
+    logLine("cmd", "invoke detect_hardware");
+    try {
+      const result = await actions.detectHardware();
+      logData("[whisper] hardware-result", result);
+      return result;
+    } catch (e) {
+      logLine("error", `detect_hardware failed: ${e}`);
+      throw e;
+    }
+  }, [actions, logLine, logData]);
+
+  const wrappedDownloadModel = useCallback(async (filename: string) => {
+    logLine("cmd", `invoke download_whisper_model: ${filename}`);
+    logLine("info", `Starting download from HuggingFace: ggml/${filename}`);
+    try {
+      await actions.downloadModel(filename);
+      logLine("success", `Model downloaded: ${filename}`);
+    } catch (e) {
+      logLine("error", `download_whisper_model failed: ${e}`);
+      throw e;
+    }
+  }, [actions, logLine]);
+
+  const wrappedInitTranscription = useCallback(async (filename: string) => {
+    logLine("cmd", `invoke init_transcription: ${filename}`);
+    try {
+      await actions.initTranscription(filename);
+      logLine("success", `Transcription engine initialized with: ${filename}`);
+    } catch (e) {
+      logLine("error", `init_transcription failed: ${e}`);
+      throw e;
+    }
+  }, [actions, logLine]);
+
+  const wrappedQuickSetup = useCallback(async () => {
+    logLine("info", "=== Starting Voice Quick Setup ===");
+    logLine("cmd", "Step 1: detect_hardware");
+    try {
+      const hw = await actions.detectHardware();
+      logData("[whisper] hardware", hw);
+      logLine("success", `Hardware detected — recommended: ${hw?.recommended_filename ?? "unknown"}`);
+    } catch (e) {
+      logLine("error", `Hardware detection failed: ${e}`);
+    }
+    logLine("cmd", "Step 2: download_vad_model");
+    try {
+      await actions.downloadVadModel();
+      logLine("success", "VAD model ready");
+    } catch (e) {
+      logLine("warn", `VAD model download failed (non-critical): ${e}`);
+    }
+    // The quickSetup action handles the rest internally — trigger it
+    logLine("cmd", "Step 3: quickSetup (download + init)");
+    try {
+      await actions.quickSetup();
+      logLine("success", "=== Voice Quick Setup complete ===");
+    } catch (e) {
+      logLine("error", `Quick setup failed: ${e}`);
+    }
+  }, [actions, logLine, logData]);
+
+  const wrappedDeleteModel = useCallback(async (filename: string) => {
+    logLine("cmd", `invoke delete_model: ${filename}`);
+    try {
+      await actions.deleteModel(filename);
+      logLine("success", `Model deleted: ${filename}`);
+    } catch (e) {
+      logLine("error", `delete_model failed: ${e}`);
+    }
+  }, [actions, logLine]);
+
+  const wrappedActions = {
+    ...actions,
+    detectHardware: wrappedDetectHardware,
+    downloadModel: wrappedDownloadModel,
+    initTranscription: wrappedInitTranscription,
+    quickSetup: wrappedQuickSetup,
+    deleteModel: wrappedDeleteModel,
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -47,11 +145,25 @@ export function Voice() {
       />
       <SubTabBar tabs={TABS} value={tab} onValueChange={setTab} />
       <div className="flex-1 overflow-y-auto p-6">
-        {tab === "setup" && <SetupTab state={state} actions={actions} />}
+        {tab === "setup" && (
+          <SetupTab
+            state={state}
+            actions={wrappedActions}
+            logs={logs}
+            onClearLogs={clearLogs}
+          />
+        )}
         {tab === "transcribe" && (
           <TranscribeTab state={state} actions={actions} />
         )}
-        {tab === "models" && <ModelsTab state={state} actions={actions} />}
+        {tab === "models" && (
+          <ModelsTab
+            state={state}
+            actions={wrappedActions}
+            logs={logs}
+            onClearLogs={clearLogs}
+          />
+        )}
         {tab === "devices" && <DevicesTab state={state} actions={actions} />}
       </div>
     </div>
@@ -63,11 +175,16 @@ export function Voice() {
 function SetupTab({
   state,
   actions,
+  logs,
+  onClearLogs,
 }: {
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
+  logs: import("@/components/DebugTerminal").LogLine[];
+  onClearLogs: () => void;
 }) {
   const isSetupDone = state.setupStatus?.setup_complete ?? false;
+  const isActive = state.isDetecting || state.isDownloading || state.isInitializing;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -102,31 +219,29 @@ function SetupTab({
             {!isSetupDone && (
               <Button
                 onClick={actions.quickSetup}
-                disabled={state.isDetecting || state.isDownloading || state.isInitializing}
+                disabled={isActive}
                 className="mt-2"
                 size="lg"
               >
                 {state.isDetecting ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Detecting hardware...
-                  </>
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Detecting hardware...</>
                 ) : state.isDownloading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Downloading model...
-                  </>
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Downloading model...</>
                 ) : state.isInitializing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Loading model...
-                  </>
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading model...</>
                 ) : (
-                  <>
-                    <Zap className="mr-2 h-4 w-4" />
-                    One-Click Setup
-                  </>
+                  <><Zap className="mr-2 h-4 w-4" />One-Click Setup</>
                 )}
+              </Button>
+            )}
+            {isSetupDone && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={actions.refreshSetupStatus}
+              >
+                <RefreshCw className="mr-1 h-3 w-3" />
+                Refresh Status
               </Button>
             )}
           </div>
@@ -145,6 +260,9 @@ function SetupTab({
               </span>
             </div>
             <Progress value={state.downloadProgress.percent} className="h-2" />
+            <p className="text-xs text-muted-foreground text-right tabular-nums">
+              {state.downloadProgress.percent.toFixed(1)}%
+            </p>
           </div>
         )}
       </div>
@@ -154,8 +272,8 @@ function SetupTab({
         <div className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
           <AlertCircle className="mt-0.5 h-4 w-4 text-red-500 flex-shrink-0" />
           <div className="flex-1">
-            <p className="text-sm font-medium text-red-500">Setup Error</p>
-            <p className="text-sm text-red-400">{state.error}</p>
+            <p className="text-sm font-medium text-red-500">Error</p>
+            <p className="text-sm text-red-400 whitespace-pre-wrap">{state.error}</p>
           </div>
           <Button
             variant="ghost"
@@ -171,6 +289,15 @@ function SetupTab({
       {/* Hardware Info */}
       <HardwareInfoCard state={state} actions={actions} />
 
+      {/* Debug Terminal — always visible, auto-opens during active operations */}
+      <DebugTerminal
+        logs={logs}
+        onClear={onClearLogs}
+        title="Voice Setup Log"
+        defaultOpen={isActive}
+        maxHeight="260px"
+      />
+
       {/* How it works */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
         <h3 className="font-semibold flex items-center gap-2">
@@ -179,34 +306,16 @@ function SetupTab({
         </h3>
         <div className="space-y-3 text-sm text-muted-foreground">
           <div className="flex items-start gap-3">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">
-              1
-            </div>
-            <p>
-              <strong className="text-foreground">Local processing</strong> —
-              All transcription runs on your machine using Whisper. No audio
-              leaves your device.
-            </p>
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">1</div>
+            <p><strong className="text-foreground">Local processing</strong> — All transcription runs on your machine using Whisper. No audio leaves your device.</p>
           </div>
           <div className="flex items-start gap-3">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">
-              2
-            </div>
-            <p>
-              <strong className="text-foreground">Adaptive models</strong> — The
-              system picks the best model for your hardware. Faster machines get
-              more accurate models.
-            </p>
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">2</div>
+            <p><strong className="text-foreground">Adaptive models</strong> — The system picks the best model for your hardware. Faster machines get more accurate models.</p>
           </div>
           <div className="flex items-start gap-3">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">
-              3
-            </div>
-            <p>
-              <strong className="text-foreground">Future: Wake words</strong> —
-              This system will support custom wake words that trigger AI agents
-              automatically.
-            </p>
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">3</div>
+            <p><strong className="text-foreground">Future: Wake words</strong> — This system will support custom wake words that trigger AI agents automatically.</p>
           </div>
         </div>
       </div>
@@ -467,9 +576,13 @@ function TranscribeTab({
 function ModelsTab({
   state,
   actions,
+  logs,
+  onClearLogs,
 }: {
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
+  logs: import("@/components/DebugTerminal").LogLine[];
+  onClearLogs: () => void;
 }) {
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const hw = state.hardwareResult;
@@ -490,7 +603,7 @@ function ModelsTab({
       }
       await actions.initTranscription(model.filename);
     } catch {
-      // Error is set in state
+      // Error displayed in terminal + state.error
     }
     setDownloadingFile(null);
   };
@@ -638,6 +751,15 @@ function ModelsTab({
           </p>
         </div>
       </div>
+
+      {/* Debug Terminal */}
+      <DebugTerminal
+        logs={logs}
+        onClear={onClearLogs}
+        title="Model Download Log"
+        defaultOpen={downloadingFile !== null}
+        maxHeight="260px"
+      />
     </div>
   );
 }

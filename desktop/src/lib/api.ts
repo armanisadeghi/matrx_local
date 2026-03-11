@@ -1231,8 +1231,10 @@ class EngineAPI {
    */
   async runSetupInstall(callbacks: {
     onProgress: (data: SetupProgressEvent) => void;
-    onComplete: (data: { message: string }) => void;
+    onComplete: (data: SetupCompleteEvent) => void;
     onError: (error: string) => void;
+    /** Raw SSE line callback for full transparency logging */
+    onRawLine?: (line: string) => void;
     signal?: AbortSignal;
   }): Promise<void> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
@@ -1259,13 +1261,17 @@ class EngineAPI {
       buffer = lines.pop() || "";
       let eventType = "";
       for (const line of lines) {
+        callbacks.onRawLine?.(line);
         if (line.startsWith("event: ")) {
           eventType = line.slice(7).trim();
         } else if (line.startsWith("data: ")) {
           try {
             const data = JSON.parse(line.slice(6));
             if (eventType === "progress") callbacks.onProgress(data);
-            else if (eventType === "complete") { receivedComplete = true; callbacks.onComplete(data); }
+            else if (eventType === "complete") {
+              receivedComplete = true;
+              callbacks.onComplete(data as SetupCompleteEvent);
+            }
             else if (eventType === "cancelled") { receivedComplete = true; callbacks.onError("Setup cancelled"); }
             else if (eventType === "started") callbacks.onProgress({ component: "_system", status: "installing", message: data.message, percent: 0 });
           } catch { /* skip malformed */ }
@@ -1273,9 +1279,8 @@ class EngineAPI {
         }
       }
     }
-    // If the stream ended without a complete or error event, tell the caller
     if (!receivedComplete) {
-      callbacks.onError("Setup stream ended unexpectedly — click Re-check to verify status");
+      callbacks.onError("Setup stream ended without a completion event — check the debug terminal for details");
     }
   }
 
@@ -1286,8 +1291,9 @@ class EngineAPI {
     model: string,
     callbacks: {
       onProgress: (data: SetupProgressEvent) => void;
-      onComplete: (data: { message: string }) => void;
+      onComplete: (data: { message: string; had_errors?: boolean; errors?: string[] }) => void;
       onError: (error: string) => void;
+      onRawLine?: (line: string) => void;
       signal?: AbortSignal;
     },
   ): Promise<void> {
@@ -1314,6 +1320,7 @@ class EngineAPI {
       buffer = lines.pop() || "";
       let eventType = "";
       for (const line of lines) {
+        callbacks.onRawLine?.(line);
         if (line.startsWith("event: ")) {
           eventType = line.slice(7).trim();
         } else if (line.startsWith("data: ")) {
@@ -1328,7 +1335,7 @@ class EngineAPI {
       }
     }
     if (!receivedComplete) {
-      callbacks.onError("Transcription install stream ended unexpectedly");
+      callbacks.onError("Transcription install stream ended without completion event");
     }
   }
 }
@@ -1623,10 +1630,13 @@ export interface SetupComponentStatus {
   id: string;
   label: string;
   description: string;
-  status: "ready" | "not_ready" | "installing" | "error" | "skipped";
+  /** "warning" = advisory only (cannot be auto-fixed, e.g. macOS TCC permissions) */
+  status: "ready" | "not_ready" | "installing" | "error" | "skipped" | "warning";
   detail: string | null;
   optional: boolean;
   size_hint: string | null;
+  /** macOS x-apple.systempreferences deep link or other OS settings URL */
+  deep_link: string | null;
 }
 
 export interface SetupStatus {
@@ -1643,6 +1653,18 @@ export interface SetupProgressEvent {
   status: string;
   message: string;
   percent: number;
+  /** Optional deep link forwarded from Python backend */
+  deep_link?: string | null;
+  /** Raw byte counts for download progress */
+  bytes_downloaded?: number;
+  total_bytes?: number;
+}
+
+export interface SetupCompleteEvent {
+  message: string;
+  had_errors: boolean;
+  errors: string[];
+  timestamp: number;
 }
 
 // Singleton instance

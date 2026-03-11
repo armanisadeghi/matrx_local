@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useLlm, type LlmState, type LlmActions } from "@/hooks/use-llm";
@@ -24,6 +24,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DebugTerminal, useDebugTerminal } from "@/components/DebugTerminal";
 import type { LlmModelInfo, LlmTier } from "@/lib/llm/types";
 
 const TABS = [
@@ -37,6 +38,120 @@ const TABS = [
 export function LocalModels() {
   const [tab, setTab] = useState("overview");
   const [state, actions] = useLlm();
+  const { logs, logLine, logData, clearLogs } = useDebugTerminal();
+
+  // Wire state changes to the terminal
+  useEffect(() => {
+    if (state.downloadProgress) {
+      logData("[llm] download-progress", state.downloadProgress);
+    }
+  }, [state.downloadProgress, logData]);
+
+  useEffect(() => {
+    if (state.error) {
+      logLine("error", `[llm] ERROR: ${state.error}`);
+    }
+  }, [state.error, logLine]);
+
+  useEffect(() => {
+    if (state.serverStatus) {
+      logData("[llm] server-status", state.serverStatus);
+    }
+  }, [state.serverStatus, logData]);
+
+  // Wrapped actions with full terminal logging
+  const wrappedDetectHardware = useCallback(async () => {
+    logLine("cmd", "invoke detect_llm_hardware");
+    try {
+      const result = await actions.detectHardware();
+      logData("[llm] hardware-result", result);
+      logLine("success", `Hardware: ${result.hardware.is_apple_silicon ? "Apple Silicon" : `${result.hardware.total_ram_mb}MB RAM`} — recommended: ${result.recommended_filename}`);
+      return result;
+    } catch (e) {
+      logLine("error", `detect_llm_hardware failed: ${e}`);
+      throw e;
+    }
+  }, [actions, logLine, logData]);
+
+  const wrappedDownloadModel = useCallback(async (filename: string, url: string) => {
+    logLine("cmd", `invoke download_llm_model: ${filename}`);
+    logLine("info", `Source URL: ${url}`);
+    logLine("info", "Download started — progress events will appear below");
+    try {
+      await actions.downloadModel(filename, url);
+      logLine("success", `Model downloaded and validated: ${filename}`);
+    } catch (e) {
+      logLine("error", `download_llm_model failed: ${e}`);
+      throw e;
+    }
+  }, [actions, logLine]);
+
+  const wrappedStartServer = useCallback(async (modelFilename: string, gpuLayers: number, contextLength?: number) => {
+    logLine("cmd", `invoke start_llm_server: ${modelFilename} gpu_layers=${gpuLayers} ctx=${contextLength ?? 8192}`);
+    try {
+      const result = await actions.startServer(modelFilename, gpuLayers, contextLength);
+      logData("[llm] server-started", result);
+      logLine("success", `Server running on port ${result.port}`);
+      return result;
+    } catch (e) {
+      logLine("error", `start_llm_server failed: ${e}`);
+      throw e;
+    }
+  }, [actions, logLine, logData]);
+
+  const wrappedStopServer = useCallback(async () => {
+    logLine("cmd", "invoke stop_llm_server");
+    try {
+      await actions.stopServer();
+      logLine("success", "Server stopped");
+    } catch (e) {
+      logLine("error", `stop_llm_server failed: ${e}`);
+      throw e;
+    }
+  }, [actions, logLine]);
+
+  const wrappedDeleteModel = useCallback(async (filename: string) => {
+    logLine("cmd", `invoke delete_llm_model: ${filename}`);
+    try {
+      await actions.deleteModel(filename);
+      logLine("success", `Model deleted: ${filename}`);
+    } catch (e) {
+      logLine("error", `delete_llm_model failed: ${e}`);
+    }
+  }, [actions, logLine]);
+
+  const wrappedHealthCheck = useCallback(async () => {
+    logLine("cmd", "invoke check_llm_server_health");
+    try {
+      const ok = await actions.healthCheck();
+      logLine(ok ? "success" : "warn", `Health check: ${ok ? "healthy" : "not healthy"}`);
+      return ok;
+    } catch (e) {
+      logLine("error", `health check failed: ${e}`);
+      return false;
+    }
+  }, [actions, logLine]);
+
+  const wrappedQuickSetup = useCallback(async () => {
+    logLine("info", "=== Starting LLM Quick Setup ===");
+    try {
+      await actions.quickSetup();
+      logLine("success", "=== LLM Quick Setup complete ===");
+    } catch (e) {
+      logLine("error", `Quick setup failed: ${e}`);
+    }
+  }, [actions, logLine]);
+
+  const wrappedActions: LlmActions = {
+    ...actions,
+    detectHardware: wrappedDetectHardware,
+    downloadModel: wrappedDownloadModel,
+    startServer: wrappedStartServer,
+    stopServer: wrappedStopServer,
+    deleteModel: wrappedDeleteModel,
+    healthCheck: wrappedHealthCheck,
+    quickSetup: wrappedQuickSetup,
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -47,15 +162,17 @@ export function LocalModels() {
       <SubTabBar tabs={TABS} value={tab} onValueChange={setTab} />
       <div className="flex-1 overflow-y-auto p-6">
         {tab === "overview" && (
-          <OverviewTab state={state} actions={actions} />
+          <OverviewTab state={state} actions={wrappedActions} logs={logs} onClearLogs={clearLogs} />
         )}
-        {tab === "models" && <ModelsTab state={state} actions={actions} />}
-        {tab === "server" && <ServerTab state={state} actions={actions} />}
+        {tab === "models" && (
+          <ModelsTab state={state} actions={wrappedActions} logs={logs} onClearLogs={clearLogs} />
+        )}
+        {tab === "server" && <ServerTab state={state} actions={wrappedActions} />}
         {tab === "hardware" && (
-          <HardwareTab state={state} actions={actions} />
+          <HardwareTab state={state} actions={wrappedActions} />
         )}
         {tab === "inference" && (
-          <InferenceTab state={state} actions={actions} />
+          <InferenceTab state={state} actions={wrappedActions} />
         )}
       </div>
     </div>
@@ -67,12 +184,17 @@ export function LocalModels() {
 function OverviewTab({
   state,
   actions,
+  logs,
+  onClearLogs,
 }: {
   state: LlmState;
   actions: LlmActions;
+  logs: import("@/components/DebugTerminal").LogLine[];
+  onClearLogs: () => void;
 }) {
   const isSetup = state.setupStatus?.setup_complete ?? false;
   const isRunning = state.serverStatus?.running ?? false;
+  const isActive = state.isDetecting || state.isDownloading || state.isStarting;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -289,6 +411,15 @@ function OverviewTab({
           </div>
         </div>
       )}
+
+      {/* Debug Terminal */}
+      <DebugTerminal
+        logs={logs}
+        onClear={onClearLogs}
+        title="LLM Operations Log"
+        defaultOpen={isActive}
+        maxHeight="260px"
+      />
     </div>
   );
 }
@@ -298,11 +429,16 @@ function OverviewTab({
 function ModelsTab({
   state,
   actions,
+  logs,
+  onClearLogs,
 }: {
   state: LlmState;
   actions: LlmActions;
+  logs: import("@/components/DebugTerminal").LogLine[];
+  onClearLogs: () => void;
 }) {
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
   const allModels = state.hardwareResult?.all_models ?? [];
   const downloadedFilenames = new Set(
@@ -310,14 +446,18 @@ function ModelsTab({
   );
 
   useEffect(() => {
-    // Detect hardware to get the full model catalog
     if (!state.hardwareResult && !state.isDetecting) {
       actions.detectHardware();
     }
   }, []);
 
   const handleDownload = async (model: LlmModelInfo) => {
-    await actions.downloadModel(model.filename, model.hf_url);
+    setDownloadingFile(model.filename);
+    try {
+      await actions.downloadModel(model.filename, model.hf_url);
+    } finally {
+      setDownloadingFile(null);
+    }
   };
 
   const handleDelete = async (filename: string) => {
@@ -400,8 +540,8 @@ function ModelsTab({
                 isActive={isActive}
                 isRecommended={isRecommended}
                 isDownloading={
-                  state.isDownloading &&
-                  state.downloadProgress?.filename === model.filename
+                  (state.isDownloading || downloadingFile === model.filename) &&
+                  (state.downloadProgress?.filename === model.filename || downloadingFile === model.filename)
                 }
                 isStarting={state.isStarting}
                 isDeleting={deleting === model.filename}
@@ -414,6 +554,15 @@ function ModelsTab({
           })}
         </div>
       )}
+
+      {/* Debug Terminal */}
+      <DebugTerminal
+        logs={logs}
+        onClear={onClearLogs}
+        title="Model Download Log"
+        defaultOpen={state.isDownloading || downloadingFile !== null}
+        maxHeight="260px"
+      />
     </div>
   );
 }

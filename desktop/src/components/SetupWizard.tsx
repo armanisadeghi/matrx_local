@@ -1,19 +1,22 @@
 /**
  * SetupWizard — First-run setup experience for Matrx Local.
- * 
- * Shows installation status, runs automatic setup (browser engine, storage dirs),
- * and offers optional configuration (transcription, preferences).
  *
- * Designed to be embedded in the Dashboard page. Shows automatically when setup
- * is incomplete, and can be re-opened via a "Setup" button when complete.
+ * Shows installation status, runs automatic setup (browser engine, storage dirs),
+ * and offers optional configuration (transcription, LLM models).
+ *
+ * Embedded in the Dashboard page. Shows automatically when setup is incomplete,
+ * and can be re-opened via a "Setup" button when complete.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-shell";
 import {
   CheckCircle2, Circle, Loader2, AlertCircle, ChevronRight,
   Chrome, FolderOpen, Shield, Mic, Cpu, Sparkles, Settings2,
   Download, Play, RotateCcw, ChevronDown, ChevronUp, X,
-  Terminal,
+  ExternalLink, BrainCircuit, AlertTriangle,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,9 +24,12 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { engine } from "@/lib/api";
 import type {
-  SetupStatus, SetupComponentStatus, SetupProgressEvent,
+  SetupStatus, SetupComponentStatus, SetupProgressEvent, SetupCompleteEvent,
 } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
+import type { VoiceSetupStatus } from "@/lib/transcription/types";
+import type { LlmSetupStatus, LlmHardwareResult, LlmDownloadProgress } from "@/lib/llm/types";
+import { DebugTerminal, useDebugTerminal } from "@/components/DebugTerminal";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -32,20 +38,18 @@ import type { EngineStatus } from "@/hooks/use-engine";
 const SETUP_DISMISSED_KEY = "matrx-setup-dismissed";
 
 const COMPONENT_ICONS: Record<string, React.ReactNode> = {
-  core_packages: <Cpu className="h-5 w-5" />,
+  core_packages:  <Cpu className="h-5 w-5" />,
   browser_engine: <Chrome className="h-5 w-5" />,
-  storage_dirs: <FolderOpen className="h-5 w-5" />,
-  permissions: <Shield className="h-5 w-5" />,
-  transcription: <Mic className="h-5 w-5" />,
+  storage_dirs:   <FolderOpen className="h-5 w-5" />,
+  permissions:    <Shield className="h-5 w-5" />,
+  transcription:  <Mic className="h-5 w-5" />,
+  local_llm:      <BrainCircuit className="h-5 w-5" />,
 };
 
-const COMPONENT_ORDER = [
-  "core_packages",
-  "browser_engine",
-  "storage_dirs",
-  "permissions",
-  "transcription",
-];
+// Components that must be "ready" for setup to be considered complete
+const BLOCKING_IDS = new Set(["core_packages", "browser_engine", "storage_dirs"]);
+// Components that are advisory only (show warning style, never block)
+const ADVISORY_IDS = new Set(["permissions"]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,12 +61,7 @@ interface ComponentProgress {
   status: string;
   message: string;
   percent: number;
-}
-
-interface LogEntry {
-  time: string;
-  level: "info" | "success" | "warn" | "error";
-  message: string;
+  deep_link?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,29 +80,49 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
   const [overallPercent, setOverallPercent] = useState(0);
   const [installError, setInstallError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
-  const [transcriptionProgress, setTranscriptionProgress] = useState<ComponentProgress | null>(null);
   const [dismissed, setDismissed] = useState(() => {
     return localStorage.getItem(SETUP_DISMISSED_KEY) === "true";
   });
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [showDebug, setShowDebug] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
 
+  // Tauri-driven optional component states
+  const [voiceStatus, setVoiceStatus] = useState<VoiceSetupStatus | null>(null);
+  const [llmStatus, setLlmStatus] = useState<LlmSetupStatus | null>(null);
+  const [llmHardware, setLlmHardware] = useState<LlmHardwareResult | null>(null);
+  const [_llmDownloadProgress, setLlmDownloadProgress] = useState<LlmDownloadProgress | null>(null);
+  const [isDownloadingModel, setIsDownloadingModel] = useState(false);
+  const [isDownloadingTranscription, setIsDownloadingTranscription] = useState(false);
+
   const abortRef = useRef<AbortController | null>(null);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const llmUnlistenRef = useRef<UnlistenFn | null>(null);
 
-  // ── Logging helper ─────────────────────────────────────────────────────
+  const { logs, logLine, logData, clearLogs } = useDebugTerminal();
 
-  const addLog = useCallback((level: LogEntry["level"], message: string) => {
-    const now = new Date();
-    const time = now.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    setLogs((prev) => [...prev, { time, level, message }]);
-  }, []);
+  // ── Load Tauri optional status ─────────────────────────────────────────
 
-  // Auto-scroll debug console
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+  const loadTauriStatus = useCallback(async () => {
+    try {
+      const v = await invoke<VoiceSetupStatus>("get_voice_setup_status");
+      setVoiceStatus(v);
+      logLine("data", `Voice setup: model=${v.selected_model ?? "none"}, complete=${v.setup_complete}`);
+    } catch (e) {
+      logLine("warn", `Could not load voice setup status: ${e}`);
+    }
+    try {
+      const l = await invoke<LlmSetupStatus>("get_llm_setup_status");
+      setLlmStatus(l);
+      logLine("data", `LLM setup: models=${l.downloaded_models.join(", ") || "none"}, server=${l.server_running}`);
+    } catch (e) {
+      logLine("warn", `Could not load LLM setup status: ${e}`);
+    }
+    try {
+      const hw = await invoke<LlmHardwareResult>("detect_llm_hardware");
+      setLlmHardware(hw);
+      logLine("info", `Hardware: ${hw.hardware.is_apple_silicon ? "Apple Silicon" : `${hw.hardware.total_ram_mb}MB RAM`} — recommended model: ${hw.recommended_filename}`);
+    } catch (e) {
+      logLine("warn", `Hardware detection failed: ${e}`);
+    }
+  }, [logLine]);
 
   // ── Load setup status ──────────────────────────────────────────────────
 
@@ -111,44 +130,50 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
     if (engineStatus !== "connected") return;
     setPhase("checking");
     setStatusError(null);
-    addLog("info", "Checking system setup status...");
+    logLine("info", "Checking system setup status...");
     try {
       const status = await engine.getSetupStatus();
       setSetupStatus(status);
 
-      addLog("info", `Platform: ${status.platform} ${status.architecture}`);
-      if (status.gpu_available) addLog("info", `GPU detected: ${status.gpu_name}`);
+      logLine("info", `Platform: ${status.platform} ${status.architecture}`);
+      if (status.gpu_available) logLine("info", `GPU detected: ${status.gpu_name}`);
 
-      // Initialize progress from status
       const initial: Record<string, ComponentProgress> = {};
       for (const comp of status.components) {
         initial[comp.id] = {
           status: comp.status,
           message: comp.detail || "",
           percent: comp.status === "ready" ? 100 : 0,
+          deep_link: comp.deep_link,
         };
-        addLog(
-          comp.status === "ready" ? "success" : comp.status === "error" ? "error" : "warn",
-          `${comp.label}: ${comp.status}${comp.detail ? ` — ${comp.detail}` : ""}`
-        );
+        const level =
+          comp.status === "ready" ? "success" :
+          comp.status === "error" ? "error" :
+          comp.status === "warning" ? "warn" : "warn";
+        logLine(level, `${comp.label}: ${comp.status}${comp.detail ? ` — ${comp.detail}` : ""}`);
       }
       setProgress(initial);
 
       if (status.setup_complete) {
         setPhase("complete");
-        addLog("success", "All core components are ready");
+        logLine("success", "All core components are ready");
       } else {
         setPhase("ready");
-        const notReady = status.components.filter((c) => !c.optional && c.status !== "ready");
-        addLog("warn", `${notReady.length} component(s) need setup`);
+        const notReady = status.components.filter(
+          (c) => BLOCKING_IDS.has(c.id) && c.status !== "ready"
+        );
+        logLine("warn", `${notReady.length} required component(s) need setup`);
       }
+
+      // Load Tauri optional status after engine status loads
+      await loadTauriStatus();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setStatusError(msg);
       setPhase("ready");
-      addLog("error", `Failed to check status: ${msg}`);
+      logLine("error", `Failed to check status: ${msg}`);
     }
-  }, [engineStatus, addLog]);
+  }, [engineStatus, logLine, loadTauriStatus]);
 
   useEffect(() => {
     checkStatus();
@@ -160,7 +185,7 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
     setPhase("installing");
     setInstallError(null);
     setOverallPercent(0);
-    addLog("info", "Starting setup installation...");
+    logLine("info", "Starting setup installation...");
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -168,6 +193,11 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
     try {
       await engine.runSetupInstall({
         signal: controller.signal,
+        onRawLine: (line) => {
+          if (line.trim() && !line.startsWith("event:") && !line.startsWith("data:")) {
+            logLine("data", line);
+          }
+        },
         onProgress: (data: SetupProgressEvent) => {
           setProgress((prev) => ({
             ...prev,
@@ -175,19 +205,28 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
               status: data.status,
               message: data.message,
               percent: data.percent,
+              deep_link: data.deep_link,
             },
           }));
 
-          // Log every progress event
-          const level: LogEntry["level"] =
+          const level =
             data.status === "ready" ? "success" :
-            data.status === "error" ? "error" : "info";
-          addLog(level, `[${data.component}] ${data.message} (${data.percent}%)`);
+            data.status === "error" ? "error" :
+            data.status === "warning" ? "warn" : "info";
+          logLine(level, `[${data.component}] ${data.message} (${data.percent}%)`);
+          if (data.bytes_downloaded !== undefined && data.total_bytes !== undefined) {
+            logData(`[${data.component}] download`, {
+              bytes: data.bytes_downloaded,
+              total: data.total_bytes,
+              pct: data.percent,
+            });
+          }
 
-          // Calculate overall progress
           if (data.component !== "_system") {
             setOverallPercent((prev) => {
-              const components = setupStatus?.components.filter((c) => !c.optional) || [];
+              const components = setupStatus?.components.filter(
+                (c) => BLOCKING_IDS.has(c.id)
+              ) || [];
               const total = components.length;
               if (total === 0) return 0;
               const idx = components.findIndex((c) => c.id === data.component);
@@ -198,57 +237,63 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
             });
           }
         },
-        onComplete: () => {
+        onComplete: (data: SetupCompleteEvent) => {
           setOverallPercent(100);
-          setPhase("complete");
-          addLog("success", "Setup complete — all core systems ready");
-          checkStatus().then(() => {
-            onSetupComplete?.();
-          });
+          if (data.had_errors) {
+            logLine("warn", `Setup finished with errors: ${data.errors.join("; ")}`);
+            logLine("warn", "Some components may not be ready — check details above");
+            setPhase("ready");
+          } else {
+            logLine("success", "Setup complete — all core systems ready");
+            setPhase("complete");
+            checkStatus().then(() => { onSetupComplete?.(); });
+          }
         },
         onError: (error: string) => {
           setInstallError(error);
           setPhase("ready");
-          addLog("error", `Setup failed: ${error}`);
+          logLine("error", `Setup error: ${error}`);
+          // Auto-recheck status so we know what actually succeeded
+          setTimeout(() => checkStatus(), 1500);
         },
       });
     } catch (e) {
       if ((e as Error).name === "AbortError") {
-        addLog("warn", "Setup cancelled by user");
+        logLine("warn", "Setup cancelled by user");
         setPhase("ready");
       } else {
         const msg = (e as Error).message;
         setInstallError(msg);
         setPhase("ready");
-        addLog("error", `Setup error: ${msg}`);
+        logLine("error", `Setup exception: ${msg}`);
+        setTimeout(() => checkStatus(), 1500);
       }
     }
-  }, [setupStatus, checkStatus, onSetupComplete, addLog]);
+  }, [setupStatus, checkStatus, onSetupComplete, logLine, logData]);
 
   const cancelInstall = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
     setPhase("ready");
-    addLog("warn", "Setup cancelled");
-  }, [addLog]);
+    logLine("warn", "Setup cancelled by user");
+  }, [logLine]);
 
-  // ── Transcription install ──────────────────────────────────────────────
+  // ── Transcription (Python model download) ─────────────────────────────
 
   const installTranscription = useCallback(async () => {
-    setTranscriptionProgress({ status: "installing", message: "Starting download...", percent: 0 });
-    addLog("info", "Starting transcription model download...");
+    setIsDownloadingTranscription(true);
+    logLine("info", "Starting whisper model download from HuggingFace...");
 
     const controller = new AbortController();
-
     try {
       await engine.runTranscriptionInstall("base.en", {
         signal: controller.signal,
+        onRawLine: (line) => {
+          if (line.trim() && !line.startsWith("event:") && !line.startsWith("data:")) {
+            logLine("data", line);
+          }
+        },
         onProgress: (data: SetupProgressEvent) => {
-          setTranscriptionProgress({
-            status: data.status,
-            message: data.message,
-            percent: data.percent,
-          });
           setProgress((prev) => ({
             ...prev,
             transcription: {
@@ -257,29 +302,108 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
               percent: data.percent,
             },
           }));
-          addLog(data.status === "error" ? "error" : "info", `[transcription] ${data.message}`);
+          const level = data.status === "error" ? "error" : data.status === "ready" ? "success" : "info";
+          logLine(level, `[transcription] ${data.message} (${data.percent}%)`);
+          if (data.bytes_downloaded !== undefined) {
+            logData("[transcription] download", {
+              bytes: data.bytes_downloaded,
+              total: data.total_bytes,
+              pct: data.percent,
+            });
+          }
         },
-        onComplete: () => {
-          setTranscriptionProgress({ status: "ready", message: "Transcription engine ready", percent: 100 });
-          setProgress((prev) => ({
-            ...prev,
-            transcription: { status: "ready", message: "Transcription engine ready", percent: 100 },
-          }));
-          addLog("success", "Transcription model installed successfully");
+        onComplete: (data) => {
+          if (data.had_errors) {
+            logLine("error", `Transcription download failed: ${data.errors?.join("; ")}`);
+          } else {
+            logLine("success", "Transcription model ready");
+            setProgress((prev) => ({
+              ...prev,
+              transcription: { status: "ready", message: "Model ready", percent: 100 },
+            }));
+          }
         },
         onError: (error: string) => {
-          setTranscriptionProgress({ status: "error", message: error, percent: 0 });
-          addLog("error", `Transcription install failed: ${error}`);
+          logLine("error", `Transcription install error: ${error}`);
+          setProgress((prev) => ({
+            ...prev,
+            transcription: { status: "error", message: error, percent: 0 },
+          }));
         },
       });
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         const msg = (e as Error).message;
-        setTranscriptionProgress({ status: "error", message: msg, percent: 0 });
-        addLog("error", `Transcription error: ${msg}`);
+        logLine("error", `Transcription exception: ${msg}`);
       }
+    } finally {
+      setIsDownloadingTranscription(false);
     }
-  }, [addLog]);
+  }, [logLine, logData]);
+
+  // ── LLM model download ─────────────────────────────────────────────────
+
+  const downloadLlmModel = useCallback(async () => {
+    if (!llmHardware) return;
+    const filename = llmHardware.recommended_filename;
+    const url = llmHardware.all_models.find((m) => m.filename === filename)?.hf_url;
+    if (!url) {
+      logLine("error", `No download URL found for ${filename}`);
+      return;
+    }
+
+    setIsDownloadingModel(true);
+    setLlmDownloadProgress(null);
+    logLine("info", `Starting LLM model download: ${filename}`);
+    logLine("cmd", `Source URL: ${url}`);
+
+    // Listen for progress events from Tauri
+    const unlisten = await listen<LlmDownloadProgress>("llm-download-progress", (event) => {
+      const p = event.payload;
+      setLlmDownloadProgress(p);
+      setProgress((prev) => ({
+        ...prev,
+        local_llm: {
+          status: "installing",
+          message: `Downloading ${p.filename}: ${(p.bytes_downloaded / 1e6).toFixed(0)} / ${(p.total_bytes / 1e6).toFixed(0)} MB`,
+          percent: Math.round(p.percent),
+        },
+      }));
+      logData("[local_llm] download-progress", p);
+    });
+    llmUnlistenRef.current = unlisten;
+
+    try {
+      logLine("cmd", `invoke download_llm_model: ${filename}`);
+      await invoke("download_llm_model", { filename, url });
+      logLine("success", `LLM model downloaded: ${filename}`);
+      setProgress((prev) => ({
+        ...prev,
+        local_llm: { status: "ready", message: filename, percent: 100 },
+      }));
+      const updated = await invoke<LlmSetupStatus>("get_llm_setup_status");
+      setLlmStatus(updated);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      logLine("error", `LLM download failed: ${msg}`);
+      setProgress((prev) => ({
+        ...prev,
+        local_llm: { status: "error", message: msg, percent: 0 },
+      }));
+    } finally {
+      setIsDownloadingModel(false);
+      setLlmDownloadProgress(null);
+      unlisten();
+      llmUnlistenRef.current = null;
+    }
+  }, [llmHardware, logLine, logData]);
+
+  // Cleanup LLM listener on unmount
+  useEffect(() => {
+    return () => {
+      llmUnlistenRef.current?.();
+    };
+  }, []);
 
   // ── Dismiss handler ────────────────────────────────────────────────────
 
@@ -292,6 +416,17 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
     setDismissed(false);
     localStorage.removeItem(SETUP_DISMISSED_KEY);
   }, []);
+
+  // ── Open macOS Settings deep link ──────────────────────────────────────
+
+  const openDeepLink = useCallback(async (link: string) => {
+    try {
+      logLine("cmd", `Opening settings: ${link}`);
+      await open(link);
+    } catch (e) {
+      logLine("error", `Could not open settings link: ${e}`);
+    }
+  }, [logLine]);
 
   // ── Don't render if engine not connected ───────────────────────────────
 
@@ -311,13 +446,55 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
     );
   }
 
-  // ── Sorted components ──────────────────────────────────────────────────
+  // ── Component categorisation ───────────────────────────────────────────
 
-  const sorted = [...(setupStatus?.components || [])].sort(
-    (a, b) => COMPONENT_ORDER.indexOf(a.id) - COMPONENT_ORDER.indexOf(b.id)
+  const allComponents = setupStatus?.components || [];
+
+  // Override transcription status with Tauri authoritative value
+  const effectiveComponents = allComponents.map((c) => {
+    if (c.id === "transcription" && voiceStatus !== null) {
+      return {
+        ...c,
+        status: voiceStatus.setup_complete ? "ready" : c.status,
+        detail: voiceStatus.setup_complete
+          ? `Model: ${voiceStatus.selected_model ?? "loaded"}`
+          : c.detail,
+      } as SetupComponentStatus;
+    }
+    return c;
+  });
+
+  // Build LLM component from Tauri status
+  const llmComponent: SetupComponentStatus | null = llmStatus
+    ? {
+        id: "local_llm",
+        label: "Local AI Models",
+        description: "Offline LLM inference via llama-server (no internet required at runtime)",
+        status: llmStatus.downloaded_models.length > 0 ? "ready" : "not_ready",
+        detail: llmStatus.downloaded_models.length > 0
+          ? `${llmStatus.downloaded_models.length} model(s) downloaded`
+          : llmHardware
+            ? `Recommended: ${llmHardware.recommended_filename} (~${llmHardware.all_models.find((m) => m.filename === llmHardware.recommended_filename)?.disk_size_gb ?? "?"}GB)`
+            : "No models downloaded",
+        optional: true,
+        size_hint: llmHardware
+          ? `~${llmHardware.all_models.find((m) => m.filename === llmHardware.recommended_filename)?.disk_size_gb ?? "?"}GB`
+          : null,
+        deep_link: null,
+      }
+    : null;
+
+  const requiredComponents = effectiveComponents.filter(
+    (c) => BLOCKING_IDS.has(c.id)
   );
-  const requiredComponents = sorted.filter((c) => !c.optional);
-  const optionalComponents = sorted.filter((c) => c.optional);
+  const advisoryComponents = effectiveComponents.filter(
+    (c) => ADVISORY_IDS.has(c.id)
+  );
+  const optionalComponents = [
+    ...effectiveComponents.filter((c) => c.optional),
+    ...(llmComponent ? [llmComponent] : []),
+  ];
+
   const allRequiredReady = requiredComponents.every(
     (c) => (progress[c.id]?.status || c.status) === "ready"
   );
@@ -351,13 +528,6 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost" size="icon" className="h-8 w-8"
-              onClick={() => setShowDebug((v) => !v)}
-              title="Toggle debug console"
-            >
-              <Terminal className={`h-4 w-4 ${showDebug ? "text-blue-400" : ""}`} />
-            </Button>
             {phase === "complete" && (
               <Button variant="ghost" size="icon" className="h-8 w-8" onClick={dismiss} title="Dismiss">
                 <X className="h-4 w-4" />
@@ -383,7 +553,7 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
           </div>
         )}
 
-        {/* Action buttons when collapsed */}
+        {/* Action button when collapsed */}
         {phase === "ready" && !expanded && (
           <div className="mt-3">
             <Button size="sm" className="gap-1.5" onClick={runInstall}>
@@ -411,7 +581,7 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
                 <span>Could not check setup status: {statusError}</span>
               </div>
               <p className="text-xs text-muted-foreground ml-6">
-                You can still try running setup, or click Re-check to try again.
+                Check the debug terminal below for details, or try running setup directly.
               </p>
               <div className="flex gap-2 ml-6">
                 <Button size="sm" variant="outline" className="gap-1.5" onClick={checkStatus}>
@@ -427,13 +597,44 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
           {/* ── Required components ────────────────────────────── */}
           {phase !== "checking" && requiredComponents.length > 0 && (
             <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide px-1 mb-1">
+                Required
+              </p>
               {requiredComponents.map((comp) => (
                 <ComponentRow
                   key={comp.id}
                   component={comp}
                   progress={progress[comp.id]}
+                  onOpenSettings={comp.deep_link ? () => openDeepLink(comp.deep_link!) : undefined}
                 />
               ))}
+            </div>
+          )}
+
+          {/* ── Advisory: Permissions ──────────────────────────── */}
+          {phase !== "checking" && advisoryComponents.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide px-1 mb-1">
+                Permissions
+              </p>
+              {advisoryComponents.map((comp) => {
+                const p = progress[comp.id];
+                const deepLink = p?.deep_link || comp.deep_link;
+                return (
+                  <div key={comp.id} className="space-y-1">
+                    <ComponentRow
+                      component={comp}
+                      progress={p}
+                      onOpenSettings={deepLink ? () => openDeepLink(deepLink) : undefined}
+                    />
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-muted-foreground/60 px-3 pt-1">
+                Permission checks run against the background engine process — some may show
+                as ungranted even when the app has access. Click "Open System Settings" to
+                verify or grant permissions.
+              </p>
             </div>
           )}
 
@@ -459,12 +660,12 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
                 <X className="h-3.5 w-3.5" /> Cancel
               </Button>
               <span className="text-xs text-muted-foreground">
-                Please keep the app open while setup completes
+                Keep the app open while setup completes
               </span>
             </div>
           )}
 
-          {phase === "complete" && (
+          {(phase === "complete" || (phase === "ready" && allRequiredReady)) && (
             <div className="flex items-center gap-3 pt-1">
               <Button variant="outline" size="sm" className="gap-1.5" onClick={checkStatus}>
                 <RotateCcw className="h-3.5 w-3.5" /> Re-check
@@ -472,98 +673,117 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
             </div>
           )}
 
-          {/* ── Optional: Transcription ───────────────────────── */}
-          {(phase === "complete" || phase === "configure") && optionalComponents.length > 0 && (
-            <div className="border-t border-border/50 pt-4 mt-4">
-              <div className="flex items-center gap-2 mb-3">
+          {/* ── Optional Enhancements ──────────────────────────── */}
+          {(phase === "complete" || phase === "ready" || phase === "configure") && optionalComponents.length > 0 && (
+            <div className="border-t border-border/50 pt-4 mt-4 space-y-3">
+              <div className="flex items-center gap-2 mb-1">
                 <Sparkles className="h-4 w-4 text-amber-400" />
                 <span className="text-sm font-medium">Optional Enhancements</span>
               </div>
 
               {optionalComponents.map((comp) => {
                 const p = progress[comp.id];
-                const isTranscription = comp.id === "transcription";
-                const isReady = (p?.status || comp.status) === "ready";
-                const isInstalling = p?.status === "installing";
-                const isError = (p?.status || comp.status) === "error";
+                const effectiveStatus = p?.status || comp.status;
+                const isReady = effectiveStatus === "ready";
+                const isInstalling = effectiveStatus === "installing";
+                const isError = effectiveStatus === "error";
+
+                if (comp.id === "transcription") {
+                  return (
+                    <div key={comp.id} className="space-y-2">
+                      <ComponentRow component={comp} progress={p} />
+                      {!isReady && !isInstalling && (
+                        <div className="ml-9 space-y-1.5">
+                          <p className="text-xs text-muted-foreground">
+                            {setupStatus?.gpu_available
+                              ? `GPU detected (${setupStatus.gpu_name}) — transcription will use hardware acceleration.`
+                              : "No GPU detected — transcription will run on CPU (functional but slower)."}
+                          </p>
+                          <Button
+                            size="sm" variant="outline" className="gap-1.5"
+                            onClick={installTranscription}
+                            disabled={isDownloadingTranscription}
+                          >
+                            {isDownloadingTranscription ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Download className="h-3.5 w-3.5" />
+                            )}
+                            {isError ? "Retry" : "Download"} Whisper Model ({comp.size_hint || "~150 MB"})
+                          </Button>
+                        </div>
+                      )}
+                      {isInstalling && p && (
+                        <div className="ml-9 space-y-1">
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span className="truncate">{p.message}</span>
+                            <span className="tabular-nums ml-2">{p.percent}%</span>
+                          </div>
+                          <Progress value={p.percent} className="h-1.5" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (comp.id === "local_llm") {
+                  return (
+                    <div key={comp.id} className="space-y-2">
+                      <ComponentRow component={comp} progress={p} />
+                      {!isReady && !isInstalling && llmHardware && (
+                        <div className="ml-9 space-y-1.5">
+                          <p className="text-xs text-muted-foreground">
+                            Recommended for your hardware: <span className="text-foreground font-medium">{llmHardware.recommended_filename}</span>
+                            {" "}— {llmHardware.reason}
+                          </p>
+                          <Button
+                            size="sm" variant="outline" className="gap-1.5"
+                            onClick={downloadLlmModel}
+                            disabled={isDownloadingModel}
+                          >
+                            {isDownloadingModel ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Download className="h-3.5 w-3.5" />
+                            )}
+                            {isError ? "Retry" : "Download"} Model ({comp.size_hint || "varies"})
+                          </Button>
+                        </div>
+                      )}
+                      {isInstalling && p && (
+                        <div className="ml-9 space-y-1">
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span className="truncate">{p.message}</span>
+                            <span className="tabular-nums ml-2">{p.percent}%</span>
+                          </div>
+                          <Progress value={p.percent} className="h-1.5" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
 
                 return (
-                  <div key={comp.id} className="space-y-2">
-                    <ComponentRow component={comp} progress={p} />
-                    {isTranscription && !isReady && !isInstalling && (
-                      <div className="ml-9 space-y-2">
-                        <p className="text-xs text-muted-foreground">
-                          Enable local speech-to-text transcription.
-                          {setupStatus?.gpu_available
-                            ? ` GPU detected (${setupStatus.gpu_name}) — transcription will be fast.`
-                            : " No GPU detected — transcription will use CPU (slower but functional)."}
-                        </p>
-                        <Button
-                          size="sm" variant="outline" className="gap-1.5"
-                          onClick={installTranscription}
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          {isError ? "Retry" : "Install"} Transcription ({comp.size_hint || "~150 MB"})
-                        </Button>
-                      </div>
-                    )}
-                    {isTranscription && isInstalling && transcriptionProgress && (
-                      <div className="ml-9 space-y-1">
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>{transcriptionProgress.message}</span>
-                          <span className="tabular-nums">{transcriptionProgress.percent}%</span>
-                        </div>
-                        <Progress value={transcriptionProgress.percent} className="h-1.5" />
-                      </div>
-                    )}
-                  </div>
+                  <ComponentRow key={comp.id} component={comp} progress={p} />
                 );
               })}
             </div>
           )}
 
-          {/* ── Debug Console ─────────────────────────────────── */}
-          {showDebug && (
-            <div className="border-t border-border/50 pt-3 mt-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                  <Terminal className="h-3.5 w-3.5" />
-                  Setup Log ({logs.length} entries)
-                </div>
-                <Button
-                  variant="ghost" size="sm" className="h-6 px-2 text-[10px]"
-                  onClick={() => setLogs([])}
-                >
-                  Clear
-                </Button>
-              </div>
-              <div className="rounded-md bg-black/40 border border-border/30 p-2 max-h-48 overflow-y-auto font-mono text-[11px] leading-relaxed">
-                {logs.length === 0 && (
-                  <div className="text-muted-foreground/50 py-2 text-center">No log entries yet</div>
-                )}
-                {logs.map((entry, i) => (
-                  <div key={i} className="flex gap-2">
-                    <span className="text-muted-foreground/50 shrink-0 select-none">{entry.time}</span>
-                    <span
-                      className={
-                        entry.level === "success" ? "text-emerald-400" :
-                        entry.level === "error" ? "text-red-400" :
-                        entry.level === "warn" ? "text-amber-400" :
-                        "text-muted-foreground"
-                      }
-                    >
-                      {entry.message}
-                    </span>
-                  </div>
-                ))}
-                <div ref={logEndRef} />
-              </div>
-            </div>
-          )}
+          {/* ── Debug Terminal — always visible ───────────────── */}
+          <div className="border-t border-border/50 pt-3 mt-2">
+            <DebugTerminal
+              logs={logs}
+              onClear={clearLogs}
+              title="Setup Log"
+              defaultOpen={phase === "installing"}
+              maxHeight="220px"
+            />
+          </div>
 
           {/* ── System info footer ────────────────────────────── */}
           {setupStatus && (
-            <div className="flex items-center gap-4 text-[11px] text-muted-foreground/60 pt-2 border-t border-border/30">
+            <div className="flex items-center gap-4 text-[11px] text-muted-foreground/60 pt-1 border-t border-border/30">
               <span>{setupStatus.platform} {setupStatus.architecture}</span>
               {setupStatus.gpu_available && (
                 <span className="flex items-center gap-1">
@@ -585,29 +805,41 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
 function ComponentRow({
   component,
   progress: p,
+  onOpenSettings,
 }: {
-  component: SetupComponentStatus;
+  component: SetupComponentStatus & { status: string };
   progress?: ComponentProgress;
+  onOpenSettings?: () => void;
 }) {
   const effectiveStatus = p?.status || component.status;
   const effectiveMessage = p?.message || component.detail || "";
   const icon = COMPONENT_ICONS[component.id] || <Circle className="h-5 w-5" />;
 
+  const isWarning = effectiveStatus === "warning";
+  const isReady = effectiveStatus === "ready";
+  const isInstalling = effectiveStatus === "installing";
+  const isError = effectiveStatus === "error";
+  const isNotReady = effectiveStatus === "not_ready";
+
   return (
     <div className="flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/30">
       {/* Status indicator */}
       <div className="shrink-0">
-        {effectiveStatus === "ready" ? (
+        {isReady ? (
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10">
             <CheckCircle2 className="h-5 w-5 text-emerald-500" />
           </div>
-        ) : effectiveStatus === "installing" ? (
+        ) : isInstalling ? (
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500/10">
             <Loader2 className="h-5 w-5 text-blue-400 animate-spin" />
           </div>
-        ) : effectiveStatus === "error" ? (
+        ) : isError ? (
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-500/10">
             <AlertCircle className="h-5 w-5 text-red-400" />
+          </div>
+        ) : isWarning ? (
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/10">
+            <AlertTriangle className="h-5 w-5 text-amber-400" />
           </div>
         ) : (
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted/50 text-muted-foreground">
@@ -618,43 +850,58 @@ function ComponentRow({
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium">{component.label}</span>
           {component.optional && (
             <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-muted-foreground border-muted-foreground/30">
               Optional
             </Badge>
           )}
-          {component.size_hint && effectiveStatus !== "ready" && (
+          {isWarning && (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-amber-400 border-amber-400/30">
+              Advisory
+            </Badge>
+          )}
+          {component.size_hint && !isReady && (
             <span className="text-[10px] text-muted-foreground">{component.size_hint}</span>
           )}
         </div>
         <p className="text-xs text-muted-foreground truncate mt-0.5">
-          {effectiveStatus === "installing" ? effectiveMessage : component.description}
+          {isInstalling ? effectiveMessage : component.description}
         </p>
-        {effectiveStatus === "ready" && effectiveMessage && (
+        {isReady && effectiveMessage && (
           <p className="text-[11px] text-emerald-500/70 mt-0.5">{effectiveMessage}</p>
         )}
-        {effectiveStatus === "error" && effectiveMessage && (
-          <p className="text-[11px] text-red-400/70 mt-0.5">{effectiveMessage}</p>
+        {isError && effectiveMessage && (
+          <p className="text-[11px] text-red-400/80 mt-0.5 whitespace-normal line-clamp-2">{effectiveMessage}</p>
+        )}
+        {isWarning && effectiveMessage && (
+          <p className="text-[11px] text-amber-400/70 mt-0.5 whitespace-normal line-clamp-2">{effectiveMessage}</p>
         )}
       </div>
 
       {/* Progress bar for installing state */}
-      {effectiveStatus === "installing" && p && (
+      {isInstalling && p && (
         <div className="w-16 shrink-0">
           <Progress value={p.percent} className="h-1.5" />
         </div>
       )}
 
-      {/* Status indicator icon */}
-      <div className="shrink-0">
-        {effectiveStatus === "ready" && (
-          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+      {/* Right-side action / indicator */}
+      <div className="shrink-0 flex items-center gap-1">
+        {isWarning && onOpenSettings && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-[11px] text-amber-400 hover:text-amber-300 gap-1"
+            onClick={onOpenSettings}
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open Settings
+          </Button>
         )}
-        {effectiveStatus === "not_ready" && (
-          <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-        )}
+        {isReady && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
+        {isNotReady && <ChevronRight className="h-4 w-4 text-muted-foreground/50" />}
       </div>
     </div>
   );
