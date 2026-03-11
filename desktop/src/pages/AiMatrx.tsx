@@ -1,5 +1,6 @@
 import { ExternalLink, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import supabase from "@/lib/supabase";
 
 const WEB_ORIGIN = "https://www.aimatrx.com";
@@ -9,24 +10,14 @@ const HANDOFF_PATH = "/auth/desktop-handoff";
 /**
  * Build the iframe src URL.
  *
- * Passes the user's access_token and refresh_token directly in the URL so
- * the handoff page can call supabase.setSession() on first load — no
- * postMessage round-trip needed. The handoff page then does a hard redirect
- * to TARGET_PATH with a valid server-side session cookie in place.
- *
- * If we can't get a session (should never happen since auth is required to
- * reach this page), fall back to loading the target directly and let the
- * web app's own auth handle it.
+ * Uses getSession() (read-only, no network call, no auth events) rather than
+ * refreshSession() which fires onAuthStateChange and can disrupt the session
+ * state of the main app. The handoff page handles token freshness on its end.
  */
 async function buildIframeSrc(): Promise<string> {
-    // Try to refresh first so we hand off a fresh token
-    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-    const session = refreshError
-        ? (await supabase.auth.getSession()).data.session
-        : refreshData.session;
+    const { data: { session } } = await supabase.auth.getSession();
 
     if (!session) {
-        // No session available — load target directly (will hit web app login)
         return `${WEB_ORIGIN}${TARGET_PATH}`;
     }
 
@@ -42,10 +33,17 @@ async function buildIframeSrc(): Promise<string> {
 export function AiMatrx() {
     const [iframeSrc, setIframeSrc] = useState<string | null>(null);
     const [reloadKey, setReloadKey] = useState(0);
+    const location = useLocation();
+    const isVisible = location.pathname === "/aimatrx";
 
+    // Only build the iframe src when this page is actually visible.
+    // This prevents a Supabase call on every app startup (the page is
+    // always mounted but should not run auth operations until the user
+    // actually navigates here).
     useEffect(() => {
+        if (!isVisible) return;
         buildIframeSrc().then(setIframeSrc);
-    }, [reloadKey]);
+    }, [reloadKey, isVisible]);
 
     const reload = () => {
         setIframeSrc(null);
