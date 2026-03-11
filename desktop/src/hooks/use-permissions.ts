@@ -266,7 +266,7 @@ export function usePermissions(): UsePermissionsReturn {
   const [isLoading, setIsLoading] = useState(true);
 
   // Ref so focus listener always has the latest checkAll without stale closure
-  const checkAllRef = useRef<() => Promise<void>>();
+  const checkAllRef = useRef<(() => Promise<void>) | undefined>(undefined);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
