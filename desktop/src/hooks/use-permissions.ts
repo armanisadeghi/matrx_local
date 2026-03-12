@@ -233,11 +233,6 @@ const PLUGIN_KEYS = new Set<PermissionKey>([
   "input_monitoring",
 ]);
 
-// Permissions where the OS can show an in-app dialog on NOT_DETERMINED.
-// Screen recording is included: the native dialog fires on first request.
-// Once denied or granted, the user must change it in System Settings.
-const CAN_PROMPT_KEYS = new Set<PermissionKey>(["microphone", "camera", "screen_recording"]);
-
 // How long to wait after firing a prompt request before re-checking status.
 // AVFoundation completionHandler fires async; we need a small buffer.
 const POST_REQUEST_DELAY_MS = 1200;
@@ -434,74 +429,72 @@ export function usePermissions(): UsePermissionsReturn {
 
   const request = useCallback(
     async (key: PermissionKey) => {
-      if (!PLUGIN_KEYS.has(key)) {
-        // Contacts, Calendar, Photos, Location, Local Network, Automation, Network:
-        // These require ObjC frameworks (CNContactStore, EKEventStore, etc.) that
-        // are not in the plugin. The ONLY way to trigger their OS dialogs is to
-        // open System Settings — the user must grant manually.
+      if (!isTauri()) {
         await openSettings(key);
         return;
       }
 
-      if (CAN_PROMPT_KEYS.has(key)) {
-        // These permissions CAN show a native OS dialog on NOT_DETERMINED.
-        // For mic/camera: AVFoundation fires the dialog, plugin handles it.
-        // For screen_recording: the native dialog fires on NOT_DETERMINED only;
-        //   once denied/granted the user must change it in System Settings.
-        if (isTauri()) {
-          const currentStatus = permissions.get(key)?.status;
+      switch (key) {
+        // ── Microphone & Camera: AVFoundation in-app dialog on first request ──
+        case "microphone":
+        case "camera": {
           try {
             const perms = await import("tauri-plugin-macos-permissions-api");
-            switch (key) {
-              case "microphone":
-                await perms.requestMicrophonePermission();
-                break;
-              case "camera":
-                await perms.requestCameraPermission();
-                break;
-              case "screen_recording":
-                if (currentStatus === "not_determined") {
-                  // First-time request: the OS shows the native dialog.
-                  await perms.requestScreenRecordingPermission();
-                } else {
-                  // Already denied or granted — only System Settings can change it.
-                  await openSettings(key);
-                  return;
-                }
-                break;
+            if (key === "microphone") {
+              await perms.requestMicrophonePermission();
+            } else {
+              await perms.requestCameraPermission();
             }
-          } catch {
-            // Ignore — will re-check below
-          }
-          // Wait for the OS dialog and callback to settle
-          await delay(POST_REQUEST_DELAY_MS);
-          await check(key);
-        }
-      } else {
-        // Accessibility, Full Disk Access, Input Monitoring:
-        // These CANNOT be prompted programmatically — open System Settings.
-        if (isTauri()) {
-          try {
-            const perms = await import("tauri-plugin-macos-permissions-api");
-            switch (key) {
-              case "accessibility":
-                await perms.requestAccessibilityPermission();
-                break;
-              case "full_disk_access":
-                await perms.requestFullDiskAccessPermission();
-                break;
-              case "input_monitoring":
-                await perms.requestInputMonitoringPermission();
-                break;
-              default:
-                await openSettings(key);
-            }
-          } catch {
+            // Wait for the async AVFoundation callback to settle before re-checking
+            await delay(POST_REQUEST_DELAY_MS);
+            await check(key);
+          } catch (err) {
+            console.error(`[permissions] Failed to request ${key}:`, err);
             await openSettings(key);
           }
-        } else {
-          await openSettings(key);
+          break;
         }
+
+        // ── Screen Recording: always open System Settings ──────────────────────
+        // On macOS Sequoia (15+), the requestScreenRecordingPermission() plugin
+        // call opens System Settings — there is no longer a native in-app dialog.
+        // The plugin's check uses CGPreflightScreenCaptureAccess() which returns
+        // false until the next app restart even when the user has already granted
+        // access, so we always send the user to System Settings to confirm/change.
+        case "screen_recording":
+          await openSettings(key);
+          break;
+
+        // ── Accessibility, Full Disk Access, Input Monitoring: open Settings ──
+        // These cannot be prompted with an in-app dialog — the plugin's request
+        // calls open System Settings directly, same as openSettings().
+        case "accessibility":
+        case "full_disk_access":
+        case "input_monitoring": {
+          try {
+            const perms = await import("tauri-plugin-macos-permissions-api");
+            if (key === "accessibility") {
+              await perms.requestAccessibilityPermission();
+            } else if (key === "full_disk_access") {
+              await perms.requestFullDiskAccessPermission();
+            } else {
+              await perms.requestInputMonitoringPermission();
+            }
+          } catch (err) {
+            console.error(`[permissions] Failed to open settings for ${key}:`, err);
+            await openSettings(key);
+          }
+          break;
+        }
+
+        // ── All others: open the specific System Settings pane directly ───────
+        // Contacts, Calendar, Reminders, Photos, Location, Local Network,
+        // Automation, Network, Messages, Mail, Speech Recognition — these require
+        // ObjC frameworks not exposed by the plugin. Opening System Settings is
+        // the correct action.
+        default:
+          await openSettings(key);
+          break;
       }
     },
     [check, openSettings],

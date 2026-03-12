@@ -211,22 +211,6 @@ function PermissionRow({
         {state.detail && (
           <p className="text-xs text-muted-foreground/70 italic">{state.detail}</p>
         )}
-
-        {/* Hint for permissions that need System Settings (not first-time promptable) */}
-        {!isGranted && !isUnavailable && !isRestricted &&
-          !state.canPrompt && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            Must be enabled manually in System Settings → Privacy &amp; Security.
-          </p>
-        )}
-        {/* Screen recording: already denied/granted → must use Settings */}
-        {!isGranted && !isUnavailable && !isRestricted &&
-          state.canPrompt && state.key === "screen_recording" &&
-          state.status !== "not_determined" && (
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            Change in System Settings → Privacy &amp; Security → Screen Recording.
-          </p>
-        )}
       </div>
 
       {/* Actions */}
@@ -237,8 +221,9 @@ function PermissionRow({
           <span className="text-xs text-muted-foreground">N/A</span>
         ) : isRestricted ? (
           <span className="text-xs text-orange-500">MDM/Restricted</span>
-        ) : state.canPrompt && state.status === "not_determined" ? (
-          // First-time promptable: show "Grant Access" button to trigger OS dialog
+        ) : (state.key === "microphone" || state.key === "camera") &&
+          state.status === "not_determined" ? (
+          // Mic & camera: AVFoundation can show an in-app OS dialog the first time
           <Button
             size="sm"
             variant="default"
@@ -259,7 +244,7 @@ function PermissionRow({
             )}
           </Button>
         ) : (
-          // Denied/already-granted/non-promptable: open System Settings
+          // All others: open the specific System Settings pane
           <Button
             size="sm"
             variant="default"
