@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
+import { usePermissions } from "@/hooks/use-permissions";
 import { Button } from "@/components/ui/button";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import {
@@ -415,6 +416,9 @@ function TranscribeTab({
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
 }) {
+  const { permissions, check, request, openSettings } = usePermissions();
+  const [permError, setPermError] = useState<string | null>(null);
+
   // Load device list if not yet populated
   useEffect(() => {
     if (state.audioDevices.length === 0) {
@@ -422,6 +426,42 @@ function TranscribeTab({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Permission-gated start: checks microphone TCC status before invoking
+   * start_transcription. Handles all four AVAuthorizationStatus cases so
+   * the user always gets a clear, actionable message — never silent failure.
+   */
+  const handleStartRecording = useCallback(async () => {
+    setPermError(null);
+    const status = (await check("microphone"));
+    if (status === "granted") {
+      await actions.startRecording();
+      return;
+    }
+    if (status === "not_determined") {
+      // Show the OS permission dialog. After the user responds, re-check.
+      await request("microphone");
+      const recheck = (await check("microphone"));
+      if (recheck === "granted") {
+        await actions.startRecording();
+      } else {
+        setPermError("Microphone access is required for transcription. Please allow access when prompted.");
+      }
+      return;
+    }
+    if (status === "denied" || status === "restricted") {
+      setPermError(
+        status === "restricted"
+          ? "Microphone access is restricted on this device (parental controls or MDM policy)."
+          : "Microphone access was denied. Open System Settings → Privacy & Security → Microphone and enable access for Matrx Local."
+      );
+      await openSettings("microphone");
+      return;
+    }
+    // "unavailable" or "unknown" — try anyway; Rust will emit whisper-error if it fails
+    await actions.startRecording();
+  }, [check, request, openSettings, actions]);
 
   const setupDoneInConfig = state.setupStatus?.setup_complete ?? false;
   const modelLoadedInMemory = state.activeModel !== null;
@@ -529,8 +569,22 @@ function TranscribeTab({
         )}
 
         <div className="flex flex-col items-center gap-4 py-6">
+          {/* Permission status indicator — shown when mic is not granted */}
+          {permissions.get("microphone")?.status === "denied" && !state.isRecording && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-500">
+              <MicOff className="h-4 w-4 flex-shrink-0" />
+              <span>Microphone access denied.</span>
+              <button
+                className="underline underline-offset-2 hover:text-amber-400"
+                onClick={() => openSettings("microphone")}
+              >
+                Open Settings
+              </button>
+            </div>
+          )}
+
           <button
-            onClick={state.isRecording ? actions.stopRecording : () => actions.startRecording()}
+            onClick={state.isRecording ? actions.stopRecording : handleStartRecording}
             className={cn(
               "flex h-20 w-20 items-center justify-center rounded-full transition-all duration-300",
               state.isRecording
@@ -574,17 +628,20 @@ function TranscribeTab({
                   style={{ width: `${Math.min(state.liveRms * 10000, 100)}%` }}
                 />
               </div>
-              {state.liveRms > 0 && state.liveRms < 0.0001 && !state.isCalibrating && (
-                <p className="text-xs text-amber-500">
-                  Very low signal. Check microphone permissions in System Settings → Privacy &amp; Security.
-                </p>
-              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Error */}
+      {/* Permission error */}
+      {permError && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+          <AlertCircle className="mt-0.5 h-4 w-4 text-amber-500 flex-shrink-0" />
+          <p className="text-sm text-amber-400">{permError}</p>
+        </div>
+      )}
+
+      {/* Transcription / Rust error */}
       {state.error && (
         <div className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
           <AlertCircle className="mt-0.5 h-4 w-4 text-red-500 flex-shrink-0" />

@@ -102,8 +102,10 @@ const PERMISSION_META: Record<
     label: "Screen Recording",
     description: "Screenshot tool and screen-based automation",
     tools: ["Screenshot", "BrowserScreenshot"],
-    // CGRequestScreenCaptureAccess() does show a dialog on first-ever request
-    canPrompt: true,
+    // Screen recording cannot be prompted programmatically on macOS 15+.
+    // CGRequestScreenCaptureAccess() is deprecated in macOS 15.1.
+    // The only correct path is: check → if not granted → open System Settings.
+    canPrompt: false,
     settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
   },
   accessibility: {
@@ -195,10 +197,10 @@ const PLUGIN_KEYS = new Set<PermissionKey>([
   "input_monitoring",
 ]);
 
-// Permissions where the OS can show an in-app dialog (mic/camera = AVFoundation
-// dialog; screen_recording = CGRequestScreenCaptureAccess dialog on first ever
-// request, then must go to Settings on subsequent denials)
-const CAN_PROMPT_KEYS = new Set<PermissionKey>(["microphone", "camera", "screen_recording"]);
+// Permissions where the OS can show an in-app dialog via AVFoundation.
+// Screen recording is NOT here — CGRequestScreenCaptureAccess is deprecated on
+// macOS 15.1 and the correct path is always System Settings.
+const CAN_PROMPT_KEYS = new Set<PermissionKey>(["microphone", "camera"]);
 
 // How long to wait after firing a prompt request before re-checking status.
 // AVFoundation completionHandler fires async; we need a small buffer.
@@ -254,15 +256,16 @@ export function usePermissions(): UsePermissionsReturn {
   /**
    * Check a plugin-native permission.
    *
-   * Screen recording special case: CGPreflightScreenCaptureAccess() is broken
-   * and returns false even when the user already granted the permission. Apple
-   * explicitly states this is by design — the app must restart for the preflight
-   * to reflect reality. We therefore:
-   *   1. Call the plugin (CGPreflightScreenCaptureAccess).
-   *   2. If it returns true  → definitively granted.
-   *   3. If it returns false → check the engine's functional test (which calls
-   *      CGWindowListCreateImage). If that says "granted" the permission is
-   *      already active and we trust it. If both say false → not_determined.
+   * All checks go through tauri-plugin-macos-permissions which calls the
+   * correct underlying framework API for each permission type:
+   *   - microphone / camera  → AVCaptureDevice.authorizationStatus (AVFoundation)
+   *   - screen_recording     → CGPreflightScreenCaptureAccess (CoreGraphics)
+   *   - accessibility        → AXIsProcessTrusted
+   *   - full_disk_access     → file-system probe
+   *   - input_monitoring     → IOKit
+   *
+   * Note: The deprecated engine CGDisplayCreateImage cross-check for screen
+   * recording has been removed — it triggered OS warnings on macOS 15+.
    */
   const checkPluginPermission = useCallback(
     async (key: PermissionKey): Promise<PermissionStatus> => {
@@ -280,16 +283,11 @@ export function usePermissions(): UsePermissionsReturn {
             return granted ? "granted" : "not_determined";
 
           case "screen_recording": {
+            // The plugin calls CGPreflightScreenCaptureAccess() (Rust side).
+            // Trust it directly — the deprecated engine CGDisplayCreateImage
+            // cross-check has been removed as it triggers OS warnings on macOS 15+.
             granted = await perms.checkScreenRecordingPermission();
-            if (granted) return "granted";
-            // Preflight lied — do a functional cross-check via the engine
-            try {
-              const engineResult = await engine.getDevicePermission("screen_recording");
-              if (engineResult.status === "granted") return "granted";
-            } catch {
-              // Engine not connected — trust the preflight result
-            }
-            return "not_determined";
+            return granted ? "granted" : "not_determined";
           }
 
           case "accessibility":
@@ -395,9 +393,8 @@ export function usePermissions(): UsePermissionsReturn {
 
       if (CAN_PROMPT_KEYS.has(key)) {
         // Mic/Camera: AVFoundation request → async OS dialog → completionHandler.
-        // Screen Recording (first-ever): CGRequestScreenCaptureAccess → modal dialog.
-        // In all cases the plugin call returns before the user responds,
-        // so we wait POST_REQUEST_DELAY_MS before re-checking.
+        // Plugin call returns before the user responds, so we wait
+        // POST_REQUEST_DELAY_MS before re-checking.
         if (isTauri()) {
           try {
             const perms = await import("tauri-plugin-macos-permissions-api");
@@ -408,12 +405,6 @@ export function usePermissions(): UsePermissionsReturn {
               case "camera":
                 await perms.requestCameraPermission();
                 break;
-              case "screen_recording":
-                await perms.requestScreenRecordingPermission();
-                // CGRequestScreenCaptureAccess shows a one-time dialog; on macOS
-                // 12+ if already denied it just opens System Settings instead.
-                // Either way, wait then re-check.
-                break;
             }
           } catch {
             // Ignore — will re-check below
@@ -423,14 +414,18 @@ export function usePermissions(): UsePermissionsReturn {
           await check(key);
         }
       } else {
-        // Accessibility, Full Disk Access, Input Monitoring:
-        // These CANNOT be prompted programmatically — macOS only allows granting
-        // them via the System Settings toggle. The plugin's request functions
-        // open System Settings to the correct pane.
+        // Screen Recording, Accessibility, Full Disk Access, Input Monitoring:
+        // These CANNOT be prompted programmatically on macOS 15+.
+        // CGRequestScreenCaptureAccess is deprecated in macOS 15.1.
+        // The plugin's request functions open System Settings to the correct pane.
         if (isTauri()) {
           try {
             const perms = await import("tauri-plugin-macos-permissions-api");
             switch (key) {
+              case "screen_recording":
+                // Open System Settings directly — no deprecated CGRequest call.
+                await openSettings(key);
+                break;
               case "accessibility":
                 await perms.requestAccessibilityPermission();
                 break;

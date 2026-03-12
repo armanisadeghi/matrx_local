@@ -219,6 +219,20 @@ pub async fn start_transcription(
         }
     }
 
+    // On macOS, verify microphone TCC permission before opening the audio
+    // stream. CPAL silently delivers silence when permission is denied on
+    // signed builds, making it impossible to surface the error from the audio
+    // callback. Checking here gives us a clear, actionable error up front.
+    #[cfg(target_os = "macos")]
+    {
+        let mic_granted = tauri_plugin_macos_permissions::check_microphone_permission().await;
+        if !mic_granted {
+            let msg = "Microphone permission not granted. Open System Settings → Privacy & Security → Microphone and enable access for Matrx Local.";
+            let _ = app.emit("whisper-error", msg);
+            return Err("microphone_permission_denied".to_string());
+        }
+    }
+
     // Get thread count from hardware — use up to half the CPUs, capped at 8
     let hw = HardwareProfile::detect();
     let n_threads = (hw.cpu_threads / 2).max(1).min(8) as i32;

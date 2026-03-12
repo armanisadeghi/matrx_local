@@ -94,42 +94,49 @@ async def check_microphone() -> PermissionResult:
     """Check microphone access and list available input devices."""
     devices: list[dict[str, Any]] = []
 
-    # Try to list audio input devices
-    try:
-        import sounddevice as sd
-
-        all_devs = sd.query_devices()
-        for i, dev in enumerate(all_devs):
-            if dev["max_input_channels"] > 0:
-                devices.append(
-                    {
-                        "index": i,
-                        "name": dev["name"],
-                        "channels": dev["max_input_channels"],
-                        "sample_rate": dev["default_samplerate"],
-                    }
-                )
-    except ImportError:
-        # Fallback: system commands
+    # Try to list audio input devices.
+    # On macOS we enumerate via system_profiler so the device list is available
+    # even before TCC permission is granted (sounddevice may return an empty list
+    # or raise when mic access is denied — it is NOT a reliable permission proxy).
+    if IS_MACOS:
         try:
-            if IS_MACOS:
-                out, _, _ = await _run(["system_profiler", "SPAudioDataType", "-json"])
-                data = json.loads(out)
-                for item in data.get("SPAudioDataType", []):
-                    for sub in item.get("_items", [item]):
-                        name = sub.get("_name", "")
-                        if name:
-                            devices.append({"name": name, "type": "system_profiler"})
-            elif IS_LINUX:
-                out, _, rc = await _run(["arecord", "-l"])
-                if rc == 0:
-                    for line in out.split("\n"):
-                        if line.startswith("card"):
-                            devices.append({"name": line.strip()})
+            out, _, _ = await _run(["system_profiler", "SPAudioDataType", "-json"])
+            data = json.loads(out)
+            for item in data.get("SPAudioDataType", []):
+                for sub in item.get("_items", [item]):
+                    name = sub.get("_name", "")
+                    if name:
+                        devices.append({"name": name, "type": "system_profiler"})
         except Exception:
             pass
-    except Exception:
-        pass
+    else:
+        # Windows / Linux: sounddevice is reliable for device enumeration
+        try:
+            import sounddevice as sd
+
+            all_devs = sd.query_devices()
+            for i, dev in enumerate(all_devs):
+                if dev["max_input_channels"] > 0:
+                    devices.append(
+                        {
+                            "index": i,
+                            "name": dev["name"],
+                            "channels": dev["max_input_channels"],
+                            "sample_rate": dev["default_samplerate"],
+                        }
+                    )
+        except ImportError:
+            try:
+                if IS_LINUX:
+                    out, _, rc = await _run(["arecord", "-l"])
+                    if rc == 0:
+                        for line in out.split("\n"):
+                            if line.startswith("card"):
+                                devices.append({"name": line.strip()})
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     _MIC_DEEP_LINK = (
         "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
@@ -883,100 +890,82 @@ def _wifi_instructions() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _macos_screen_capture_functional_test() -> bool | None:
-    """Perform a quick functional test of screen capture on macOS.
+def _macos_screen_recording_status() -> PermissionStatus:
+    """Check screen recording permission using ScreenCaptureKit (macOS 12.3+).
 
-    Returns True if capture works, False if it fails, None if inconclusive.
-    Uses CGDisplayCreateImage which is the most reliable API on modern macOS.
+    SCShareableContent.getShareableContentWithCompletionHandler_ is the Apple-
+    recommended replacement for the deprecated CGPreflightScreenCaptureAccess()
+    and CGDisplayCreateImage() APIs (both deprecated in macOS 15.1).
+
+    How it works:
+    - On first call: if permission is not yet determined, the OS shows the
+      screen recording permission dialog and the call succeeds (NOT_DETERMINED
+      becomes GRANTED after user accepts and app restarts).
+    - If permission is already granted: call succeeds → GRANTED.
+    - If permission is denied: call returns an error → DENIED.
+
+    Threading: pyobjc completionHandlers run on a background dispatch queue.
+    We use threading.Event to block until the handler fires (bounded by timeout).
     """
-    try:
-        import Quartz
+    import threading
 
-        main_display = Quartz.CGMainDisplayID()
-        img = Quartz.CGDisplayCreateImage(main_display)
-        if img is None:
-            return False
-        w = Quartz.CGImageGetWidth(img)
-        h = Quartz.CGImageGetHeight(img)
-        if w > 0 and h > 0:
-            return True
-        return False
+    try:
+        from ScreenCaptureKit import SCShareableContent  # pyobjc-framework-ScreenCaptureKit
+
+        result: list[PermissionStatus] = []
+        event = threading.Event()
+
+        def completion_handler(content, error):  # type: ignore[override]
+            if error is not None:
+                result.append(PermissionStatus.DENIED)
+            else:
+                result.append(PermissionStatus.GRANTED)
+            event.set()
+
+        SCShareableContent.getShareableContentWithCompletionHandler_(completion_handler)
+
+        # Wait up to 3 seconds for the completion handler to fire.
+        if not event.wait(timeout=3.0):
+            # Timed out — assume permission not yet determined (first run scenario).
+            return PermissionStatus.NOT_DETERMINED
+
+        return result[0] if result else PermissionStatus.UNKNOWN
+    except ImportError:
+        return PermissionStatus.UNKNOWN
     except Exception:
-        return None
+        return PermissionStatus.UNKNOWN
 
 
 async def check_screen_recording() -> PermissionResult:
     """Check screen recording / screenshot permission."""
+    _sr_deep_link = (
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        if IS_MACOS else ""
+    )
+
     if IS_MACOS:
-        # On modern macOS (especially 15+), CGPreflightScreenCaptureAccess()
-        # can return False even when capture actually works, because the TCC
-        # identity of the Python process may differ from the parent app.
-        # We use a functional test with CGDisplayCreateImage() as the primary
-        # check, falling back to CGPreflightScreenCaptureAccess() only when
-        # the functional test is inconclusive.
-        try:
-            import Quartz
+        # Use ScreenCaptureKit — the Apple-mandated replacement for
+        # CGPreflightScreenCaptureAccess + CGDisplayCreateImage on macOS 15+.
+        # Run the blocking pyobjc call in a thread pool so it doesn't block
+        # the asyncio event loop.
+        import asyncio
 
-            # Primary check: does capture actually work?
-            capture_works = _macos_screen_capture_functional_test()
-            _sr_deep_link = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        loop = asyncio.get_event_loop()
+        status = await loop.run_in_executor(None, _macos_screen_recording_status)
 
-            if capture_works is True:
-                return PermissionResult(
-                    permission="screen_recording",
-                    status=PermissionStatus.GRANTED,
-                    details="Screen recording permission granted (verified via capture)",
-                    grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-                    user_details="Screen capture is active",
-                    user_instructions="",
-                    deep_link=_sr_deep_link,
-                )
-
-            if capture_works is False:
-                preflight = Quartz.CGPreflightScreenCaptureAccess()
-                if preflight:
-                    return PermissionResult(
-                        permission="screen_recording",
-                        status=PermissionStatus.GRANTED,
-                        details="Screen recording permission granted (preflight API)",
-                        grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-                        user_details="Screen capture is active",
-                        user_instructions="",
-                        deep_link=_sr_deep_link,
-                    )
-                return PermissionResult(
-                    permission="screen_recording",
-                    status=PermissionStatus.DENIED,
-                    details="Screen recording permission not granted",
-                    grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-                    user_details="Screen capture needs permission",
-                    user_instructions="Open System Settings > Privacy & Security > Screen Recording",
-                    deep_link=_sr_deep_link,
-                )
-
-            # Functional test was inconclusive — fall back to preflight API
-            preflight = Quartz.CGPreflightScreenCaptureAccess()
-            status = PermissionStatus.GRANTED if preflight else PermissionStatus.DENIED
-            return PermissionResult(
-                permission="screen_recording",
-                status=status,
-                details="Screen recording permission " + ("granted" if preflight else "not granted"),
-                grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-                user_details="Screen capture is active" if preflight else "Screen capture needs permission",
-                user_instructions="" if preflight else "Open System Settings > Privacy & Security > Screen Recording",
-                deep_link=_sr_deep_link,
-            )
-        except Exception:
-            pass
-
+        granted = status == PermissionStatus.GRANTED
         return PermissionResult(
             permission="screen_recording",
-            status=PermissionStatus.UNKNOWN,
-            details="Could not determine screen recording status",
+            status=status,
+            details="Screen recording permission granted (ScreenCaptureKit)"
+            if granted
+            else "Screen recording permission not granted",
             grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-            user_details="Screen capture status unknown",
-            user_instructions="Open System Settings to check screen recording permissions",
-            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            user_details="Screen capture is active" if granted else "Screen capture needs permission",
+            user_instructions=""
+            if granted
+            else "Open System Settings > Privacy & Security > Screen Recording",
+            deep_link=_sr_deep_link,
         )
 
     elif IS_WINDOWS:
@@ -1006,22 +995,14 @@ async def check_screen_recording() -> PermissionResult:
 
 
 async def check_location() -> PermissionResult:
-    """Check location services availability."""
-    if IS_MACOS:
-        status = await _macos_check_tcc("kTCCServiceSystemPolicyAllFiles", "Location")
-        # Location is a different TCC, just report availability
-        try:
-            out, _, rc = await _run(
-                [
-                    "defaults",
-                    "read",
-                    "/var/db/locationd/clients.plist",
-                ]
-            )
-            # This will fail without root — that's fine
-        except Exception:
-            pass
+    """Check location services availability.
 
+    CoreLocation TCC cannot be queried from a non-UI background process —
+    CLLocationManager.authorizationStatus() requires a run loop and entitlements
+    that a sidecar process does not have. We return UNKNOWN with instructions
+    so the frontend can direct the user to System Settings.
+    """
+    if IS_MACOS:
         return PermissionResult(
             permission="location",
             status=PermissionStatus.UNKNOWN,
@@ -1029,6 +1010,7 @@ async def check_location() -> PermissionResult:
             grant_instructions="System Settings > Privacy & Security > Location Services > Enable for Matrx Local",
             user_details="Location services may need permission",
             user_instructions="Open System Settings to allow location access",
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices",
         )
 
     return PermissionResult(
@@ -1047,24 +1029,19 @@ async def check_location() -> PermissionResult:
 
 
 def _avfoundation_auth_status(media_type: str) -> PermissionStatus | None:
-    """Check AVCaptureDevice authorization status via pyobjc.
+    """Check AVCaptureDevice authorization status via pyobjc-framework-AVFoundation.
 
     media_type: "soun" for audio (microphone), "vide" for video (camera).
     Returns PermissionStatus or None if AVFoundation is not available.
+
+    Uses the official pyobjc-framework-AVFoundation package (explicit import,
+    not the fragile objc.loadBundle path). macOS 10.14+ authoritative API.
     """
     try:
-        import objc
+        from AVFoundation import AVCaptureDevice  # pyobjc-framework-AVFoundation
 
-        # Load the AVFoundation framework so AVCaptureDevice becomes available.
-        # This works with just pyobjc-core — no pyobjc-framework-AVFoundation needed.
-        objc.loadBundle(
-            "AVFoundation",
-            bundle_path="/System/Library/Frameworks/AVFoundation.framework",
-            module_globals={},
-        )
-        AVCaptureDevice = objc.lookUpClass("AVCaptureDevice")
         status_code = AVCaptureDevice.authorizationStatusForMediaType_(media_type)
-        # 0 = not_determined, 1 = restricted, 2 = denied, 3 = authorized
+        # AVAuthorizationStatus: 0=notDetermined, 1=restricted, 2=denied, 3=authorized
         return {
             0: PermissionStatus.NOT_DETERMINED,
             1: PermissionStatus.RESTRICTED,
@@ -1082,33 +1059,15 @@ async def _macos_check_tcc(service: str, label: str) -> PermissionStatus:
     falling back to heuristic probes.
     """
     if "Microphone" in label:
-        # Try AVFoundation first — this is the authoritative API
+        # AVFoundation is the authoritative TCC API for microphone on macOS.
+        # sounddevice.query_devices() is NOT a valid proxy — it can return
+        # devices even when TCC permission is denied (macOS delivers silence).
         av_status = _avfoundation_auth_status("soun")
-        if av_status is not None:
-            return av_status
-        # Fallback: try a quick sounddevice query
-        try:
-            import sounddevice as sd
-
-            sd.query_devices()
-            return PermissionStatus.GRANTED
-        except Exception:
-            return PermissionStatus.UNKNOWN
+        return av_status if av_status is not None else PermissionStatus.UNKNOWN
 
     if "Camera" in label:
-        # Try AVFoundation first
         av_status = _avfoundation_auth_status("vide")
-        if av_status is not None:
-            return av_status
-        # Fallback: check if system_profiler can list cameras
-        try:
-            out, _, rc = await _run(["system_profiler", "SPCameraDataType", "-json"])
-            data = json.loads(out)
-            if data.get("SPCameraDataType"):
-                return PermissionStatus.GRANTED
-        except Exception:
-            pass
-        return PermissionStatus.UNKNOWN
+        return av_status if av_status is not None else PermissionStatus.UNKNOWN
 
     return PermissionStatus.UNKNOWN
 

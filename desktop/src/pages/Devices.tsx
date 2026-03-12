@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Mic,
   Camera,
@@ -38,6 +38,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { engine } from "@/lib/api";
 import type { PermissionInfo, PermissionStatusValue } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
+import { usePermissions, PLUGIN_KEYS } from "@/hooks/use-permissions";
 
 interface DevicesProps {
   engineStatus: EngineStatus;
@@ -1469,10 +1470,15 @@ function ResourceBar({ label, percent, detail }: { label: string; percent: numbe
 // ---------------------------------------------------------------------------
 
 export function Devices({ engineStatus }: DevicesProps) {
-  const [permissions, setPermissions] = useState<Record<string, PermissionInfo>>({});
+  // Engine REST: provides device listings and rich instruction text per permission.
+  const [enginePermissions, setEnginePermissions] = useState<Record<string, PermissionInfo>>({});
   const [loading, setLoading] = useState(false);
   const [platform, setPlatform] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+
+  // Tauri plugin: authoritative TCC status for microphone, camera, screen_recording,
+  // accessibility, full_disk_access, and input_monitoring on macOS.
+  const { permissions: pluginPermissions, checkAll: recheckPlugin, isLoading: pluginLoading } = usePermissions();
 
   const loadPermissions = useCallback(async () => {
     if (engineStatus !== "connected") return;
@@ -1481,10 +1487,10 @@ export function Devices({ engineStatus }: DevicesProps) {
       const result = await engine.getDevicePermissions();
       setPlatform(result.platform);
       const map: Record<string, PermissionInfo> = {};
-      for (const p of result.permissions) {
-        map[p.permission] = p;
+      for (const ep of result.permissions) {
+        map[ep.permission] = ep;
       }
-      setPermissions(map);
+      setEnginePermissions(map);
       setLastRefresh(new Date());
     } catch (err) {
       console.error("Failed to load permissions:", err);
@@ -1496,6 +1502,39 @@ export function Devices({ engineStatus }: DevicesProps) {
   useEffect(() => {
     loadPermissions();
   }, [loadPermissions]);
+
+  /**
+   * Build the merged permission map:
+   * - For plugin-managed keys (mic, camera, screen_recording, accessibility,
+   *   full_disk_access, input_monitoring), override the status field with the
+   *   Tauri plugin's authoritative TCC value.
+   * - For all other keys (bluetooth, wifi, network, location), use engine status.
+   * - Keep the engine's device listing and instruction text in all cases.
+   */
+  const permissions = useMemo((): Record<string, PermissionInfo> => {
+    const merged: Record<string, PermissionInfo> = { ...enginePermissions };
+    for (const [key, pluginState] of pluginPermissions.entries()) {
+      if (PLUGIN_KEYS.has(key)) {
+        const engineEntry = enginePermissions[key];
+        if (engineEntry) {
+          merged[key] = { ...engineEntry, status: pluginState.status as PermissionStatusValue };
+        } else {
+          merged[key] = {
+            permission: key,
+            status: pluginState.status as PermissionStatusValue,
+            details: pluginState.detail ?? "",
+            user_details: pluginState.description,
+            user_instructions: pluginState.status !== "granted"
+              ? `Open ${pluginState.label} settings to grant access.`
+              : "",
+            grant_instructions: pluginState.settingsUrl ? `Open: ${pluginState.settingsUrl}` : "",
+            deep_link: pluginState.settingsUrl,
+          } as PermissionInfo;
+        }
+      }
+    }
+    return merged;
+  }, [enginePermissions, pluginPermissions]);
 
   const p = (key: string): PermissionInfo | null => permissions[key] ?? null;
 
@@ -1528,10 +1567,10 @@ export function Devices({ engineStatus }: DevicesProps) {
         <Button
           variant="ghost"
           size="sm"
-          onClick={loadPermissions}
-          disabled={loading || engineStatus !== "connected"}
+          onClick={() => { loadPermissions(); recheckPlugin(); }}
+          disabled={(loading || pluginLoading) || engineStatus !== "connected"}
         >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {(loading || pluginLoading) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           Refresh All
         </Button>
       </PageHeader>
