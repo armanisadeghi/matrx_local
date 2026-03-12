@@ -995,21 +995,42 @@ async def check_screen_recording() -> PermissionResult:
 
 
 async def check_location() -> PermissionResult:
-    """Check location services availability.
+    """Check location services TCC status via CLLocationManager (macOS only).
 
-    CoreLocation TCC cannot be queried from a non-UI background process —
-    CLLocationManager.authorizationStatus() requires a run loop and entitlements
-    that a sidecar process does not have. We return UNKNOWN with instructions
-    so the frontend can direct the user to System Settings.
+    CLLocationManager.authorizationStatus() is a static method that can be
+    called from any process — it does NOT require a run loop or UI ownership.
+    The sidecar can read the status but cannot prompt; if NOT_DETERMINED we
+    return UNKNOWN with instructions to open System Settings.
     """
     if IS_MACOS:
+        status = PermissionStatus.UNKNOWN
+        try:
+            from CoreLocation import CLLocationManager  # pyobjc-framework-CoreLocation
+            code = CLLocationManager.authorizationStatus()
+            # CLAuthorizationStatus: 0=notDetermined, 1=restricted, 2=denied,
+            # 3=authorizedAlways, 4=authorizedWhenInUse
+            status = {
+                0: PermissionStatus.NOT_DETERMINED,
+                1: PermissionStatus.RESTRICTED,
+                2: PermissionStatus.DENIED,
+                3: PermissionStatus.GRANTED,
+                4: PermissionStatus.GRANTED,
+            }.get(code, PermissionStatus.UNKNOWN)
+        except ImportError:
+            pass  # pyobjc-framework-CoreLocation not yet installed
+        except Exception as exc:
+            logger.debug("CoreLocation status check failed: %s", exc)
+
+        instructions = (
+            "System Settings → Privacy & Security → Location Services → Enable for AI Matrx"
+        )
         return PermissionResult(
             permission="location",
-            status=PermissionStatus.UNKNOWN,
-            details="Location permission is managed per-app by macOS",
-            grant_instructions="System Settings > Privacy & Security > Location Services > Enable for Matrx Local",
-            user_details="Location services may need permission",
-            user_instructions="Open System Settings to allow location access",
+            status=status,
+            details="Location permission status via CLLocationManager",
+            grant_instructions=instructions,
+            user_details="Location services let AI tools access your GPS/network position.",
+            user_instructions=instructions if status != PermissionStatus.GRANTED else "",
             deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices",
         )
 
@@ -1020,6 +1041,278 @@ async def check_location() -> PermissionResult:
         grant_instructions="Check your system's location settings",
         user_details="Location services status unknown",
         user_instructions="Check your system's location settings",
+    )
+
+
+async def check_contacts() -> PermissionResult:
+    """Check Contacts TCC status via CNContactStore (macOS only)."""
+    if IS_MACOS:
+        status = PermissionStatus.UNKNOWN
+        try:
+            from Contacts import CNContactStore  # pyobjc-framework-Contacts
+            # CNEntityTypeContacts = 0
+            code = CNContactStore.authorizationStatusForEntityType_(0)
+            # CNAuthorizationStatus: 0=notDetermined, 1=restricted, 2=denied, 3=authorized
+            status = {
+                0: PermissionStatus.NOT_DETERMINED,
+                1: PermissionStatus.RESTRICTED,
+                2: PermissionStatus.DENIED,
+                3: PermissionStatus.GRANTED,
+            }.get(code, PermissionStatus.UNKNOWN)
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.debug("Contacts status check failed: %s", exc)
+
+        instructions = "System Settings → Privacy & Security → Contacts → Enable for AI Matrx"
+        return PermissionResult(
+            permission="contacts",
+            status=status,
+            details="Contacts permission status via CNContactStore",
+            grant_instructions=instructions,
+            user_details="Contacts access lets AI tools search and read your address book.",
+            user_instructions=instructions if status != PermissionStatus.GRANTED else "",
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts",
+        )
+
+    return PermissionResult(
+        permission="contacts",
+        status=PermissionStatus.UNAVAILABLE,
+        details="Contacts access is macOS-only",
+    )
+
+
+async def check_calendar() -> PermissionResult:
+    """Check Calendar TCC status via EKEventStore (macOS only)."""
+    if IS_MACOS:
+        status = PermissionStatus.UNKNOWN
+        try:
+            from EventKit import EKEventStore  # pyobjc-framework-EventKit
+            # EKEntityTypeEvent = 0
+            code = EKEventStore.authorizationStatusForEntityType_(0)
+            # EKAuthorizationStatus: 0=notDetermined, 1=restricted, 2=denied, 3=authorized, 4=writeOnly
+            status = {
+                0: PermissionStatus.NOT_DETERMINED,
+                1: PermissionStatus.RESTRICTED,
+                2: PermissionStatus.DENIED,
+                3: PermissionStatus.GRANTED,
+                4: PermissionStatus.GRANTED,  # write-only still means some access
+            }.get(code, PermissionStatus.UNKNOWN)
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.debug("Calendar status check failed: %s", exc)
+
+        instructions = "System Settings → Privacy & Security → Calendars → Enable for AI Matrx"
+        return PermissionResult(
+            permission="calendar",
+            status=status,
+            details="Calendar permission status via EKEventStore",
+            grant_instructions=instructions,
+            user_details="Calendar access lets AI tools list and create calendar events.",
+            user_instructions=instructions if status != PermissionStatus.GRANTED else "",
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars",
+        )
+
+    return PermissionResult(
+        permission="calendar",
+        status=PermissionStatus.UNAVAILABLE,
+        details="Calendar access is macOS-only",
+    )
+
+
+async def check_reminders() -> PermissionResult:
+    """Check Reminders TCC status via EKEventStore (macOS only)."""
+    if IS_MACOS:
+        status = PermissionStatus.UNKNOWN
+        try:
+            from EventKit import EKEventStore  # pyobjc-framework-EventKit
+            # EKEntityTypeReminder = 1
+            code = EKEventStore.authorizationStatusForEntityType_(1)
+            status = {
+                0: PermissionStatus.NOT_DETERMINED,
+                1: PermissionStatus.RESTRICTED,
+                2: PermissionStatus.DENIED,
+                3: PermissionStatus.GRANTED,
+                4: PermissionStatus.GRANTED,
+            }.get(code, PermissionStatus.UNKNOWN)
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.debug("Reminders status check failed: %s", exc)
+
+        instructions = "System Settings → Privacy & Security → Reminders → Enable for AI Matrx"
+        return PermissionResult(
+            permission="reminders",
+            status=status,
+            details="Reminders permission status via EKEventStore",
+            grant_instructions=instructions,
+            user_details="Reminders access lets AI tools list and create reminders.",
+            user_instructions=instructions if status != PermissionStatus.GRANTED else "",
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders",
+        )
+
+    return PermissionResult(
+        permission="reminders",
+        status=PermissionStatus.UNAVAILABLE,
+        details="Reminders access is macOS-only",
+    )
+
+
+async def check_photos() -> PermissionResult:
+    """Check Photos library TCC status via PHPhotoLibrary (macOS only)."""
+    if IS_MACOS:
+        status = PermissionStatus.UNKNOWN
+        try:
+            from Photos import PHPhotoLibrary  # pyobjc-framework-Photos
+            # PHAccessLevelReadWrite = 2
+            code = PHPhotoLibrary.authorizationStatusForAccessLevel_(2)
+            # PHAuthorizationStatus: 0=notDetermined, 1=restricted, 2=denied, 3=authorized, 4=limited
+            status = {
+                0: PermissionStatus.NOT_DETERMINED,
+                1: PermissionStatus.RESTRICTED,
+                2: PermissionStatus.DENIED,
+                3: PermissionStatus.GRANTED,
+                4: PermissionStatus.GRANTED,  # limited access — still usable
+            }.get(code, PermissionStatus.UNKNOWN)
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.debug("Photos status check failed: %s", exc)
+
+        instructions = "System Settings → Privacy & Security → Photos → Enable for AI Matrx"
+        return PermissionResult(
+            permission="photos",
+            status=status,
+            details="Photos permission status via PHPhotoLibrary",
+            grant_instructions=instructions,
+            user_details="Photos access lets AI tools search and view your photo library.",
+            user_instructions=instructions if status != PermissionStatus.GRANTED else "",
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_Photos",
+        )
+
+    return PermissionResult(
+        permission="photos",
+        status=PermissionStatus.UNAVAILABLE,
+        details="Photos access is macOS-only",
+    )
+
+
+async def check_messages() -> PermissionResult:
+    """Check Messages access via functional probe on chat.db (macOS only).
+
+    Messages does not have its own TCC service. Access is gated by Full Disk
+    Access (kTCCServiceSystemPolicyAllFiles). We probe by attempting to open
+    ~/Library/Messages/chat.db in read-only mode.
+    """
+    if IS_MACOS:
+        import sqlite3 as _sqlite3
+        from pathlib import Path as _Path
+
+        chat_db = _Path.home() / "Library" / "Messages" / "chat.db"
+        if not chat_db.exists():
+            return PermissionResult(
+                permission="messages",
+                status=PermissionStatus.UNKNOWN,
+                details="chat.db not found — Messages may not be configured on this device.",
+                grant_instructions="Enable Full Disk Access in System Settings → Privacy & Security → Full Disk Access",
+                deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+            )
+
+        try:
+            conn = _sqlite3.connect(f"file:{chat_db}?mode=ro", uri=True, timeout=3.0)
+            conn.execute("SELECT 1 FROM message LIMIT 1")
+            conn.close()
+            return PermissionResult(
+                permission="messages",
+                status=PermissionStatus.GRANTED,
+                details="chat.db is readable — Full Disk Access granted.",
+                user_details="Messages (iMessage/SMS) are accessible.",
+            )
+        except (_sqlite3.OperationalError, PermissionError) as exc:
+            instructions = "System Settings → Privacy & Security → Full Disk Access → Enable for AI Matrx"
+            return PermissionResult(
+                permission="messages",
+                status=PermissionStatus.DENIED,
+                details=f"Cannot open chat.db: {exc}",
+                grant_instructions=instructions,
+                user_details="Full Disk Access is required to read iMessage/SMS history.",
+                user_instructions=instructions,
+                deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+            )
+
+    return PermissionResult(
+        permission="messages",
+        status=PermissionStatus.UNAVAILABLE,
+        details="Messages (iMessage) is macOS-only",
+    )
+
+
+async def check_mail() -> PermissionResult:
+    """Check Mail.app automation access (macOS only).
+
+    Mail has no dedicated TCC service. Access is via Apple Events (Automation).
+    We return UNKNOWN with instructions to grant Automation access since we cannot
+    query the Automation TCC table from a background sidecar process reliably.
+    """
+    if IS_MACOS:
+        return PermissionResult(
+            permission="mail",
+            status=PermissionStatus.UNKNOWN,
+            details="Mail access is via Automation (Apple Events) — cannot be probed from sidecar.",
+            grant_instructions=(
+                "System Settings → Privacy & Security → Automation → "
+                "AI Matrx → enable 'Mail'"
+            ),
+            user_details="Mail access lets AI tools read and send emails via Mail.app.",
+            user_instructions=(
+                "To grant Mail access: System Settings → Privacy & Security → "
+                "Automation → AI Matrx → enable Mail"
+            ),
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+        )
+
+    return PermissionResult(
+        permission="mail",
+        status=PermissionStatus.UNAVAILABLE,
+        details="Mail.app access is macOS-only",
+    )
+
+
+async def check_speech_recognition() -> PermissionResult:
+    """Check Speech Recognition TCC status via SFSpeechRecognizer (macOS only)."""
+    if IS_MACOS:
+        status = PermissionStatus.UNKNOWN
+        try:
+            from Speech import SFSpeechRecognizer  # pyobjc-framework-Speech
+            # SFSpeechRecognizerAuthorizationStatus: 0=notDetermined, 1=denied, 2=restricted, 3=authorized
+            code = SFSpeechRecognizer.authorizationStatus()
+            status = {
+                0: PermissionStatus.NOT_DETERMINED,
+                1: PermissionStatus.DENIED,
+                2: PermissionStatus.RESTRICTED,
+                3: PermissionStatus.GRANTED,
+            }.get(code, PermissionStatus.UNKNOWN)
+        except ImportError:
+            pass
+        except Exception as exc:
+            logger.debug("Speech Recognition status check failed: %s", exc)
+
+        instructions = "System Settings → Privacy & Security → Speech Recognition → Enable for AI Matrx"
+        return PermissionResult(
+            permission="speech_recognition",
+            status=status,
+            details="Speech Recognition permission status via SFSpeechRecognizer",
+            grant_instructions=instructions,
+            user_details="Speech Recognition lets AI tools transcribe audio using Apple's on-device engine.",
+            user_instructions=instructions if status != PermissionStatus.GRANTED else "",
+            deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition",
+        )
+
+    return PermissionResult(
+        permission="speech_recognition",
+        status=PermissionStatus.UNAVAILABLE,
+        details="Apple Speech Recognition is macOS-only",
     )
 
 
@@ -1088,10 +1381,16 @@ async def check_all_permissions() -> list[dict[str, Any]]:
         check_wifi(),
         check_screen_recording(),
         check_location(),
+        check_contacts(),
+        check_calendar(),
+        check_reminders(),
+        check_photos(),
+        check_messages(),
+        check_mail(),
+        check_speech_recognition(),
         return_exceptions=True,
     )
 
-    output: list[dict[str, Any]] = []
     names = [
         "microphone",
         "camera",
@@ -1101,7 +1400,16 @@ async def check_all_permissions() -> list[dict[str, Any]]:
         "wifi",
         "screen_recording",
         "location",
+        "contacts",
+        "calendar",
+        "reminders",
+        "photos",
+        "messages",
+        "mail",
+        "speech_recognition",
     ]
+
+    output: list[dict[str, Any]] = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
             output.append(

@@ -23,14 +23,37 @@ from app.services.permissions.checker import (
     check_accessibility,
     check_all_permissions,
     check_bluetooth,
+    check_calendar,
     check_camera,
+    check_contacts,
+    check_location,
+    check_mail,
+    check_messages,
     check_microphone,
     check_network,
+    check_photos,
+    check_reminders,
     check_screen_recording,
+    check_speech_recognition,
     check_wifi,
 )
 from app.tools.session import ToolSession
 from app.tools.tools.audio import tool_list_audio_devices, tool_record_audio, tool_play_audio
+from app.tools.tools.calendar_tools import (
+    tool_list_events,
+    tool_create_event,
+    tool_list_reminders,
+    tool_create_reminder,
+)
+from app.tools.tools.contacts import tool_search_contacts, tool_get_contact
+from app.tools.tools.location import tool_get_location
+from app.tools.tools.mail import tool_list_emails, tool_send_email, tool_get_email_accounts
+from app.tools.tools.messages import tool_list_messages, tool_list_conversations, tool_send_message
+from app.tools.tools.photos import tool_search_photos, tool_get_photo
+from app.tools.tools.speech_recognition_tools import (
+    tool_transcribe_with_speech,
+    tool_list_speech_locales,
+)
 from app.tools.tools.wifi_bluetooth import (
     tool_bluetooth_devices,
     tool_connected_devices,
@@ -59,6 +82,47 @@ class RecordAudioRequest(BaseModel):
 
 class CapturePhotoRequest(BaseModel):
     device_index: int | None = None
+
+
+class ContactSearchRequest(BaseModel):
+    query: str | None = None
+    limit: int = 25
+
+
+class CreateEventRequest(BaseModel):
+    title: str
+    start: str
+    end: str
+    notes: str | None = None
+    calendar: str | None = None
+    all_day: bool = False
+
+
+class CreateReminderRequest(BaseModel):
+    title: str
+    notes: str | None = None
+    due: str | None = None
+    list_name: str | None = None
+
+
+class SendMessageRequest(BaseModel):
+    recipient: str
+    body: str
+    service: str = "iMessage"
+
+
+class SendEmailRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    cc: str | None = None
+    bcc: str | None = None
+
+
+class TranscribeSpeechRequest(BaseModel):
+    audio_path: str
+    locale: str = "en-US"
+    timeout: float = 60.0
 
 
 class RecordVideoRequest(BaseModel):
@@ -647,6 +711,357 @@ async def get_system_resources():
     session = ToolSession()
     try:
         result = await tool_system_resources(session=session)
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Contacts
+# ---------------------------------------------------------------------------
+
+
+@router.get("/contacts")
+async def list_contacts(limit: int = 25):
+    """List contacts from macOS Contacts (CNContactStore)."""
+    session = ToolSession()
+    try:
+        result = await tool_search_contacts(session=session, query=None, limit=limit)
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.post("/contacts/search")
+async def search_contacts(req: ContactSearchRequest):
+    """Search contacts by name or identifier."""
+    session = ToolSession()
+    try:
+        result = await tool_search_contacts(session=session, query=req.query, limit=req.limit)
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.get("/contacts/{identifier}")
+async def get_contact(identifier: str):
+    """Get a single contact by CNContact identifier."""
+    session = ToolSession()
+    try:
+        result = await tool_get_contact(session=session, identifier=identifier)
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Calendar
+# ---------------------------------------------------------------------------
+
+
+@router.get("/calendar/events")
+async def list_calendar_events(days_ahead: int = 7, limit: int = 50):
+    """List upcoming calendar events."""
+    session = ToolSession()
+    try:
+        result = await tool_list_events(session=session, days_ahead=days_ahead, limit=limit)
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.post("/calendar/events")
+async def create_calendar_event(req: CreateEventRequest):
+    """Create a new calendar event."""
+    session = ToolSession()
+    try:
+        result = await tool_create_event(
+            session=session,
+            title=req.title,
+            start=req.start,
+            end=req.end,
+            notes=req.notes,
+            calendar=req.calendar,
+            all_day=req.all_day,
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Reminders
+# ---------------------------------------------------------------------------
+
+
+@router.get("/calendar/reminders")
+async def list_reminders(include_completed: bool = False, limit: int = 50):
+    """List reminders from macOS Reminders."""
+    session = ToolSession()
+    try:
+        result = await tool_list_reminders(
+            session=session, include_completed=include_completed, limit=limit
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.post("/calendar/reminders")
+async def create_reminder(req: CreateReminderRequest):
+    """Create a new reminder."""
+    session = ToolSession()
+    try:
+        result = await tool_create_reminder(
+            session=session,
+            title=req.title,
+            notes=req.notes,
+            due=req.due,
+            list_name=req.list_name,
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Photos
+# ---------------------------------------------------------------------------
+
+
+@router.get("/photos")
+async def list_photos(media_type: str = "image", limit: int = 25, favorites_only: bool = False):
+    """List photo/video assets from macOS Photos library."""
+    session = ToolSession()
+    try:
+        result = await tool_search_photos(
+            session=session, media_type=media_type, limit=limit, favorites_only=favorites_only
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.get("/photos/{identifier}")
+async def get_photo(identifier: str, thumbnail_size: int = 512):
+    """Get a single photo asset with thumbnail by identifier."""
+    session = ToolSession()
+    try:
+        result = await tool_get_photo(
+            session=session, identifier=identifier, thumbnail_size=thumbnail_size
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Location (override the existing inline implementation)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/location/current")
+async def get_current_location(timeout: float = 15.0):
+    """Get current device location via CoreLocation."""
+    session = ToolSession()
+    try:
+        result = await tool_get_location(session=session, timeout=timeout)
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Messages
+# ---------------------------------------------------------------------------
+
+
+@router.get("/messages")
+async def list_messages_endpoint(limit: int = 50, contact: str | None = None, unread_only: bool = False):
+    """List recent iMessage/SMS messages (requires Full Disk Access)."""
+    session = ToolSession()
+    try:
+        result = await tool_list_messages(
+            session=session, limit=limit, contact=contact, unread_only=unread_only
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.get("/messages/conversations")
+async def list_conversations_endpoint(limit: int = 25):
+    """List recent iMessage/SMS conversations with last message preview."""
+    session = ToolSession()
+    try:
+        result = await tool_list_conversations(session=session, limit=limit)
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.post("/messages/send")
+async def send_message_endpoint(req: SendMessageRequest):
+    """Send an iMessage or SMS via Messages.app (requires Automation permission)."""
+    session = ToolSession()
+    try:
+        result = await tool_send_message(
+            session=session,
+            recipient=req.recipient,
+            body=req.body,
+            service=req.service,
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Mail
+# ---------------------------------------------------------------------------
+
+
+@router.get("/mail/accounts")
+async def get_mail_accounts():
+    """List configured Mail.app accounts and their mailboxes."""
+    session = ToolSession()
+    try:
+        result = await tool_get_email_accounts(session=session)
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.get("/mail")
+async def list_mail(mailbox: str = "INBOX", limit: int = 25, unread_only: bool = False):
+    """List recent emails from Mail.app (requires Automation permission)."""
+    session = ToolSession()
+    try:
+        result = await tool_list_emails(
+            session=session, mailbox=mailbox, limit=limit, unread_only=unread_only
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.post("/mail/send")
+async def send_mail(req: SendEmailRequest):
+    """Send an email via Mail.app (requires Automation permission)."""
+    session = ToolSession()
+    try:
+        result = await tool_send_email(
+            session=session,
+            to=req.to,
+            subject=req.subject,
+            body=req.body,
+            cc=req.cc,
+            bcc=req.bcc,
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+# ---------------------------------------------------------------------------
+# Speech Recognition
+# ---------------------------------------------------------------------------
+
+
+@router.post("/speech/transcribe")
+async def transcribe_with_speech(req: TranscribeSpeechRequest):
+    """Transcribe an audio file using Apple's on-device SFSpeechRecognizer."""
+    session = ToolSession()
+    try:
+        result = await tool_transcribe_with_speech(
+            session=session,
+            audio_path=req.audio_path,
+            locale=req.locale,
+            timeout=req.timeout,
+        )
+        return {
+            "output": result.output,
+            "metadata": result.metadata,
+            "type": result.type.value if hasattr(result.type, "value") else str(result.type),
+        }
+    finally:
+        await session.cleanup()
+
+
+@router.get("/speech/locales")
+async def list_speech_locales():
+    """List all locales supported by SFSpeechRecognizer on this device."""
+    session = ToolSession()
+    try:
+        result = await tool_list_speech_locales(session=session)
         return {
             "output": result.output,
             "metadata": result.metadata,

@@ -25,11 +25,33 @@
     <!-- Required for any future camera access from Python tools -->
     <key>com.apple.security.device.camera</key>
     <true/>
+    <!-- Required for CoreBluetooth device discovery on macOS 12+ -->
+    <key>com.apple.security.device.bluetooth</key>
+    <true/>
+
+    <!-- ── File system ────────────────────────────────────────────────────── -->
+    <!-- Full Disk Access: required for reading ~/Library/Messages/chat.db,
+         ~/Library/Mail/, and arbitrary user files. The sidecar must declare
+         this independently — TCC does not inherit it from the parent Tauri process. -->
+    <key>com.apple.security.files.all</key>
+    <true/>
 
     <!-- ── Automation / Apple Events ─────────────────────────────────────── -->
     <!-- Required for osascript calls from input_automation.py, window_manager.py,
-         app_integration.py. Without this, AppleScript sends get error -1743. -->
+         app_integration.py, messages.py, mail.py.
+         Without this, AppleScript sends get error -1743. -->
     <key>com.apple.security.automation.apple-events</key>
+    <true/>
+
+    <!-- ── Personal information ───────────────────────────────────────────── -->
+    <!-- Required by CNContactStore, EKEventStore, PHPhotoLibrary in Python tools -->
+    <key>com.apple.security.personal-information.addressbook</key>
+    <true/>
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+    <key>com.apple.security.personal-information.reminders</key>
+    <true/>
+    <key>com.apple.security.personal-information.photos-library</key>
     <true/>
 
     <!-- ── Network ────────────────────────────────────────────────────────── -->

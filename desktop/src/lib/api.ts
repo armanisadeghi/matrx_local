@@ -314,6 +314,20 @@ class EngineAPI {
     GetLocation: ["location"],
     // Input monitoring
     MonitorInput: ["input_monitoring"],
+    // Reminders
+    ListReminders: ["reminders"],
+    CreateReminder: ["reminders"],
+    // Messages (iMessage/SMS)
+    ListMessages: ["messages", "full_disk_access"],
+    ListConversations: ["messages", "full_disk_access"],
+    SendMessage: ["messages", "automation"],
+    // Mail
+    ListEmails: ["mail", "automation"],
+    SendEmail: ["mail", "automation"],
+    GetEmailAccounts: ["mail", "automation"],
+    // Speech Recognition
+    TranscribeWithAppleSpeech: ["speech_recognition", "microphone"],
+    ListSpeechLocales: ["speech_recognition"],
   } as const;
 
   /**

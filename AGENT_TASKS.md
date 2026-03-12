@@ -115,6 +115,24 @@ _Last updated: 2026-03-11_
 
 ---
 
+## ✅ COMPLETED — Recent (2026-03-12)
+
+### macOS Permissions Full Audit (2026-03-12)
+- [x] **`com.apple.security.files.all` entitlement added** — Both `Entitlements.plist` and `sidecar/sidecar.entitlements.plist` now declare Full Disk Access. Without this, FDA TCC grants had no effect in the hardened runtime.
+- [x] **`com.apple.security.device.bluetooth` entitlement added** — Added to both plists so CoreBluetooth scanning works on macOS 12+ with the TCC grant.
+- [x] **`com.apple.security.personal-information.reminders` entitlement added** — Added to both plists; also added personal-information entitlements for addressbook/calendars/photos to the sidecar plist which was missing them.
+- [x] **Deprecated Quartz screenshot APIs replaced** — `system.py` now uses `screencapture -x` CLI as the primary macOS capture path (not deprecated). Quartz (`CGWindowListCreateImage`/`CGDisplayCreateImage`) kept as fallback for macOS < 15 only.
+- [x] **Screen recording cross-check restored in `use-permissions.ts`** — When `CGPreflightScreenCaptureAccess()` returns false (known macOS lie-until-restart), the hook now cross-checks via `engine.getDevicePermission("screen_recording")` which uses ScreenCaptureKit (not deprecated Quartz). Status is correctly reported as granted if the engine confirms it.
+- [x] **New pyobjc frameworks added** — `pyobjc-framework-Contacts`, `pyobjc-framework-EventKit`, `pyobjc-framework-Photos`, `pyobjc-framework-CoreLocation`, `pyobjc-framework-Speech` added to `pyproject.toml` and verified importing.
+- [x] **New Python tool files** — `contacts.py`, `calendar_tools.py`, `photos.py`, `location.py`, `messages.py`, `mail.py`, `speech_recognition_tools.py` all implemented with full macOS-only + graceful fallback on other platforms.
+- [x] **Permission checker expanded** — `checker.py` now has `check_contacts()`, `check_calendar()`, `check_reminders()`, `check_photos()`, `check_location()` (real CLLocationManager), `check_messages()` (functional probe), `check_mail()`, `check_speech_recognition()` — all registered in `check_all_permissions()`.
+- [x] **New REST endpoints** — `permissions_routes.py` expanded with `/contacts`, `/calendar/events`, `/calendar/reminders`, `/photos`, `/location/current`, `/messages`, `/messages/conversations`, `/messages/send`, `/mail`, `/mail/send`, `/mail/accounts`, `/speech/transcribe`, `/speech/locales`.
+- [x] **TypeScript permission keys expanded** — `use-permissions.ts` now has `reminders`, `messages`, `mail`, `speech_recognition` as full `PermissionKey` entries with metadata and `settingsUrl` deep links.
+- [x] **`TOOL_PERMISSION_REQUIREMENTS` expanded** — `api.ts` now maps all new tool names to their required permissions.
+- [x] **`PermissionsModal.tsx` updated** — New icons (Bell, MessageSquare, Mail, AudioLines) added; new keys inserted in `PERMISSION_ORDER`.
+
+---
+
 ## ✅ COMPLETED — Recent (2026-03-11)
 
 - [x] **`opencv-python` and `mss` added to pyproject.toml** — Camera capture (`cv2.VideoCapture`) and screen recording fallback (`mss`) were imported in `permissions_routes.py` but never declared as dependencies. Added `opencv-python>=4.10.0` and `mss>=9.0.1`; both installed via `uv sync`.

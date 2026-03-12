@@ -521,13 +521,13 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
         </div>
       </PageHeader>
 
-      <div className="flex-1 p-6 overflow-hidden">
+      <div className="flex-1 px-6 pb-6 overflow-hidden flex flex-col min-h-0">
         <Tabs
           defaultValue="user"
-          className="h-full flex flex-col min-h-0"
+          className="flex-1 flex flex-col min-h-0"
           onValueChange={(v) => { setActiveTab(v); setSearch(""); }}
         >
-          <TabsList className="w-full max-w-[620px] grid grid-cols-3 bg-background/40 backdrop-blur-xl border border-border shadow-sm shrink-0">
+          <TabsList className="w-full max-w-[620px] grid grid-cols-3 bg-background/40 backdrop-blur-xl border border-border shadow-sm shrink-0 mt-6 mb-4">
             <TabsTrigger value="user" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
               <Server className="h-4 w-4 mr-2" />
               Dev Services
@@ -545,8 +545,8 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="user" className="flex-1 mt-4 overflow-hidden flex flex-col min-h-0">
-            <div className="flex flex-col h-full rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
+          <TabsContent value="user" className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col">
+            <div className="flex flex-col flex-1 min-h-0 rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
               <CategoryPills
                 categories={PORT_CATEGORIES}
                 active={portCategory}
@@ -565,8 +565,8 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="all" className="flex-1 mt-4 overflow-hidden flex flex-col min-h-0">
-            <div className="flex flex-col h-full rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
+          <TabsContent value="all" className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col">
+            <div className="flex flex-col flex-1 min-h-0 rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
               <CategoryPills
                 categories={PORT_CATEGORIES}
                 active={portCategory}
@@ -585,8 +585,8 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
             </div>
           </TabsContent>
 
-          <TabsContent value="terminals" className="flex-1 mt-4 overflow-hidden flex flex-col min-h-0">
-            <div className="flex flex-col h-full rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
+          <TabsContent value="terminals" className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col">
+            <div className="flex flex-col flex-1 min-h-0 rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
               <CategoryPills
                 categories={TERM_CATEGORIES}
                 active={termCategory}

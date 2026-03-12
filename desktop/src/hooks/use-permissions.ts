@@ -48,12 +48,16 @@ export type PermissionKey =
   | "input_monitoring"
   | "contacts"
   | "calendar"
+  | "reminders"
   | "photos"
   | "bluetooth"
   | "location"
   | "local_network"
   | "automation"
-  | "network";
+  | "network"
+  | "messages"
+  | "mail"
+  | "speech_recognition";
 
 export type PermissionStatus =
   | "granted"
@@ -150,6 +154,13 @@ const PERMISSION_META: Record<
     canPrompt: false,
     settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos",
   },
+  reminders: {
+    label: "Reminders",
+    description: "Read and create reminders in macOS Reminders",
+    tools: ["ListReminders", "CreateReminder"],
+    canPrompt: false,
+    settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders",
+  },
   bluetooth: {
     label: "Bluetooth",
     description: "Discover and list nearby Bluetooth devices",
@@ -184,6 +195,29 @@ const PERMISSION_META: Record<
     tools: ["NetworkInfo", "PortScan"],
     canPrompt: false,
     settingsUrl: "x-apple.systempreferences:com.apple.preference.network",
+  },
+  messages: {
+    label: "Messages & iMessage",
+    description: "Read iMessage/SMS history and send messages",
+    tools: ["ListMessages", "ListConversations", "SendMessage"],
+    canPrompt: false,
+    // Messages access requires Full Disk Access (to read chat.db) and
+    // Automation (to send via Messages.app). Direct the user to both.
+    settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+  },
+  mail: {
+    label: "Mail",
+    description: "Read and send emails via Mail.app",
+    tools: ["ListEmails", "SendEmail", "GetEmailAccounts"],
+    canPrompt: false,
+    settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+  },
+  speech_recognition: {
+    label: "Speech Recognition",
+    description: "Transcribe audio using Apple's on-device speech engine",
+    tools: ["TranscribeWithAppleSpeech", "ListSpeechLocales"],
+    canPrompt: false,
+    settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition",
   },
 };
 
@@ -264,8 +298,22 @@ export function usePermissions(): UsePermissionsReturn {
    *   - full_disk_access     → file-system probe
    *   - input_monitoring     → IOKit
    *
-   * Note: The deprecated engine CGDisplayCreateImage cross-check for screen
-   * recording has been removed — it triggered OS warnings on macOS 15+.
+   * Plugin limitation — microphone & camera: The plugin only returns a boolean
+   * (granted / not-granted). It cannot distinguish between NOT_DETERMINED,
+   * DENIED, and RESTRICTED — all three map to "not_determined" here. This is a
+   * known limitation of tauri-plugin-macos-permissions v2.3.0. Until the plugin
+   * exposes the raw AVAuthorizationStatus integer, users who have explicitly
+   * denied mic/camera access will see "Not Requested" rather than "Denied" in
+   * the UI. The request() flow still correctly directs denied users to System
+   * Settings after the first failed prompt.
+   *
+   * Screen recording cross-check: CGPreflightScreenCaptureAccess() returns false
+   * until the app is restarted even when permission was just granted in the same
+   * session (known macOS TCC cache behaviour). To detect "granted but preflight
+   * lying", when the plugin returns not_determined we perform a functional test
+   * via the engine GET /devices/permissions/screen_recording, which uses
+   * ScreenCaptureKit (SCShareableContent) — the modern non-deprecated API — as
+   * the authoritative check. If the engine confirms granted we trust that.
    */
   const checkPluginPermission = useCallback(
     async (key: PermissionKey): Promise<PermissionStatus> => {
@@ -275,19 +323,30 @@ export function usePermissions(): UsePermissionsReturn {
         let granted: boolean;
         switch (key) {
           case "microphone":
+            // Plugin returns boolean only — see limitation note above.
             granted = await perms.checkMicrophonePermission();
             return granted ? "granted" : "not_determined";
 
           case "camera":
+            // Plugin returns boolean only — see limitation note above.
             granted = await perms.checkCameraPermission();
             return granted ? "granted" : "not_determined";
 
           case "screen_recording": {
-            // The plugin calls CGPreflightScreenCaptureAccess() (Rust side).
-            // Trust it directly — the deprecated engine CGDisplayCreateImage
-            // cross-check has been removed as it triggers OS warnings on macOS 15+.
+            // Primary check via CGPreflightScreenCaptureAccess (Rust side).
             granted = await perms.checkScreenRecordingPermission();
-            return granted ? "granted" : "not_determined";
+            if (granted) return "granted";
+
+            // Cross-check: CGPreflightScreenCaptureAccess lies until restart.
+            // Ask the engine which uses SCShareableContent (ScreenCaptureKit) —
+            // the Apple-recommended modern check — as the authoritative source.
+            try {
+              const engineResult = await engine.getDevicePermission("screen_recording");
+              if (engineResult.status === "granted") return "granted";
+            } catch {
+              // Engine unavailable — trust the plugin's false result.
+            }
+            return "not_determined";
           }
 
           case "accessibility":

@@ -187,23 +187,69 @@ def _get_screen_geometry() -> list[dict]:
     return monitors
 
 
-def _grab_screenshot_quartz(
+def _grab_screenshot_screencapture(
+    bbox: tuple[int, int, int, int] | None = None,
+) -> "Image.Image":
+    """Capture a screenshot using macOS screencapture CLI (macOS only).
+
+    screencapture is the preferred method on macOS 15+ because:
+    - CGWindowListCreateImage and CGDisplayCreateImage are deprecated in macOS 15.1
+    - The CLI respects Screen Recording TCC permission
+    - -x suppresses the camera shutter sound
+    - -R specifies a region (x,y,width,height) for bbox captures
+    """
+    import io
+    import subprocess
+    import tempfile
+    from PIL import Image
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        cmd = ["screencapture", "-x", "-t", "png"]
+        if bbox is not None:
+            x, y, w, h = bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]
+            cmd += ["-R", f"{x},{y},{w},{h}"]
+        cmd.append(tmp_path)
+
+        result = subprocess.run(cmd, capture_output=True, timeout=15)
+        if result.returncode != 0:
+            err = result.stderr.decode(errors="replace").strip()
+            raise OSError(
+                f"screencapture failed (exit {result.returncode}): {err or 'no error output'}. "
+                "Grant Screen Recording in System Settings → Privacy & Security → Screen Recording."
+            )
+
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+        if not data:
+            raise OSError(
+                "screencapture produced an empty file — Screen Recording permission may be denied. "
+                "Grant it in System Settings → Privacy & Security → Screen Recording."
+            )
+        return Image.open(io.BytesIO(data))
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def _grab_screenshot_quartz_legacy(
     bbox: tuple[int, int, int, int] | None = None,
     all_screens: bool = True,
 ) -> "Image.Image":
-    """Capture a screenshot using Quartz APIs (macOS only).
+    """Capture a screenshot using Quartz APIs (macOS < 15 fallback only).
 
-    This is more reliable than PIL.ImageGrab on modern macOS because ImageGrab
-    depends on the `screencapture` CLI tool which can fail on newer macOS versions.
-    Quartz CGDisplayCreateImage/CGWindowListCreateImage work directly via the
-    CoreGraphics framework.
+    CGWindowListCreateImage and CGDisplayCreateImage are deprecated as of macOS 15.1.
+    Use _grab_screenshot_screencapture() on macOS 15+.
     """
+    import io
     import Quartz
     from PIL import Image
-    import io
 
     if bbox is not None:
-        # Capture a specific region (absolute screen coordinates)
         x, y, w, h = bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]
         rect = Quartz.CGRectMake(x, y, w, h)
         cg_image = Quartz.CGWindowListCreateImage(
@@ -213,8 +259,6 @@ def _grab_screenshot_quartz(
             Quartz.kCGWindowImageDefault,
         )
     elif all_screens:
-        # Capture all screens using CGWindowListCreateImage with infinite rect
-        # If that fails, fall back to main display only
         rect = Quartz.CGRectInfinite
         cg_image = Quartz.CGWindowListCreateImage(
             rect,
@@ -223,16 +267,13 @@ def _grab_screenshot_quartz(
             Quartz.kCGWindowImageDefault,
         )
         if cg_image is None:
-            # Fallback to main display
             cg_image = Quartz.CGDisplayCreateImage(Quartz.CGMainDisplayID())
     else:
-        # Primary display only
         cg_image = Quartz.CGDisplayCreateImage(Quartz.CGMainDisplayID())
 
     if cg_image is None:
         raise OSError("Screen capture failed — screen recording permission may be required")
 
-    # Convert CGImage to PNG bytes, then to PIL Image
     data = Quartz.CFDataCreateMutable(None, 0)
     dest = Quartz.CGImageDestinationCreateWithData(data, "public.png", 1, None)
     if dest is None:
@@ -241,32 +282,54 @@ def _grab_screenshot_quartz(
     if not Quartz.CGImageDestinationFinalize(dest):
         raise OSError("Failed to finalize screenshot image")
 
-    png_bytes = bytes(data)
-    return Image.open(io.BytesIO(png_bytes))
+    return Image.open(io.BytesIO(bytes(data)))
+
+
+def _macos_version_tuple() -> tuple[int, int]:
+    """Return (major, minor) macOS version, e.g. (15, 1) for Sequoia 15.1."""
+    try:
+        ver = platform.mac_ver()[0]  # e.g. "15.1.0"
+        parts = ver.split(".")
+        return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+    except Exception:
+        return (0, 0)
 
 
 def _grab_screenshot(
     bbox: tuple[int, int, int, int] | None = None,
     all_screens: bool = True,
 ) -> "Image.Image":
-    """Cross-platform screenshot capture with macOS Quartz fallback."""
-    if platform.system() == "Darwin":
-        # On macOS, prefer Quartz APIs — PIL.ImageGrab depends on the
-        # `screencapture` CLI tool which is broken on newer macOS versions.
-        try:
-            return _grab_screenshot_quartz(bbox=bbox, all_screens=all_screens)
-        except ImportError:
-            pass  # pyobjc-framework-Quartz not installed, fall through to PIL
-        except OSError:
-            pass  # Quartz capture failed, fall through to PIL
+    """Cross-platform screenshot capture.
 
-    # Non-macOS or Quartz unavailable: use PIL ImageGrab
+    macOS strategy (in order of preference):
+    1. screencapture -x CLI — works on all macOS versions, not deprecated,
+       respects Screen Recording TCC. This is the primary path.
+    2. Quartz CGWindowListCreateImage — fallback for macOS < 15 if screencapture
+       is somehow unavailable (highly unlikely in practice).
+    3. PIL ImageGrab — last resort or non-macOS.
+    """
+    if platform.system() == "Darwin":
+        try:
+            return _grab_screenshot_screencapture(bbox=bbox)
+        except OSError:
+            raise  # propagate permission errors; don't silently fall through
+        except Exception:
+            pass  # unexpected error — try Quartz legacy
+
+        mac_major, mac_minor = _macos_version_tuple()
+        if mac_major < 15:
+            try:
+                return _grab_screenshot_quartz_legacy(bbox=bbox, all_screens=all_screens)
+            except ImportError:
+                pass
+            except OSError:
+                raise
+
     from PIL import ImageGrab
 
     try:
         return ImageGrab.grab(bbox=bbox, all_screens=all_screens)
     except TypeError:
-        # Older Pillow versions don't have all_screens
         return ImageGrab.grab(bbox=bbox)
 
 

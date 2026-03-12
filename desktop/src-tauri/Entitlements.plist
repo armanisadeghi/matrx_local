@@ -21,10 +21,26 @@
     <key>com.apple.security.automation.apple-events</key>
     <true/>
 
+    <!-- ── File system ───────────────────────────────────────────────────── -->
+    <!-- Full Disk Access: required for reading ~/Library/Messages/chat.db,
+         ~/Library/Mail/, and arbitrary user files outside the app sandbox.
+         Must be paired with a TCC grant in System Settings → Privacy → Full Disk Access. -->
+    <key>com.apple.security.files.all</key>
+    <true/>
+
+    <!-- ── Bluetooth ──────────────────────────────────────────────────────── -->
+    <!-- Required for CoreBluetooth scanning and device discovery on macOS 12+. -->
+    <key>com.apple.security.device.bluetooth</key>
+    <true/>
+
     <!-- ── Personal information ───────────────────────────────────────────── -->
     <key>com.apple.security.personal-information.addressbook</key>
     <true/>
     <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+    <!-- Reminders use EventKit (same TCC service group as calendars) but need
+         their own entitlement key for the hardened runtime. -->
+    <key>com.apple.security.personal-information.reminders</key>
     <true/>
     <key>com.apple.security.personal-information.photos-library</key>
     <true/>
