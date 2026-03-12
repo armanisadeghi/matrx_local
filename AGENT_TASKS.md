@@ -27,39 +27,31 @@ _Last updated: 2026-03-11_
 
 ---
 
-## 🟠 P1 — Voice Transcription (Tab Exists, Doesn't Work End-to-End)
+## 🟠 P1 — Voice Transcription
 
-The Voice tab exists and the Rust/TS infrastructure is wired, but the full flow is broken. The user hits "Transcribe" and gets `"Transcription not initialized — call init_transcription first"` with no auto-recovery.
-
-- [ ] **Auto-initialize transcription on first use** — When `start_transcription` or the Transcribe tab is activated and no model is loaded, automatically run the init sequence (`detect_hardware` → `download_whisper_model` → `init_transcription`) instead of showing an error. The app knows what's wrong — it should fix it, not complain.
-- [ ] **Init sequence not triggered on app startup** — If a model was previously downloaded and saved in `transcription.json`, `init_transcription` should be called automatically at Tauri startup so the Voice tab is ready immediately. Currently the user must manually click through setup every session.
+- [x] **Auto-initialize transcription on app startup** — `lib.rs` `.setup()` now spawns a Tauri async task that reads `transcription.json`, verifies the model file exists, and calls `TranscriptionManager::load()` automatically. The Transcribe tab now shows a loading spinner while the model loads rather than the "Setup Required" dead-end gate.
+- [x] **Frontend polling for in-memory model load** — `use-transcription.ts` now polls `get_active_model` every second (max 30s) after mount, updating `activeModel` once Rust confirms the model is resident.
+- [x] **"Taking too long? Click to retry" escape hatch** — Transcribe tab loading state includes a manual retry button that calls `initTranscription` directly.
 - [ ] **VAD integration** — The silero VAD model (`ggml-silero-v6.2.0.bin`) is downloaded but the transcription loop never calls it. The RMS energy gate works but produces false positives. Wire in VAD for accurate speech/silence detection.
 - [ ] **Multilingual support** — Currently hardcoded to `.en` models. Add model picker that includes multilingual variants (`ggml-base.bin` etc.) for non-English users.
-- [ ] **CDN mirror for whisper models** — Models download directly from HuggingFace. Mirror to `assets.aimatrx.com/whisper-models/` before shipping. Use CDN-first with HF fallback.
+- [ ] **CDN mirror for whisper models** — Models download directly from HuggingFace. Mirror to `assets.aimatrx.com/whisper-models/` before shipping.
   - Files: `ggml-tiny.en.bin` (75MB), `ggml-base.en.bin` (142MB), `ggml-small.en.bin` (466MB), `ggml-silero-v6.2.0.bin` (0.8MB)
 
-**Reference:** `whisper-transcription-integration.md` — full architecture, model catalog, download URLs, hardware detection, Rust code patterns.
+**Reference:** `whisper-transcription-integration.md`
 
 ---
 
-## 🟠 P1 — Local LLM Inference (No Tab, Nothing Works)
+## 🟠 P1 — Local LLM Inference
 
-The Rust module (`src-tauri/src/llm/`), TypeScript types, hook (`use-llm.ts`), and `LocalModels.tsx` page **exist on disk** but the entire feature is non-functional because:
-1. The `llama-server` binaries are not bundled
-2. There is no sidebar entry for the Local Models page
-3. The UI has never been tested against a real running server
-
-- [ ] **Add sidebar entry** — "Local Models" page at `/local-models` is missing from the sidebar nav. Add it (BrainCircuit icon) so users can reach it.
-- [ ] **Download and bundle llama-server binaries** — Download pre-built binaries from `https://github.com/ggml-org/llama.cpp/releases/latest` and place in `desktop/src-tauri/binaries/` with correct Tauri triple naming:
-  - `llama-server-aarch64-apple-darwin` (macOS ARM)
-  - `llama-server-x86_64-apple-darwin` (macOS Intel)
-  - `llama-server-x86_64-pc-windows-msvc.exe` (Windows)
-  - `llama-server-x86_64-unknown-linux-gnu` (Linux)
-- [ ] **Mirror GGUF models to CDN** — Models download from HuggingFace. Mirror to `assets.aimatrx.com/llm-models/` with CDN-first + HF fallback.
-  - Default model: `Qwen3-8B-Instruct-Q4_K_M.gguf` (~5.2GB). Also mirror Qwen3-4B, Phi-4-mini, Qwen2.5-14B, Mistral-Small-3.
-- [ ] **Mirror llama-server binaries to CDN** — `assets.aimatrx.com/llama-server/v{VERSION}/` for auto-download in CI.
-- [ ] **End-to-end smoke test** — Start engine, navigate to Local Models, click Quick Setup, verify model downloads, server starts, and a test inference returns a response. Test on macOS ARM first.
-- [ ] **Cloud capability sync** — Sync available local models to Supabase `app_instances` so the web app knows each device's LLM capabilities.
+- [x] **Sidebar entry added** — "Voice" (Mic icon) and "Local Models" (BrainCircuit icon) both visible in sidebar.
+- [x] **llama-server macOS ARM binary** — Downloaded from `ggml-org/llama.cpp` release b8281 and placed at `binaries/llama-server-aarch64-apple-darwin`. Verified it runs (`--version` returns b8281).
+- [x] **llama-server dylibs bundled** — All required shared libs (`libggml-*.dylib`, `libllama.dylib`, `libmtmd.dylib`) copied to `binaries/`. Listed in `tauri.conf.json` as `resources: {"binaries/*.dylib": "binaries/"}`.
+- [x] **DYLD_LIBRARY_PATH set at spawn** — `server.rs` resolves the Tauri resource dir and sets `DYLD_LIBRARY_PATH` / `DYLD_FALLBACK_LIBRARY_PATH` before spawning the sidecar so dylibs are found at runtime.
+- [ ] **End-to-end smoke test** — Download a model (Qwen3-4B or Phi-4-mini), verify server starts, test inference in the Test tab. Needs a GGUF model present.
+- [ ] **Mirror GGUF models to CDN** — `assets.aimatrx.com/llm-models/` with CDN-first + HF fallback.
+  - Default model: `Qwen3-8B-Instruct-Q4_K_M.gguf` (~5.2GB). Also mirror Qwen3-4B, Phi-4-mini.
+- [ ] **llama-server binaries for other platforms** — Intel Mac, Windows, Linux builds not yet added.
+- [ ] **Cloud capability sync** — Sync available local models to Supabase `app_instances`.
 
 **Reference:** `local-llm-inference-integration.md` — full architecture, sidecar config, model catalog, server.rs, commands.rs, Qwen3 tool calling gotchas.
 

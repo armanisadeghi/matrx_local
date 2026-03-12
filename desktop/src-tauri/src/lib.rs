@@ -457,6 +457,48 @@ pub fn run() {
             get_llm_setup_status,
         ])
         .setup(|app| {
+            // ── Auto-initialize transcription model on startup ──────────────
+            // If a model was previously set up, load it into memory immediately
+            // so the Transcribe tab works without requiring the user to
+            // re-run setup every session. This is fire-and-forget — a failure
+            // here is non-fatal; the user can still use Setup tab to init.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use transcription::{config::TranscriptionConfig, downloader, manager::TranscriptionManager};
+                    let config_dir = match handle.path().app_data_dir() {
+                        Ok(d) => d,
+                        Err(_) => return,
+                    };
+                    let config = TranscriptionConfig::load(&config_dir);
+                    if !config.setup_complete {
+                        return;
+                    }
+                    let Some(filename) = config.selected_model else { return };
+                    let model_path = config_dir.join("models").join(&filename);
+                    if !downloader::is_valid_model(&model_path) {
+                        // Config says ready but file is gone — reset the flag so
+                        // the UI prompts setup again instead of being stuck.
+                        let reset = TranscriptionConfig { setup_complete: false, selected_model: None };
+                        let _ = reset.save(&config_dir);
+                        return;
+                    }
+                    let state = handle.state::<TranscriptionState>();
+                    // Only load if not already initialized (another path may have beaten us).
+                    if state.0.lock().unwrap().is_some() {
+                        return;
+                    }
+                    match tokio::task::spawn_blocking(move || TranscriptionManager::load(model_path)).await {
+                        Ok(Ok(manager)) => {
+                            *state.0.lock().unwrap() = Some(manager);
+                            println!("[transcription] Auto-loaded model: {}", filename);
+                        }
+                        Ok(Err(e)) => eprintln!("[transcription] Auto-load failed: {}", e),
+                        Err(e) => eprintln!("[transcription] Auto-load task panicked: {}", e),
+                    }
+                });
+            }
+
             // Register the deep-link listener for OAuth callbacks.
             // When Supabase redirects to aimatrx://auth/callback?..., the OS fires this handler.
             let handle = app.handle().clone();

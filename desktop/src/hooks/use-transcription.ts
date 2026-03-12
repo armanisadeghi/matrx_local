@@ -93,7 +93,39 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
 
   // Load initial setup status
   useEffect(() => {
-    if (isTauri()) refreshSetupStatus();
+    if (!isTauri()) return;
+    refreshSetupStatus();
+  }, []);
+
+  // Poll get_active_model until the Rust auto-init completes (max 30s).
+  // This bridges the gap between the config saying "setup_complete: true"
+  // and the TranscriptionManager actually being loaded into memory.
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 30;
+
+    const poll = async () => {
+      if (cancelled || attempts >= MAX_ATTEMPTS) return;
+      attempts++;
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const model = await invoke<string | null>("get_active_model");
+        if (model) {
+          setActiveModel(model);
+          return; // done — model is loaded
+        }
+      } catch {
+        // not ready yet — keep polling
+      }
+      setTimeout(poll, 1000);
+    };
+
+    poll();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const refreshSetupStatus = useCallback(async () => {

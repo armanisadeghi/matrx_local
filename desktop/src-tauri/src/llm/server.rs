@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::ShellExt;
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,11 +45,23 @@ impl LlmServer {
 
         let args = build_server_args(model_path, gpu_layers, context_length, port);
 
+        // Resolve the binaries directory so the dylibs (libggml-*, libllama-*,
+        // libmtmd-*) that ship alongside llama-server can be found at runtime.
+        let binaries_dir = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|p| p.join("binaries"))
+            .unwrap_or_default();
+        let dyld_path = binaries_dir.to_string_lossy().to_string();
+
         let (_rx, child) = app
             .shell()
             .sidecar("llama-server")
             .map_err(|e| format!("llama-server sidecar not found: {e}"))?
             .args(&args)
+            .env("DYLD_LIBRARY_PATH", &dyld_path)
+            .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path)
             .spawn()
             .map_err(|e| format!("Failed to spawn llama-server: {e}"))?;
 

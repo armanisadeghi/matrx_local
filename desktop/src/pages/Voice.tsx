@@ -415,9 +415,37 @@ function TranscribeTab({
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
 }) {
-  const isReady = state.setupStatus?.setup_complete ?? false;
+  const setupDoneInConfig = state.setupStatus?.setup_complete ?? false;
+  const modelLoadedInMemory = state.activeModel !== null;
 
-  if (!isReady) {
+  // Config says ready but model isn't in memory yet — it's being auto-loaded
+  // on startup. Show a spinner instead of the unhelpful "Setup Required" gate.
+  if (setupDoneInConfig && !modelLoadedInMemory) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <div className="flex flex-col items-center justify-center rounded-xl border bg-card p-12 text-center space-y-4">
+          <Loader2 className="h-10 w-10 text-primary animate-spin" />
+          <h3 className="text-lg font-semibold">Loading model…</h3>
+          <p className="text-sm text-muted-foreground max-w-md">
+            {state.setupStatus?.selected_model
+              ? `Loading ${state.setupStatus.selected_model} into memory. This takes a few seconds.`
+              : "Initializing transcription engine…"}
+          </p>
+          <button
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            onClick={async () => {
+              const model = state.setupStatus?.selected_model;
+              if (model) await actions.initTranscription(model);
+            }}
+          >
+            Taking too long? Click to retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!setupDoneInConfig) {
     return (
       <div className="mx-auto max-w-2xl">
         <div className="flex flex-col items-center justify-center rounded-xl border bg-card p-12 text-center space-y-4">

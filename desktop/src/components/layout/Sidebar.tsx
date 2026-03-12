@@ -10,6 +10,7 @@ import {
   Zap,
   Network,
   BrainCircuit,
+  Mic,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -29,6 +30,7 @@ const navItems = [
   { to: "/notes", icon: FileText, label: "Notes" },
   { to: "/scraping", icon: Globe, label: "Scraping" },
   { to: "/tools", icon: Wrench, label: "Tools" },
+  { to: "/voice", icon: Mic, label: "Voice" },
   { to: "/local-models", icon: BrainCircuit, label: "Local Models" },
   { to: "/ports", icon: Network, label: "Port Manager" },
   { to: "/activity", icon: Activity, label: "Activity" },

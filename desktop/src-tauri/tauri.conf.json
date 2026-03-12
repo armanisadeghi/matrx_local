@@ -44,6 +44,9 @@
       "sidecar/cloudflared",
       "binaries/llama-server"
     ],
+    "resources": {
+      "binaries/*.dylib": "binaries/"
+    },
     "windows": {
       "wix": {
         "language": "en-US"
