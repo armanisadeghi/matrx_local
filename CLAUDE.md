@@ -292,6 +292,23 @@ When editing `.env` files: comment out values instead of deleting them, with a n
 
 ---
 
+## Database Migrations
+
+**Rule: Never create a migration file without immediately applying it.**
+
+Migrations live in `migrations/NNN_name.sql`. The Supabase MCP (`plugin-supabase-supabase`) is available and must be used to apply every migration in the same session it is written. The target project is `txzxabzwovsujtloxrus` (automation-matrix).
+
+Workflow for any schema change:
+1. Write the migration SQL file in `migrations/`.
+2. Immediately call `apply_migration` via the Supabase MCP — never leave a migration unapplied.
+3. Call `execute_sql` to verify the schema change landed (e.g. check `information_schema.columns`).
+4. Mark the corresponding `.arman/ARMAN_TASKS.md` item as done (if one exists).
+5. Update `AGENT_TASKS.md` to record the migration was applied.
+
+A migration file that exists on disk but has not been applied to Supabase is a broken state — it causes runtime errors (like `PGRST204 column not found`) that are hard to trace. If you find an unapplied migration in `migrations/`, apply it immediately before doing anything else.
+
+---
+
 ## Arman's Preferences
 
 - Prefers working through issues systematically, one at a time

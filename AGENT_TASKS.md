@@ -8,20 +8,31 @@ _Last updated: 2026-03-11_
 ---
 
 # NEW Tasks
-- Significant mumber of required packages are simply missing!!!!!!!
+- Significant number of required packages are simply missing!!!!!!!
   - Missing Video recording requires OpenCV (cv2). Install: pip install opencv-python
   - Screen recording requires ffmpeg. Install: brew install ffmpeg (macOS) or sudo apt install ffmpeg (Linux)
-  - in addition to this, we MUST check for every other potential packagae we need for everything our system is designed to do! It doesn't make sense to have features that dont' have the proper tools and utilities to actualy work!
+  - in addition to this, we MUST check for every other potential package we need for everything our system is designed to do! It doesn't make sense to have features that don't have the proper tools and utilities to actually work!
 - Devices & Permissions (Wifi Networks) - Shows as hidden network. If that's the case, then how are we supposed to interact with it?
-- Devices & Permissions (Connected Devices and/or network) - I know for a fact that this system has a printer connected to it, yet it's no where to be found so how can our application properly interface with the printer if we can't even see it?
-- Devices & Permissions (Location) - It says that permission is needed but here is no button or anything to click and have it request it so we can approve! Clicking 'get location' just gives an error instead of properly requesting permission and updating it.
-- Devices & Permissions (System Resources)
-  - CPU: Shows cpu usage but nothing more abou the cpu or capabilities of it.
-  - RAM: Shows 0.0/0 GB which clearly means we're not properly reading it
-  - Shows 12/3722 GB which makes no sense. I don't know if this means 12GB out of 3,722GB or if it's just garbage data
-
 - Voice Tab:
   - if I go in and then go to "Transcribe" tab and click the pretty blue icon, it says "Transcription not initialized — call init_transcription first" but if that's the case and the system knows what the problem is, then why isn't it just doing it and telling the user to do it. How am I going to do that as a user???
+
+## Fixed 2026-03-11 (session 2)
+- [x] **`UnboundLocalError: importlib` in `capabilities_routes.py`** — `_check_module()` used `import importlib.metadata` inside an `if` branch, which made Python treat `importlib` as a local variable throughout the function. The `importlib.util.find_spec()` call on the else-path then raised `UnboundLocalError`. Fixed by moving `import importlib.metadata` and `import importlib.util` to the module-level top of the file.
+- [x] **Duplicate `POST /cloud/configure`** — `initialize()` and the `onAuthStateChange(INITIAL_SESSION)` listener both called `configureCloudSync()` for the same session because the INITIAL_SESSION event fires before `initialize()` reaches the configure step. Replaced the boolean flag approach with a timestamp: the listener skips the call if `initialize()` already ran configure within the last 10 seconds.
+- [x] **Migration 005 applied** — `hardware_uuid`, `serial_number`, `board_id` columns added to `app_instances` via Supabase MCP. Fixes the `PGRST204 board_id column not found` ORPHAN INSTANCE error on every cloud configure call.
+- [x] **`engine.setTokenProvider()` never wired up** — Every authenticated API call (tools/invoke, capabilities, cloud/instance, settings/paths, etc.) was returning 401 because the token provider function was defined in `api.ts` but never registered. Fixed by calling `engine.setTokenProvider(() => supabase.auth.getSession()...)` in a `useEffect` at the top of `useEngine()`, before `initialize()` runs.
+- [x] **WebSocket infinite reconnect loop** — When `connectWebSocket()` was called without a session (no `?token=` param), the server rejected with 403. `ws.onclose` then called `scheduleReconnect()` which retried in 3s, forever. Fixed in two places: (1) `initialize()` now gates `connectWebSocket()` on `session?.access_token` existing; (2) `scheduleReconnect()` checks for a token before attempting and returns early if none exists. Also added exponential backoff (3s → 6s → ... → 60s) on genuine reconnect failures.
+- [x] **Duplicate cloud configure calls** — `initialize()` called `configureCloudSync()` and then the `onAuthStateChange` SIGNED_IN/INITIAL_SESSION listener fired a second call for the same event. Added `cloudConfiguredRef` flag: set to `true` inside `initialize()` after configure, and the listener skips its call (and resets the flag) if it's already set.
+
+## Fixed 2026-03-11
+- [x] **SetupWizard startup race** — `checkStatus()` fired immediately after `engineStatus === "connected"` but internal engine services hadn't settled yet, causing "Load failed". Fixed with 5-attempt retry loop with exponential backoff (500ms → 1s → 2s → 3s → 3s). Re-Check worked because by then everything was stable.
+- [x] **Auto-install on first run** — Setup wizard now automatically triggers `runInstall()` on first launch when any blocking component is not ready. Users no longer have to click "Set Up Now" themselves. `autoInstallFiredRef` prevents it looping.
+- [x] **Permissions page: no Open Settings button** — `PermissionAlert` showed text but no action. Added "Open Settings" button that opens the macOS deep link (`x-apple.systempreferences:...`) for every permission that isn't granted.
+- [x] **RAM shows 0.0/0 GB** — Frontend used `memory_*` field names, backend returns `ram_*` fields (e.g. `ram_used_gb`, `ram_total_gb`, `ram_percent`). Fixed frontend to read `ram_*` with `memory_*` as fallback.
+- [x] **Disk shows "12/3722 GB"** — Data was correct (11.6 GB used on a 3.7 TB drive) but display looked wrong. Added smart formatting: values ≥ 1000 GB now show as TB (e.g. "12 GB / 3.6 TB").
+- [x] **CPU shows no detail** — System Resources card now shows core count, thread count, and frequency alongside usage percent.
+- [x] **Printer not found in Connected Devices** — macOS tool only scanned USB, Bluetooth, and displays. Added `lpstat -p` to enumerate all configured printers, plus Thunderbolt device scanning.
+- [x] **`deep_link` missing from `PermissionInfo` TypeScript interface** — Added `deep_link?: string | null` to the interface in `api.ts`.
 
 
 ## 🔴 AGENT PRIORITY QUEUE

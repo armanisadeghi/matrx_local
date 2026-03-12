@@ -557,6 +557,52 @@ async def _connected_macos() -> ToolResult:
     except Exception:
         pass
 
+    # Printers — lpstat lists all configured printers; system_profiler gives richer info
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "lpstat", "-p",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
+        for line in stdout.decode().splitlines():
+            line = line.strip()
+            if line.startswith("printer "):
+                # "printer HP_LaserJet is idle."
+                parts = line.split()
+                if len(parts) >= 2:
+                    devices.append({
+                        "name": parts[1].replace("_", " "),
+                        "category": "printer",
+                        "type": "Printer",
+                        "status": " ".join(parts[3:]) if len(parts) > 3 else "",
+                    })
+    except Exception:
+        pass
+
+    # Thunderbolt / PCIe devices
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "system_profiler", "SPThunderboltDataType", "-json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        tb_data = json.loads(stdout.decode())
+        for bus in tb_data.get("SPThunderboltDataType", []):
+            for device in bus.get("_items", []):
+                name = device.get("_name", "")
+                if name and name.lower() not in ("thunderbolt bus", ""):
+                    devices.append({
+                        "name": name,
+                        "category": "thunderbolt",
+                        "type": "Thunderbolt",
+                        "vendor": device.get("vendor_name", ""),
+                        "speed": device.get("thb_speed", ""),
+                    })
+    except Exception:
+        pass
+
     lines = [f"Connected devices ({len(devices)}):", ""]
     categories = {}
     for d in devices:

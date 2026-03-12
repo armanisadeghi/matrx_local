@@ -158,10 +158,18 @@ function SectionCard({
 
 function PermissionAlert({ perm }: { perm: PermissionInfo | null }) {
   if (!perm || perm.status === "granted") return null;
+
+  const openSettings = () => {
+    const url = perm.deep_link || "x-apple.systempreferences:com.apple.preference.security?Privacy";
+    import("@tauri-apps/plugin-shell")
+      .then(({ open }) => open(url))
+      .catch(() => { window.open(url, "_blank"); });
+  };
+
   return (
     <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
       <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
-      <div>
+      <div className="flex-1 min-w-0">
         <p className="text-xs font-medium text-amber-500">Permission Required</p>
         {perm.user_instructions && (
           <p className="mt-0.5 text-xs text-muted-foreground">{perm.user_instructions}</p>
@@ -170,6 +178,13 @@ function PermissionAlert({ perm }: { perm: PermissionInfo | null }) {
           <p className="mt-1 font-mono text-[10px] text-muted-foreground/70">{perm.grant_instructions}</p>
         )}
       </div>
+      <button
+        onClick={openSettings}
+        className="shrink-0 flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-amber-500 border border-amber-500/30 hover:bg-amber-500/10 transition-colors"
+      >
+        <ExternalLink className="h-3 w-3" />
+        Open Settings
+      </button>
     </div>
   );
 }
@@ -1389,12 +1404,24 @@ function SystemResourcesCard({ engineStatus }: { engineStatus: EngineStatus }) {
   if (!resources) return null;
 
   const cpuPercent = Number(resources.cpu_percent ?? 0);
-  const ramPercent = Number(resources.memory_percent ?? 0);
-  const ramUsed = Number(resources.memory_used_gb ?? 0);
-  const ramTotal = Number(resources.memory_total_gb ?? 0);
+  const cpuCores = resources.cpu_cores as number | undefined;
+  const cpuLogical = resources.cpu_logical as number | undefined;
+  const cpuFreq = resources.cpu_freq as string | undefined;
+  // Backend returns ram_* fields; support both names for forward compatibility
+  const ramPercent = Number(resources.ram_percent ?? resources.memory_percent ?? 0);
+  const ramUsed = Number(resources.ram_used_gb ?? resources.memory_used_gb ?? 0);
+  const ramTotal = Number(resources.ram_total_gb ?? resources.memory_total_gb ?? 0);
   const diskPercent = Number(resources.disk_percent ?? 0);
   const diskUsed = Number(resources.disk_used_gb ?? 0);
   const diskTotal = Number(resources.disk_total_gb ?? 0);
+
+  // Format storage values: show TB when >= 1000 GB for readability
+  const fmtStorage = (gb: number) =>
+    gb >= 1000 ? `${(gb / 1024).toFixed(1)} TB` : `${gb.toFixed(0)} GB`;
+
+  const cpuDetail = cpuCores
+    ? `${cpuPercent.toFixed(0)}% · ${cpuCores}c/${cpuLogical ?? cpuCores}t${cpuFreq ? ` · ${cpuFreq}` : ""}`
+    : `${cpuPercent.toFixed(0)}%`;
 
   return (
     <Card>
@@ -1409,9 +1436,9 @@ function SystemResourcesCard({ engineStatus }: { engineStatus: EngineStatus }) {
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-3 gap-4">
-          <ResourceBar label="CPU" percent={cpuPercent} detail={`${cpuPercent.toFixed(0)}%`} />
-          <ResourceBar label="RAM" percent={ramPercent} detail={`${ramUsed.toFixed(1)} / ${ramTotal.toFixed(0)} GB`} />
-          <ResourceBar label="Disk" percent={diskPercent} detail={`${diskUsed.toFixed(0)} / ${diskTotal.toFixed(0)} GB`} />
+          <ResourceBar label="CPU" percent={cpuPercent} detail={cpuDetail} />
+          <ResourceBar label="RAM" percent={ramPercent} detail={`${ramUsed.toFixed(1)} / ${fmtStorage(ramTotal)}`} />
+          <ResourceBar label="Disk" percent={diskPercent} detail={`${fmtStorage(diskUsed)} / ${fmtStorage(diskTotal)}`} />
         </div>
       </CardContent>
     </Card>

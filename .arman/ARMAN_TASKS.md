@@ -34,7 +34,7 @@ _Last updated: 2026-03-02_
 ### 4. Supabase & Cloud Config
 - [ ] **Add "close this tab" page on aimatrx.com** — After OAuth approval, the system browser lands on a blank/confusing page showing the `aimatrx://` URL. Add a page at `aimatrx.com/oauth/success` (or similar) that shows "You're signed in! You can close this tab." Then update the Supabase OAuth consent flow to redirect the browser there after firing the deep link. This is purely a UX improvement — the app itself works correctly without it.
 - [ ] **Add `aimatrx://auth/callback` to OAuth client redirect URIs** — In Supabase Dashboard → Authentication → OAuth Apps → client `af37ec97-3e0c-423c-a205-3d6c5adc5645`, add `aimatrx://auth/callback` as a redirect URI. This is the production deep-link URI used by the Tauri app on macOS, Linux, and Windows. The `aimatrx` scheme is already registered in `tauri.conf.json`. Keep the existing URIs (`http://localhost:1420/auth/callback`, `http://localhost:22140/auth/callback`, `tauri://localhost/auth/callback`).
-- [ ] **Run migration 005** — `migrations/005_hardware_identity.sql` adds `hardware_uuid`, `serial_number`, `board_id` columns to `app_instances`. Run in Supabase SQL Editor.
+- [x] **Run migration 005** — `migrations/005_hardware_identity.sql` adds `hardware_uuid`, `serial_number`, `board_id` columns to `app_instances`. Applied via MCP 2026-03-11.
 - [ ] **Verify `app_settings` Table** — Check RLS and existence. [HOWTO.md → Cloud Sync](HOWTO.md#app_settings-table)
 - [ ] **Verify `note_folders` Table** — "New Folder" failing suggests RLS/Table issue. [HOWTO.md → Cloud Sync](HOWTO.md#note_folders-table)
 - [ ] **Add `BRAVE_API_KEY` to `.env`** — Required for web search. [HOWTO.md → Cloud Sync](HOWTO.md#brave_api_key-for-web-search)

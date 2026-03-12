@@ -96,6 +96,8 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
 
   const abortRef = useRef<AbortController | null>(null);
   const llmUnlistenRef = useRef<UnlistenFn | null>(null);
+  const runInstallRef = useRef<(() => void) | null>(null);
+  const autoInstallFiredRef = useRef(false);
 
   const { logs, logLine, logData, clearLogs } = useDebugTerminal();
   const { permissions: permissionStates } = usePermissions();
@@ -135,48 +137,78 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
     setPhase("checking");
     setStatusError(null);
     logLine("info", "Checking system setup status...");
-    try {
-      const status = await engine.getSetupStatus();
-      setSetupStatus(status);
 
-      logLine("info", `Platform: ${status.platform} ${status.architecture}`);
-      if (status.gpu_available) logLine("info", `GPU detected: ${status.gpu_name}`);
-
-      const initial: Record<string, ComponentProgress> = {};
-      for (const comp of status.components) {
-        initial[comp.id] = {
-          status: comp.status,
-          message: comp.detail || "",
-          percent: comp.status === "ready" ? 100 : 0,
-          deep_link: comp.deep_link,
-        };
-        const level =
-          comp.status === "ready" ? "success" :
-          comp.status === "error" ? "error" :
-          comp.status === "warning" ? "warn" : "warn";
-        logLine(level, `${comp.label}: ${comp.status}${comp.detail ? ` — ${comp.detail}` : ""}`);
+    // Retry up to 5 times with exponential backoff. The engine may have just
+    // finished booting and its internal services (permissions checker, etc.)
+    // need a moment to settle — this is why "Re-Check" always worked but the
+    // first automatic check failed with "Load failed".
+    let status: SetupStatus | null = null;
+    let lastError = "";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        status = await engine.getSetupStatus();
+        break;
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+        if (attempt < 4) {
+          const delayMs = [500, 1000, 2000, 3000][attempt] ?? 3000;
+          logLine("warn", `Status check attempt ${attempt + 1} failed — retrying in ${delayMs}ms...`);
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
       }
-      setProgress(initial);
+    }
 
-      if (status.setup_complete) {
-        setPhase("complete");
-        logLine("success", "All core components are ready");
+    if (!status) {
+      setStatusError(lastError);
+      setPhase("ready");
+      logLine("error", `Failed to check status after 5 attempts: ${lastError}`);
+      return;
+    }
+
+    setSetupStatus(status);
+    logLine("info", `Platform: ${status.platform} ${status.architecture}`);
+    if (status.gpu_available) logLine("info", `GPU detected: ${status.gpu_name}`);
+
+    const initial: Record<string, ComponentProgress> = {};
+    for (const comp of status.components) {
+      initial[comp.id] = {
+        status: comp.status,
+        message: comp.detail || "",
+        percent: comp.status === "ready" ? 100 : 0,
+        deep_link: comp.deep_link,
+      };
+      const level =
+        comp.status === "ready" ? "success" :
+        comp.status === "error" ? "error" :
+        comp.status === "warning" ? "warn" : "warn";
+      logLine(level, `${comp.label}: ${comp.status}${comp.detail ? ` — ${comp.detail}` : ""}`);
+    }
+    setProgress(initial);
+
+    if (status.setup_complete) {
+      setPhase("complete");
+      logLine("success", "All core components are ready");
+    } else {
+      const notReady = status.components.filter(
+        (c) => BLOCKING_IDS.has(c.id) && c.status !== "ready"
+      );
+      logLine("warn", `${notReady.length} required component(s) need setup — starting automatically`);
+
+      // Auto-start installation on first run. We only fire this once per app
+      // session so a cancelled/errored install doesn't loop.
+      if (!autoInstallFiredRef.current) {
+        autoInstallFiredRef.current = true;
+        setPhase("ready");
+        // Small delay so the UI renders the component list before the
+        // install progress starts streaming in.
+        setTimeout(() => { runInstallRef.current?.(); }, 600);
       } else {
         setPhase("ready");
-        const notReady = status.components.filter(
-          (c) => BLOCKING_IDS.has(c.id) && c.status !== "ready"
-        );
-        logLine("warn", `${notReady.length} required component(s) need setup`);
       }
-
-      // Load Tauri optional status after engine status loads
-      await loadTauriStatus();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setStatusError(msg);
-      setPhase("ready");
-      logLine("error", `Failed to check status: ${msg}`);
     }
+
+    // Load Tauri optional status after engine status loads
+    await loadTauriStatus();
   }, [engineStatus, logLine, loadTauriStatus]);
 
   useEffect(() => {
@@ -274,6 +306,9 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
       }
     }
   }, [setupStatus, checkStatus, onSetupComplete, logLine, logData]);
+
+  // Keep ref current so auto-install can call it without circular deps.
+  runInstallRef.current = runInstall;
 
   const cancelInstall = useCallback(() => {
     abortRef.current?.abort();

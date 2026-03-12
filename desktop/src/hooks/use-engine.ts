@@ -38,6 +38,21 @@ export function useEngine(authenticated = true) {
   // Timestamp when the engine was first discovered. Used to suppress false
   // "disconnected" flips during the engine's slow startup phase (~60s).
   const connectedAtRef = useRef<number | null>(null);
+  // Timestamp of the last successful cloud configure call. Used to deduplicate
+  // the configure call that fires from onAuthStateChange(INITIAL_SESSION) when
+  // initialize() has already done it within the last 10 seconds.
+  const lastCloudConfigureRef = useRef<number>(0);
+
+  // Wire up the token provider immediately so all authenticated calls have
+  // access to the current JWT. This must happen before initialize() runs.
+  // We always register it — the provider handles the case where no session
+  // exists by returning null, which authHeaders() converts to no header.
+  useEffect(() => {
+    engine.setTokenProvider(async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      return session?.access_token ?? null;
+    });
+  }, []);
 
   const update = useCallback((partial: Partial<EngineState>) => {
     if (mountedRef.current) {
@@ -138,10 +153,15 @@ export function useEngine(authenticated = true) {
         // Non-critical
       }
 
-      // Connect WebSocket
+      // Connect WebSocket — only when we have a token; the server rejects
+      // unauthenticated WS connections with 403 and the auto-reconnect loop
+      // would hammer the server until auth is available.
       try {
-        await engine.connectWebSocket();
-        update({ wsConnected: true });
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          await engine.connectWebSocket();
+          update({ wsConnected: true });
+        }
       } catch {
         // WS is optional, REST still works
       }
@@ -153,6 +173,7 @@ export function useEngine(authenticated = true) {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.access_token && session?.user?.id) {
+          lastCloudConfigureRef.current = Date.now();
           await engine.configureCloudSync(session.access_token, session.user.id);
           engine.cloudHeartbeat().catch(() => {});
         }
@@ -232,7 +253,11 @@ export function useEngine(authenticated = true) {
         if (!engine.engineUrl) return;
         if (event === "SIGNED_IN" || event === "INITIAL_SESSION") {
           if (session?.access_token && session?.user?.id) {
+            // Skip if initialize() already sent configure within the last 10s
+            // to avoid a duplicate call on the INITIAL_SESSION event.
+            if (Date.now() - lastCloudConfigureRef.current < 10_000) return;
             try {
+              lastCloudConfigureRef.current = Date.now();
               await engine.configureCloudSync(session.access_token, session.user.id);
               engine.cloudHeartbeat().catch(() => {});
             } catch {

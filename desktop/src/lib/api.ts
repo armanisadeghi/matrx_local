@@ -755,16 +755,29 @@ class EngineAPI {
     this.eventListeners.get(event)?.forEach((cb) => cb(data));
   }
 
+  private reconnectDelay = 3000;
+  private readonly MAX_RECONNECT_DELAY = 60000;
+
   private scheduleReconnect() {
     if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
+      // Don't attempt reconnect if there's no token — the server will
+      // reject with 403 and we'd loop forever. Wait for auth state changes
+      // to trigger a reconnect via connectWebSocket() instead.
+      const token = this._getAccessToken ? await this._getAccessToken() : null;
+      if (!token) {
+        this.reconnectDelay = 3000; // reset backoff
+        return;
+      }
       try {
         await this.connectWebSocket();
+        this.reconnectDelay = 3000; // reset on success
       } catch {
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.MAX_RECONNECT_DELAY);
         this.scheduleReconnect();
       }
-    }, 3000);
+    }, this.reconnectDelay);
   }
 
   /** Disconnect and clean up. */
@@ -1743,6 +1756,7 @@ export interface PermissionInfo {
   fixable?: boolean;
   fix_capability_id?: string | null;
   devices?: Array<Record<string, unknown>>;
+  deep_link?: string | null;
 }
 
 export interface DevicePermissionsResponse {

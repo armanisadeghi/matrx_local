@@ -7,6 +7,8 @@ requiring the user to touch a terminal.
 
 from __future__ import annotations
 
+import importlib.metadata
+import importlib.util
 import subprocess
 import sys
 from typing import Literal
@@ -144,8 +146,6 @@ def _check_module(module_name: str) -> bool:
     # `fitz` stub package that matrx-utils historically pulled in.
     if module_name == "fitz":
         try:
-            import importlib.metadata
-
             importlib.metadata.version("PyMuPDF")
             return True
         except importlib.metadata.PackageNotFoundError:
