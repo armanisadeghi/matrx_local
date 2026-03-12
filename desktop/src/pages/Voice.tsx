@@ -528,15 +528,20 @@ function TranscribeTab({
           </div>
         )}
 
-        <div className="flex items-center justify-center py-8">
+        <div className="flex flex-col items-center gap-4 py-6">
           <button
             onClick={state.isRecording ? actions.stopRecording : () => actions.startRecording()}
             className={cn(
               "flex h-20 w-20 items-center justify-center rounded-full transition-all duration-300",
               state.isRecording
-                ? "bg-red-500 text-white shadow-lg shadow-red-500/25 hover:bg-red-600 animate-pulse"
+                ? "bg-red-500 text-white shadow-lg shadow-red-500/25 hover:bg-red-600"
                 : "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90"
             )}
+            style={
+              state.isRecording && state.liveRms > 0.00005
+                ? { boxShadow: `0 0 ${8 + Math.min(state.liveRms * 8000, 40)}px ${4 + Math.min(state.liveRms * 4000, 20)}px rgba(239,68,68,${Math.min(0.2 + state.liveRms * 200, 0.6)})` }
+                : undefined
+            }
           >
             {state.isRecording ? (
               <MicOff className="h-8 w-8" />
@@ -544,17 +549,39 @@ function TranscribeTab({
               <Mic className="h-8 w-8" />
             )}
           </button>
-        </div>
 
-        {state.isRecording && (
-          <div className="flex items-center justify-center gap-2 text-sm text-red-500">
-            <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-            Recording
-            {state.selectedDevice && (
-              <span className="text-muted-foreground text-xs">· {state.selectedDevice}</span>
-            )}
-          </div>
-        )}
+          {/* Live audio level meter */}
+          {state.isRecording && (
+            <div className="w-full max-w-xs space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                  {state.isCalibrating ? "Calibrating mic level…" : "Recording"}
+                  {state.selectedDevice && (
+                    <span className="text-muted-foreground/60">· {state.selectedDevice}</span>
+                  )}
+                </span>
+                <span className="font-mono tabular-nums">
+                  {state.liveRms > 0 ? (state.liveRms * 1000).toFixed(2) : "—"}
+                </span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all duration-75",
+                    state.liveRms > 0.001 ? "bg-green-500" : state.liveRms > 0.0001 ? "bg-yellow-500" : "bg-red-400"
+                  )}
+                  style={{ width: `${Math.min(state.liveRms * 10000, 100)}%` }}
+                />
+              </div>
+              {state.liveRms > 0 && state.liveRms < 0.0001 && !state.isCalibrating && (
+                <p className="text-xs text-amber-500">
+                  Very low signal. Check microphone permissions in System Settings → Privacy &amp; Security.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Error */}

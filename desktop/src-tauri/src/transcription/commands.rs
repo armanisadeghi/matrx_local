@@ -256,9 +256,20 @@ pub async fn start_transcription(
         let sample_rate = capture.sample_rate(); // always 16000 after resampling
         let target_samples = sample_rate as usize * 5; // 5 seconds
 
-        // RMS silence threshold: below this we skip inference to avoid hallucinations.
-        // ~-40 dB relative to full scale. Tuned for typical office environments.
-        let silence_threshold: f32 = 0.01;
+        // Silence gate: skip Whisper on truly silent chunks to avoid hallucinations.
+        //
+        // The threshold is adaptive: we measure the first 2 seconds of audio (the
+        // "floor") and set the gate at 10× that floor.  This handles the wide range
+        // of device gain levels — AirPods at 24kHz deliver ~0.0001 floor, while a
+        // USB desk mic at 44.1kHz delivers ~0.001 floor.  10× gives headroom without
+        // letting clear-silence chunks through.
+        //
+        // We also keep a hard minimum (0.00001) so the gate fires on dead-silent
+        // streams (permission denied / muted) rather than transcribing noise.
+        let mut silence_threshold: f32 = 0.00010; // starting value; adapted below
+        let mut floor_samples: Vec<f32> = Vec::with_capacity(sample_rate as usize * 2);
+        let mut floor_calibrated = false;
+        let mut loop_ticks: u32 = 0;
 
         let mut accumulated = Vec::<f32>::with_capacity(target_samples + 4096);
 
@@ -270,7 +281,36 @@ pub async fn start_transcription(
             let samples = capture.drain();
             if !samples.is_empty() {
                 accumulated.extend_from_slice(&samples);
+
+                // Calibrate silence threshold from the first 2s of audio.
+                // We collect raw samples before speech starts, compute their RMS,
+                // and use 10× that as the gate.  This fires once on first startup.
+                if !floor_calibrated {
+                    floor_samples.extend_from_slice(&samples);
+                    if floor_samples.len() >= sample_rate as usize * 2 {
+                        let floor_rms = rms_energy(&floor_samples);
+                        // 10× floor, clamped to [0.00001, 0.001]
+                        silence_threshold = (floor_rms * 10.0).clamp(0.00001, 0.001);
+                        floor_calibrated = true;
+                        let _ = app_events.emit(
+                            "whisper-calibrated",
+                            serde_json::json!({
+                                "floor_rms": floor_rms,
+                                "threshold": silence_threshold,
+                            }),
+                        );
+                    }
+                }
+
+                // Emit live RMS every ~250ms for the UI audio meter (every 5 loop ticks at 50ms each).
+                let recent = accumulated.len().min(sample_rate as usize / 4);
+                if recent > 0 && loop_ticks % 5 == 0 {
+                    let rms_live = rms_energy(&accumulated[accumulated.len() - recent..]);
+                    let _ = app_events.emit("whisper-rms", rms_live);
+                }
             }
+
+            loop_ticks += 1;
 
             if accumulated.len() >= target_samples {
                 let audio_chunk = accumulated.drain(0..target_samples).collect::<Vec<f32>>();

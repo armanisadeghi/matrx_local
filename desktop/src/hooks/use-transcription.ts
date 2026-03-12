@@ -33,6 +33,10 @@ export interface TranscriptionState {
   segments: WhisperSegment[];
   fullTranscript: string;
   activeModel: string | null;
+  /** Live RMS energy from the microphone (0–1). Updated ~5Hz while recording. */
+  liveRms: number;
+  /** Whether the adaptive silence calibration has finished (first 2s of recording). */
+  isCalibrating: boolean;
 
   // Devices
   audioDevices: AudioDeviceInfo[];
@@ -77,6 +81,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
+  const [liveRms, setLiveRms] = useState(0);
+  const [isCalibrating, setIsCalibrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const unlistenersRef = useRef<UnlistenFn[]>([]);
@@ -230,6 +236,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const startRecording = useCallback(async (deviceName?: string) => {
     setError(null);
     setSegments([]);
+    setLiveRms(0);
+    setIsCalibrating(true);
 
     const segmentUnlisten = await tauriListen<WhisperSegment>(
       "whisper-segment",
@@ -241,9 +249,22 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     const errorUnlisten = await tauriListen<string>("whisper-error", (event) => {
       setError(event.payload);
       setIsRecording(false);
+      setLiveRms(0);
+      setIsCalibrating(false);
     });
 
-    unlistenersRef.current.push(segmentUnlisten, errorUnlisten);
+    const rmsUnlisten = await tauriListen<number>("whisper-rms", (event) => {
+      setLiveRms(event.payload);
+    });
+
+    const calibratedUnlisten = await tauriListen<{ floor_rms: number; threshold: number }>(
+      "whisper-calibrated",
+      () => {
+        setIsCalibrating(false);
+      }
+    );
+
+    unlistenersRef.current.push(segmentUnlisten, errorUnlisten, rmsUnlisten, calibratedUnlisten);
 
     // Prefer explicitly passed device, fall back to persisted selectedDevice state
     const resolvedDevice = deviceName ?? selectedDevice ?? undefined;
@@ -268,6 +289,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
       // Ignore — the recording may have already stopped
     }
     setIsRecording(false);
+    setLiveRms(0);
+    setIsCalibrating(false);
 
     unlistenersRef.current.forEach((fn) => fn());
     unlistenersRef.current = [];
@@ -338,6 +361,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     segments,
     fullTranscript,
     activeModel,
+    liveRms,
+    isCalibrating,
     audioDevices,
     selectedDevice,
     error,
