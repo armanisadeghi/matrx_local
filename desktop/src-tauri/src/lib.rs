@@ -144,33 +144,60 @@ async fn stop_sidecar(state: tauri::State<'_, SidecarState>) -> Result<(), Strin
     Ok(())
 }
 
-/// Restart the app after an update with a clean shutdown sequence.
+/// Shared graceful-shutdown sequence used by both Quit and Restart.
 ///
-/// Unlike calling `relaunch()` directly from the frontend (which terminates
-/// the process without going through the Cocoa/WinRT shutdown sequence and
-/// causes macOS to log a crash report), this command:
-///   1. Kills the Python sidecar process gracefully.
-///   2. Kills the llama-server process if running.
-///   3. Calls `app.restart()` which goes through the proper Tauri/Cocoa
-///      termination handshake before relaunching, so macOS does NOT
-///      generate a crash report.
-#[tauri::command]
-async fn restart_for_update(
-    app: tauri::AppHandle,
-    sidecar_state: tauri::State<'_, SidecarState>,
-    llm_state: tauri::State<'_, llm::commands::LlmServerState>,
-) -> Result<(), String> {
-    // Kill the Python engine sidecar
+/// SIGABRT root cause: whisper.cpp and llama.cpp embed the GGML C library
+/// which stores thread-local state. When `std::process::exit()` fires (via
+/// tao's `AppState::exit`) without first dropping the WhisperContext / LLM
+/// server, the GGML atexit handlers call `ggml_abort()` → C `abort()` →
+/// SIGABRT. macOS records this as a crash report even though the user
+/// triggered an intentional quit or update restart.
+///
+/// Fix: always explicitly drop all GGML-bearing state before calling any
+/// Tauri exit/restart function so the Rust destructors run in order and
+/// GGML's own cleanup completes before the process terminates.
+fn graceful_shutdown_sync(
+    sidecar_state: &SidecarState,
+    transcription_state: &TranscriptionState,
+    llm_state: &llm::commands::LlmServerState,
+) {
+    // 1. Kill the Python sidecar — no GGML, but good hygiene.
     if let Some(child) = sidecar_state.child.lock().unwrap().take() {
         let _ = child.kill();
     }
 
-    // Kill llama-server if running
+    // 2. Drop the WhisperContext — this runs GGML cleanup in Rust before
+    //    any C atexit handlers, preventing ggml_abort on process exit.
+    if let Ok(mut guard) = transcription_state.0.lock() {
+        *guard = None; // Drops TranscriptionManager → WhisperContext → GGML
+    }
+
+    // 3. Kill llama-server child process — also GGML-based.
     if let Ok(mut server) = llm_state.try_lock() {
         if let Some(child) = server.take_process() {
             let _ = child.kill();
         }
     }
+}
+
+/// Restart the app after an update with a clean shutdown sequence.
+///
+/// Unlike calling `relaunch()` directly from the frontend (which terminates
+/// the process without going through the Cocoa/WinRT shutdown sequence and
+/// causes macOS to log a crash report), this command:
+///   1. Drops all GGML state (WhisperContext, llama-server) so the GGML C
+///      library can clean up without calling abort().
+///   2. Kills the Python sidecar.
+///   3. Calls `app.request_restart()` which goes through the proper Tauri/
+///      Cocoa termination handshake before relaunching.
+#[tauri::command]
+async fn restart_for_update(
+    app: tauri::AppHandle,
+    sidecar_state: tauri::State<'_, SidecarState>,
+    transcription_state: tauri::State<'_, TranscriptionState>,
+    llm_state: tauri::State<'_, llm::commands::LlmServerState>,
+) -> Result<(), String> {
+    graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_state);
 
     // Give child processes a moment to exit cleanly before we restart.
     // This avoids orphaned port bindings on the new instance's startup.
@@ -397,18 +424,12 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 show_main_window(app);
             }
             "quit" => {
-                // Kill the sidecar before quitting
-                let state = app.state::<SidecarState>();
-                if let Some(child) = state.child.lock().unwrap().take() {
-                    let _ = child.kill();
-                }
-                // Kill llama-server if running
+                // Drop all GGML state before exit to prevent ggml_abort → SIGABRT.
+                // See graceful_shutdown_sync() for full explanation.
+                let sidecar_state = app.state::<SidecarState>();
+                let transcription_state = app.state::<TranscriptionState>();
                 let llm_state = app.state::<llm::commands::LlmServerState>();
-                if let Ok(mut server) = llm_state.try_lock() {
-                    if let Some(child) = server.take_process() {
-                        let _ = child.kill();
-                    }
-                }
+                graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_state);
                 app.exit(0);
             }
             _ => {}
@@ -594,19 +615,15 @@ pub fn run() {
                     let _ = window.hide();
                     api.prevent_close();
                 } else {
-                    // User explicitly chose "Quit" — kill sidecar before exit.
-                    if let Some(state) = window.app_handle().try_state::<SidecarState>() {
-                        if let Some(child) = state.child.lock().unwrap().take() {
-                            let _ = child.kill();
-                        }
-                    }
-                    // Kill llama-server if running
-                    if let Some(llm_state) = window.app_handle().try_state::<llm::commands::LlmServerState>() {
-                        if let Ok(mut server) = llm_state.try_lock() {
-                            if let Some(child) = server.take_process() {
-                                let _ = child.kill();
-                            }
-                        }
+                    // User explicitly chose "Quit" — run graceful shutdown before exit.
+                    // Must drop GGML state (whisper/llama) before process terminates
+                    // to prevent ggml_abort → SIGABRT crash reports.
+                    if let (Some(sidecar), Some(transcription), Some(llm)) = (
+                        window.app_handle().try_state::<SidecarState>(),
+                        window.app_handle().try_state::<TranscriptionState>(),
+                        window.app_handle().try_state::<llm::commands::LlmServerState>(),
+                    ) {
+                        graceful_shutdown_sync(&sidecar, &transcription, &llm);
                     }
                     // Fall through: window closes normally, app exits when last window closes.
                 }

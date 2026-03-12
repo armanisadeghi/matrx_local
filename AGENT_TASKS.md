@@ -1,6 +1,6 @@
 # Matrx Local — Task Tracker
 
-_Last updated: 2026-03-11_
+_Last updated: 2026-03-12_
 
 > Living document. Log every discovered bug, issue, and improvement immediately.
 > Keep active items concise and actionable. Completed items go in the History section at the bottom.
@@ -130,6 +130,14 @@ _Last updated: 2026-03-11_
 - [x] **TypeScript permission keys expanded** — `use-permissions.ts` now has `reminders`, `messages`, `mail`, `speech_recognition` as full `PermissionKey` entries with metadata and `settingsUrl` deep links.
 - [x] **`TOOL_PERMISSION_REQUIREMENTS` expanded** — `api.ts` now maps all new tool names to their required permissions.
 - [x] **`PermissionsModal.tsx` updated** — New icons (Bell, MessageSquare, Mail, AudioLines) added; new keys inserted in `PERMISSION_ORDER`.
+
+---
+
+## ✅ COMPLETED — Recent (2026-03-12)
+
+- [x] **Repeated macOS permission prompts on every window focus** — `SCShareableContent.getShareableContentWithCompletionHandler_()` was being used as a status check for screen recording. It is an *active capture operation* that triggers the macOS Sequoia 30-day recurring consent dialog every time it is called. Fixed: replaced with `CGPreflightScreenCaptureAccess()` (read-only, no prompt). Removed the engine cross-check in `use-permissions.ts` that called it. Removed the `onFocusChanged` listener that was firing `checkAll()` across 5 simultaneous hook instances on every System Settings round-trip.
+
+- [x] **App crash report on every quit/restart/permission-approval restart** — macOS recorded `EXC_CRASH (SIGABRT)` via `ggml_abort` on every intentional exit. Root cause: `tao`'s `AppState::exit` calls `std::process::exit()` which triggers GGML C library atexit handlers before Rust drops `WhisperContext`. The GGML atexit handler calls `ggml_abort()` → C `abort()` → SIGABRT. Fixed: introduced `graceful_shutdown_sync()` in `lib.rs` that explicitly drops `TranscriptionState` (releasing `WhisperContext` → GGML) and kills the llama-server before any `app.exit(0)` or `app.request_restart()` call. Applied to all three exit paths: tray Quit, window close handler, and `restart_for_update` command.
 
 ---
 
