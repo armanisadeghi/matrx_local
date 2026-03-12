@@ -1,120 +1,234 @@
-import { ExternalLink, RefreshCw, Loader2 } from "lucide-react";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import supabase from "@/lib/supabase";
 
-const WEB_ORIGIN = "https://www.aimatrx.com";
+// const WEB_ORIGIN = "https://www.aimatrx.com";
+const WEB_ORIGIN = "http://localhost:3000";
 const TARGET_PATH = "/demos/local-tools";
 const HANDOFF_PATH = "/auth/desktop-handoff";
 
-/**
- * Build the iframe src URL with a guaranteed-fresh access token.
- *
- * getSession() returns the cached session without checking expiry. If the
- * JWT has expired (Supabase JWTs last 1 hour), the handoff page receives a
- * dead token and can't authenticate. We pro-actively refresh when the token
- * is within 5 minutes of expiry or already expired.
- *
- * refreshSession() is safe to call here — firing TOKEN_REFRESHED on
- * onAuthStateChange is normal behaviour and does not disrupt the main app.
- * What must be avoided is calling it unnecessarily (which caused the old bug
- * where every tab switch re-triggered auth events). The expiry gate prevents that.
- */
-async function buildIframeSrc(): Promise<string> {
-    let { data: { session } } = await supabase.auth.getSession();
+type DebugLog = { ok: boolean; msg: string };
 
-    if (!session) {
-        return `${WEB_ORIGIN}${TARGET_PATH}`;
+async function buildIframeSrc(
+  addLog: (ok: boolean, msg: string) => void,
+): Promise<string> {
+  addLog(true, "buildIframeSrc() called");
+
+  addLog(true, "Calling supabase.auth.getSession()…");
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    addLog(false, `getSession error: ${sessionError.message}`);
+    return `${WEB_ORIGIN}${TARGET_PATH}`;
+  }
+
+  if (!session) {
+    addLog(
+      false,
+      "getSession returned null — no active session! User is not logged in to desktop app.",
+    );
+    return `${WEB_ORIGIN}${TARGET_PATH}`;
+  }
+
+  addLog(true, `Session found — user: ${session.user?.email ?? "(no email)"}`);
+  addLog(true, `access_token length: ${session.access_token?.length ?? 0}`);
+  addLog(true, `refresh_token length: ${session.refresh_token?.length ?? 0}`);
+  addLog(
+    true,
+    `expires_at: ${session.expires_at} (now: ${Math.floor(Date.now() / 1000)})`,
+  );
+
+  const expiresAt = session.expires_at ?? 0;
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const secondsUntilExpiry = expiresAt - nowSeconds;
+  addLog(secondsUntilExpiry > 0, `Token expires in ${secondsUntilExpiry}s`);
+
+  let finalSession = session;
+  if (secondsUntilExpiry < 300) {
+    addLog(true, "Token expires soon — calling refreshSession()…");
+    const { data: refreshed, error: refreshError } =
+      await supabase.auth.refreshSession();
+    if (refreshError) {
+      addLog(
+        false,
+        `refreshSession error: ${refreshError.message} — using existing token`,
+      );
+    } else if (refreshed.session) {
+      finalSession = refreshed.session;
+      addLog(
+        true,
+        `refreshSession OK — new token length: ${finalSession.access_token?.length}`,
+      );
     }
+  }
 
-    // Refresh if the access token expires within the next 5 minutes.
-    const expiresAt = session.expires_at ?? 0; // Unix seconds
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    if (expiresAt - nowSeconds < 300) {
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        if (refreshed.session) {
-            session = refreshed.session;
-        }
-    }
+  const params = new URLSearchParams({
+    access_token: finalSession.access_token,
+    refresh_token: finalSession.refresh_token,
+    redirect: TARGET_PATH,
+  });
 
-    const params = new URLSearchParams({
-        access_token: session.access_token,
-        refresh_token: session.refresh_token,
-        redirect: TARGET_PATH,
-    });
-
-    return `${WEB_ORIGIN}${HANDOFF_PATH}?${params.toString()}`;
+  const url = `${WEB_ORIGIN}${HANDOFF_PATH}?${params.toString()}`;
+  addLog(true, `Built handoff URL (first 120 chars): ${url.slice(0, 120)}…`);
+  return url;
 }
 
 export function AiMatrx() {
-    const [iframeSrc, setIframeSrc] = useState<string | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [reloadKey, setReloadKey] = useState(0);
-    const location = useLocation();
-    const isVisible = location.pathname === "/aimatrx";
+  const [iframeSrc, setIframeSrc] = useState<string | null>(null);
+  const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
+  const [building, setBuilding] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [showDebug, setShowDebug] = useState(true);
+  const location = useLocation();
+  const isVisible = location.pathname === "/aimatrx";
 
-    // Only build the iframe src when this page is actually visible.
-    // This avoids a Supabase call (and potential token refresh) on every
-    // app startup — the page is always mounted but auth should only run
-    // when the user actually navigates here.
-    useEffect(() => {
-        if (!isVisible) return;
-        setLoading(true);
-        buildIframeSrc()
-            .then(setIframeSrc)
-            .finally(() => setLoading(false));
-    }, [reloadKey, isVisible]);
+  const addLog = (ok: boolean, msg: string) =>
+    setDebugLogs((prev) => [...prev, { ok, msg }]);
 
-    const reload = () => {
-        setIframeSrc(null);
-        setReloadKey((k) => k + 1);
-    };
+  useEffect(() => {
+    if (!isVisible) return;
+    setIframeSrc(null);
+    setDebugLogs([]);
+    setBuilding(true);
+    buildIframeSrc(addLog)
+      .then((src) => {
+        setIframeSrc(src);
+        addLog(true, `iframe src set — loading…`);
+      })
+      .catch((e) => addLog(false, `buildIframeSrc threw: ${String(e)}`))
+      .finally(() => setBuilding(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey, isVisible]);
 
-    return (
-        <div className="flex h-full flex-col">
-            {/* Thin toolbar */}
-            <div className="flex items-center gap-2 border-b bg-background/80 backdrop-blur px-4 py-2 shrink-0">
-                <span className="text-xs font-medium text-muted-foreground truncate flex-1 select-text">
-                    {WEB_ORIGIN}{TARGET_PATH}
-                </span>
-                <button
-                    onClick={reload}
-                    disabled={loading}
-                    title="Reload"
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:opacity-50"
-                >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                </button>
-                <a
-                    href={`${WEB_ORIGIN}${TARGET_PATH}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open in browser"
-                    className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                </a>
+  const reload = () => {
+    setIframeSrc(null);
+    setReloadKey((k) => k + 1);
+  };
+
+  const hasError = debugLogs.some((l) => !l.ok);
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        fontFamily: "monospace",
+      }}
+    >
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 border-b bg-background/80 backdrop-blur px-4 py-2 shrink-0">
+        <span className="text-xs font-medium text-muted-foreground truncate flex-1 select-text">
+          {WEB_ORIGIN}
+          {TARGET_PATH}
+        </span>
+        <button
+          onClick={() => setShowDebug((v) => !v)}
+          title="Toggle debug panel"
+          style={{
+            fontSize: "10px",
+            padding: "2px 6px",
+            borderRadius: "4px",
+            border: "1px solid #374151",
+            background: "#1f2937",
+            color: "#9ca3af",
+            cursor: "pointer",
+          }}
+        >
+          {showDebug ? "Hide Debug" : "Show Debug"}
+        </button>
+        <button
+          onClick={reload}
+          disabled={building}
+          title="Reload"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+        </button>
+        <a
+          href={`${WEB_ORIGIN}${TARGET_PATH}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open in browser"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+      </div>
+
+      {/* Debug panel — shown while building or on error */}
+      {showDebug && (building || debugLogs.length > 0) && (
+        <div
+          style={{
+            background: "#0a0a0a",
+            borderBottom: "1px solid #1f2937",
+            padding: "10px 14px",
+            maxHeight: "220px",
+            overflowY: "auto",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              color: "#60a5fa",
+              fontSize: "11px",
+              marginBottom: "6px",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+          >
+            Desktop → Handoff Debug Log{" "}
+            {hasError ? "⚠️ ERRORS" : building ? "⏳ building…" : "✓ done"}
+          </div>
+          {debugLogs.map((entry, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: "11px",
+                marginBottom: "2px",
+                display: "flex",
+                gap: "6px",
+              }}
+            >
+              <span
+                style={{
+                  color: entry.ok ? "#4ade80" : "#f87171",
+                  flexShrink: 0,
+                }}
+              >
+                {entry.ok ? "✓" : "✗"}
+              </span>
+              <span
+                style={{
+                  color: entry.ok ? "#d1d5db" : "#fca5a5",
+                  wordBreak: "break-all",
+                }}
+              >
+                {entry.msg}
+              </span>
             </div>
-
-            {/* Loading state while we fetch/refresh the session */}
-            {loading && (
-                <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Signing you in…
-                </div>
-            )}
-
-            {/* iframe fills remaining space — only rendered once src is ready */}
-            {!loading && iframeSrc && (
-                <iframe
-                    key={reloadKey}
-                    src={iframeSrc}
-                    title="AiMatrx Local Tools"
-                    className="flex-1 w-full border-0"
-                    allow="camera; microphone; clipboard-read; clipboard-write"
-                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
-                />
-            )}
+          ))}
+          {building && (
+            <div style={{ fontSize: "11px", color: "#6b7280" }}>…</div>
+          )}
         </div>
-    );
+      )}
+
+      {/* iframe */}
+      {!building && iframeSrc && (
+        <iframe
+          key={reloadKey}
+          src={iframeSrc}
+          title="AiMatrx Local Tools"
+          style={{ flex: 1, width: "100%", border: "none" }}
+          allow="camera; microphone; clipboard-read; clipboard-write"
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+        />
+      )}
+    </div>
+  );
 }

@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 IS_WINDOWS = platform.system() == "Windows"
 IS_MACOS = platform.system() == "Darwin"
+IS_LINUX = platform.system() == "Linux"
 
 
 async def tool_list_processes(
@@ -653,3 +654,236 @@ if ($proc) {{
         )
     except Exception as e:
         return ToolResult(type=ToolResultType.ERROR, output=f"Failed to focus app: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Terminal discovery and tail
+# ---------------------------------------------------------------------------
+
+_TERMINAL_NAMES = {
+    # macOS
+    "Terminal", "iTerm2", "iTerm", "Hyper", "Warp", "Alacritty", "kitty",
+    "WezTerm", "wezterm", "tabby", "Tabby",
+    # Linux
+    "gnome-terminal", "konsole", "xterm", "xfce4-terminal", "tilix",
+    "terminator", "rxvt", "urxvt", "st", "foot",
+    # Windows
+    "WindowsTerminal", "cmd", "powershell", "pwsh", "ConEmu", "mintty",
+}
+
+_SHELL_NAMES = {"zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "pwsh", "powershell"}
+
+
+def _is_terminal_or_shell(name: str) -> bool:
+    lower = name.lower()
+    for t in _TERMINAL_NAMES:
+        if t.lower() in lower:
+            return True
+    for s in _SHELL_NAMES:
+        if lower == s or lower == s + ".exe":
+            return True
+    return False
+
+
+async def tool_list_terminals(
+    session: ToolSession,
+) -> ToolResult:
+    """List all running terminal emulators and interactive shells.
+
+    Returns PID, name, status, working directory (when accessible), TTY/PTY
+    device path, command line, and elapsed running time for each process.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return ToolResult(
+            type=ToolResultType.ERROR,
+            output="psutil is required for ListTerminals.",
+        )
+
+    terminals: list[dict] = []
+    now = psutil.boot_time()  # fallback; overridden per-process
+
+    for proc in psutil.process_iter(
+        ["pid", "name", "status", "username", "cwd", "cmdline", "terminal", "create_time"]
+    ):
+        try:
+            info = proc.info
+            name: str = info.get("name") or ""
+            if not _is_terminal_or_shell(name):
+                continue
+
+            cwd = ""
+            try:
+                cwd = info.get("cwd") or proc.cwd() or ""
+            except (psutil.AccessDenied, psutil.NoSuchProcess, OSError):
+                pass
+
+            cmdline: list[str] = info.get("cmdline") or []
+            tty: str = info.get("terminal") or ""
+
+            create_time: float = info.get("create_time") or 0.0
+            import time
+            elapsed_s = int(time.time() - create_time) if create_time else 0
+
+            terminals.append({
+                "pid": info["pid"],
+                "name": name,
+                "status": info.get("status", "unknown"),
+                "user": info.get("username", ""),
+                "cwd": cwd,
+                "tty": tty,
+                "cmdline": " ".join(cmdline) if cmdline else name,
+                "elapsed_s": elapsed_s,
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    terminals.sort(key=lambda t: t["name"].lower())
+
+    lines = [f"{'PID':>8}  {'TTY':<15}  {'ELAPSED':>8}  NAME / CMDLINE"]
+    lines.append("-" * 70)
+    for t in terminals:
+        h, rem = divmod(t["elapsed_s"], 3600)
+        m, s = divmod(rem, 60)
+        elapsed_str = f"{h}h{m:02d}m" if h else f"{m}m{s:02d}s"
+        lines.append(
+            f"{t['pid']:>8}  {(t['tty'] or '-'):<15}  {elapsed_str:>8}  {t['name']} — {t['cmdline'][:60]}"
+        )
+
+    return ToolResult(
+        output=f"Terminal processes ({len(terminals)} found):\n" + "\n".join(lines),
+        metadata={"terminals": terminals, "count": len(terminals)},
+    )
+
+
+async def tool_tail_terminal(
+    session: ToolSession,
+    pid: int | None = None,
+    tty: str | None = None,
+    lines: int = 50,
+) -> ToolResult:
+    """Fetch recent output from a terminal process.
+
+    Reads output by one of three strategies (tried in order):
+    1. If `tty` is provided (e.g. "/dev/ttys003"), read the last `lines` lines
+       directly from the TTY device via `cat` + timeout (macOS/Linux only).
+    2. If `pid` is provided, attempt to read /proc/<pid>/fd/1 (Linux) or
+       use `script`-style capture.  Falls back to running `tail` on any log
+       file associated with the process.
+    3. Fallback: return the open file descriptors of the process so the caller
+       can at least see what files / sockets the process has open.
+
+    Note: reading another process's TTY output reliably requires either the
+    same EUID or root. When access is denied the tool returns what it can
+    plus a clear explanation.
+    """
+    if pid is None and tty is None:
+        return ToolResult(
+            type=ToolResultType.ERROR,
+            output="Provide at least one of: pid, tty.",
+        )
+
+    # ── Strategy 1: read from TTY device directly ────────────────────────────
+    if tty and not IS_WINDOWS:
+        try:
+            result = subprocess.run(
+                ["script", "-q", "/dev/null", "-c", f"cat {tty}"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if result.stdout.strip():
+                tail_lines = result.stdout.strip().splitlines()[-lines:]
+                return ToolResult(
+                    output="\n".join(tail_lines),
+                    metadata={"source": "tty_device", "tty": tty, "lines": len(tail_lines)},
+                )
+        except Exception:
+            pass
+
+        # Alternative: use `strings` or direct open (requires same-uid)
+        try:
+            with open(tty, "rb") as fh:
+                import time
+                fh.seek(0, 2)
+                size = fh.tell()
+                # Read up to 32 KB from the end
+                read_from = max(0, size - 32768)
+                fh.seek(read_from)
+                raw = fh.read()
+            text = raw.decode("utf-8", errors="replace")
+            tail_lines = text.strip().splitlines()[-lines:]
+            return ToolResult(
+                output="\n".join(tail_lines),
+                metadata={"source": "tty_device_direct", "tty": tty, "lines": len(tail_lines)},
+            )
+        except PermissionError:
+            pass
+        except Exception:
+            pass
+
+    # ── Strategy 2: /proc/<pid>/fd/1 (Linux) ────────────────────────────────
+    if pid and IS_LINUX:
+        fd1 = Path(f"/proc/{pid}/fd/1")
+        try:
+            real = fd1.resolve()
+            if real.exists():
+                result = subprocess.run(
+                    ["tail", "-n", str(lines), str(real)],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if result.stdout.strip():
+                    return ToolResult(
+                        output=result.stdout.strip(),
+                        metadata={"source": "proc_fd1", "pid": pid, "path": str(real)},
+                    )
+        except Exception:
+            pass
+
+    # ── Strategy 3: open file descriptors via psutil ─────────────────────────
+    if pid:
+        try:
+            import psutil
+            proc = psutil.Process(pid)
+            fds: list[dict] = []
+            try:
+                for of in proc.open_files():
+                    fds.append({"path": of.path, "fd": of.fd})
+            except psutil.AccessDenied:
+                pass
+
+            connections: list[dict] = []
+            try:
+                for conn in proc.connections():
+                    connections.append({
+                        "fd": conn.fd,
+                        "laddr": f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else "",
+                        "raddr": f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "",
+                        "status": conn.status,
+                    })
+            except psutil.AccessDenied:
+                pass
+
+            note = (
+                "Direct TTY read was not possible (access denied or non-Linux). "
+                "Showing open file descriptors and connections instead."
+            )
+            return ToolResult(
+                output=note,
+                metadata={
+                    "source": "open_fds",
+                    "pid": pid,
+                    "open_files": fds,
+                    "connections": connections,
+                    "note": note,
+                },
+            )
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            return ToolResult(
+                type=ToolResultType.ERROR,
+                output=f"Cannot access process {pid}: {e}",
+            )
+
+    return ToolResult(
+        type=ToolResultType.ERROR,
+        output="Could not read terminal output with available permissions.",
+    )
