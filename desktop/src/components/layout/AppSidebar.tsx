@@ -17,6 +17,7 @@ import {
   Sparkles,
   MonitorSmartphone,
   Mic,
+  BrainCircuit,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -45,6 +46,7 @@ const navItems = [
   { to: "/ports", icon: Network, label: "Ports" },
   { to: "/devices", icon: Cpu, label: "Devices" },
   { to: "/voice", icon: Mic, label: "Voice" },
+  { to: "/local-models", icon: BrainCircuit, label: "Local Models" },
   { to: "/aimatrx", icon: Sparkles, label: "AiMatrx" },
   { to: "/browser", icon: MonitorSmartphone, label: "Browser" },
   { to: "/settings", icon: Settings, label: "Settings" },
