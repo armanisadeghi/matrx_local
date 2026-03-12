@@ -891,45 +891,25 @@ def _wifi_instructions() -> str:
 
 
 def _macos_screen_recording_status() -> PermissionStatus:
-    """Check screen recording permission using ScreenCaptureKit (macOS 12.3+).
+    """Check screen recording permission status — read-only, no prompt.
 
-    SCShareableContent.getShareableContentWithCompletionHandler_ is the Apple-
-    recommended replacement for the deprecated CGPreflightScreenCaptureAccess()
-    and CGDisplayCreateImage() APIs (both deprecated in macOS 15.1).
+    Uses CGPreflightScreenCaptureAccess() from CoreGraphics, which is a
+    passive status-only query. It does NOT trigger a permission dialog.
 
-    How it works:
-    - On first call: if permission is not yet determined, the OS shows the
-      screen recording permission dialog and the call succeeds (NOT_DETERMINED
-      becomes GRANTED after user accepts and app restarts).
-    - If permission is already granted: call succeeds → GRANTED.
-    - If permission is denied: call returns an error → DENIED.
+    IMPORTANT: SCShareableContent.getShareableContentWithCompletionHandler_()
+    was previously used here but it ACTIVELY TRIGGERS the macOS Sequoia
+    recurring 30-day screen recording consent prompt every time it is called.
+    Do not use SCShareableContent for status checks — only use it for actual
+    capture operations when the user has explicitly requested a screenshot.
 
-    Threading: pyobjc completionHandlers run on a background dispatch queue.
-    We use threading.Event to block until the handler fires (bounded by timeout).
+    CGPreflightScreenCaptureAccess() has a known limitation: it returns false
+    until the app is restarted even when the user grants permission in the same
+    session. This is expected macOS TCC cache behaviour and is acceptable for
+    a read-only status display.
     """
-    import threading
-
     try:
-        from ScreenCaptureKit import SCShareableContent  # pyobjc-framework-ScreenCaptureKit
-
-        result: list[PermissionStatus] = []
-        event = threading.Event()
-
-        def completion_handler(content, error):  # type: ignore[override]
-            if error is not None:
-                result.append(PermissionStatus.DENIED)
-            else:
-                result.append(PermissionStatus.GRANTED)
-            event.set()
-
-        SCShareableContent.getShareableContentWithCompletionHandler_(completion_handler)
-
-        # Wait up to 3 seconds for the completion handler to fire.
-        if not event.wait(timeout=3.0):
-            # Timed out — assume permission not yet determined (first run scenario).
-            return PermissionStatus.NOT_DETERMINED
-
-        return result[0] if result else PermissionStatus.UNKNOWN
+        from Quartz import CGPreflightScreenCaptureAccess  # pyobjc-framework-Quartz
+        return PermissionStatus.GRANTED if CGPreflightScreenCaptureAccess() else PermissionStatus.NOT_DETERMINED
     except ImportError:
         return PermissionStatus.UNKNOWN
     except Exception:

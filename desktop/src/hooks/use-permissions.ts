@@ -31,7 +31,7 @@
  *   on focus-return re-check.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { isTauri } from "@/lib/sidecar";
 import { engine } from "@/lib/api";
 
@@ -271,7 +271,6 @@ export function usePermissions(): UsePermissionsReturn {
     buildInitialState,
   );
   const [isLoading, setIsLoading] = useState(true);
-  const checkAllRef = useRef<(() => Promise<void>) | undefined>(undefined);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -307,13 +306,11 @@ export function usePermissions(): UsePermissionsReturn {
    * the UI. The request() flow still correctly directs denied users to System
    * Settings after the first failed prompt.
    *
-   * Screen recording cross-check: CGPreflightScreenCaptureAccess() returns false
-   * until the app is restarted even when permission was just granted in the same
-   * session (known macOS TCC cache behaviour). To detect "granted but preflight
-   * lying", when the plugin returns not_determined we perform a functional test
-   * via the engine GET /devices/permissions/screen_recording, which uses
-   * ScreenCaptureKit (SCShareableContent) — the modern non-deprecated API — as
-   * the authoritative check. If the engine confirms granted we trust that.
+   * Screen recording: Uses CGPreflightScreenCaptureAccess() — a read-only
+   * status query that never triggers a permission dialog. Known limitation:
+   * returns false until app restart after an in-session grant. Do NOT use
+   * SCShareableContent for status checks — it triggers the macOS Sequoia
+   * recurring 30-day consent prompt on every invocation.
    */
   const checkPluginPermission = useCallback(
     async (key: PermissionKey): Promise<PermissionStatus> => {
@@ -333,20 +330,16 @@ export function usePermissions(): UsePermissionsReturn {
             return granted ? "granted" : "not_determined";
 
           case "screen_recording": {
-            // Primary check via CGPreflightScreenCaptureAccess (Rust side).
+            // CGPreflightScreenCaptureAccess() — read-only status query, no prompt.
+            // Known limitation: returns false until app restart after an in-session
+            // grant. This is acceptable — the user will see correct status on next launch.
+            //
+            // DO NOT cross-check via engine.getDevicePermission("screen_recording"):
+            // the engine previously used SCShareableContent which ACTIVELY TRIGGERS
+            // the macOS Sequoia recurring 30-day screen recording consent dialog
+            // every time it is called. That caused repeated prompts on every checkAll().
             granted = await perms.checkScreenRecordingPermission();
-            if (granted) return "granted";
-
-            // Cross-check: CGPreflightScreenCaptureAccess lies until restart.
-            // Ask the engine which uses SCShareableContent (ScreenCaptureKit) —
-            // the Apple-recommended modern check — as the authoritative source.
-            try {
-              const engineResult = await engine.getDevicePermission("screen_recording");
-              if (engineResult.status === "granted") return "granted";
-            } catch {
-              // Engine unavailable — trust the plugin's false result.
-            }
-            return "not_determined";
+            return granted ? "granted" : "not_determined";
           }
 
           case "accessibility":
@@ -423,8 +416,6 @@ export function usePermissions(): UsePermissionsReturn {
     await Promise.all([...pluginChecks, engineCheck]);
     setIsLoading(false);
   }, [checkPluginPermission, updatePermission]);
-
-  checkAllRef.current = checkAll;
 
   // ── Request ────────────────────────────────────────────────────────────────
 
@@ -515,34 +506,18 @@ export function usePermissions(): UsePermissionsReturn {
     checkAll();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Re-check when app regains focus (user may have changed Settings) ───────
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    let unlisten: (() => void) | undefined;
-
-    import("@tauri-apps/api/window")
-      .then(({ getCurrentWindow }) =>
-        getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-          if (focused && checkAllRef.current) {
-            // 600 ms: TCC DB flush + CGPreflightScreenCaptureAccess cache clear
-            setTimeout(() => {
-              checkAllRef.current?.();
-            }, 600);
-          }
-        })
-      )
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch(() => {
-        // Not in Tauri context (browser dev mode) — skip
-      });
-
-    return () => {
-      unlisten?.();
-    };
-  }, []);
+  // NOTE: We intentionally do NOT re-check permissions on window focus.
+  //
+  // The hook is instantiated by multiple components simultaneously (Dashboard,
+  // Voice, Devices, PermissionsModal, SetupWizard). A focus listener here would
+  // fire checkAll() N times in parallel on every focus event — once per mounted
+  // consumer. With the old SCShareableContent-based screen recording check, this
+  // triggered the macOS Sequoia 30-day consent dialog on every System Settings
+  // round-trip, causing repeated prompts.
+  //
+  // The Refresh button in PermissionsModal and Devices pages provides a manual
+  // recheck path. macOS TCC status for CGPreflightScreenCaptureAccess only
+  // updates after an app restart anyway, so auto-recheck provides no real value.
 
   return { permissions, isLoading, check, checkAll, request, openSettings };
 }
