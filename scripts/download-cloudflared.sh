@@ -81,12 +81,12 @@ download_target() {
         # macOS assets are tarballs containing a single `cloudflared` binary
         local tmp_dir
         tmp_dir="$(mktemp -d)"
-        curl -fsSL --progress-bar --connect-timeout 15 --max-time 120 -o "$tmp_dir/cloudflared.tgz" "$url"
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 120 --retry 5 --retry-delay 10 --retry-all-errors -o "$tmp_dir/cloudflared.tgz" "$url"
         tar -xzf "$tmp_dir/cloudflared.tgz" -C "$tmp_dir"
         mv "$tmp_dir/cloudflared" "$dest"
         rm -rf "$tmp_dir"
     else
-        curl -fsSL --progress-bar --connect-timeout 15 --max-time 120 -o "$dest" "$url"
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 120 --retry 5 --retry-delay 10 --retry-all-errors -o "$dest" "$url"
     fi
 
     [[ "$ext" != ".exe" ]] && chmod +x "$dest"

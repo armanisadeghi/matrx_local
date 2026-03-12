@@ -84,7 +84,7 @@ download_target() {
     tmp_dir="$(mktemp -d)"
 
     if [[ "$asset" == *.tar.gz ]]; then
-        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 -o "$tmp_dir/archive.tar.gz" "$url"
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o "$tmp_dir/archive.tar.gz" "$url"
         tar -xzf "$tmp_dir/archive.tar.gz" -C "$tmp_dir"
         # Find llama-server in the extracted directory
         local server_bin
@@ -96,7 +96,7 @@ download_target() {
         fi
         mv "$server_bin" "$dest"
     elif [[ "$asset" == *.zip ]]; then
-        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 -o "$tmp_dir/archive.zip" "$url"
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o "$tmp_dir/archive.zip" "$url"
         # Use unzip or python to extract
         if command -v unzip &>/dev/null; then
             unzip -q "$tmp_dir/archive.zip" -d "$tmp_dir/extracted"
