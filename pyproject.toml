@@ -52,6 +52,10 @@ dependencies = [
     # Media downloading & video processing
     "yt-dlp>=2024.1.0",
     "imageio-ffmpeg>=0.5.1",
+    # Camera capture & video recording (webcam, VideoCapture, VideoWriter)
+    "opencv-python>=4.10.0",
+    # Screen capture fallback (used when system ffmpeg is unavailable)
+    "mss>=9.0.1",
     # Browser automation
     "playwright",
     # System monitoring & process management
