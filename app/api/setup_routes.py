@@ -259,10 +259,14 @@ def _check_transcription() -> ComponentStatus:
 
 
 async def _check_permissions() -> ComponentStatus:
-    """Check OS-level permissions — advisory only, never blocks setup_complete."""
-    system = platform.system()
+    """Check OS-level permissions — advisory only, never blocks setup_complete.
 
-    # macOS Settings deep links (x-apple.systempreferences: scheme)
+    Uses only fast, read-only TCC database probes — no AVFoundation, no
+    CNContactStore, no ScreenCaptureKit. Those APIs trigger native OS dialogs
+    when status is notDetermined. The full permission detail is available via
+    GET /devices/permissions which the Permissions modal uses separately.
+    """
+    system = platform.system()
     PRIVACY_DEEP_LINK = (
         "x-apple.systempreferences:com.apple.preference.security?Privacy"
     )
@@ -276,17 +280,39 @@ async def _check_permissions() -> ComponentStatus:
             detail="No special permissions required on this platform",
         )
 
-    granted = 0
-    total = 0
+    # Fast read-only check: probe TCC DB for the three most important services.
+    # This never triggers any dialog.
     try:
-        from app.services.permissions.checker import check_all_permissions
-        perms = await check_all_permissions()
-        # Only count non-trivial permissions (exclude location/network which are always UNKNOWN)
-        counted = [p for p in perms if p.get("permission") not in ("location",)]
-        total = len(counted)
-        granted = sum(
-            1 for p in counted
-            if p.get("status") in ("granted", "unknown")  # "unknown" = can't probe = assume OK
+        import asyncio as _asyncio
+        from app.services.permissions.checker import _tcc_db_status
+
+        loop = _asyncio.get_event_loop()
+        mic, cam, screen = await _asyncio.gather(
+            loop.run_in_executor(None, _tcc_db_status, "kTCCServiceMicrophone"),
+            loop.run_in_executor(None, _tcc_db_status, "kTCCServiceCamera"),
+            loop.run_in_executor(None, _tcc_db_status, "kTCCServiceScreenCapture"),
+        )
+
+        from app.services.permissions.checker import PermissionStatus
+        checks = {"Microphone": mic, "Camera": cam, "Screen Recording": screen}
+        not_granted = [name for name, s in checks.items() if s != PermissionStatus.GRANTED]
+
+        if not not_granted:
+            return ComponentStatus(
+                id="permissions",
+                label="Device Permissions",
+                description="OS-level access for microphone, screen recording, and accessibility",
+                status="ready",
+                detail="Core permissions granted (microphone, camera, screen recording)",
+            )
+
+        return ComponentStatus(
+            id="permissions",
+            label="Device Permissions",
+            description="OS-level access for microphone, screen recording, and accessibility",
+            status="warning",
+            detail=f"{', '.join(not_granted)} — click Review & Grant to set up permissions",
+            deep_link=PRIVACY_DEEP_LINK,
         )
     except Exception:
         return ComponentStatus(
@@ -294,33 +320,9 @@ async def _check_permissions() -> ComponentStatus:
             label="Device Permissions",
             description="OS-level access for microphone, screen recording, and accessibility",
             status="warning",
-            detail="Could not check permissions — grant access in System Settings",
+            detail="Permissions can be reviewed in the Devices tab",
             deep_link=PRIVACY_DEEP_LINK,
         )
-
-    if granted >= total:
-        return ComponentStatus(
-            id="permissions",
-            label="Device Permissions",
-            description="OS-level access for microphone, screen recording, and accessibility",
-            status="ready",
-            detail=f"All {total} permissions appear granted",
-        )
-
-    # Use "warning" (not "not_ready") — permissions cannot be auto-granted by a
-    # subprocess; they require user action in System Settings.
-    denied = total - granted
-    return ComponentStatus(
-        id="permissions",
-        label="Device Permissions",
-        description="OS-level access for microphone, screen recording, and accessibility",
-        status="warning",
-        detail=(
-            f"{denied} permission(s) may need attention — "
-            "note: some checks are limited when running as a background service"
-        ),
-        deep_link=PRIVACY_DEEP_LINK,
-    )
 
 
 # ---------------------------------------------------------------------------

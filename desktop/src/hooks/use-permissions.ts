@@ -106,10 +106,12 @@ const PERMISSION_META: Record<
     label: "Screen Recording",
     description: "Screenshot tool and screen-based automation",
     tools: ["Screenshot", "BrowserScreenshot"],
-    // Screen recording cannot be prompted programmatically on macOS 15+.
-    // CGRequestScreenCaptureAccess() is deprecated in macOS 15.1.
-    // The only correct path is: check → if not granted → open System Settings.
-    canPrompt: false,
+    // Screen recording CAN be prompted when not_determined (the OS shows the
+    // native "AI Matrx.app would like to record your screen" dialog).
+    // Once denied or granted, CGRequestScreenCaptureAccess has no effect —
+    // the user must change it in System Settings. The request() function
+    // handles this by prompting when not_determined and opening Settings otherwise.
+    canPrompt: true,
     settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
   },
   accessibility: {
@@ -231,10 +233,10 @@ const PLUGIN_KEYS = new Set<PermissionKey>([
   "input_monitoring",
 ]);
 
-// Permissions where the OS can show an in-app dialog via AVFoundation.
-// Screen recording is NOT here — CGRequestScreenCaptureAccess is deprecated on
-// macOS 15.1 and the correct path is always System Settings.
-const CAN_PROMPT_KEYS = new Set<PermissionKey>(["microphone", "camera"]);
+// Permissions where the OS can show an in-app dialog on NOT_DETERMINED.
+// Screen recording is included: the native dialog fires on first request.
+// Once denied or granted, the user must change it in System Settings.
+const CAN_PROMPT_KEYS = new Set<PermissionKey>(["microphone", "camera", "screen_recording"]);
 
 // How long to wait after firing a prompt request before re-checking status.
 // AVFoundation completionHandler fires async; we need a small buffer.
@@ -442,10 +444,12 @@ export function usePermissions(): UsePermissionsReturn {
       }
 
       if (CAN_PROMPT_KEYS.has(key)) {
-        // Mic/Camera: AVFoundation request → async OS dialog → completionHandler.
-        // Plugin call returns before the user responds, so we wait
-        // POST_REQUEST_DELAY_MS before re-checking.
+        // These permissions CAN show a native OS dialog on NOT_DETERMINED.
+        // For mic/camera: AVFoundation fires the dialog, plugin handles it.
+        // For screen_recording: the native dialog fires on NOT_DETERMINED only;
+        //   once denied/granted the user must change it in System Settings.
         if (isTauri()) {
+          const currentStatus = permissions.get(key)?.status;
           try {
             const perms = await import("tauri-plugin-macos-permissions-api");
             switch (key) {
@@ -455,27 +459,31 @@ export function usePermissions(): UsePermissionsReturn {
               case "camera":
                 await perms.requestCameraPermission();
                 break;
+              case "screen_recording":
+                if (currentStatus === "not_determined") {
+                  // First-time request: the OS shows the native dialog.
+                  await perms.requestScreenRecordingPermission();
+                } else {
+                  // Already denied or granted — only System Settings can change it.
+                  await openSettings(key);
+                  return;
+                }
+                break;
             }
           } catch {
             // Ignore — will re-check below
           }
-          // Wait for the OS dialog and AVFoundation callback to settle
+          // Wait for the OS dialog and callback to settle
           await delay(POST_REQUEST_DELAY_MS);
           await check(key);
         }
       } else {
-        // Screen Recording, Accessibility, Full Disk Access, Input Monitoring:
-        // These CANNOT be prompted programmatically on macOS 15+.
-        // CGRequestScreenCaptureAccess is deprecated in macOS 15.1.
-        // The plugin's request functions open System Settings to the correct pane.
+        // Accessibility, Full Disk Access, Input Monitoring:
+        // These CANNOT be prompted programmatically — open System Settings.
         if (isTauri()) {
           try {
             const perms = await import("tauri-plugin-macos-permissions-api");
             switch (key) {
-              case "screen_recording":
-                // Open System Settings directly — no deprecated CGRequest call.
-                await openSettings(key);
-                break;
               case "accessibility":
                 await perms.requestAccessibilityPermission();
                 break;
@@ -494,7 +502,6 @@ export function usePermissions(): UsePermissionsReturn {
         } else {
           await openSettings(key);
         }
-        // Status re-checked via the window focus listener when user returns
       }
     },
     [check, openSettings],

@@ -1307,42 +1307,87 @@ def _avfoundation_auth_status(media_type: str) -> PermissionStatus | None:
     media_type: "soun" for audio (microphone), "vide" for video (camera).
     Returns PermissionStatus or None if AVFoundation is not available.
 
-    Uses the official pyobjc-framework-AVFoundation package (explicit import,
-    not the fragile objc.loadBundle path). macOS 10.14+ authoritative API.
-    """
-    try:
-        from AVFoundation import AVCaptureDevice  # pyobjc-framework-AVFoundation
+    IMPORTANT: On macOS 14+ (Sonoma) and macOS 15 (Sequoia),
+    AVCaptureDevice.authorizationStatusForMediaType_() TRIGGERS the native
+    TCC permission dialog when the status is notDetermined (0). This function
+    MUST NOT be called from the Python sidecar process. TCC prompts must only
+    originate from the main Tauri .app bundle process via tauri-plugin-macos-
+    permissions, not from the background sidecar. Calling it from the sidecar
+    associates the prompt with "Terminal" or "aimatrx-engine" rather than
+    "AI Matrx.app", confuses the user, and can cause repeated prompts.
 
-        status_code = AVCaptureDevice.authorizationStatusForMediaType_(media_type)
-        # AVAuthorizationStatus: 0=notDetermined, 1=restricted, 2=denied, 3=authorized
-        return {
-            0: PermissionStatus.NOT_DETERMINED,
-            1: PermissionStatus.RESTRICTED,
-            2: PermissionStatus.DENIED,
-            3: PermissionStatus.GRANTED,
-        }.get(status_code, PermissionStatus.UNKNOWN)
+    This function is intentionally disabled — it returns None unconditionally
+    so callers fall through to the TCC database probe (_tcc_db_status) which
+    is read-only and never triggers any dialog.
+    """
+    # DO NOT call AVCaptureDevice.authorizationStatusForMediaType_ here.
+    # See the docstring above for the full explanation.
+    return None
+
+
+def _tcc_db_status(service: str) -> PermissionStatus:
+    """Read TCC permission status from the macOS TCC SQLite database.
+
+    This is a PASSIVE read-only operation — it never triggers any permission
+    dialog. The TCC database at ~/Library/Application Support/com.apple.TCC/TCC.db
+    stores the grant status for every permission the user has been asked about.
+
+    Schema: SELECT auth_value FROM access WHERE service=? AND client=?
+    auth_value: 0=deny, 1=unknown/ask, 2=allow, 3=limited
+
+    Limitation: this only sees rows that exist (i.e. the user was prompted at
+    least once). If no row exists → NOT_DETERMINED (never been asked).
+
+    Full Disk Access is needed to read the system TCC DB; we try only the
+    per-user DB which is always readable by the owning user.
+    """
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    tcc_db = _Path.home() / "Library" / "Application Support" / "com.apple.TCC" / "TCC.db"
+    if not tcc_db.exists():
+        return PermissionStatus.UNKNOWN
+
+    try:
+        conn = _sqlite3.connect(f"file:{tcc_db}?mode=ro", uri=True, timeout=2.0)
+        # The `client` column holds the bundle ID or process name.
+        # We check for any row matching our service regardless of client so we
+        # know whether the user has ever been asked (and what they answered).
+        rows = conn.execute(
+            "SELECT auth_value FROM access WHERE service=?", (service,)
+        ).fetchall()
+        conn.close()
+
+        if not rows:
+            return PermissionStatus.NOT_DETERMINED  # never been asked
+
+        # If ANY row has auth_value=2 (allow), the service is accessible.
+        # Otherwise take the most recently set value.
+        values = [r[0] for r in rows]
+        if 2 in values:
+            return PermissionStatus.GRANTED
+        if 0 in values:
+            return PermissionStatus.DENIED
+        return PermissionStatus.NOT_DETERMINED
+
     except Exception:
-        return None
+        return PermissionStatus.UNKNOWN
 
 
 async def _macos_check_tcc(service: str, label: str) -> PermissionStatus:
-    """Try to determine macOS TCC permission status.
+    """Read macOS TCC status for a service — read-only, never triggers a dialog.
 
-    Uses AVFoundation APIs for microphone and camera when available,
-    falling back to heuristic probes.
+    Uses _tcc_db_status() which reads the TCC SQLite database directly.
+    This avoids the AVFoundation / CNContactStore / etc. APIs that trigger
+    the native OS permission dialog when status is notDetermined.
     """
-    if "Microphone" in label:
-        # AVFoundation is the authoritative TCC API for microphone on macOS.
-        # sounddevice.query_devices() is NOT a valid proxy — it can return
-        # devices even when TCC permission is denied (macOS delivers silence).
-        av_status = _avfoundation_auth_status("soun")
-        return av_status if av_status is not None else PermissionStatus.UNKNOWN
-
-    if "Camera" in label:
-        av_status = _avfoundation_auth_status("vide")
-        return av_status if av_status is not None else PermissionStatus.UNKNOWN
-
-    return PermissionStatus.UNKNOWN
+    tcc_service_map = {
+        "Microphone": "kTCCServiceMicrophone",
+        "Camera": "kTCCServiceCamera",
+    }
+    svc = tcc_service_map.get(label, service)
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _tcc_db_status, svc)
 
 
 # ---------------------------------------------------------------------------
