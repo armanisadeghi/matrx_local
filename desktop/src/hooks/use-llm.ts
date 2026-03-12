@@ -20,6 +20,18 @@ async function tauriListen<T>(event: string, handler: (e: { payload: T }) => voi
   return listen<T>(event, handler);
 }
 
+export interface ServerStartProgress {
+  elapsed_secs: number;
+  max_secs: number;
+  phase: string;
+  percent: number;
+}
+
+export interface ServerLogLine {
+  line: string;
+  kind: "loading" | "progress" | "ready" | "error" | "noise";
+}
+
 export interface LlmState {
   // Setup
   setupStatus: LlmSetupStatus | null;
@@ -29,6 +41,8 @@ export interface LlmState {
   isDownloading: boolean;
   isStarting: boolean;
   startingModelName: string | null;
+  serverStartProgress: ServerStartProgress | null;
+  serverLogs: ServerLogLine[];
   downloadCancelled: boolean;
 
   // Server
@@ -76,6 +90,8 @@ export function useLlm(): [LlmState, LlmActions] {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [startingModelName, setStartingModelName] = useState<string | null>(null);
+  const [serverStartProgress, setServerStartProgress] = useState<ServerStartProgress | null>(null);
+  const [serverLogs, setServerLogs] = useState<ServerLogLine[]>([]);
   const [downloadCancelled, setDownloadCancelled] = useState(false);
   const [serverStatus, setServerStatus] = useState<LlmServerStatus | null>(
     null
@@ -109,13 +125,36 @@ export function useLlm(): [LlmState, LlmActions] {
           if (mounted) {
             setServerStatus(event.payload);
             setStartingModelName(null);
+            setServerStartProgress(null);
+            setServerLogs([]);
           }
         }
       );
       const unlistenStarting = await tauriListen<{ model_filename: string; port: number }>(
         "llm-server-starting",
         (event) => {
-          if (mounted) setStartingModelName(event.payload.model_filename);
+          if (mounted) {
+            setStartingModelName(event.payload.model_filename);
+            setServerStartProgress(null);
+            setServerLogs([]);
+          }
+        }
+      );
+      const unlistenProgress = await tauriListen<ServerStartProgress>(
+        "llm-server-progress",
+        (event) => {
+          if (mounted) setServerStartProgress(event.payload);
+        }
+      );
+      const unlistenLog = await tauriListen<ServerLogLine>(
+        "llm-server-log",
+        (event) => {
+          if (!mounted) return;
+          setServerLogs((prev) => {
+            const next = [...prev, event.payload];
+            // Keep last 50 lines
+            return next.length > 50 ? next.slice(next.length - 50) : next;
+          });
         }
       );
       const unlistenStopped = await tauriListen<void>("llm-server-stopped", () => {
@@ -124,6 +163,7 @@ export function useLlm(): [LlmState, LlmActions] {
             prev ? { ...prev, running: false, port: 0 } : null
           );
           setStartingModelName(null);
+          setServerStartProgress(null);
         }
       });
       const unlistenCancelled = await tauriListen<LlmDownloadCancelledEvent>(
@@ -136,7 +176,10 @@ export function useLlm(): [LlmState, LlmActions] {
           }
         }
       );
-      unlistenRef.current.push(unlistenReady, unlistenStarting, unlistenStopped, unlistenCancelled);
+      unlistenRef.current.push(
+        unlistenReady, unlistenStarting, unlistenProgress, unlistenLog,
+        unlistenStopped, unlistenCancelled
+      );
     };
     setupListeners();
 
@@ -253,6 +296,8 @@ export function useLlm(): [LlmState, LlmActions] {
     ) => {
       setIsStarting(true);
       setStartingModelName(modelFilename);
+      setServerStartProgress(null);
+      setServerLogs([]);
       setError(null);
       try {
         const status = await tauriInvoke<LlmServerStatus>("start_llm_server", {
@@ -269,6 +314,7 @@ export function useLlm(): [LlmState, LlmActions] {
       } finally {
         setIsStarting(false);
         setStartingModelName(null);
+        setServerStartProgress(null);
       }
     },
     []
@@ -373,6 +419,8 @@ export function useLlm(): [LlmState, LlmActions] {
     isDownloading,
     isStarting,
     startingModelName,
+    serverStartProgress,
+    serverLogs,
     downloadCancelled,
     serverStatus,
     downloadedModels,

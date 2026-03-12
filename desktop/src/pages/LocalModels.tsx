@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback, createContext, useContext } from "react";
+import { useState, useRef, useCallback, createContext, useContext, useEffect } from "react";
 import { useLlm } from "@/hooks/use-llm";
-import type { LlmState, LlmActions } from "@/hooks/use-llm";
+import type { LlmState, LlmActions, ServerStartProgress, ServerLogLine } from "@/hooks/use-llm";
 import {
   Download,
   Trash2,
@@ -99,6 +99,104 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   );
 }
 
+// ── Model Loading Progress Card ───────────────────────────────────────────
+
+function ModelLoadingCard({
+  modelName,
+  progress,
+  logs,
+}: {
+  modelName: string | null;
+  progress: ServerStartProgress | null;
+  logs: ServerLogLine[];
+}) {
+  const [elapsed, setElapsed] = useState(0);
+  const [showLogs, setShowLogs] = useState(false);
+
+  // Local timer that ticks every second regardless of Tauri events
+  useEffect(() => {
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [modelName]);
+
+  const pct = progress?.percent ?? Math.min((elapsed / 120) * 60, 55);
+  const phase = progress?.phase ?? (elapsed < 3 ? "initializing" : "loading model");
+  const elapsedDisplay = progress?.elapsed_secs ?? elapsed;
+
+  // Meaningful log lines to show
+  const visibleLogs = logs.filter((l) => l.kind !== "noise").slice(-8);
+
+  return (
+    <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+      {/* Header */}
+      <div className="px-4 pt-4 pb-3 space-y-3">
+        <div className="flex items-center gap-2.5">
+          <Activity className="h-4 w-4 text-blue-500 animate-pulse shrink-0" />
+          <p className="text-sm font-semibold">Loading model into memory</p>
+          <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+            {elapsedDisplay}s
+          </span>
+        </div>
+
+        {modelName && (
+          <p className="text-xs text-muted-foreground font-mono truncate pl-6">
+            {modelName}
+          </p>
+        )}
+
+        {/* Progress bar */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground capitalize">{phase}</span>
+            <span className="text-muted-foreground">{pct.toFixed(0)}%</span>
+          </div>
+          <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all duration-1000 ease-linear"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Large models take 10–90 seconds to map into GPU memory.
+          </p>
+        </div>
+      </div>
+
+      {/* Log toggle */}
+      {visibleLogs.length > 0 && (
+        <div className="border-t">
+          <button
+            className="w-full flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
+            onClick={() => setShowLogs((v) => !v)}
+          >
+            {showLogs ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            {showLogs ? "Hide" : "Show"} server output
+          </button>
+          {showLogs && (
+            <div className="px-4 pb-3 space-y-0.5 max-h-40 overflow-y-auto">
+              {visibleLogs.map((l, i) => (
+                <p
+                  key={i}
+                  className={`text-xs font-mono leading-relaxed ${
+                    l.kind === "error"
+                      ? "text-destructive"
+                      : l.kind === "ready"
+                      ? "text-green-600"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {l.line}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Setup Tab ─────────────────────────────────────────────────────────────
 
 function SetupTab() {
@@ -110,6 +208,8 @@ function SetupTab() {
     isDownloading,
     isStarting,
     startingModelName,
+    serverStartProgress,
+    serverLogs,
     downloadCancelled,
     downloadedModels,
     serverStatus,
@@ -260,22 +360,13 @@ function SetupTab() {
             </div>
           )}
 
-          {/* Model loading progress */}
+          {/* Model loading progress — shown while server is starting */}
           {isStarting && (
-            <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Activity className="h-4 w-4 text-blue-500 animate-pulse" />
-                Loading model into memory…
-              </div>
-              {startingModelName && (
-                <p className="text-xs text-muted-foreground font-mono truncate">
-                  {startingModelName}
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground">
-                Large models can take 30–90 seconds to map into GPU memory. Please wait.
-              </p>
-            </div>
+            <ModelLoadingCard
+              modelName={startingModelName}
+              progress={serverStartProgress}
+              logs={serverLogs}
+            />
           )}
 
           {serverStatus?.running && (
@@ -302,7 +393,7 @@ function SetupTab() {
               : isDownloading
               ? "Downloading…"
               : isStarting
-              ? "Loading model… (may take up to 2 min)"
+              ? "Starting server…"
               : serverStatus?.running && isModelDownloaded
               ? "Restart with Recommended Model"
               : isModelDownloaded
@@ -783,6 +874,8 @@ function ModelsTab() {
     isDownloading,
     isStarting,
     startingModelName,
+    serverStartProgress,
+    serverLogs,
     downloadedModels,
     serverStatus,
     error,
@@ -850,16 +943,11 @@ function ModelsTab() {
       )}
 
       {isStarting && (
-        <div className="flex items-center gap-3 rounded-lg border bg-blue-500/5 border-blue-500/20 px-4 py-3 text-sm">
-          <Activity className="h-4 w-4 text-blue-500 animate-pulse shrink-0" />
-          <div>
-            <p className="font-medium text-blue-600">Loading model into memory…</p>
-            {startingModelName && (
-              <p className="text-xs text-muted-foreground mt-0.5 font-mono">{startingModelName}</p>
-            )}
-            <p className="text-xs text-muted-foreground mt-0.5">Large models take 30–90 seconds. Do not close the app.</p>
-          </div>
-        </div>
+        <ModelLoadingCard
+          modelName={startingModelName}
+          progress={serverStartProgress}
+          logs={serverLogs}
+        />
       )}
 
       {allModels.length === 0 && (
