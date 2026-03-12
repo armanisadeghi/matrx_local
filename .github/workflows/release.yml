@@ -112,6 +112,33 @@ jobs:
           fi
         shell: bash
 
+      # ---- Sign llama.cpp dylibs (macOS only) ----
+      # Apple notarization requires every binary inside the app bundle to be
+      # signed with a Developer ID certificate. The llama.cpp dylibs we download
+      # from GitHub Releases are unsigned, so we must sign them here before
+      # tauri-action bundles them via tauri.macos.conf.json resources.
+      - name: Sign llama.cpp dylibs for notarization
+        if: matrix.platform == 'macos-15'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          DYLIB_DIR="desktop/src-tauri/binaries"
+          if ls "$DYLIB_DIR"/*.dylib 1>/dev/null 2>&1; then
+            echo "Signing dylibs in $DYLIB_DIR with identity: $APPLE_SIGNING_IDENTITY"
+            for dylib in "$DYLIB_DIR"/*.dylib; do
+              echo "  Signing: $(basename "$dylib")"
+              codesign \
+                --force \
+                --timestamp \
+                --options runtime \
+                --sign "$APPLE_SIGNING_IDENTITY" \
+                "$dylib"
+            done
+            echo "✅ All dylibs signed"
+          else
+            echo "No dylibs found in $DYLIB_DIR — skipping dylib signing"
+          fi
+
       # ---- Frontend + Tauri build ----
       - name: Install pnpm
         uses: pnpm/action-setup@v4

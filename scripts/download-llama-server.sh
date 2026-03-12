@@ -123,6 +123,26 @@ download_target() {
             if (( dylib_count > 0 )); then
                 echo "  ✓ Copied ${dylib_count} dylib(s) to binaries/"
             fi
+
+            # Rewrite the llama-server binary's rpath so it can locate the dylibs
+            # in two locations:
+            #   1. @executable_path          — dev mode: dylibs next to the binary
+            #   2. @executable_path/../Resources/binaries
+            #                                — production app bundle (Tauri resources)
+            #
+            # The @rpath entries baked in by the llama.cpp build point to an
+            # absolute build-machine path and won't work on end-user machines.
+            if [[ -f "$dest" ]] && command -v install_name_tool &>/dev/null; then
+                # Remove all existing rpaths (the absolute ones from the build machine)
+                while IFS= read -r rpath_entry; do
+                    install_name_tool -delete_rpath "$rpath_entry" "$dest" 2>/dev/null || true
+                done < <(otool -l "$dest" 2>/dev/null | grep -A2 'LC_RPATH' | awk '/path /{print $2}')
+
+                # Add the two paths we actually need
+                install_name_tool -add_rpath "@executable_path" "$dest" 2>/dev/null || true
+                install_name_tool -add_rpath "@executable_path/../Resources/binaries" "$dest" 2>/dev/null || true
+                echo "  ✓ Rewrote rpath: @executable_path + @executable_path/../Resources/binaries"
+            fi
         fi
 
     elif [[ "$asset" == *.zip ]]; then
