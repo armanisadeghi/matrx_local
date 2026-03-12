@@ -63,9 +63,27 @@ export async function checkForUpdates(install = false): Promise<UpdateStatus> {
   return result;
 }
 
-/** Restart the app (used after installing an update). */
+/**
+ * Restart the app after an update with a clean shutdown sequence.
+ *
+ * Calls the Rust `restart_for_update` command which kills the Python sidecar
+ * and llama-server before relaunching via the proper Cocoa/WinRT termination
+ * handshake. This prevents macOS from generating a crash report on update.
+ *
+ * Falls back to a direct `relaunch()` if the Rust command is unavailable
+ * (e.g. in a browser dev environment).
+ */
 export async function restartApp(): Promise<void> {
   if (!isTauri()) return;
+  const inv = await loadTauriInvoke();
+  if (inv) {
+    try {
+      await inv("restart_for_update");
+      return;
+    } catch {
+      // Rust command not available — fall through to direct relaunch
+    }
+  }
   try {
     const { relaunch } = await import("@tauri-apps/plugin-process");
     await relaunch();

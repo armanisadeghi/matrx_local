@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { isTauri, checkForUpdates, type UpdateStatus } from "@/lib/sidecar";
+import { isTauri, checkForUpdates, restartApp, type UpdateStatus } from "@/lib/sidecar";
 import { loadSettings } from "@/lib/settings";
 
 export interface AutoUpdateState {
@@ -129,13 +129,7 @@ export function useAutoUpdate(): [AutoUpdateState, AutoUpdateActions] {
   }, [busy]);
 
   const restart = useCallback(async () => {
-    if (!isTauri()) return;
-    try {
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
-    } catch {
-      // plugin not available
-    }
+    await restartApp();
   }, []);
 
   const dismiss = useCallback(() => {

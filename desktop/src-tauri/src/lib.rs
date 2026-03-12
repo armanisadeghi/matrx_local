@@ -144,6 +144,47 @@ async fn stop_sidecar(state: tauri::State<'_, SidecarState>) -> Result<(), Strin
     Ok(())
 }
 
+/// Restart the app after an update with a clean shutdown sequence.
+///
+/// Unlike calling `relaunch()` directly from the frontend (which terminates
+/// the process without going through the Cocoa/WinRT shutdown sequence and
+/// causes macOS to log a crash report), this command:
+///   1. Kills the Python sidecar process gracefully.
+///   2. Kills the llama-server process if running.
+///   3. Calls `app.restart()` which goes through the proper Tauri/Cocoa
+///      termination handshake before relaunching, so macOS does NOT
+///      generate a crash report.
+#[tauri::command]
+async fn restart_for_update(
+    app: tauri::AppHandle,
+    sidecar_state: tauri::State<'_, SidecarState>,
+    llm_state: tauri::State<'_, llm::commands::LlmServerState>,
+) -> Result<(), String> {
+    // Kill the Python engine sidecar
+    if let Some(child) = sidecar_state.child.lock().unwrap().take() {
+        let _ = child.kill();
+    }
+
+    // Kill llama-server if running
+    if let Ok(mut server) = llm_state.try_lock() {
+        if let Some(child) = server.take_process() {
+            let _ = child.kill();
+        }
+    }
+
+    // Give child processes a moment to exit cleanly before we restart.
+    // This avoids orphaned port bindings on the new instance's startup.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // `request_restart()` fires RunEvent::ExitRequested + RunEvent::Exit and
+    // then relaunches through the proper OS shutdown sequence, so macOS does
+    // not generate a crash report. We use request_restart() (non-diverging)
+    // over restart() (diverging / never returns) because we are on an async
+    // task and need the Tokio runtime to wind down cleanly.
+    app.request_restart();
+    Ok(())
+}
+
 /// Get sidecar status.
 #[tauri::command]
 async fn sidecar_status(state: tauri::State<'_, SidecarState>) -> Result<SidecarStatus, String> {
@@ -423,6 +464,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
+            restart_for_update,
             sidecar_status,
             get_sidecar_logs,
             set_close_to_tray,
