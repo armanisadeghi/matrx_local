@@ -112,17 +112,6 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
     );
   }
 
-  if (!userId) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center text-muted-foreground">
-          <FileText className="h-12 w-12 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">Sign in to access your documents</p>
-        </div>
-      </div>
-    );
-  }
-
   const allFolders = docs.tree?.folders ?? [];
 
   return (
@@ -175,36 +164,41 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
 
           {docs.activeNote && (
             <>
-              <button
-                onClick={() => {
-                  docs.loadShares();
-                  setShowShareDialog(true);
-                }}
-                className="rounded-md p-1.5 hover:bg-accent text-muted-foreground hover:text-foreground"
-                title="Share"
-              >
-                <Share2 className="h-4 w-4" />
-              </button>
+              {/* Share + Version history are cloud-only features */}
+              {userId && (
+                <>
+                  <button
+                    onClick={() => {
+                      docs.loadShares();
+                      setShowShareDialog(true);
+                    }}
+                    className="rounded-md p-1.5 hover:bg-accent text-muted-foreground hover:text-foreground"
+                    title="Share"
+                  >
+                    <Share2 className="h-4 w-4" />
+                  </button>
 
-              <button
-                onClick={() => setShowRightPanel(!showRightPanel)}
-                className={cn(
-                  "rounded-md p-1.5 hover:bg-accent transition-colors",
-                  showRightPanel
-                    ? "text-primary"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-                title="Version history"
-              >
-                <History className="h-4 w-4" />
-              </button>
+                  <button
+                    onClick={() => setShowRightPanel(!showRightPanel)}
+                    className={cn(
+                      "rounded-md p-1.5 hover:bg-accent transition-colors",
+                      showRightPanel
+                        ? "text-primary"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                    title="Version history"
+                  >
+                    <History className="h-4 w-4" />
+                  </button>
+                </>
+              )}
 
               <button
                 onClick={() => {
                   if (docs.activeNote) {
                     if (
                       confirm(
-                        `Delete "${docs.activeNote.label}"? This can be undone from the web.`,
+                        `Delete "${docs.activeNote.label}"? This cannot be undone.`,
                       )
                     ) {
                       docs.deleteNote(docs.activeNote.id);
@@ -221,14 +215,21 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
         </div>
       </div>
 
-      {/* Sync status bar */}
-      <div className="border-b px-4 py-1.5">
-        <SyncStatusBar
-          status={docs.syncStatus}
-          syncing={docs.syncing}
-          onSync={() => docs.triggerSync()}
-        />
-      </div>
+      {/* Sync status bar — only shown when signed in */}
+      {userId ? (
+        <div className="border-b px-4 py-1.5">
+          <SyncStatusBar
+            status={docs.syncStatus}
+            syncing={docs.syncing}
+            onSync={() => docs.triggerSync()}
+          />
+        </div>
+      ) : (
+        <div className="border-b px-4 py-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+          <FileText className="h-3.5 w-3.5 shrink-0" />
+          <span>Local mode — files stored on this device. Sign in to enable cloud sync.</span>
+        </div>
+      )}
 
       {/* Conflict banner */}
       {docs.syncStatus && docs.syncStatus.conflict_count > 0 && (
@@ -415,10 +416,10 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
         />
       )}
 
-      {/* Directory mappings dialog */}
-      {showMappingsDialog && userId && (
+      {/* Directory mappings dialog — works locally, userId optional */}
+      {showMappingsDialog && (
         <DirectoryMappings
-          userId={userId}
+          userId={userId ?? "local"}
           folders={allFolders}
           onClose={() => setShowMappingsDialog(false)}
         />

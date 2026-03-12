@@ -39,14 +39,30 @@ router = APIRouter(tags=["notes"])
 # ---------------------------------------------------------------------------
 
 def _get_user_id(request: Request) -> str:
-    """Extract user_id from the request.
+    """Extract user_id from the request. Raises 401 if not found.
 
-    Preference order:
-    1. X-User-Id header (explicit, zero overhead)
-    2. JWT sub claim decoded from the Bearer token
+    Only call this for operations that genuinely require a user identity
+    (e.g. cloud sync, sharing). For local-only operations use
+    _get_user_id_optional instead.
+    """
+    uid = _get_user_id_optional(request)
+    if uid:
+        return uid
+    raise HTTPException(
+        status_code=401,
+        detail="Could not determine user identity — provide Authorization header or X-User-Id",
+    )
+
+
+def _get_user_id_optional(request: Request) -> str | None:
+    """Extract user_id from the request without raising — returns None if missing.
+
+    Safe to call on any request; used for local-first endpoints where auth is
+    optional (enables background cloud sync when credentials are present but
+    never blocks local file operations when they are not).
     """
     explicit = request.headers.get("X-User-Id")
-    if explicit:
+    if explicit and explicit != "local":
         return explicit
 
     token = getattr(request.state, "user_token", None)
@@ -61,10 +77,7 @@ def _get_user_id(request: Request) -> str:
         except Exception:
             pass
 
-    raise HTTPException(
-        status_code=401,
-        detail="Could not determine user identity — provide Authorization header or X-User-Id",
-    )
+    return None
 
 
 def _configure_sync(request: Request) -> None:
@@ -249,7 +262,7 @@ async def get_folder_tree(request: Request) -> dict[str, Any]:
 async def create_folder(req: CreateFolderRequest, request: Request) -> dict[str, Any]:
     """Create a folder locally. Background-syncs to Supabase if available."""
     _configure_sync(request)
-    user_id = _get_user_id(request)
+    user_id = _get_user_id_optional(request)
 
     # Build path: if parent specified, prefix with parent name
     path = req.name
@@ -277,7 +290,7 @@ async def create_folder(req: CreateFolderRequest, request: Request) -> dict[str,
     }
 
     # ── Fire-and-forget Supabase sync ─────────────────────────────────────────
-    if sync_engine.is_configured:
+    if sync_engine.is_configured and user_id:
         async def _sync_folder():
             await supabase_docs.create_folder(
                 user_id=user_id,
@@ -416,7 +429,7 @@ async def get_note(note_id: str, request: Request) -> dict[str, Any]:
 async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any]:
     """Create a note locally. Background-syncs to Supabase."""
     _configure_sync(request)
-    user_id = _get_user_id(request)
+    user_id = _get_user_id_optional(request)
     note_id = str(uuid.uuid4())
 
     # ── Local first ──────────────────────────────────────────────────────────
@@ -437,7 +450,7 @@ async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any
     }
 
     # ── Fire-and-forget Supabase sync ─────────────────────────────────────────
-    if sync_engine.is_configured:
+    if sync_engine.is_configured and user_id:
         _fire_and_forget(sync_engine.push_note(
             note_id=note_id,
             label=req.label,
@@ -723,10 +736,10 @@ async def delete_share(share_id: str, request: Request) -> dict[str, str]:
 @router.get("/mappings")
 async def list_mappings(request: Request) -> dict[str, Any]:
     _configure_sync(request)
-    user_id = _get_user_id(request)
+    user_id = _get_user_id_optional(request)
 
     cloud_mappings: list[dict[str, Any]] = []
-    if sync_engine.is_configured:
+    if sync_engine.is_configured and user_id:
         cloud_mappings = await supabase_docs.list_mappings(user_id, sync_engine.device_id)
 
     local_mappings = file_manager.load_local_mappings()
@@ -740,7 +753,7 @@ async def list_mappings(request: Request) -> dict[str, Any]:
 @router.post("/mappings")
 async def create_mapping(req: MappingRequest, request: Request) -> dict[str, Any]:
     _configure_sync(request)
-    user_id = _get_user_id(request)
+    user_id = _get_user_id_optional(request)
 
     # Save locally first
     local_mappings = file_manager.load_local_mappings()
@@ -751,7 +764,7 @@ async def create_mapping(req: MappingRequest, request: Request) -> dict[str, Any
     file_manager.save_local_mappings(local_mappings)
 
     cloud_result: dict[str, Any] = {}
-    if sync_engine.is_configured:
+    if sync_engine.is_configured and user_id:
         _fire_and_forget(supabase_docs.create_mapping(
             user_id=user_id,
             device_id=sync_engine.device_id,

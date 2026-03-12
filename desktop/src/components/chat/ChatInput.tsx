@@ -1,11 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import {
-  ArrowUp,
-  Square,
-  Plus,
-  ChevronDown,
-  Cpu,
-} from "lucide-react";
+import { ArrowUp, Square, Plus, ChevronDown, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LOCAL_MODEL_PREFIX, type ChatMode } from "@/hooks/use-chat";
 import type { AgentInfo } from "@/types/agents";
@@ -16,7 +10,12 @@ interface ChatInputProps {
   isStreaming: boolean;
   mode: ChatMode;
   model: string;
-  availableModels: { id: string; label: string; provider?: string; default?: boolean }[];
+  availableModels: {
+    id: string;
+    label: string;
+    provider?: string;
+    default?: boolean;
+  }[];
   onModelChange: (model: string) => void;
   onModeChange: (mode: ChatMode) => void;
   /** When true, the send button is disabled but the textarea remains typeable. */
@@ -67,10 +66,16 @@ export function ChatInput({
   // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setShowModelDropdown(false);
       }
-      if (agentDropdownRef.current && !agentDropdownRef.current.contains(e.target as Node)) {
+      if (
+        agentDropdownRef.current &&
+        !agentDropdownRef.current.contains(e.target as Node)
+      ) {
         setShowAgentDropdown(false);
       }
     };
@@ -97,25 +102,25 @@ export function ChatInput({
         handleSend();
       }
     },
-    [handleSend]
+    [handleSend],
   );
 
   const selectedModel = availableModels.find((m) => m.id === model);
   const isLocalModel = model.startsWith(LOCAL_MODEL_PREFIX);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 pb-4 pt-2 md:px-8">
+    <div className="mx-auto w-full max-w-3xl px-2 pt-1 md:px-4">
       {/* Mode Tabs — centered above composer */}
-      <div className="mb-3 flex items-center justify-center gap-1">
+      <div className="mb-1.5 flex items-center justify-center gap-1">
         {(Object.keys(modeLabels) as ChatMode[]).map((m) => (
           <button
             key={m}
             onClick={() => onModeChange(m)}
             className={cn(
-              "rounded-full px-4 py-1.5 text-xs font-medium transition-all duration-200",
+              "rounded-full px-3 py-1 text-xs font-medium transition-all duration-200",
               mode === m
                 ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
             )}
           >
             {modeLabels[m]}
@@ -124,7 +129,7 @@ export function ChatInput({
       </div>
 
       {/* Composer Container */}
-      <div className="glass relative rounded-2xl transition-shadow focus-within:shadow-md">
+      <div className="glass relative rounded-xl transition-shadow focus-within:shadow-md">
         {/* Textarea */}
         <textarea
           ref={textareaRef}
@@ -135,25 +140,25 @@ export function ChatInput({
             !engineReady
               ? "Waiting for engine..."
               : mode === "code"
-              ? "Write or ask about code..."
-              : mode === "co-work"
-              ? "What would you like to work on together?"
-              : "Message AI Matrx..."
+                ? "Write or ask about code..."
+                : mode === "co-work"
+                  ? "What would you like to work on together?"
+                  : "Message AI Matrx..."
           }
           rows={1}
-          className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[0.9375rem] leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
+          className="min-h-[2.5rem] w-full resize-none bg-transparent px-3 py-2 text-[0.9375rem] leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
         />
 
         {/* Bottom bar */}
-        <div className="flex items-center justify-between px-3 pb-2.5">
+        <div className="flex items-center justify-between px-2 pb-1.5">
           {/* Left: Attach + Agent + Model */}
           <div className="flex items-center gap-1">
             {/* Attach / plus button */}
             <button
-              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
               title="Attach files"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="h-3.5 w-3.5" />
             </button>
 
             {/* Agent selector */}
@@ -161,11 +166,12 @@ export function ChatInput({
               <div className="relative" ref={agentDropdownRef}>
                 <button
                   onClick={() => setShowAgentDropdown(!showAgentDropdown)}
-                  className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                 >
                   <span className="max-w-[120px] truncate">
                     {selectedAgentId
-                      ? (agents.find((a) => a.id === selectedAgentId)?.name ?? "Agent")
+                      ? (agents.find((a) => a.id === selectedAgentId)?.name ??
+                        "Agent")
                       : "No Agent"}
                   </span>
                   <ChevronDown className="h-3 w-3" />
@@ -180,16 +186,21 @@ export function ChatInput({
                     ) : (
                       <>
                         <button
-                          onClick={() => { onAgentChange(null); setShowAgentDropdown(false); }}
+                          onClick={() => {
+                            onAgentChange(null);
+                            setShowAgentDropdown(false);
+                          }}
                           className={cn(
                             "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
                             !selectedAgentId
                               ? "bg-accent text-accent-foreground"
-                              : "text-foreground hover:bg-accent/50"
+                              : "text-foreground hover:bg-accent/50",
                           )}
                         >
                           <span className="font-medium">No Agent</span>
-                          <span className="ml-1.5 text-muted-foreground">— plain chat</span>
+                          <span className="ml-1.5 text-muted-foreground">
+                            — plain chat
+                          </span>
                         </button>
                         {agents.length > 0 && (
                           <div className="my-1 border-t border-border/50" />
@@ -197,16 +208,21 @@ export function ChatInput({
                         {agents.map((agent) => (
                           <button
                             key={agent.id}
-                            onClick={() => { onAgentChange(agent.id); setShowAgentDropdown(false); }}
+                            onClick={() => {
+                              onAgentChange(agent.id);
+                              setShowAgentDropdown(false);
+                            }}
                             className={cn(
                               "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
                               selectedAgentId === agent.id
                                 ? "bg-accent text-accent-foreground"
-                                : "text-foreground hover:bg-accent/50"
+                                : "text-foreground hover:bg-accent/50",
                             )}
                           >
                             <div className="flex-1 min-w-0">
-                              <span className="font-medium block truncate">{agent.name}</span>
+                              <span className="font-medium block truncate">
+                                {agent.name}
+                              </span>
                               {agent.description && (
                                 <span className="text-muted-foreground truncate block mt-0.5">
                                   {agent.description}
@@ -214,7 +230,9 @@ export function ChatInput({
                               )}
                             </div>
                             {agent.source === "user" && (
-                              <span className="ml-auto text-[10px] text-muted-foreground shrink-0">mine</span>
+                              <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                                mine
+                              </span>
                             )}
                           </button>
                         ))}
@@ -229,7 +247,7 @@ export function ChatInput({
             <div className="relative" ref={dropdownRef}>
               <button
                 onClick={() => setShowModelDropdown(!showModelDropdown)}
-                className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 {isLocalModel && (
                   <Cpu className="h-3 w-3 text-blue-500 shrink-0" />
@@ -267,12 +285,14 @@ export function ChatInput({
                               "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
                               model === m.id
                                 ? "bg-accent text-accent-foreground"
-                                : "text-foreground hover:bg-accent/50"
+                                : "text-foreground hover:bg-accent/50",
                             )}
                           >
                             <Cpu className="h-3 w-3 text-blue-500 mr-2 shrink-0" />
                             <span className="font-medium">{m.label}</span>
-                            <span className="ml-auto text-[10px] text-blue-500">local</span>
+                            <span className="ml-auto text-[10px] text-blue-500">
+                              local
+                            </span>
                           </button>
                         ))}
                       {availableModels.some((m) => m.provider !== "local") && (
@@ -285,12 +305,15 @@ export function ChatInput({
                   {Object.entries(
                     availableModels
                       .filter((m) => m.provider !== "local")
-                      .reduce<Record<string, typeof availableModels>>((acc, m) => {
-                        const p = m.provider ?? "other";
-                        if (!acc[p]) acc[p] = [];
-                        acc[p].push(m);
-                        return acc;
-                      }, {})
+                      .reduce<Record<string, typeof availableModels>>(
+                        (acc, m) => {
+                          const p = m.provider ?? "other";
+                          if (!acc[p]) acc[p] = [];
+                          acc[p].push(m);
+                          return acc;
+                        },
+                        {},
+                      ),
                   ).map(([provider, models]) => (
                     <div key={provider}>
                       <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
@@ -307,12 +330,14 @@ export function ChatInput({
                             "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
                             model === m.id
                               ? "bg-accent text-accent-foreground"
-                              : "text-foreground hover:bg-accent/50"
+                              : "text-foreground hover:bg-accent/50",
                           )}
                         >
                           <span className="font-medium">{m.label}</span>
                           {m.default && (
-                            <span className="ml-auto text-[10px] text-muted-foreground">default</span>
+                            <span className="ml-auto text-[10px] text-muted-foreground">
+                              default
+                            </span>
                           )}
                         </button>
                       ))}
@@ -328,9 +353,9 @@ export function ChatInput({
             {isStreaming ? (
               <button
                 onClick={onStop}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors"
+                className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors"
               >
-                <Square className="h-3.5 w-3.5" />
+                <Square className="h-3 w-3" />
               </button>
             ) : (
               <button
@@ -338,10 +363,10 @@ export function ChatInput({
                 disabled={!canSend}
                 title={!engineReady ? "Engine not connected" : undefined}
                 className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200",
+                  "flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200",
                   !canSend
                     ? "bg-muted-foreground/30 text-primary-foreground opacity-30 cursor-not-allowed"
-                    : "bg-primary text-primary-foreground active:scale-[0.96]"
+                    : "bg-primary text-primary-foreground active:scale-[0.96]",
                 )}
               >
                 <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
@@ -352,7 +377,7 @@ export function ChatInput({
       </div>
 
       {/* Disclaimer */}
-      <p className="mt-2 text-center text-[10px] text-muted-foreground">
+      <p className="mt-1 text-center text-[10px] text-muted-foreground">
         AI Matrx can make mistakes. Verify important information.
       </p>
     </div>

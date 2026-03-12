@@ -186,8 +186,8 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
           </div>
         )}
 
-        {/* Input Area */}
-        <div className={cn("px-4 pb-4", hasVariables ? "pt-0" : "pt-2")}>
+        {/* Input Area — shrink-0 so it never gets squeezed */}
+        <div className={cn("shrink-0 px-4 pb-3", hasVariables ? "pt-0" : "pt-1")}>
           <ChatInput
             onSend={handleSend}
             onStop={stopStreaming}
