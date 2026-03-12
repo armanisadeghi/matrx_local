@@ -3,6 +3,7 @@ import { ArrowUp, Square, Plus, ChevronDown, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LOCAL_MODEL_PREFIX, type ChatMode } from "@/hooks/use-chat";
 import type { AgentInfo } from "@/types/agents";
+import { AgentPicker } from "./AgentPicker";
 
 interface ChatInputProps {
   onSend: (message: string) => void | Promise<void>;
@@ -50,10 +51,10 @@ export function ChatInput({
 }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
-  const [showAgentDropdown, setShowAgentDropdown] = useState(false);
+  const [showAgentPicker, setShowAgentPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const agentDropdownRef = useRef<HTMLDivElement>(null);
+  const agentButtonRef = useRef<HTMLButtonElement>(null);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -63,7 +64,7 @@ export function ChatInput({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [value]);
 
-  // Close dropdowns on outside click
+  // Close model dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (
@@ -71,12 +72,6 @@ export function ChatInput({
         !dropdownRef.current.contains(e.target as Node)
       ) {
         setShowModelDropdown(false);
-      }
-      if (
-        agentDropdownRef.current &&
-        !agentDropdownRef.current.contains(e.target as Node)
-      ) {
-        setShowAgentDropdown(false);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -163,10 +158,16 @@ export function ChatInput({
 
             {/* Agent selector */}
             {onAgentChange && (
-              <div className="relative" ref={agentDropdownRef}>
+              <div className="relative">
                 <button
-                  onClick={() => setShowAgentDropdown(!showAgentDropdown)}
-                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  ref={agentButtonRef}
+                  onClick={() => setShowAgentPicker((v) => !v)}
+                  className={cn(
+                    "flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors",
+                    selectedAgentId
+                      ? "text-primary hover:text-primary/80"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
                 >
                   <span className="max-w-[120px] truncate">
                     {selectedAgentId
@@ -177,69 +178,17 @@ export function ChatInput({
                   <ChevronDown className="h-3 w-3" />
                 </button>
 
-                {showAgentDropdown && (
-                  <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[220px] max-h-72 overflow-y-auto rounded-lg p-1.5">
-                    {agentsLoading ? (
-                      <div className="px-3 py-4 text-xs text-muted-foreground text-center">
-                        Loading…
-                      </div>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => {
-                            onAgentChange(null);
-                            setShowAgentDropdown(false);
-                          }}
-                          className={cn(
-                            "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
-                            !selectedAgentId
-                              ? "bg-accent text-accent-foreground"
-                              : "text-foreground hover:bg-accent/50",
-                          )}
-                        >
-                          <span className="font-medium">No Agent</span>
-                          <span className="ml-1.5 text-muted-foreground">
-                            — plain chat
-                          </span>
-                        </button>
-                        {agents.length > 0 && (
-                          <div className="my-1 border-t border-border/50" />
-                        )}
-                        {agents.map((agent) => (
-                          <button
-                            key={agent.id}
-                            onClick={() => {
-                              onAgentChange(agent.id);
-                              setShowAgentDropdown(false);
-                            }}
-                            className={cn(
-                              "flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors",
-                              selectedAgentId === agent.id
-                                ? "bg-accent text-accent-foreground"
-                                : "text-foreground hover:bg-accent/50",
-                            )}
-                          >
-                            <div className="flex-1 min-w-0">
-                              <span className="font-medium block truncate">
-                                {agent.name}
-                              </span>
-                              {agent.description && (
-                                <span className="text-muted-foreground truncate block mt-0.5">
-                                  {agent.description}
-                                </span>
-                              )}
-                            </div>
-                            {agent.source === "user" && (
-                              <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-                                mine
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </>
-                    )}
-                  </div>
-                )}
+                <AgentPicker
+                  agents={agents}
+                  selectedAgentId={selectedAgentId}
+                  onSelect={(id) => {
+                    onAgentChange(id);
+                  }}
+                  isLoading={agentsLoading}
+                  open={showAgentPicker}
+                  onClose={() => setShowAgentPicker(false)}
+                  anchorRef={agentButtonRef}
+                />
               </div>
             )}
 

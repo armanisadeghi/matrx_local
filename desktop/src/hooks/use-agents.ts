@@ -35,6 +35,9 @@ interface RawPromptRow {
   temperature?: number | null;
   max_tokens?: number | null;
   is_active?: boolean;
+  category?: string | null;
+  tags?: string[] | null;
+  is_favorite?: boolean;
 }
 
 function shapeFromRow(row: RawPromptRow, source: AgentInfo["source"]): AgentInfo {
@@ -44,6 +47,9 @@ function shapeFromRow(row: RawPromptRow, source: AgentInfo["source"]): AgentInfo
     description: row.description ?? "",
     source,
     variable_defaults: row.variable_defaults ?? [],
+    category: row.category ?? null,
+    tags: row.tags ?? [],
+    is_favorite: row.is_favorite ?? false,
     settings: {
       model_id: row.model_id ?? null,
       temperature: row.temperature ?? null,
@@ -66,13 +72,13 @@ async function fetchUserPromptsFromSupabase(): Promise<{
   const [ownResult, sharedResult] = await Promise.allSettled([
     supabase
       .from("prompts")
-      .select("id, name, description, variable_defaults, model_id, temperature, max_tokens")
+      .select("id, name, description, variable_defaults, model_id, temperature, max_tokens, category, tags, is_favorite")
       .eq("user_id", userId)
       .order("name", { ascending: true }),
 
     supabase
       .from("prompt_permissions")
-      .select("prompt_id, prompts(id, name, description, variable_defaults, model_id, temperature, max_tokens)")
+      .select("prompt_id, prompts(id, name, description, variable_defaults, model_id, temperature, max_tokens, category, tags, is_favorite)")
       .eq("user_id", userId)
       .in("permission", ["read", "comment", "edit", "admin"]),
   ]);

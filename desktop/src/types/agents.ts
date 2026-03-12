@@ -51,6 +51,9 @@ export interface AgentInfo {
   source: AgentSource;
   variable_defaults: PromptVariable[];
   settings: AgentSettings;
+  category?: string | null;
+  tags?: string[] | null;
+  is_favorite?: boolean;
 }
 
 export interface AgentsResponse {
@@ -75,4 +78,7 @@ export interface ActiveAgent {
   source: AgentSource;
   variable_defaults: PromptVariable[];
   settings: AgentSettings;
+  category?: string | null;
+  tags?: string[] | null;
+  is_favorite?: boolean;
 }

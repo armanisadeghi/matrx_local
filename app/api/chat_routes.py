@@ -207,6 +207,9 @@ def _shape_agent(d: dict[str, Any], source: str) -> dict[str, Any]:
         "description": d.get("description") or "",
         "source": source,                          # "builtin" | "user" | "shared"
         "variable_defaults": d.get("variable_defaults") or [],
+        "category": d.get("category") or None,
+        "tags": d.get("tags") or [],
+        "is_favorite": bool(d.get("is_favorite", False)),
         "settings": {
             "model_id": settings.get("model_id"),
             "temperature": settings.get("temperature"),
