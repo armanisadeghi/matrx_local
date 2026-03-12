@@ -39,6 +39,15 @@ pub async fn start_llm_server(
     let port = find_free_port(11434)?;
     let ctx = context_length.unwrap_or(8192);
 
+    // Notify UI that server is starting (with model name for progress display)
+    let _ = app.emit(
+        "llm-server-starting",
+        serde_json::json!({
+            "model_filename": &model_filename,
+            "port": port,
+        }),
+    );
+
     let mut server = state.lock().await;
     server
         .start(&app, &model_path, gpu_layers, ctx, port)
@@ -154,19 +163,38 @@ pub async fn import_local_llm_model(
     Ok(filename)
 }
 
-/// Check if a model file exists in local storage AND passes size validation.
+/// Check if a model (and all its parts for split models) exists and is fully valid.
 #[tauri::command]
 pub fn check_llm_model_exists(app: AppHandle, filename: String) -> bool {
-    let path = match resolve_model_path(&app, &filename) {
-        Ok(p) => std::path::PathBuf::from(p),
+    let models_dir = match app.path().app_data_dir() {
+        Ok(d) => d.join("models"),
         Err(_) => return false,
     };
-    // Look up expected size from catalog for strict validation
-    let expected = model_selector::LLM_MODELS
+
+    if let Some(catalog) = model_selector::LLM_MODELS
         .iter()
         .find(|m| m.filename == filename)
-        .map(|m| m.expected_size_bytes);
-    is_valid_gguf(&path, expected)
+    {
+        // For split models, all parts must be present and valid
+        let part_filenames = catalog.all_part_filenames();
+        let part_sizes: Vec<Option<u64>> = (0..part_filenames.len())
+            .map(|i| {
+                if i == 0 {
+                    Some(catalog.expected_size_bytes)
+                } else {
+                    catalog.hf_part_sizes.get(i - 1).copied().map(Some).flatten()
+                }
+            })
+            .collect();
+
+        part_filenames.iter().zip(part_sizes.iter()).all(|(pf, &expected)| {
+            is_valid_gguf(&models_dir.join(pf), expected)
+        })
+    } else {
+        // Custom model — just check the single file
+        let path = models_dir.join(&filename);
+        is_valid_gguf(&path, None)
+    }
 }
 
 /// Cancel an in-flight download. Safe to call at any time; no-op if nothing is downloading.
@@ -182,9 +210,13 @@ pub fn cancel_llm_download(
 
 /// Download an LLM model from HuggingFace with progress events.
 ///
-/// For single-file models, pass `urls` with a single entry.
-/// For split models (e.g. Qwen2.5-14B), pass all part URLs in order — they will be
-/// downloaded sequentially and concatenated into a single `filename` file.
+/// For single-file models, pass `urls` with a single entry and `filename` as the
+/// destination filename.
+///
+/// For split models (e.g. Qwen2.5-14B), pass all part URLs in order. Each part is
+/// downloaded with its original filename (extracted from the URL). llama-server can
+/// load multi-part GGUF natively when given the first part's path — we do NOT
+/// concatenate parts. `filename` is the first-part filename in this case.
 ///
 /// Features:
 ///   - Per-chunk 60-second idle timeout to detect stalled connections
@@ -218,37 +250,10 @@ pub async fn download_llm_model(
     std::fs::create_dir_all(&dest_dir)
         .map_err(|e| format!("Failed to create models dir: {}", e))?;
 
-    let dest_path = dest_dir.join(&filename);
-
-    // Look up expected size from catalog for validation
-    let expected_size = model_selector::LLM_MODELS
+    // Look up catalog entry so we can get per-part expected sizes
+    let catalog_entry = model_selector::LLM_MODELS
         .iter()
-        .find(|m| m.filename == filename)
-        .map(|m| m.expected_size_bytes);
-
-    // Skip if already downloaded and fully valid (size-checked)
-    if is_valid_gguf(&dest_path, expected_size) {
-        let _ = app.emit(
-            "llm-download-progress",
-            serde_json::json!({
-                "filename": filename,
-                "part": 1,
-                "total_parts": 1,
-                "part_bytes_downloaded": expected_size.unwrap_or(0),
-                "part_total_bytes": expected_size.unwrap_or(0),
-                "bytes_downloaded": expected_size.unwrap_or(0),
-                "total_bytes": expected_size.unwrap_or(0),
-                "percent": 100.0,
-                "status": "already_complete",
-            }),
-        );
-        return Ok(dest_path.to_string_lossy().to_string());
-    }
-
-    // If there's a partial file that failed magic/size check, remove it before starting
-    if dest_path.exists() {
-        let _ = tokio::fs::remove_file(&dest_path).await;
-    }
+        .find(|m| m.filename == filename);
 
     let cancel_ref = cancel.inner().clone();
 
@@ -260,6 +265,33 @@ pub async fn download_llm_model(
     let total_parts = urls.len();
 
     if total_parts == 1 {
+        // ── Single-file model ──────────────────────────────────────────────
+        let dest_path = dest_dir.join(&filename);
+        let expected_size = catalog_entry.map(|m| m.expected_size_bytes);
+
+        // Skip if already fully downloaded
+        if is_valid_gguf(&dest_path, expected_size) {
+            let _ = app.emit(
+                "llm-download-progress",
+                serde_json::json!({
+                    "filename": filename,
+                    "part": 1,
+                    "total_parts": 1,
+                    "part_bytes_downloaded": expected_size.unwrap_or(0),
+                    "part_total_bytes": expected_size.unwrap_or(0),
+                    "bytes_downloaded": expected_size.unwrap_or(0),
+                    "total_bytes": expected_size.unwrap_or(0),
+                    "percent": 100.0,
+                    "status": "already_complete",
+                }),
+            );
+            return Ok(dest_path.to_string_lossy().to_string());
+        }
+
+        if dest_path.exists() {
+            let _ = tokio::fs::remove_file(&dest_path).await;
+        }
+
         let url = &urls[0];
         let mut last_error = String::new();
         for attempt in 0..3u32 {
@@ -287,9 +319,7 @@ pub async fn download_llm_model(
                     if is_valid_gguf(&dest_path, expected_size) {
                         return Ok(dest_path.to_string_lossy().to_string());
                     }
-                    last_error = format!(
-                        "Downloaded file failed validation (size mismatch or bad magic bytes)"
-                    );
+                    last_error = "Downloaded file failed validation (size mismatch or bad magic bytes)".to_string();
                     let _ = tokio::fs::remove_file(&dest_path).await;
                 }
                 Err(e) if e.contains("cancelled") => {
@@ -308,30 +338,86 @@ pub async fn download_llm_model(
         ));
     }
 
-    // Multi-part: probe total sizes first for accurate overall progress
+    // ── Split model: download each part with its original filename ─────────
+    // llama.cpp loads split GGUF files natively when given the first part path.
+    // We must preserve the `-00001-of-N` filenames — DO NOT concatenate.
+
+    // Build per-part expected sizes from catalog (index 0 = first part)
+    let part_expected_sizes: Vec<Option<u64>> = (0..total_parts)
+        .map(|i| {
+            if i == 0 {
+                catalog_entry.map(|m| m.expected_size_bytes)
+            } else {
+                catalog_entry.and_then(|m| m.hf_part_sizes.get(i - 1).copied())
+            }
+        })
+        .collect();
+
+    // Probe sizes for accurate overall progress
     let mut part_sizes: Vec<u64> = Vec::with_capacity(total_parts);
-    for url in &urls {
+    for (i, url) in urls.iter().enumerate() {
         if cancel_ref.load(Ordering::SeqCst) {
             return Err("Download cancelled by user".to_string());
         }
-        let size = probe_content_length(&client, url).await.unwrap_or(0);
+        let size = if let Some(known) = part_expected_sizes[i] {
+            known
+        } else {
+            probe_content_length(&client, url).await.unwrap_or(0)
+        };
         part_sizes.push(size);
     }
     let grand_total: u64 = part_sizes.iter().sum();
 
-    // Clean up any previous partial assembly
-    let _ = tokio::fs::remove_file(&dest_path).await;
-
     let mut bytes_before_this_part: u64 = 0;
+    let first_part_path = dest_dir.join(&filename);
+
     for (i, url) in urls.iter().enumerate() {
         if cancel_ref.load(Ordering::SeqCst) {
-            let _ = tokio::fs::remove_file(&dest_path).await;
             return Err("Download cancelled by user".to_string());
         }
 
         let part_num = i + 1;
-        let part_filename = format!("{}.part{}", filename, part_num);
+
+        // Extract original filename from the URL (preserves -00001-of-N suffix)
+        let part_filename: String = url
+            .rsplit('/')
+            .next()
+            .unwrap_or("unknown.gguf")
+            .to_string();
         let part_path = dest_dir.join(&part_filename);
+        let expected = part_expected_sizes[i];
+
+        // Skip if already fully downloaded
+        if is_valid_gguf(&part_path, expected) {
+            let already = part_sizes[i];
+            let overall = bytes_before_this_part + already;
+            let pct = if grand_total > 0 {
+                (overall as f64 / grand_total as f64) * 100.0
+            } else {
+                100.0
+            };
+            let _ = app.emit(
+                "llm-download-progress",
+                serde_json::json!({
+                    "filename": filename,
+                    "part": part_num,
+                    "total_parts": total_parts,
+                    "part_bytes_downloaded": already,
+                    "part_total_bytes": already,
+                    "bytes_downloaded": overall,
+                    "total_bytes": grand_total,
+                    "percent": pct,
+                    "status": "already_complete",
+                }),
+            );
+            bytes_before_this_part += part_sizes[i];
+            continue;
+        }
+
+        // Remove any partial file
+        if part_path.exists() {
+            let _ = tokio::fs::remove_file(&part_path).await;
+        }
 
         let mut last_error = String::new();
         let mut success = false;
@@ -339,13 +425,11 @@ pub async fn download_llm_model(
         for attempt in 0..3u32 {
             if cancel_ref.load(Ordering::SeqCst) {
                 let _ = tokio::fs::remove_file(&part_path).await;
-                let _ = tokio::fs::remove_file(&dest_path).await;
                 return Err("Download cancelled by user".to_string());
             }
             if attempt > 0 {
                 tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
             }
-            let _ = tokio::fs::remove_file(&part_path).await;
 
             match try_download_part(
                 &client,
@@ -362,12 +446,15 @@ pub async fn download_llm_model(
             .await
             {
                 Ok(_) => {
-                    success = true;
-                    break;
+                    if is_valid_gguf(&part_path, expected) {
+                        success = true;
+                        break;
+                    }
+                    last_error = format!("Part {} failed validation after download", part_num);
+                    let _ = tokio::fs::remove_file(&part_path).await;
                 }
                 Err(e) if e.contains("cancelled") => {
                     let _ = tokio::fs::remove_file(&part_path).await;
-                    let _ = tokio::fs::remove_file(&dest_path).await;
                     return Err("Download cancelled by user".to_string());
                 }
                 Err(e) => {
@@ -378,38 +465,24 @@ pub async fn download_llm_model(
         }
 
         if !success {
-            let _ = tokio::fs::remove_file(&dest_path).await;
             return Err(format!(
                 "Failed to download part {}/{}: {}",
                 part_num, total_parts, last_error
             ));
         }
 
-        // Append this part to the final destination file
-        append_file(&part_path, &dest_path)
-            .await
-            .map_err(|e| format!("Failed to append part {} to output file: {}", part_num, e))?;
-
-        // Remove the temp part file immediately to free disk space
-        let _ = tokio::fs::remove_file(&part_path).await;
-
         bytes_before_this_part += part_sizes[i];
     }
 
-    if is_valid_gguf(&dest_path, expected_size) {
-        Ok(dest_path.to_string_lossy().to_string())
-    } else {
-        let actual_size = std::fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
-        let _ = tokio::fs::remove_file(&dest_path).await;
-        Err(format!(
-            "Assembly complete but file failed validation. Got {} bytes, expected ~{} bytes.",
-            actual_size,
-            expected_size.unwrap_or(0)
-        ))
-    }
+    // All parts downloaded — return the first part path (what llama-server receives)
+    Ok(first_part_path.to_string_lossy().to_string())
 }
 
 /// List all downloaded LLM models (GGUF files) in the models directory.
+///
+/// For split models (e.g. Qwen2.5-14B), only the first part is listed as a
+/// "model" entry (with `is_split: true`). The other parts are present on disk
+/// but are not surfaced individually — llama-server finds them automatically.
 #[tauri::command]
 pub fn list_llm_models(app: AppHandle) -> Vec<serde_json::Value> {
     let models_dir = match app.path().app_data_dir() {
@@ -421,7 +494,8 @@ pub fn list_llm_models(app: AppHandle) -> Vec<serde_json::Value> {
         return Vec::new();
     }
 
-    std::fs::read_dir(&models_dir)
+    // Collect all .gguf filenames present on disk
+    let on_disk: std::collections::HashSet<String> = std::fs::read_dir(&models_dir)
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
@@ -431,38 +505,95 @@ pub fn list_llm_models(app: AppHandle) -> Vec<serde_json::Value> {
                         .map(|ext| ext == "gguf")
                         .unwrap_or(false)
                 })
-                .filter_map(|e| {
-                    let path = e.path();
-                    let fname = e.file_name().into_string().ok()?;
-                    let size_bytes = e.metadata().ok()?.len();
-
-                    // Look up catalog info and expected size
-                    let catalog_info = model_selector::LLM_MODELS
-                        .iter()
-                        .find(|m| m.filename == fname);
-                    let expected = catalog_info.map(|m| m.expected_size_bytes);
-
-                    // Only list files that pass full GGUF + size validation
-                    if !is_valid_gguf(&path, expected) {
-                        return None;
-                    }
-
-                    let size_gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-                    Some(serde_json::json!({
-                        "filename": fname,
-                        "size_bytes": size_bytes,
-                        "size_gb": format!("{:.1}", size_gb),
-                        "name": catalog_info.map(|m| m.name).unwrap_or("Custom Model"),
-                        "tier": catalog_info.map(|m| &m.tier),
-                        "is_custom": catalog_info.is_none(),
-                    }))
-                })
+                .filter_map(|e| e.file_name().into_string().ok())
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    // First pass: catalog models — emit one entry per catalog model if its first part is present
+    for catalog in model_selector::LLM_MODELS {
+        if !on_disk.contains(catalog.filename) {
+            continue;
+        }
+        let part_path = models_dir.join(catalog.filename);
+        let expected_first = Some(catalog.expected_size_bytes);
+        if !is_valid_gguf(&part_path, expected_first) {
+            continue;
+        }
+
+        // For split models, check that ALL parts are present
+        let all_parts_present = if catalog.is_split() {
+            catalog.all_part_filenames().iter().all(|pf| on_disk.contains(pf.as_str()))
+        } else {
+            true
+        };
+
+        // Calculate total size across all parts
+        let total_size_bytes: u64 = catalog
+            .all_part_filenames()
+            .iter()
+            .filter_map(|pf| {
+                std::fs::metadata(models_dir.join(pf)).ok().map(|m| m.len())
+            })
+            .sum();
+
+        let size_gb = total_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+
+        results.push(serde_json::json!({
+            "filename": catalog.filename,
+            "size_bytes": total_size_bytes,
+            "size_gb": format!("{:.1}", size_gb),
+            "name": catalog.name,
+            "tier": catalog.tier,
+            "is_custom": false,
+            "is_split": catalog.is_split(),
+            "all_parts_present": all_parts_present,
+            "total_parts": catalog.all_part_filenames().len(),
+        }));
+    }
+
+    // Second pass: custom models not in catalog
+    let catalog_filenames: std::collections::HashSet<&str> = model_selector::LLM_MODELS
+        .iter()
+        .flat_map(|m| m.all_part_filenames())
+        .map(|_| "") // placeholder — we need to collect actual filenames
+        .collect();
+    // Rebuild properly
+    let catalog_part_filenames: std::collections::HashSet<String> = model_selector::LLM_MODELS
+        .iter()
+        .flat_map(|m| m.all_part_filenames())
+        .collect();
+    let _ = catalog_filenames; // drop placeholder
+
+    for fname in &on_disk {
+        if catalog_part_filenames.contains(fname) {
+            continue; // already handled above
+        }
+        let path = models_dir.join(fname);
+        if !is_valid_gguf(&path, None) {
+            continue;
+        }
+        let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let size_gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        results.push(serde_json::json!({
+            "filename": fname,
+            "size_bytes": size_bytes,
+            "size_gb": format!("{:.1}", size_gb),
+            "name": "Custom Model",
+            "tier": null,
+            "is_custom": true,
+            "is_split": false,
+            "all_parts_present": true,
+            "total_parts": 1,
+        }));
+    }
+
+    results
 }
 
-/// Delete a downloaded LLM model file.
+/// Delete a downloaded LLM model file (and all its split parts for split models).
 #[tauri::command]
 pub async fn delete_llm_model(
     app: AppHandle,
@@ -477,26 +608,28 @@ pub async fn delete_llm_model(
         }
     }
 
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("models")
-        .join(&filename);
-
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| format!("Failed to delete model: {}", e))?;
-    }
-
-    // Also clean up any leftover .partN temp files for this model
     let models_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("models");
-    for i in 1..=10 {
-        let part = models_dir.join(format!("{}.part{}", filename, i));
-        let _ = std::fs::remove_file(&part);
+
+    // Look up all part filenames (handles split models)
+    let parts_to_delete: Vec<String> = if let Some(catalog) = model_selector::LLM_MODELS
+        .iter()
+        .find(|m| m.filename == filename)
+    {
+        catalog.all_part_filenames()
+    } else {
+        vec![filename.clone()]
+    };
+
+    for part_file in &parts_to_delete {
+        let path = models_dir.join(part_file);
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Failed to delete {}: {}", part_file, e))?;
+        }
     }
 
     Ok(())
@@ -547,19 +680,36 @@ pub async fn detect_llm_hardware() -> Result<serde_json::Value, String> {
 }
 
 /// Get the LLM setup status (config + what's downloaded).
+///
+/// Also performs a one-time migration: the old assembled Qwen2.5-14B file
+/// (`qwen2.5-14b-instruct-q4_k_m.gguf`) was created by concatenating split
+/// parts, but newer llama.cpp rejects it because the embedded split metadata
+/// doesn't match the filename. We detect and remove it automatically so the
+/// user is prompted to re-download the native split parts.
 #[tauri::command]
 pub async fn get_llm_setup_status(
     app: AppHandle,
     state: State<'_, LlmServerState>,
 ) -> Result<serde_json::Value, String> {
     let config_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    // Migrate: remove old assembled Qwen2.5-14B file that llama.cpp b8281+ rejects
+    let models_dir = config_dir.join("models");
+    let old_assembled = models_dir.join("qwen2.5-14b-instruct-q4_k_m.gguf");
+    if old_assembled.exists() {
+        // This is the old concatenated file — remove it so the UI shows
+        // "not downloaded" and offers to fetch the native split parts instead
+        let _ = std::fs::remove_file(&old_assembled);
+        eprintln!("[llm] Removed legacy assembled Qwen2.5-14B file (incompatible with llama.cpp b8281+). Please re-download.");
+    }
+
     let config = LlmConfig::load(&config_dir);
 
     let server = state.lock().await;
     let server_status = server.status.clone();
     drop(server);
 
-    let downloaded = list_llm_models_internal(&app);
+    let downloaded = list_downloaded_model_filenames(&app);
 
     Ok(serde_json::json!({
         "setup_complete": config.setup_complete,
@@ -758,33 +908,7 @@ async fn try_download_part(
     Ok(())
 }
 
-/// Append the contents of `src` to `dest` (creating `dest` if it doesn't exist).
-async fn append_file(src: &std::path::Path, dest: &std::path::Path) -> Result<(), String> {
-    use tokio::io::AsyncWriteExt;
-
-    let mut src_file = tokio::fs::File::open(src)
-        .await
-        .map_err(|e| format!("open src: {}", e))?;
-
-    let mut dest_file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dest)
-        .await
-        .map_err(|e| format!("open dest: {}", e))?;
-
-    tokio::io::copy(&mut src_file, &mut dest_file)
-        .await
-        .map_err(|e| format!("copy: {}", e))?;
-
-    dest_file
-        .flush()
-        .await
-        .map_err(|e| format!("flush: {}", e))?;
-    Ok(())
-}
-
-fn list_llm_models_internal(app: &AppHandle) -> Vec<String> {
+fn list_downloaded_model_filenames(app: &AppHandle) -> Vec<String> {
     let models_dir = match app.path().app_data_dir() {
         Ok(d) => d.join("models"),
         Err(_) => return Vec::new(),
@@ -792,7 +916,8 @@ fn list_llm_models_internal(app: &AppHandle) -> Vec<String> {
     if !models_dir.exists() {
         return Vec::new();
     }
-    std::fs::read_dir(&models_dir)
+
+    let on_disk: std::collections::HashSet<String> = std::fs::read_dir(&models_dir)
         .map(|entries| {
             entries
                 .filter_map(|e| e.ok())
@@ -802,20 +927,36 @@ fn list_llm_models_internal(app: &AppHandle) -> Vec<String> {
                         .map(|ext| ext == "gguf")
                         .unwrap_or(false)
                 })
-                .filter_map(|e| {
-                    let path = e.path();
-                    let fname = e.file_name().into_string().ok()?;
-                    let expected = model_selector::LLM_MODELS
-                        .iter()
-                        .find(|m| m.filename == fname)
-                        .map(|m| m.expected_size_bytes);
-                    if is_valid_gguf(&path, expected) {
-                        Some(fname)
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|e| e.file_name().into_string().ok())
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    // Return the first-part filename for each catalog model whose first part is present,
+    // plus any custom models present on disk.
+    let mut result = Vec::new();
+
+    let catalog_part_filenames: std::collections::HashSet<String> = model_selector::LLM_MODELS
+        .iter()
+        .flat_map(|m| m.all_part_filenames())
+        .collect();
+
+    for catalog in model_selector::LLM_MODELS {
+        if on_disk.contains(catalog.filename)
+            && is_valid_gguf(&models_dir.join(catalog.filename), Some(catalog.expected_size_bytes))
+        {
+            result.push(catalog.filename.to_string());
+        }
+    }
+
+    for fname in &on_disk {
+        if !catalog_part_filenames.contains(fname) {
+            let path = models_dir.join(fname);
+            if is_valid_gguf(&path, None) {
+                result.push(fname.clone());
+            }
+        }
+    }
+
+    result
 }

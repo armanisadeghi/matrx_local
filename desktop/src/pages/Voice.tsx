@@ -415,6 +415,14 @@ function TranscribeTab({
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
 }) {
+  // Load device list if not yet populated
+  useEffect(() => {
+    if (state.audioDevices.length === 0) {
+      actions.listAudioDevices();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const setupDoneInConfig = state.setupStatus?.setup_complete ?? false;
   const modelLoadedInMemory = state.activeModel !== null;
 
@@ -469,20 +477,60 @@ function TranscribeTab({
             <h3 className="font-semibold">Live Transcription</h3>
             <p className="text-sm text-muted-foreground">
               {state.isRecording
-                ? "Listening... speak into your microphone"
+                ? "Listening… speak into your microphone"
                 : "Click the microphone to start transcribing"}
             </p>
           </div>
-          <div className="text-xs text-muted-foreground font-mono">
-            {state.activeModel ?? "No model"}
+          <div className="text-right space-y-1">
+            <div className="text-xs text-muted-foreground font-mono">
+              {state.activeModel ?? "No model"}
+            </div>
+            {/* Device indicator */}
+            <div className="flex items-center justify-end gap-1 text-xs text-muted-foreground">
+              <Mic className="h-3 w-3" />
+              <span className="max-w-[160px] truncate">
+                {state.selectedDevice ?? "System default"}
+              </span>
+            </div>
           </div>
         </div>
 
+        {/* Device quick-select */}
+        {state.audioDevices.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button
+              onClick={() => actions.setSelectedDevice(null)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+                !state.selectedDevice
+                  ? "border-primary bg-primary/10 text-primary font-medium"
+                  : "border-border text-muted-foreground hover:border-primary/40"
+              )}
+            >
+              <Volume2 className="h-3 w-3" />
+              Default
+            </button>
+            {state.audioDevices.map((dev, i) => (
+              <button
+                key={i}
+                onClick={() => actions.setSelectedDevice(dev.name)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors max-w-[200px]",
+                  state.selectedDevice === dev.name
+                    ? "border-primary bg-primary/10 text-primary font-medium"
+                    : "border-border text-muted-foreground hover:border-primary/40"
+                )}
+              >
+                <Mic className="h-3 w-3 flex-shrink-0" />
+                <span className="truncate">{dev.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center justify-center py-8">
           <button
-            onClick={
-              state.isRecording ? actions.stopRecording : actions.startRecording
-            }
+            onClick={state.isRecording ? actions.stopRecording : () => actions.startRecording()}
             className={cn(
               "flex h-20 w-20 items-center justify-center rounded-full transition-all duration-300",
               state.isRecording
@@ -502,6 +550,9 @@ function TranscribeTab({
           <div className="flex items-center justify-center gap-2 text-sm text-red-500">
             <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
             Recording
+            {state.selectedDevice && (
+              <span className="text-muted-foreground text-xs">· {state.selectedDevice}</span>
+            )}
           </div>
         )}
       </div>
@@ -775,69 +826,177 @@ function DevicesTab({
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
 }) {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await actions.listAudioDevices();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    actions.listAudioDevices();
-  }, [actions]);
+    handleRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSelect = (deviceName: string) => {
+    actions.setSelectedDevice(deviceName);
+  };
+
+  const handleUseDefault = () => {
+    actions.setSelectedDevice(null);
+  };
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div className="rounded-xl border bg-card p-6 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Audio Input Devices</h3>
+          <div>
+            <h3 className="font-semibold">Audio Input Devices</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Select which microphone to use for transcription
+            </p>
+          </div>
           <Button
             variant="outline"
             size="sm"
-            onClick={actions.listAudioDevices}
+            onClick={handleRefresh}
+            disabled={isRefreshing}
           >
-            <RefreshCw className="mr-1 h-3 w-3" />
+            {isRefreshing ? (
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-1 h-3 w-3" />
+            )}
             Refresh
           </Button>
         </div>
 
+        {/* Active selection banner */}
+        {state.selectedDevice && (
+          <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+            <Mic className="h-4 w-4 text-primary flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-primary">Selected for transcription</p>
+              <p className="text-sm font-semibold truncate">{state.selectedDevice}</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleUseDefault}
+              className="text-xs text-muted-foreground hover:text-foreground flex-shrink-0"
+            >
+              Use Default
+            </Button>
+          </div>
+        )}
+
+        {!state.selectedDevice && (
+          <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+            <Volume2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+            <p className="text-xs text-muted-foreground">
+              Using system default microphone. Select a device below to override.
+            </p>
+          </div>
+        )}
+
         {state.audioDevices.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center space-y-2">
-            <Volume2 className="h-8 w-8 text-muted-foreground/30" />
+            {isRefreshing ? (
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/30" />
+            ) : (
+              <Volume2 className="h-8 w-8 text-muted-foreground/30" />
+            )}
             <p className="text-sm text-muted-foreground">
-              No audio input devices detected. Make sure a microphone is
-              connected.
+              {isRefreshing
+                ? "Scanning for audio devices…"
+                : "No audio input devices detected. Make sure a microphone is connected."}
             </p>
           </div>
         ) : (
           <div className="space-y-2">
-            {state.audioDevices.map((device, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "rounded-lg border p-4 space-y-2",
-                  device.is_default && "border-primary/50 bg-primary/5"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <Mic className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">{device.name}</span>
-                  {device.is_default && (
-                    <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                      Default
-                    </span>
+            {state.audioDevices.map((device, i) => {
+              const isSelected = state.selectedDevice === device.name;
+              const isActiveDefault = !state.selectedDevice && device.is_default;
+
+              return (
+                <div
+                  key={i}
+                  className={cn(
+                    "rounded-lg border p-4 transition-colors",
+                    isSelected
+                      ? "border-primary bg-primary/5"
+                      : isActiveDefault
+                      ? "border-emerald-500/30 bg-emerald-500/5"
+                      : "hover:border-primary/30"
                   )}
+                >
+                  <div className="flex items-center gap-3">
+                    <Mic
+                      className={cn(
+                        "h-4 w-4 flex-shrink-0",
+                        isSelected ? "text-primary" : "text-muted-foreground"
+                      )}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium">{device.name}</span>
+                        {device.is_default && (
+                          <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                            System default
+                          </span>
+                        )}
+                        {isSelected && (
+                          <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                            Selected
+                          </span>
+                        )}
+                        {isActiveDefault && !isSelected && (
+                          <span className="text-xs bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
+                        {device.sample_rates.length > 0 && (
+                          <span>
+                            {device.sample_rates.map((r) => `${r / 1000}kHz`).join(", ")}
+                          </span>
+                        )}
+                        {device.channels.length > 0 && (
+                          <span>
+                            {device.channels.join("/")}ch
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {!isSelected && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleSelect(device.name)}
+                        className="flex-shrink-0 text-xs"
+                      >
+                        Select
+                      </Button>
+                    )}
+                    {isSelected && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={handleUseDefault}
+                        className="flex-shrink-0 text-xs text-muted-foreground"
+                      >
+                        Deselect
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  {device.sample_rates.length > 0 && (
-                    <span>
-                      Sample rates:{" "}
-                      {device.sample_rates
-                        .map((r) => `${r / 1000}kHz`)
-                        .join(", ")}
-                    </span>
-                  )}
-                  {device.channels.length > 0 && (
-                    <span>
-                      Channels: {device.channels.join(", ")}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -847,14 +1006,17 @@ function DevicesTab({
         <div className="space-y-2 text-xs text-muted-foreground">
           <p>
             Whisper requires <strong>16kHz mono</strong> audio input. Most
-            modern microphones support this natively. If your device only
-            supports higher sample rates, audio will be captured at the native
-            rate.
+            modern microphones support this natively. Audio is automatically
+            resampled if your device delivers a different rate.
           </p>
           <p>
             For best results, use a dedicated microphone rather than a laptop's
             built-in mic. External USB microphones typically have better noise
             cancellation.
+          </p>
+          <p>
+            Your device selection is remembered across sessions. The transcription
+            engine will use it automatically when you start recording.
           </p>
         </div>
       </div>

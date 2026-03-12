@@ -201,11 +201,15 @@ pub async fn delete_model(app: AppHandle, filename: String) -> Result<(), String
 /// Start real-time microphone transcription.
 /// Emits "whisper-segment" events with transcription results.
 /// Emits "whisper-error" on failure.
+///
+/// `device_name`: optional CoreAudio/CPAL device name to use. When omitted the
+/// system default input device is used.
 #[tauri::command]
 pub async fn start_transcription(
     app: AppHandle,
     state: State<'_, TranscriptionState>,
     recording: State<'_, RecordingState>,
+    device_name: Option<String>,
 ) -> Result<(), String> {
     // Check if already recording
     {
@@ -236,7 +240,9 @@ pub async fn start_transcription(
     // capture + inference loop on a dedicated OS thread.
     std::thread::spawn(move || {
         // Start audio capture — always returns 16kHz mono after internal resampling
-        let capture = match audio_capture::AudioCapture::start() {
+        let capture = match audio_capture::AudioCapture::start_with_device(
+            device_name.as_deref()
+        ) {
             Ok(c) => c,
             Err(e) => {
                 let _ = app_events.emit("whisper-error", e);

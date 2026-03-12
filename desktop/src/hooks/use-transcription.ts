@@ -36,6 +36,8 @@ export interface TranscriptionState {
 
   // Devices
   audioDevices: AudioDeviceInfo[];
+  /** Name of the selected input device. null = use system default. */
+  selectedDevice: string | null;
 
   // Errors
   error: string | null;
@@ -46,13 +48,14 @@ export interface TranscriptionActions {
   downloadModel: (filename: string) => Promise<void>;
   downloadVadModel: () => Promise<void>;
   initTranscription: (filename: string) => Promise<void>;
-  startRecording: () => Promise<void>;
+  startRecording: (deviceName?: string) => Promise<void>;
   stopRecording: () => Promise<void>;
   checkModelExists: (filename: string) => Promise<boolean>;
   listDownloadedModels: () => Promise<string[]>;
   deleteModel: (filename: string) => Promise<void>;
   refreshSetupStatus: () => Promise<void>;
   listAudioDevices: () => Promise<AudioDeviceInfo[]>;
+  setSelectedDevice: (deviceName: string | null) => void;
   clearSegments: () => void;
   clearError: () => void;
 
@@ -73,6 +76,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const [segments, setSegments] = useState<WhisperSegment[]>([]);
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const unlistenersRef = useRef<UnlistenFn[]>([]);
@@ -223,7 +227,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     }
   }, [refreshSetupStatus]);
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (deviceName?: string) => {
     setError(null);
     setSegments([]);
 
@@ -241,8 +245,13 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
 
     unlistenersRef.current.push(segmentUnlisten, errorUnlisten);
 
+    // Prefer explicitly passed device, fall back to persisted selectedDevice state
+    const resolvedDevice = deviceName ?? selectedDevice ?? undefined;
+
     try {
-      await tauriInvoke("start_transcription");
+      await tauriInvoke("start_transcription", {
+        deviceName: resolvedDevice ?? null,
+      });
       setIsRecording(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -250,7 +259,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
       segmentUnlisten();
       errorUnlisten();
     }
-  }, []);
+  }, [selectedDevice]);
 
   const stopRecording = useCallback(async () => {
     try {
@@ -330,6 +339,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     fullTranscript,
     activeModel,
     audioDevices,
+    selectedDevice,
     error,
   };
 
@@ -345,6 +355,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     deleteModel,
     refreshSetupStatus,
     listAudioDevices,
+    setSelectedDevice,
     clearSegments,
     clearError,
     quickSetup,

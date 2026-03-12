@@ -28,6 +28,7 @@ export interface LlmState {
   isDetecting: boolean;
   isDownloading: boolean;
   isStarting: boolean;
+  startingModelName: string | null;
   downloadCancelled: boolean;
 
   // Server
@@ -74,6 +75,7 @@ export function useLlm(): [LlmState, LlmActions] {
   const [isDetecting, setIsDetecting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [startingModelName, setStartingModelName] = useState<string | null>(null);
   const [downloadCancelled, setDownloadCancelled] = useState(false);
   const [serverStatus, setServerStatus] = useState<LlmServerStatus | null>(
     null
@@ -104,14 +106,25 @@ export function useLlm(): [LlmState, LlmActions] {
       const unlistenReady = await tauriListen<LlmServerStatus>(
         "llm-server-ready",
         (event) => {
-          if (mounted) setServerStatus(event.payload);
+          if (mounted) {
+            setServerStatus(event.payload);
+            setStartingModelName(null);
+          }
+        }
+      );
+      const unlistenStarting = await tauriListen<{ model_filename: string; port: number }>(
+        "llm-server-starting",
+        (event) => {
+          if (mounted) setStartingModelName(event.payload.model_filename);
         }
       );
       const unlistenStopped = await tauriListen<void>("llm-server-stopped", () => {
-        if (mounted)
+        if (mounted) {
           setServerStatus((prev) =>
             prev ? { ...prev, running: false, port: 0 } : null
           );
+          setStartingModelName(null);
+        }
       });
       const unlistenCancelled = await tauriListen<LlmDownloadCancelledEvent>(
         "llm-download-cancelled",
@@ -123,7 +136,7 @@ export function useLlm(): [LlmState, LlmActions] {
           }
         }
       );
-      unlistenRef.current.push(unlistenReady, unlistenStopped, unlistenCancelled);
+      unlistenRef.current.push(unlistenReady, unlistenStarting, unlistenStopped, unlistenCancelled);
     };
     setupListeners();
 
@@ -239,6 +252,7 @@ export function useLlm(): [LlmState, LlmActions] {
       contextLength?: number
     ) => {
       setIsStarting(true);
+      setStartingModelName(modelFilename);
       setError(null);
       try {
         const status = await tauriInvoke<LlmServerStatus>("start_llm_server", {
@@ -254,6 +268,7 @@ export function useLlm(): [LlmState, LlmActions] {
         throw e;
       } finally {
         setIsStarting(false);
+        setStartingModelName(null);
       }
     },
     []
@@ -357,6 +372,7 @@ export function useLlm(): [LlmState, LlmActions] {
     isDetecting,
     isDownloading,
     isStarting,
+    startingModelName,
     downloadCancelled,
     serverStatus,
     downloadedModels,

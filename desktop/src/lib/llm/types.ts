@@ -51,6 +51,7 @@ export interface LlmServerStatus {
   model_name: string;
   gpu_layers: number;
   context_length: number;
+  last_error_output?: string;
 }
 
 // ── Setup Status ──────────────────────────────────────────────────────────
@@ -98,6 +99,10 @@ export interface DownloadedLlmModel {
   size_gb: string;
   name: string;
   tier: LlmTier | null;
+  is_custom: boolean;
+  is_split: boolean;
+  all_parts_present: boolean;
+  total_parts: number;
 }
 
 // ── Chat / Inference Types ────────────────────────────────────────────────

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, createContext, useContext } from "react";
 import { useLlm } from "@/hooks/use-llm";
+import type { LlmState, LlmActions } from "@/hooks/use-llm";
 import {
   Download,
   Trash2,
@@ -49,6 +50,16 @@ import { Separator } from "@/components/ui/separator";
 import { streamCompletion, callWithTools } from "@/lib/llm/api";
 import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
 
+// ── Shared LLM context (single hook instance for all tabs) ───────────────
+
+const LlmContext = createContext<[LlmState, LlmActions] | null>(null);
+
+function useLlmContext(): [LlmState, LlmActions] {
+  const ctx = useContext(LlmContext);
+  if (!ctx) throw new Error("useLlmContext used outside LlmContext.Provider");
+  return ctx;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number): string {
@@ -91,13 +102,14 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 // ── Setup Tab ─────────────────────────────────────────────────────────────
 
 function SetupTab() {
-  const [state, actions] = useLlm();
+  const [state, actions] = useLlmContext();
   const {
     hardwareResult,
     downloadProgress,
     isDetecting,
     isDownloading,
     isStarting,
+    startingModelName,
     downloadCancelled,
     downloadedModels,
     serverStatus,
@@ -248,6 +260,24 @@ function SetupTab() {
             </div>
           )}
 
+          {/* Model loading progress */}
+          {isStarting && (
+            <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-2">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Activity className="h-4 w-4 text-blue-500 animate-pulse" />
+                Loading model into memory…
+              </div>
+              {startingModelName && (
+                <p className="text-xs text-muted-foreground font-mono truncate">
+                  {startingModelName}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Large models can take 30–90 seconds to map into GPU memory. Please wait.
+              </p>
+            </div>
+          )}
+
           {serverStatus?.running && (
             <div className="flex items-center gap-2 text-sm text-green-600">
               <CheckCircle2 className="h-4 w-4" />
@@ -258,7 +288,7 @@ function SetupTab() {
           {error && (
             <div className="text-xs text-destructive flex items-start gap-2 bg-destructive/10 rounded px-3 py-2">
               <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
-              {error}
+              <span className="whitespace-pre-wrap">{error}</span>
             </div>
           )}
 
@@ -272,7 +302,7 @@ function SetupTab() {
               : isDownloading
               ? "Downloading…"
               : isStarting
-              ? "Starting server…"
+              ? "Loading model… (may take up to 2 min)"
               : serverStatus?.running && isModelDownloaded
               ? "Restart with Recommended Model"
               : isModelDownloaded
@@ -455,7 +485,7 @@ function ModelCard({
  *  2. Pick a .gguf file already on disk (Tauri only — uses a hidden file input)
  */
 function CustomModelSection({ onAdded }: { onAdded: () => void }) {
-  const [state, actions] = useLlm();
+  const [state, actions] = useLlmContext();
   const { isDownloading, downloadProgress, downloadCancelled } = state;
 
   const [open, setOpen] = useState(false);
@@ -746,11 +776,13 @@ function CustomModelSection({ onAdded }: { onAdded: () => void }) {
 // ── Models Tab ────────────────────────────────────────────────────────────
 
 function ModelsTab() {
-  const [state, actions] = useLlm();
+  const [state, actions] = useLlmContext();
   const {
     hardwareResult,
     downloadProgress,
     isDownloading,
+    isStarting,
+    startingModelName,
     downloadedModels,
     serverStatus,
     error,
@@ -813,7 +845,20 @@ function ModelsTab() {
       {(error || localError) && (
         <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-          {error ?? localError}
+          <span className="whitespace-pre-wrap">{error ?? localError}</span>
+        </div>
+      )}
+
+      {isStarting && (
+        <div className="flex items-center gap-3 rounded-lg border bg-blue-500/5 border-blue-500/20 px-4 py-3 text-sm">
+          <Activity className="h-4 w-4 text-blue-500 animate-pulse shrink-0" />
+          <div>
+            <p className="font-medium text-blue-600">Loading model into memory…</p>
+            {startingModelName && (
+              <p className="text-xs text-muted-foreground mt-0.5 font-mono">{startingModelName}</p>
+            )}
+            <p className="text-xs text-muted-foreground mt-0.5">Large models take 30–90 seconds. Do not close the app.</p>
+          </div>
         </div>
       )}
 
@@ -917,7 +962,7 @@ interface ConversationMessage {
 }
 
 function InferenceTab() {
-  const [state, actions] = useLlm();
+  const [state, actions] = useLlmContext();
   const { serverStatus, isStarting, hardwareResult, downloadedModels } = state;
   const { startServer, stopServer, detectHardware } = actions;
 
@@ -1465,7 +1510,7 @@ function InferenceTab() {
 // ── Server Tab ────────────────────────────────────────────────────────────
 
 function ServerTab() {
-  const [state, actions] = useLlm();
+  const [state, actions] = useLlmContext();
   const { serverStatus, isStarting, downloadedModels, hardwareResult } = state;
   const { startServer, stopServer, getServerStatus, healthCheck, detectHardware } = actions;
 
@@ -1689,7 +1734,7 @@ function ServerTab() {
 // ── Hardware Tab ──────────────────────────────────────────────────────────
 
 function HardwareTab() {
-  const [state, actions] = useLlm();
+  const [state, actions] = useLlmContext();
   const { hardwareResult, isDetecting } = state;
   const { detectHardware } = actions;
 
@@ -1839,16 +1884,40 @@ function HardwareTab() {
 // ── Page Root ─────────────────────────────────────────────────────────────
 
 export function LocalModels() {
+  // Single hook instance — all tabs share this state, no resets when switching tabs
+  const llm = useLlm();
+
+  return (
+    <LlmContext.Provider value={llm}>
+      <LocalModelsInner />
+    </LlmContext.Provider>
+  );
+}
+
+function LocalModelsInner() {
+  const [state] = useLlmContext();
+  const { serverStatus } = state;
+
   return (
     <div className="p-6 h-full flex flex-col">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Cpu className="h-6 w-6 text-blue-500" />
-          Local Models
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Run AI models locally on your device using llama.cpp
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <Cpu className="h-6 w-6 text-blue-500" />
+              Local Models
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Run AI models locally on your device using llama.cpp
+            </p>
+          </div>
+          {serverStatus?.running && (
+            <Badge className="bg-green-500/20 text-green-600 border-green-500/30 gap-1.5">
+              <Activity className="h-3 w-3" />
+              Server running · port {serverStatus.port}
+            </Badge>
+          )}
+        </div>
       </div>
 
       <Tabs defaultValue="setup" className="flex-1 flex flex-col">

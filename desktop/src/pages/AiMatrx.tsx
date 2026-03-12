@@ -3,8 +3,8 @@ import { useState, useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import supabase from "@/lib/supabase";
 
-// const WEB_ORIGIN = "https://www.aimatrx.com";
-const WEB_ORIGIN = "http://localhost:3000";
+const WEB_ORIGIN = "https://www.aimatrx.com";
+// const WEB_ORIGIN = "http://localhost:3000";
 const TARGET_PATH = "/demos/local-tools";
 const HANDOFF_PATH = "/auth/desktop-handoff";
 

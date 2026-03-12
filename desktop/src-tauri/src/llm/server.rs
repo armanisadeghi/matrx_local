@@ -10,6 +10,9 @@ pub struct LlmServerStatus {
     pub model_name: String,
     pub gpu_layers: i32,
     pub context_length: u32,
+    /// Last captured stderr output from llama-server (for error diagnosis).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub last_error_output: String,
 }
 
 pub struct LlmServer {
@@ -28,6 +31,7 @@ impl LlmServer {
                 model_name: String::new(),
                 gpu_layers: 0,
                 context_length: 0,
+                last_error_output: String::new(),
             },
         }
     }
@@ -49,7 +53,7 @@ impl LlmServer {
         // @executable_path/../Resources/binaries baked into its rpath (set by
         // download-llama-server.sh via install_name_tool). No DYLD_LIBRARY_PATH
         // override needed — the OS resolves dylibs from those rpath entries.
-        let (_rx, child) = app
+        let (rx, child) = app
             .shell()
             .sidecar("llama-server")
             .map_err(|e| format!("llama-server sidecar not found: {e}"))?
@@ -57,9 +61,60 @@ impl LlmServer {
             .spawn()
             .map_err(|e| format!("Failed to spawn llama-server: {e}"))?;
 
-        // Wait for server to become healthy before returning
-        wait_for_health(port).await?;
+        // Collect stderr output while waiting for health — this captures crash messages
+        // and model loading errors without blocking the health poll.
+        let stderr_log = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let stderr_log_clone = stderr_log.clone();
+        tauri::async_runtime::spawn(async move {
+            use tauri_plugin_shell::process::CommandEvent;
+            let mut rx = rx;
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stderr(bytes) | CommandEvent::Stdout(bytes) => {
+                        if let Ok(line) = String::from_utf8(bytes) {
+                            let mut log = stderr_log_clone.lock().unwrap();
+                            // Keep last 8KB of output
+                            if log.len() > 8192 {
+                                let trim_point = log.len() - 6144;
+                                *log = log[trim_point..].to_string();
+                            }
+                            log.push_str(&line);
+                        }
+                    }
+                    CommandEvent::Error(e) => {
+                        let mut log = stderr_log_clone.lock().unwrap();
+                        log.push_str(&format!("[spawn error] {}\n", e));
+                    }
+                    _ => {}
+                }
+            }
+        });
 
+        // Wait for server to become healthy before returning
+        match wait_for_health(port).await {
+            Ok(()) => {}
+            Err(timeout_msg) => {
+                // Attach any captured output to the error for diagnosis
+                let captured = stderr_log.lock().unwrap().clone();
+                // Extract the most relevant error lines (lines with "error" or "fail")
+                let relevant: String = captured
+                    .lines()
+                    .filter(|l| {
+                        let ll = l.to_lowercase();
+                        ll.contains("error") || ll.contains("fail") || ll.contains("fatal")
+                    })
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                if relevant.is_empty() {
+                    return Err(timeout_msg);
+                }
+                return Err(format!("{}\n\nServer output:\n{}", timeout_msg, relevant));
+            }
+        }
+
+        let captured = stderr_log.lock().unwrap().clone();
         self.process = Some(child);
         self.status = LlmServerStatus {
             running: true,
@@ -68,6 +123,7 @@ impl LlmServer {
             model_name: extract_model_name(model_path),
             gpu_layers,
             context_length,
+            last_error_output: captured,
         };
 
         Ok(())
@@ -80,6 +136,7 @@ impl LlmServer {
         }
         self.status.running = false;
         self.status.port = 0;
+        self.status.last_error_output = String::new();
     }
 
     /// Take ownership of the process handle (for synchronous cleanup on app quit).
@@ -124,28 +181,38 @@ fn build_server_args(
         "--jinja".to_string(),
         // Flash attention for faster inference
         "-fa".to_string(),
-        // Suppress noisy logs in production
-        "--log-disable".to_string(),
+        // Do NOT add --log-disable: we capture output for error diagnosis
     ]
 }
 
+/// Wait up to 120 seconds for llama-server to pass its health check.
+/// Large models (14B+) can take 60-90 seconds to map into memory on first load.
 async fn wait_for_health(port: u16) -> Result<(), String> {
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{port}/health");
 
-    for attempt in 0..60 {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Poll every second for up to 120 seconds
+    for attempt in 0..120 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => return Ok(()),
-            _ => {
-                if attempt == 59 {
-                    return Err("llama-server did not become healthy within 30 seconds. \
-                         The model may be too large for available RAM, or the binary \
-                         may not be compatible with this system."
-                        .to_string());
-                }
+            Ok(resp) if resp.status() == 503 => {
+                // 503 = server started but model still loading — keep waiting
             }
+            _ => {
+                // Connection refused or other error — process may have crashed
+                // Keep polling; the stderr collector will capture the crash output
+            }
+        }
+
+        if attempt == 119 {
+            return Err(
+                "llama-server did not become healthy within 120 seconds. \
+                 The model may be too large for available RAM, or the binary \
+                 may not be compatible with this system."
+                    .to_string(),
+            );
         }
     }
     Err("Timeout waiting for llama-server".to_string())

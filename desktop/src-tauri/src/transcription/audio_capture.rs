@@ -33,15 +33,35 @@ pub struct AudioCapture {
 }
 
 impl AudioCapture {
-    /// Start capturing audio from the default input device.
+    /// Start capturing audio from the specified device, or the system default if
+    /// `device_name` is None.
     ///
     /// Prefers 16kHz mono directly. If the device does not support that configuration,
     /// falls back to the device's native format and resamples to 16kHz in real time.
-    pub fn start() -> Result<Self, String> {
+    pub fn start_with_device(device_name: Option<&str>) -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or("No audio input device found")?;
+
+        let device = if let Some(name) = device_name {
+            // Try to find the named device; fall back to default if not found.
+            let found = host
+                .input_devices()
+                .map_err(|e| format!("Failed to enumerate input devices: {}", e))?
+                .find(|d| d.name().map(|n| n == name).unwrap_or(false));
+            match found {
+                Some(d) => d,
+                None => {
+                    eprintln!(
+                        "[audio_capture] Device '{}' not found; falling back to system default",
+                        name
+                    );
+                    host.default_input_device()
+                        .ok_or("No audio input device found")?
+                }
+            }
+        } else {
+            host.default_input_device()
+                .ok_or("No audio input device found")?
+        };
 
         let device_name = device.name().unwrap_or_else(|_| "unknown".into());
 
@@ -90,6 +110,11 @@ impl AudioCapture {
             buffer,
             native_sample_rate: actual_rate,
         })
+    }
+
+    /// Start capturing audio from the system default input device.
+    pub fn start() -> Result<Self, String> {
+        Self::start_with_device(None)
     }
 
     /// Drain all accumulated 16kHz mono samples from the buffer.

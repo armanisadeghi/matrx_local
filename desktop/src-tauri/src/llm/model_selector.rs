@@ -11,30 +11,41 @@ pub enum LlmTier {
 }
 
 /// Describes how a model is hosted on HuggingFace.
-/// Single-file models have one URL. Split models have multiple part URLs
-/// that must be downloaded sequentially and concatenated to produce the
-/// final GGUF file (llama.cpp reads split files natively when the first
-/// part is passed, but concatenation is simpler for our use case and avoids
-/// any version-specific split-file support requirements in llama-server).
+///
+/// Single-file models: `filename` is the single file; `hf_parts` is empty.
+///
+/// Split models: llama.cpp can load multi-part GGUF natively by passing the first
+/// part filename (e.g. `...-00001-of-00003.gguf`). We download each part with its
+/// original HuggingFace name (preserving the `-00001-of-N` suffix) and store them
+/// all in the models directory. `filename` is the first part filename — that is
+/// what we pass to llama-server. Parts MUST keep their original split filenames so
+/// that llama.cpp's split-file validation passes.
 #[derive(Debug, Clone, Serialize)]
 pub struct LlmModelInfo {
     pub tier: LlmTier,
     pub name: &'static str,
-    /// Final assembled filename stored on disk (always a single .gguf).
+    /// For single-file models: the .gguf filename.
+    /// For split models: the **first part** filename (e.g. `...-00001-of-00003.gguf`).
+    /// This is the value passed to llama-server -m.
     pub filename: &'static str,
     pub disk_size_gb: f32,
     pub ram_required_gb: f32,
     pub tool_calling_rating: u8,
     pub speed: &'static str,
     pub description: &'static str,
-    /// Primary URL (first part for split models, full file for single-file models).
+    /// URL for the first (or only) file.
     pub hf_url: &'static str,
-    /// Additional part URLs for split models. Empty slice = single-file model.
+    /// Additional part URLs for split models, in order. Empty = single-file model.
+    /// Each URL's filename is preserved on disk exactly as the HuggingFace name.
     pub hf_parts: &'static [&'static str],
     pub context_length: u32,
-    /// Expected assembled file size in bytes, verified via x-linked-size HTTP headers.
-    /// Used to detect partial/corrupted downloads on startup and reject false-valid files.
+    /// Expected size of the first part (single file) or first part for split models,
+    /// in bytes. Used to validate the download. For split models, validate each part
+    /// separately using `hf_part_sizes`.
     pub expected_size_bytes: u64,
+    /// Expected sizes for additional parts (index 0 = second part, etc.).
+    /// Empty for single-file models or if unknown.
+    pub hf_part_sizes: &'static [u64],
 }
 
 impl LlmModelInfo {
@@ -49,12 +60,35 @@ impl LlmModelInfo {
         urls.extend_from_slice(self.hf_parts);
         urls
     }
+
+    /// For split models, return the filenames for each part in order.
+    /// The filenames are extracted from the URLs (last path segment).
+    /// For single-file models, returns `[self.filename]`.
+    pub fn all_part_filenames(&self) -> Vec<String> {
+        if !self.is_split() {
+            return vec![self.filename.to_string()];
+        }
+        let all_urls = self.all_part_urls();
+        all_urls
+            .iter()
+            .map(|url| {
+                url.rsplit('/')
+                    .next()
+                    .unwrap_or("unknown.gguf")
+                    .to_string()
+            })
+            .collect()
+    }
 }
 
 // Verified 2026-03-11 against HuggingFace API + HEAD requests.
 // Single-file status confirmed by checking x-linked-size response headers.
 // Split-file part names confirmed against repository siblings list.
 // expected_size_bytes values from verified x-linked-size headers.
+//
+// IMPORTANT for split models: `filename` is the FIRST PART filename (preserving
+// the `-00001-of-N` suffix). llama-server receives this path and loads all parts
+// automatically. We do NOT concatenate parts.
 pub const LLM_MODELS: &[LlmModelInfo] = &[
     LlmModelInfo {
         tier: LlmTier::Low,
@@ -70,12 +104,12 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_parts: &[],
         context_length: 8192,
         expected_size_bytes: 2_497_280_256,
+        hf_part_sizes: &[],
     },
     LlmModelInfo {
         tier: LlmTier::LowAlt,
         name: "Phi-4-mini-Instruct",
         // Single file — 2,491,874,688 bytes (2.49 GB). Hosted by bartowski.
-        // microsoft/Phi-4-mini-instruct-gguf does not exist as a public repo.
         filename: "microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
         disk_size_gb: 2.5,
         ram_required_gb: 3.5,
@@ -86,6 +120,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_parts: &[],
         context_length: 8192,
         expected_size_bytes: 2_491_874_688,
+        hf_part_sizes: &[],
     },
     LlmModelInfo {
         tier: LlmTier::Default,
@@ -101,13 +136,15 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_parts: &[],
         context_length: 8192,
         expected_size_bytes: 5_027_783_488,
+        hf_part_sizes: &[],
     },
     LlmModelInfo {
         tier: LlmTier::High,
         name: "Qwen2.5-14B-Instruct",
-        // SPLIT: 3 parts. Assembled size = 3,991,999,872 + 3,989,373,504 + 1,006,737,120 = 8,988,110,496 bytes.
-        // The single-file URL does NOT exist in this repo.
-        filename: "qwen2.5-14b-instruct-q4_k_m.gguf",
+        // SPLIT: 3 native parts. `filename` = first part; llama-server loads all
+        // parts automatically when given the first-part path.
+        // Part sizes: 3,991,999,872 + 3,989,373,504 + 1,006,737,120 bytes.
+        filename: "qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf",
         disk_size_gb: 9.0,
         ram_required_gb: 10.0,
         tool_calling_rating: 5,
@@ -119,7 +156,8 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
             "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00003-of-00003.gguf",
         ],
         context_length: 8192,
-        expected_size_bytes: 8_988_110_496,
+        expected_size_bytes: 3_991_999_872,
+        hf_part_sizes: &[3_989_373_504, 1_006_737_120],
     },
     LlmModelInfo {
         tier: LlmTier::HighAlt,
@@ -135,6 +173,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_parts: &[],
         context_length: 4096,
         expected_size_bytes: 14_333_910_176,
+        hf_part_sizes: &[],
     },
 ];
 

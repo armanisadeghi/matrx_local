@@ -31,7 +31,148 @@ def _ensure_audio_dir() -> Path:
 async def tool_list_audio_devices(
     session: ToolSession,
 ) -> ToolResult:
-    """List available audio input (microphones) and output (speakers) devices."""
+    """List available audio input (microphones) and output (speakers) devices.
+
+    On macOS, uses system_profiler (CoreAudio) as the primary source so all
+    devices are visible — not just the PortAudio default aggregate.  sounddevice
+    indices are attached where they match, since sd.rec() needs them.
+    """
+    if IS_MACOS:
+        return await _list_devices_macos()
+    return await _list_devices_sounddevice()
+
+
+async def _list_devices_macos() -> ToolResult:
+    """macOS: enumerate all CoreAudio devices via system_profiler, then overlay
+    sounddevice indices so the recording path can still use sd.rec()."""
+    import json as _json
+    import asyncio as _asyncio
+
+    inputs: list[dict] = []
+    outputs: list[dict] = []
+
+    # --- CoreAudio via system_profiler ---
+    try:
+        proc = await _asyncio.create_subprocess_exec(
+            "system_profiler", "SPAudioDataType", "-json",
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=10)
+        data = _json.loads(stdout)
+        for item in data.get("SPAudioDataType", []):
+            name = item.get("_name", "Unknown")
+            # Each item in SPAudioDataType is a device; check input/output fields
+            # The keys differ between macOS versions — try both common layouts
+            input_ch = item.get("coreaudio_input_source", item.get("coreaudio_device_input", ""))
+            output_ch = item.get("coreaudio_output_source", item.get("coreaudio_device_output", ""))
+            default_rate = 44100  # CoreAudio commonly resamples to the host rate
+            try:
+                rate_str = item.get("coreaudio_default_audio_input_device",
+                           item.get("coreaudio_device_srate", ""))
+                if rate_str and str(rate_str).replace(".", "").isdigit():
+                    default_rate = int(float(str(rate_str)))
+            except Exception:
+                pass
+
+            # Any device that can record (input_ch present or not "0 ch")
+            if input_ch not in ("", None, "0 ch"):
+                inputs.append({
+                    "name": name,
+                    "sample_rate": default_rate,
+                    "channels": 1,  # Will be overridden by sounddevice if available
+                    "index": None,  # Filled in below
+                    "is_default": bool(item.get("coreaudio_default_audio_input_device")),
+                })
+            if output_ch not in ("", None, "0 ch"):
+                outputs.append({
+                    "name": name,
+                    "sample_rate": default_rate,
+                    "channels": 2,
+                    "index": None,
+                    "is_default": bool(item.get("coreaudio_default_audio_output_device")),
+                })
+    except Exception as exc:
+        logger.debug("system_profiler parse failed (%s); falling back to sounddevice only", exc)
+
+    # --- sounddevice for indices + richer metadata ---
+    try:
+        import sounddevice as sd
+        sd_devices = sd.query_devices()
+        sd_inputs: list[dict] = []
+        sd_outputs: list[dict] = []
+        for i, dev in enumerate(sd_devices):
+            entry = {
+                "index": i,
+                "name": dev["name"],
+                "sample_rate": dev["default_samplerate"],
+            }
+            if dev["max_input_channels"] > 0:
+                e = dict(entry)
+                e["channels"] = dev["max_input_channels"]
+                sd_inputs.append(e)
+            if dev["max_output_channels"] > 0:
+                e = dict(entry)
+                e["channels"] = dev["max_output_channels"]
+                sd_outputs.append(e)
+
+        def _match_name(name: str, sd_list: list[dict]) -> dict | None:
+            """Fuzzy match a CoreAudio name to a sounddevice entry."""
+            name_lower = name.lower()
+            for sd_dev in sd_list:
+                if sd_dev["name"].lower() == name_lower:
+                    return sd_dev
+            for sd_dev in sd_list:
+                if name_lower in sd_dev["name"].lower() or sd_dev["name"].lower() in name_lower:
+                    return sd_dev
+            return None
+
+        if inputs:
+            for entry in inputs:
+                match = _match_name(entry["name"], sd_inputs)
+                if match:
+                    entry["index"] = match["index"]
+                    entry["sample_rate"] = match["sample_rate"]
+                    entry["channels"] = match["channels"]
+        else:
+            # system_profiler gave us nothing usable — fall back to sounddevice list
+            inputs = sd_inputs
+
+        if outputs:
+            for entry in outputs:
+                match = _match_name(entry["name"], sd_outputs)
+                if match:
+                    entry["index"] = match["index"]
+                    entry["sample_rate"] = match["sample_rate"]
+                    entry["channels"] = match["channels"]
+        else:
+            outputs = sd_outputs
+
+    except ImportError:
+        pass  # No sounddevice — CoreAudio list is still returned without indices
+
+    # Ensure at least one entry if everything failed
+    if not inputs and not outputs:
+        return _list_devices_fallback()
+
+    lines = ["Input Devices (Microphones):"]
+    for d in inputs:
+        idx = f"[{d['index']}] " if d.get("index") is not None else ""
+        lines.append(f"  {idx}{d['name']} ({d.get('channels', '?')}ch, {d.get('sample_rate', '?')}Hz)")
+    lines.append("")
+    lines.append("Output Devices (Speakers):")
+    for d in outputs:
+        idx = f"[{d['index']}] " if d.get("index") is not None else ""
+        lines.append(f"  {idx}{d['name']} ({d.get('channels', '?')}ch, {d.get('sample_rate', '?')}Hz)")
+
+    return ToolResult(
+        output="\n".join(lines),
+        metadata={"inputs": inputs, "outputs": outputs},
+    )
+
+
+async def _list_devices_sounddevice() -> ToolResult:
+    """Non-macOS: use sounddevice directly."""
     try:
         import sounddevice as sd
 
@@ -46,23 +187,19 @@ async def tool_list_audio_devices(
             }
             if dev["max_input_channels"] > 0:
                 entry["channels"] = dev["max_input_channels"]
-                inputs.append(entry)
+                inputs.append(dict(entry))
             if dev["max_output_channels"] > 0:
-                entry_out = dict(entry)
-                entry_out["channels"] = dev["max_output_channels"]
-                outputs.append(entry_out)
+                e = dict(entry)
+                e["channels"] = dev["max_output_channels"]
+                outputs.append(e)
 
         lines = ["Input Devices (Microphones):"]
         for d in inputs:
-            lines.append(
-                f"  [{d['index']}] {d['name']} ({d['channels']}ch, {d['sample_rate']:.0f}Hz)"
-            )
+            lines.append(f"  [{d['index']}] {d['name']} ({d['channels']}ch, {d['sample_rate']:.0f}Hz)")
         lines.append("")
         lines.append("Output Devices (Speakers):")
         for d in outputs:
-            lines.append(
-                f"  [{d['index']}] {d['name']} ({d['channels']}ch, {d['sample_rate']:.0f}Hz)"
-            )
+            lines.append(f"  [{d['index']}] {d['name']} ({d['channels']}ch, {d['sample_rate']:.0f}Hz)")
 
         return ToolResult(
             output="\n".join(lines),
@@ -130,11 +267,15 @@ async def tool_record_audio(
     session: ToolSession,
     duration_seconds: int = 5,
     device_index: int | None = None,
-    sample_rate: int = 44100,
+    sample_rate: int | None = None,
     channels: int = 1,
     format: str = "wav",
 ) -> ToolResult:
-    """Record audio from microphone for specified duration. Returns path to audio file."""
+    """Record audio from microphone for specified duration. Returns path to audio file.
+
+    sample_rate defaults to None, which causes us to use the device's native rate
+    rather than a hardcoded 44100 that many devices don't support.
+    """
     if duration_seconds < 1 or duration_seconds > 300:
         return ToolResult(
             type=ToolResultType.ERROR, output="Duration must be 1-300 seconds."
@@ -147,6 +288,14 @@ async def tool_record_audio(
     try:
         import sounddevice as sd
         import numpy as np
+
+        # Use the device's native sample rate if not specified — avoids
+        # "Invalid sample rate" errors when the caller passes 44100 but
+        # the device's default is 48000.
+        if sample_rate is None:
+            dev_info = sd.query_devices(device_index, "input") if device_index is not None \
+                       else sd.query_devices(kind="input")
+            sample_rate = int(dev_info["default_samplerate"])
 
         logger.info(
             "Recording %ds of audio (device=%s, rate=%d, ch=%d)",
@@ -189,7 +338,8 @@ async def tool_record_audio(
 
     except ImportError:
         # Fallback to system tools
-        return await _record_fallback(filepath, duration_seconds, sample_rate, channels)
+        effective_rate = sample_rate or 44100
+        return await _record_fallback(filepath, duration_seconds, effective_rate, channels)
     except Exception as e:
         err_str = str(e)
         if (
