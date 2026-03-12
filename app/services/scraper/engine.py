@@ -210,7 +210,9 @@ class ScraperEngine:
             )
         except Exception as pw_exc:
             logger.warning(
-                "[scraper/engine.py] ScraperEngine: Playwright unavailable — "
+                "[scraper/engine.py] ScraperEngine: Playwright browser pool failed — "
+                "browser automation will be disabled. Error: %s",
+                pw_exc,
             )
             self._browser_pool = None
 

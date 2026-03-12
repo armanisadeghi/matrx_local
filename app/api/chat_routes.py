@@ -152,10 +152,10 @@ async def list_models() -> dict[str, Any]:
         return {"models": [], "total": 0, "source": "fallback"}
 
     try:
-        from matrx_ai.db.custom.ai_models.ai_model_manager import AiModelManager
+        from matrx_ai.db.custom.ai_models.ai_model_manager import ai_model_manager_instance
         # from matrx_utils import vcprint
 
-        mgr = AiModelManager()
+        mgr = ai_model_manager_instance
         all_models = await mgr.load_all_models()
         
         # vcprint(all_models, "[CHAT ROUTES API] list_models All Models", color="yellow")

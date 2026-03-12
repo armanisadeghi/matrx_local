@@ -16,7 +16,13 @@ _Last updated: 2026-03-11_
 - Voice Tab:
   - if I go in and then go to "Transcribe" tab and click the pretty blue icon, it says "Transcription not initialized — call init_transcription first" but if that's the case and the system knows what the problem is, then why isn't it just doing it and telling the user to do it. How am I going to do that as a user???
 
+- MAJOR PROBLEM: Currently, Python is attempting to use a 'server' ORM access for the database. This works in local developmnet because those envs are available. However, as soon as the app is built, then all fo the database interactions with the ai matrx database either completely stop or we are creating massive security issues because from the server, we cannot safely access the database.
+  - Solution option 1: Do everything only from the client, but this causes issues because the ai module relies on database integrations.
+  - Solution Option 2: Update the way the ORM is used to trigger the newly created client-side logic. (THIS is now ready and I just have to get the documentation for it.)
+
+
 ## Fixed 2026-03-11 (session 2)
+- [x] **Playwright browser pool silently failing at startup** — `_ensure_playwright_browsers()` set `PLAYWRIGHT_BROWSERS_PATH` only in a local `env` dict passed to the install subprocess, never in `os.environ`. So `ScraperEngine.start()` (Phase 3) launched Playwright against the wrong path, threw, and silently degraded to the stub pool. Fixed by writing the path into `os.environ` immediately in Phase 0b. Also fixed the silent exception — the caught `pw_exc` was never logged; added it to the warning message so future failures are diagnosable.
 - [x] **`UnboundLocalError: importlib` in `capabilities_routes.py`** — `_check_module()` used `import importlib.metadata` inside an `if` branch, which made Python treat `importlib` as a local variable throughout the function. The `importlib.util.find_spec()` call on the else-path then raised `UnboundLocalError`. Fixed by moving `import importlib.metadata` and `import importlib.util` to the module-level top of the file.
 - [x] **Duplicate `POST /cloud/configure`** — `initialize()` and the `onAuthStateChange(INITIAL_SESSION)` listener both called `configureCloudSync()` for the same session because the INITIAL_SESSION event fires before `initialize()` reaches the configure step. Replaced the boolean flag approach with a timestamp: the listener skips the call if `initialize()` already ran configure within the last 10 seconds.
 - [x] **Migration 005 applied** — `hardware_uuid`, `serial_number`, `board_id` columns added to `app_instances` via Supabase MCP. Fixes the `PGRST204 board_id column not found` ORPHAN INSTANCE error on every cloud configure call.

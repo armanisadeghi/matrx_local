@@ -50,12 +50,16 @@ async def _ensure_playwright_browsers() -> None:
     import os
 
     # The default path here must match the one set by hooks/runtime_hook.py
-    # for the frozen binary. When running in development the env var is
-    # typically unset and Playwright uses its own default cache location.
+    # for the frozen binary. In development the env var is usually unset, so
+    # we default to ~/.matrx/playwright-browsers and write it into os.environ
+    # so every subsequent Playwright call (including ScraperEngine.start())
+    # uses the same path — Playwright reads PLAYWRIGHT_BROWSERS_PATH at
+    # import time, so the env var must be set before any playwright import.
     browsers_path = os.environ.get(
         "PLAYWRIGHT_BROWSERS_PATH",
         os.path.join(os.path.expanduser("~"), ".matrx", "playwright-browsers"),
     )
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
 
     # Quick check: skip install if at least one versioned browser directory exists.
     browser_markers = ("chromium-", "firefox-", "webkit-", "chromium_headless_shell-")
@@ -239,7 +243,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Phase 1b: Mount the matrx-ai sub-app now that the DB config is registered.
     # This must happen after initialize_matrx_ai() because the matrx_ai module-level
     # imports (agent router → resolver → cache → definition → executor → persistence →
-    # AiModelManager) trigger an auto-fetch that requires 'supabase_automation_matrix'
+    # ai_model_manager_instance) trigger an auto-fetch that requires 'supabase_automation_matrix'
     # to already be registered in the ORM config registry.
     logger.info("[app/main.py] Phase 1b: Mounting matrx-ai sub-app...")
     try:

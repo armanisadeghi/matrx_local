@@ -136,9 +136,9 @@ class SyncEngine:
             return
 
         try:
-            from matrx_ai.db.custom.ai_models.ai_model_manager import AiModelManager
+            from matrx_ai.db.custom.ai_models.ai_model_manager import ai_model_manager_instance
 
-            mgr = AiModelManager()
+            mgr = ai_model_manager_instance
             all_models = await mgr.load_all_models()
 
             # Map endpoint → provider (same logic as chat_routes.py)
