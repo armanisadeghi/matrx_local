@@ -451,6 +451,7 @@ pub fn run() {
             check_llm_model_exists,
             download_llm_model,
             cancel_llm_download,
+            import_local_llm_model,
             list_llm_models,
             delete_llm_model,
             detect_llm_hardware,

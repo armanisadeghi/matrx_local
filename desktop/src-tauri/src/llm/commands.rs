@@ -88,6 +88,72 @@ pub async fn check_llm_server_health(state: State<'_, LlmServerState>) -> Result
 
 // ── Model Management ──────────────────────────────────────────────────────
 
+/// Import a local GGUF file into the models directory by copying it.
+///
+/// `source_path` — absolute path to the .gguf file on the user's machine.
+/// `dest_filename` — the filename to store it as (e.g. "my-model.gguf").
+///   If empty, the source file's own name is used.
+///
+/// Returns the final filename that was saved.
+#[tauri::command]
+pub async fn import_local_llm_model(
+    app: AppHandle,
+    source_path: String,
+    dest_filename: String,
+) -> Result<String, String> {
+    let src = std::path::Path::new(&source_path);
+
+    if !src.exists() {
+        return Err(format!("File not found: {}", source_path));
+    }
+
+    // Determine destination filename
+    let filename = if dest_filename.trim().is_empty() {
+        src.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("custom-model.gguf")
+            .to_string()
+    } else {
+        let mut n = dest_filename.trim().to_string();
+        if !n.ends_with(".gguf") {
+            n.push_str(".gguf");
+        }
+        n
+    };
+
+    let models_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("models");
+
+    std::fs::create_dir_all(&models_dir)
+        .map_err(|e| format!("Failed to create models dir: {}", e))?;
+
+    let dest = models_dir.join(&filename);
+
+    // Quick GGUF magic check on the source before copying
+    {
+        use std::io::Read;
+        let mut f = std::fs::File::open(src).map_err(|e| e.to_string())?;
+        let mut magic = [0u8; 4];
+        f.read_exact(&mut magic)
+            .map_err(|_| "File is too small to be a valid GGUF model".to_string())?;
+        if magic != [0x47, 0x47, 0x55, 0x46] {
+            return Err(
+                "Not a valid GGUF file (wrong magic bytes). Only .gguf models are supported."
+                    .to_string(),
+            );
+        }
+    }
+
+    tokio::fs::copy(src, &dest)
+        .await
+        .map_err(|e| format!("Failed to copy model: {}", e))?;
+
+    Ok(filename)
+}
+
 /// Check if a model file exists in local storage AND passes size validation.
 #[tauri::command]
 pub fn check_llm_model_exists(app: AppHandle, filename: String) -> bool {

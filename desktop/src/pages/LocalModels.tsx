@@ -23,7 +23,12 @@ import {
   Server,
   Settings,
   X,
+  FolderOpen,
+  Link,
+  Plus,
+  PackagePlus,
 } from "lucide-react";
+import { isTauri } from "@/lib/sidecar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -442,6 +447,302 @@ function ModelCard({
   );
 }
 
+// ── Custom Model Section ──────────────────────────────────────────────────
+
+/**
+ * Lets users add their own GGUF models two ways:
+ *  1. Paste a direct download URL (any GGUF from HuggingFace or elsewhere)
+ *  2. Pick a .gguf file already on disk (Tauri only — uses a hidden file input)
+ */
+function CustomModelSection({ onAdded }: { onAdded: () => void }) {
+  const [state, actions] = useLlm();
+  const { isDownloading, downloadProgress, downloadCancelled } = state;
+
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"url" | "local">("url");
+
+  // URL download state
+  const [url, setUrl] = useState("");
+  const [customFilename, setCustomFilename] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const deriveFilenameFromUrl = (u: string) => {
+    try {
+      const segments = new URL(u).pathname.split("/");
+      const last = segments[segments.length - 1];
+      if (last.endsWith(".gguf")) return last;
+    } catch {
+      // not a valid URL yet — ignore
+    }
+    return "";
+  };
+
+  const handleUrlChange = (u: string) => {
+    setUrl(u);
+    if (!customFilename) {
+      setCustomFilename(deriveFilenameFromUrl(u));
+    }
+  };
+
+  const handleUrlDownload = async () => {
+    setLocalError(null);
+    setSuccessMsg(null);
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) return;
+
+    let filename = customFilename.trim();
+    if (!filename) {
+      filename = deriveFilenameFromUrl(trimmedUrl);
+    }
+    if (!filename) {
+      filename = "custom-model.gguf";
+    }
+    if (!filename.endsWith(".gguf")) filename += ".gguf";
+
+    try {
+      await actions.downloadModel(filename, [trimmedUrl]);
+      setSuccessMsg(`Downloaded: ${filename}`);
+      setUrl("");
+      setCustomFilename("");
+      onAdded();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.toLowerCase().includes("cancel")) setLocalError(msg);
+    }
+  };
+
+  const handleLocalFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocalError(null);
+    setSuccessMsg(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // In Tauri the webview exposes the real filesystem path via `file.path`
+    // (a Tauri-specific extension). Fall back gracefully in browser.
+    const filePath = (file as File & { path?: string }).path;
+
+    if (!isTauri() || !filePath) {
+      setLocalError(
+        "Local file import only works in the desktop app. " +
+          "If you're already in the desktop app, try restarting it."
+      );
+      return;
+    }
+
+    if (!file.name.endsWith(".gguf")) {
+      setLocalError("Only .gguf files are supported.");
+      return;
+    }
+
+    setIsImporting(true);
+    try {
+      const saved = await actions.importLocalModel(filePath, customFilename.trim());
+      setSuccessMsg(`Imported: ${saved}`);
+      setCustomFilename("");
+      onAdded();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setLocalError(msg);
+    } finally {
+      setIsImporting(false);
+      // Reset file input so the same file can be picked again if needed
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const progressPercent = downloadProgress?.percent ?? 0;
+
+  return (
+    <Card className="border-dashed">
+      <CardHeader className="pb-3">
+        <button
+          className="flex items-center justify-between w-full text-left"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
+            <PackagePlus className="h-4 w-4" />
+            Add Custom Model
+          </CardTitle>
+          <Plus
+            className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-45" : ""}`}
+          />
+        </button>
+        {!open && (
+          <CardDescription className="text-xs mt-1">
+            Add any GGUF model from a URL or from a file already on your machine.
+          </CardDescription>
+        )}
+      </CardHeader>
+
+      {open && (
+        <CardContent className="space-y-4">
+          {/* Mode toggle */}
+          <div className="flex gap-1 rounded-lg border p-1 bg-muted/30 w-fit">
+            <button
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                mode === "url"
+                  ? "bg-background shadow text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => setMode("url")}
+            >
+              <Link className="h-3 w-3" />
+              Download from URL
+            </button>
+            <button
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                mode === "local"
+                  ? "bg-background shadow text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => setMode("local")}
+            >
+              <FolderOpen className="h-3 w-3" />
+              Use Local File
+            </button>
+          </div>
+
+          {/* Optional custom filename */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              Save as (optional)
+            </Label>
+            <Input
+              placeholder="my-model.gguf — leave blank to use the source filename"
+              value={customFilename}
+              onChange={(e) => setCustomFilename(e.target.value)}
+              className="text-sm h-8"
+            />
+          </div>
+
+          {mode === "url" ? (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Download URL</Label>
+                <Input
+                  placeholder="https://huggingface.co/.../model.gguf"
+                  value={url}
+                  onChange={(e) => handleUrlChange(e.target.value)}
+                  className="text-sm h-8 font-mono"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Direct link to any .gguf file. HuggingFace, GitHub, or any CDN.
+                </p>
+              </div>
+
+              {/* Download progress */}
+              {isDownloading && downloadProgress && !downloadProgress.filename.startsWith("ggml") && (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Downloading…</span>
+                    <span>{formatBytes(downloadProgress.bytes_downloaded)}</span>
+                  </div>
+                  <Progress value={progressPercent} className="h-1.5" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">{progressPercent.toFixed(1)}%</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-5 px-1 text-xs text-destructive"
+                      onClick={actions.cancelDownload}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {downloadCancelled && (
+                <p className="text-xs text-amber-500 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  Download cancelled.
+                </p>
+              )}
+
+              <Button
+                size="sm"
+                className="w-full gap-1.5"
+                disabled={!url.trim() || isDownloading}
+                onClick={handleUrlDownload}
+              >
+                {isDownloading ? (
+                  <><Download className="h-3.5 w-3.5 animate-bounce" />Downloading…</>
+                ) : (
+                  <><Download className="h-3.5 w-3.5" />Download Model</>
+                )}
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Pick a .gguf file already on your machine. It will be copied into the
+                app's models folder so it can be managed here.
+              </p>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".gguf"
+                className="hidden"
+                onChange={handleLocalFile}
+              />
+
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full gap-1.5"
+                disabled={isImporting}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+                {isImporting ? "Importing…" : "Choose .gguf File…"}
+              </Button>
+
+              <div className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                <p className="font-medium">Requirements</p>
+                <ul className="list-disc list-inside space-y-0.5">
+                  <li>Must be a valid GGUF file (llama.cpp format)</li>
+                  <li>Compatible with llama-server (most chat/instruct models work)</li>
+                  <li>Quantized versions (Q4_K_M, Q5_K_M, etc.) are recommended</li>
+                  <li>
+                    Find models at{" "}
+                    <a
+                      href="https://huggingface.co/models?library=gguf&sort=trending"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline hover:text-foreground"
+                    >
+                      huggingface.co
+                    </a>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* Feedback */}
+          {localError && (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              {localError}
+            </div>
+          )}
+          {successMsg && (
+            <div className="flex items-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-600">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              {successMsg}
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
 // ── Models Tab ────────────────────────────────────────────────────────────
 
 function ModelsTab() {
@@ -454,7 +755,7 @@ function ModelsTab() {
     serverStatus,
     error,
   } = state;
-  const { detectHardware, downloadModel, startServer, deleteModel, cancelDownload } = actions;
+  const { detectHardware, downloadModel, startServer, deleteModel, cancelDownload, listModels } = actions;
 
   const [downloadingFilename, setDownloadingFilename] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -558,47 +859,48 @@ function ModelsTab() {
         })}
       </div>
 
-      {/* Raw files section for downloaded models not in catalog */}
+      {/* Custom models already on disk but not in the catalog */}
       {downloadedModels.some(
         (dm) => !allModels.some((m) => m.filename === dm.filename)
       ) && (
-        <div className="mt-4">
-          <h3 className="text-sm font-medium text-muted-foreground mb-2">Custom Models</h3>
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium text-muted-foreground">Your Custom Models</h3>
           {downloadedModels
             .filter((dm) => !allModels.some((m) => m.filename === dm.filename))
             .map((dm) => (
-              <div
-                key={dm.filename}
-                className="flex items-center justify-between rounded-lg border px-4 py-3 text-sm"
-              >
-                <div>
-                  <p className="font-medium">{dm.name}</p>
-                  <p className="text-xs text-muted-foreground">{dm.size_gb} GB</p>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      startServer(dm.filename, 0, 4096)
-                    }
-                  >
-                    <Play className="h-3 w-3 mr-1" />
-                    Load
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-destructive"
-                    onClick={() => handleDelete(dm.filename)}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
+              <Card key={dm.filename}>
+                <CardContent className="py-3 px-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">{dm.name}</p>
+                    <p className="text-xs text-muted-foreground">{dm.size_gb} GB • Custom</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1"
+                      onClick={() => startServer(dm.filename, 99, 4096)}
+                    >
+                      <Play className="h-3 w-3" />
+                      Load
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:bg-destructive/10"
+                      onClick={() => handleDelete(dm.filename)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             ))}
         </div>
       )}
+
+      {/* Add a new custom model */}
+      <CustomModelSection onAdded={listModels} />
     </div>
   );
 }

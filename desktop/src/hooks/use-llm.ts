@@ -44,6 +44,11 @@ export interface LlmActions {
   downloadModel: (filename: string, urls: string[]) => Promise<void>;
   /** Request cancellation of an in-flight download. */
   cancelDownload: () => Promise<void>;
+  /**
+   * Copy a local GGUF file into the app's models directory.
+   * Returns the final filename it was saved as.
+   */
+  importLocalModel: (sourcePath: string, destFilename?: string) => Promise<string>;
   startServer: (
     modelFilename: string,
     gpuLayers: number,
@@ -206,6 +211,27 @@ export function useLlm(): [LlmState, LlmActions] {
     }
   }, []);
 
+  const importLocalModel = useCallback(
+    async (sourcePath: string, destFilename = "") => {
+      setError(null);
+      try {
+        const filename = await tauriInvoke<string>("import_local_llm_model", {
+          sourcePath,
+          destFilename,
+        });
+        // Refresh the model list so the new model appears immediately
+        const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
+        setDownloadedModels(models);
+        return filename;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        throw e;
+      }
+    },
+    []
+  );
+
   const startServer = useCallback(
     async (
       modelFilename: string,
@@ -341,6 +367,7 @@ export function useLlm(): [LlmState, LlmActions] {
     detectHardware,
     downloadModel,
     cancelDownload,
+    importLocalModel,
     startServer,
     stopServer,
     getServerStatus,
