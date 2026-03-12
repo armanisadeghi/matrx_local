@@ -18,7 +18,7 @@ BINARIES_DIR="$SCRIPT_DIR/../desktop/src-tauri/binaries"
 mkdir -p "$BINARIES_DIR"
 
 # llama.cpp release version — update when upgrading
-LLAMA_FALLBACK_VERSION="b8245"
+LLAMA_FALLBACK_VERSION="b8281"
 LLAMA_VERSION=""
 LLAMA_BASE=""
 LLAMA_REPO="ggml-org/llama.cpp"
@@ -69,13 +69,21 @@ download_target() {
     [[ "$triple" == *"windows"* ]] && ext=".exe"
     local dest="$BINARIES_DIR/llama-server-${triple}${ext}"
 
-    if [[ -f "$dest" ]]; then
+    # Ensure version is resolved
+    ensure_llama_version
+
+    # On macOS, check if dylibs also need to be downloaded (they live in the same archive)
+    local dylibs_needed=false
+    if [[ "$triple" == *"apple-darwin"* ]]; then
+        if ! ls "$BINARIES_DIR"/libggml.dylib &>/dev/null; then
+            dylibs_needed=true
+        fi
+    fi
+
+    if [[ -f "$dest" ]] && [[ "$dylibs_needed" == "false" ]]; then
         echo "  ✓ Already exists: $(basename "$dest")"
         return
     fi
-
-    # Ensure version is resolved
-    ensure_llama_version
 
     local url="${LLAMA_BASE}/${asset}"
     echo "  ↓ Downloading llama-server ${LLAMA_VERSION} for ${triple} ..."
@@ -85,19 +93,40 @@ download_target() {
 
     if [[ "$asset" == *.tar.gz ]]; then
         curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o "$tmp_dir/archive.tar.gz" "$url"
-        tar -xzf "$tmp_dir/archive.tar.gz" -C "$tmp_dir"
-        # Find llama-server in the extracted directory
-        local server_bin
-        server_bin="$(find "$tmp_dir" -name "llama-server" -type f | head -1)"
-        if [[ -z "$server_bin" ]]; then
-            rm -rf "$tmp_dir"
-            echo "  ✗ ERROR: llama-server not found in archive" >&2
-            return 1
+        tar -xzf "$tmp_dir/archive.tar.gz" -C "$tmp_dir" 2>/dev/null || true
+        # Find extracted dir
+        local extracted_dir
+        extracted_dir="$(find "$tmp_dir" -maxdepth 1 -type d | grep -v "^$tmp_dir$" | head -1)"
+        [[ -z "$extracted_dir" ]] && extracted_dir="$tmp_dir"
+
+        # Copy the server binary
+        if [[ ! -f "$dest" ]]; then
+            local server_bin
+            server_bin="$(find "$extracted_dir" -name "llama-server" -type f | head -1)"
+            if [[ -z "$server_bin" ]]; then
+                rm -rf "$tmp_dir"
+                echo "  ✗ ERROR: llama-server not found in archive" >&2
+                return 1
+            fi
+            cp "$server_bin" "$dest"
+            chmod +x "$dest"
+            echo "  ✓ Saved: $(basename "$dest")"
         fi
-        mv "$server_bin" "$dest"
+
+        # On macOS: copy all .dylib files so the server can find them at runtime
+        if [[ "$triple" == *"apple-darwin"* ]]; then
+            local dylib_count=0
+            while IFS= read -r -d '' lib; do
+                cp "$lib" "$BINARIES_DIR/"
+                (( dylib_count++ )) || true
+            done < <(find "$extracted_dir" -name "*.dylib" -type f -print0)
+            if (( dylib_count > 0 )); then
+                echo "  ✓ Copied ${dylib_count} dylib(s) to binaries/"
+            fi
+        fi
+
     elif [[ "$asset" == *.zip ]]; then
         curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o "$tmp_dir/archive.zip" "$url"
-        # Use unzip or python to extract
         if command -v unzip &>/dev/null; then
             unzip -q "$tmp_dir/archive.zip" -d "$tmp_dir/extracted"
         else
@@ -110,12 +139,11 @@ download_target() {
             echo "  ✗ ERROR: llama-server.exe not found in archive" >&2
             return 1
         fi
-        mv "$server_bin" "$dest"
+        cp "$server_bin" "$dest"
+        echo "  ✓ Saved: $(basename "$dest")"
     fi
 
     rm -rf "$tmp_dir"
-    [[ "$ext" != ".exe" ]] && chmod +x "$dest"
-    echo "  ✓ Saved: $(basename "$dest")"
 }
 
 MODE="${1:-all}"
