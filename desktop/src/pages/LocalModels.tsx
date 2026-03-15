@@ -1267,6 +1267,12 @@ function InferenceTab() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {error && (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
             {downloadedModels.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No models downloaded yet. Go to the Models tab to download one.
@@ -1289,7 +1295,9 @@ function InferenceTab() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label className="text-xs">GPU Layers</Label>
+                    <Label className="text-xs" title="Number of transformer layers to offload to the GPU accelerator. Set to 99 to offload all layers (recommended for Metal/CUDA). Use 0 for CPU-only inference.">
+                      GPU Layers (offload to accelerator)
+                    </Label>
                     <Input
                       type="number"
                       value={gpuLayersRaw}
