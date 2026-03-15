@@ -6,19 +6,19 @@ ToolRegistry so AI models can invoke them.
 
 Initialization sequence
 -----------------------
-  1. ``initialize_matrx_ai()`` — sync phase: loads env, registers DB if configured.
+  1. ``initialize_matrx_ai()`` — sync phase: sets up Supabase client mode.
   2. ``load_tools_and_register()`` — async phase:
        a. Loads the matrx-ai tool registry from the DB (cloud tools).
        b. Registers all local OS tools via ``LocalToolBridge``.
        c. Starts the tool executor and lifecycle sweep.
 
-Graceful degradation
---------------------
-  - MATRX_AI_CLIENT_MODE=true → client mode: uses Supabase PostgREST + RLS.
-    No DB credentials on the machine. Conversations not persisted server-side.
-  - No ``SUPABASE_MATRIX_HOST`` → AI calls work, conversations not persisted to DB.
+matrx-local ALWAYS runs in client mode
+---------------------------------------
+  - Uses Supabase PostgREST API (anon key + user JWT + RLS).
+  - No direct DB credentials are stored on the user's machine.
+  - Conversation persistence is skipped server-side — RLS enforces per-user isolation.
+  - AI provider calls (OpenAI, Anthropic, etc.) work in full.
   - Local tool registration failures are logged but don't block startup.
-  - Tool executor and lifecycle manager start regardless of DB availability.
 """
 
 from __future__ import annotations
@@ -35,116 +35,65 @@ logger = get_logger()
 
 _ai_initialized = False
 _tools_loaded = False
-_db_registered = False   # True only when asyncpg connection was successfully registered
-_client_mode_active = False  # True when MATRX_AI_CLIENT_MODE=true
+_client_mode_active = False
 
 
 def initialize_matrx_ai() -> None:
     """Initialize the matrx_ai library once at startup (synchronous phase).
 
-    Three mutually exclusive paths, checked in order:
-
-    1. MATRX_AI_CLIENT_MODE=true — client mode (PostgREST + RLS).
-       Uses SUPABASE_URL + SUPABASE_PUBLISHABLE_KEY. No asyncpg connection.
-       Conversation persistence is skipped; RLS enforces per-user data isolation.
-
-    2. SUPABASE_MATRIX_HOST is set — server mode with direct asyncpg connection.
-       Full conversation persistence via the cx_ tables.
-
-    3. Neither set — AI calls work, but nothing is persisted.
+    matrx-local always uses client mode: Supabase PostgREST + RLS.
+    Reads SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY from .env.
 
     Call this from the FastAPI lifespan handler BEFORE the async phase.
     """
-    global _ai_initialized, _db_registered, _client_mode_active
+    global _ai_initialized, _client_mode_active
     if _ai_initialized:
         return
 
     import matrx_ai
 
-    client_mode = os.getenv("MATRX_AI_CLIENT_MODE", "false").strip().lower() in ("1", "true", "yes")
+    supabase_url = os.getenv("SUPABASE_URL", "").strip()
+    supabase_anon_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
-    if client_mode:
-        supabase_url = os.getenv("SUPABASE_URL", "").strip()
-        supabase_anon_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
-        logger.info(
-            "[engine] matrx-ai: client mode — using Supabase PostgREST + RLS. url=%s",
-            supabase_url,
+    logger.info(
+        "[engine] matrx-ai: initializing in client mode (PostgREST + RLS). url=%s",
+        supabase_url,
+    )
+
+    try:
+        matrx_ai.initialize(
+            client_mode=True,
+            supabase_url=supabase_url,
+            supabase_anon_key=supabase_anon_key,
         )
-        try:
-            matrx_ai.initialize(
-                client_mode=True,
-                supabase_url=supabase_url,
-                supabase_anon_key=supabase_anon_key,
-            )
-            _client_mode_active = True
-            logger.info("[engine] matrx-ai: initialized in client mode ✓")
-        except Exception:
-            logger.error(
-                "[engine] matrx-ai: client mode initialization FAILED — "
-                "check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in .env",
-                exc_info=True,
-            )
-            matrx_ai._initialized = True
-
-    else:
-        db_host = os.getenv("SUPABASE_MATRIX_HOST", "").strip()
-
-        if db_host:
-            logger.info(
-                "[engine] matrx-ai: connecting to DB — host=%s port=%s db=%s user=%s",
-                db_host,
-                os.getenv("SUPABASE_MATRIX_PORT", "6543"),
-                os.getenv("SUPABASE_MATRIX_DATABASE_NAME", "postgres"),
-                os.getenv("SUPABASE_MATRIX_USER", "(not set)"),
-            )
-            try:
-                matrx_ai.initialize(
-                    db_name="supabase_automation_matrix",
-                    db_env_prefix="SUPABASE_MATRIX",
-                    db_additional_schemas=["auth"],
-                    db_env_var_overrides={"NAME": "SUPABASE_MATRIX_DATABASE_NAME"},
-                )
-                _db_registered = True
-                logger.info("[engine] matrx-ai: initialized with database persistence ✓")
-            except Exception:
-                logger.warning(
-                    "[engine] matrx-ai: DB initialization FAILED — "
-                    "AI calls will work but conversations won't be persisted. "
-                    "Attempted: host=%s port=%s. Check SUPABASE_MATRIX_* vars in .env",
-                    db_host,
-                    os.getenv("SUPABASE_MATRIX_PORT", "6543"),
-                    exc_info=True,
-                )
-                # Even if DB setup fails, mark matrx_ai as initialized so the tool
-                # registry load proceeds. AI provider calls work without a DB connection.
-                matrx_ai._initialized = True
-        else:
-            logger.warning(
-                "[engine] matrx-ai: neither MATRX_AI_CLIENT_MODE nor SUPABASE_MATRIX_HOST "
-                "is set — running WITHOUT cloud database. "
-                "AI model/agent data will not sync from Supabase. "
-                "Set MATRX_AI_CLIENT_MODE=true (desktop) or SUPABASE_MATRIX_HOST (server) "
-                "in .env to enable conversation history, model sync, and agent sync."
-            )
-            # Initialize without DB so matrx_ai._initialized is True and tool registry loads.
-            matrx_ai._initialized = True
+        _client_mode_active = True
+        logger.info("[engine] matrx-ai: initialized in client mode ✓")
+    except Exception:
+        logger.error(
+            "[engine] matrx-ai: client mode initialization FAILED — "
+            "check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in .env",
+            exc_info=True,
+        )
+        # Mark initialized anyway so the tool registry load proceeds.
+        # AI provider calls still work; only DB-backed features are unavailable.
+        matrx_ai._initialized = True
 
     _ai_initialized = True
 
 
-def has_db() -> bool:
-    """Return True if the asyncpg DB config was successfully registered.
-
-    Use this to guard any code that issues direct ORM queries — if False, those
-    queries will raise DatabaseConfigError and generate noisy tracebacks.
-    In client mode this returns False; use is_client_mode() to check instead.
-    """
-    return _db_registered
-
-
 def is_client_mode() -> bool:
-    """Return True if matrx-ai was initialized in client (PostgREST + RLS) mode."""
+    """Return True if matrx-ai was successfully initialized in client (PostgREST + RLS) mode."""
     return _client_mode_active
+
+
+def has_db() -> bool:
+    """Always returns False for matrx-local.
+
+    matrx-local never opens an asyncpg connection to the database. All
+    data access goes through the Supabase PostgREST API (client mode).
+    Code that guards on has_db() will skip gracefully without error.
+    """
+    return False
 
 
 async def load_tools_and_register() -> None:

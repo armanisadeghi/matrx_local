@@ -126,12 +126,12 @@ class SyncEngine:
             return
 
         if not has_db():
-            logger.warning(
-                "[sync_engine] Skipping model sync — no cloud database connection. "
-                "Set SUPABASE_MATRIX_HOST in .env to enable AI model syncing from Supabase."
+            logger.debug(
+                "[sync_engine] Skipping model sync — matrx-local runs in client mode "
+                "(no direct DB connection). Models are loaded via Supabase PostgREST."
             )
             await self._sync_meta.set_last_sync(
-                "models", status="skipped", error_message="no database connection"
+                "models", status="skipped", error_message="client mode — no direct DB connection"
             )
             return
 
@@ -220,12 +220,12 @@ class SyncEngine:
             return
 
         if not has_db():
-            logger.warning(
-                "[sync_engine] Skipping agent sync — no cloud database connection. "
-                "Set SUPABASE_MATRIX_HOST in .env to enable AI agent syncing from Supabase."
+            logger.debug(
+                "[sync_engine] Skipping agent sync — matrx-local runs in client mode "
+                "(no direct DB connection). Agents are loaded via Supabase PostgREST."
             )
             await self._sync_meta.set_last_sync(
-                "agents", status="skipped", error_message="no database connection"
+                "agents", status="skipped", error_message="client mode — no direct DB connection"
             )
             return
 

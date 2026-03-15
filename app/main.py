@@ -236,7 +236,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.error(
             "[app/main.py] Phase 1: matrx-ai initialization FAILED — AI endpoints will not work. "
-            "Check SUPABASE_MATRIX_* vars in .env",
+            "Check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in .env",
             exc_info=True,
         )
 

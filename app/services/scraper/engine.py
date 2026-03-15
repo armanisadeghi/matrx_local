@@ -334,14 +334,46 @@ class _MemoryOnlyPageCache:
         self._memory.pop(page_name, None)
 
 
+class _NullConnection:
+    """Stub connection that raises on any DB operation."""
+
+    async def fetchrow(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("No database connection — scraper running in memory-only mode")
+
+    async def fetch(self, *args: Any, **kwargs: Any) -> list[Any]:
+        raise RuntimeError("No database connection — scraper running in memory-only mode")
+
+    async def execute(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("No database connection — scraper running in memory-only mode")
+
+    async def executemany(self, *args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("No database connection — scraper running in memory-only mode")
+
+
+class _NullAcquireContext:
+    """Async context manager returned by _NullPool.acquire().
+
+    asyncpg Pool.acquire() is used as ``async with pool.acquire() as conn:``,
+    so it must return an async context manager, not a bare coroutine.
+    """
+
+    async def __aenter__(self) -> "_NullConnection":
+        return _NullConnection()
+
+    async def __aexit__(self, *args: Any) -> None:
+        pass
+
+
 class _NullPool:
     """Stub that satisfies the asyncpg.Pool type hint when no DB is available.
 
     Any actual DB operation will fail with a clear message.
+    acquire() returns an async context manager so callers can use
+    ``async with pool.acquire() as conn:`` without a TypeError.
     """
 
-    async def acquire(self) -> None:
-        raise RuntimeError("No database connection — scraper running in memory-only mode")
+    def acquire(self) -> _NullAcquireContext:
+        return _NullAcquireContext()
 
     async def close(self) -> None:
         pass

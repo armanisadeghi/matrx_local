@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,10 +48,29 @@ impl LlmServer {
 
         let args = build_server_args(model_path, gpu_layers, context_length, port);
 
-        let (rx, child) = app
+        // Resolve the binaries directory so dylibs can be found regardless of
+        // where Tauri places the binary at runtime (dev vs. bundled app).
+        // On macOS, DYLD_LIBRARY_PATH must point to the dir containing the
+        // libggml*.dylib / libllama.dylib files that ship alongside llama-server.
+        let binaries_dir: String = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|r: std::path::PathBuf| r.join("binaries").to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let mut sidecar_cmd = app
             .shell()
             .sidecar("llama-server")
-            .map_err(|e| format!("llama-server sidecar not found: {e}"))?
+            .map_err(|e| format!("llama-server sidecar not found: {e}"))?;
+
+        if !binaries_dir.is_empty() {
+            sidecar_cmd = sidecar_cmd
+                .env("DYLD_LIBRARY_PATH", &binaries_dir)
+                .env("LD_LIBRARY_PATH", &binaries_dir);
+        }
+
+        let (rx, child) = sidecar_cmd
             .args(&args)
             .spawn()
             .map_err(|e| format!("Failed to spawn llama-server: {e}"))?;
@@ -115,26 +134,22 @@ impl LlmServer {
             Ok(()) => {}
             Err(timeout_msg) => {
                 let captured = log_buf.lock().unwrap().clone();
-                let relevant: String = captured
-                    .lines()
-                    .filter(|l| {
-                        let ll = l.to_lowercase();
-                        ll.contains("error") || ll.contains("fail") || ll.contains("fatal")
-                    })
-                    .take(8)
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let output = extract_crash_output(&captured);
 
                 let _ = app.emit(
                     "llm-server-log",
                     serde_json::json!({ "line": &timeout_msg, "kind": "error" }),
                 );
 
-                return if relevant.is_empty() {
-                    Err(timeout_msg)
-                } else {
-                    Err(format!("{}\n\nServer output:\n{}", timeout_msg, relevant))
-                };
+                // Emit each line of captured output as individual log events
+                for line in output.lines() {
+                    let _ = app.emit(
+                        "llm-server-log",
+                        serde_json::json!({ "line": line, "kind": "error" }),
+                    );
+                }
+
+                return Err(format!("{}\n\nServer output:\n{}", timeout_msg, output));
             }
         }
 
@@ -232,22 +247,17 @@ async fn wait_for_health(
         // Fast-fail: if the process died and we haven't gotten a 200, it crashed
         if crashed.load(std::sync::atomic::Ordering::SeqCst) {
             let captured = log_buf.lock().unwrap().clone();
-            let relevant: String = captured
-                .lines()
-                .filter(|l| {
-                    let ll = l.to_lowercase();
-                    ll.contains("error") || ll.contains("fail") || ll.contains("argument")
-                        || ll.contains("fatal") || ll.contains("exiting")
-                })
-                .take(5)
-                .collect::<Vec<_>>()
-                .join("\n");
+            let output = extract_crash_output(&captured);
 
-            return Err(if relevant.is_empty() {
-                "llama-server process exited unexpectedly before becoming healthy.".to_string()
-            } else {
-                format!("llama-server crashed:\n{}", relevant)
-            });
+            // Emit each line of the crash output so the UI log panel can show it
+            for line in output.lines() {
+                let _ = app.emit(
+                    "llm-server-log",
+                    serde_json::json!({ "line": line, "kind": "error" }),
+                );
+            }
+
+            return Err(format!("llama-server crashed:\n{}", output));
         }
 
         // Determine phase label from recent log output for the progress event
@@ -362,6 +372,42 @@ fn infer_phase(log: &str) -> &'static str {
         return "sizing to memory";
     }
     "initializing"
+}
+
+/// Extract the most useful output from the crash log buffer.
+///
+/// Prefers lines with error keywords. Falls back to the last 20 lines of raw output
+/// so there is always something actionable to show the user, even when the process
+/// was killed silently (e.g. macOS dylib resolution failure, Gatekeeper, OOM).
+fn extract_crash_output(captured: &str) -> String {
+    let error_lines: Vec<&str> = captured
+        .lines()
+        .filter(|l| {
+            let ll = l.to_lowercase();
+            ll.contains("error") || ll.contains("fail") || ll.contains("argument")
+                || ll.contains("fatal") || ll.contains("exiting") || ll.contains("abort")
+                || ll.contains("killed") || ll.contains("signal")
+        })
+        .take(8)
+        .collect();
+
+    if !error_lines.is_empty() {
+        return error_lines.join("\n");
+    }
+
+    // No error keywords — return the last 20 lines of whatever was captured
+    let last_lines: Vec<&str> = captured.lines().collect();
+    let start = last_lines.len().saturating_sub(20);
+    let tail = last_lines[start..].join("\n");
+
+    if tail.trim().is_empty() {
+        "(no output captured — process may have been killed by macOS before writing anything)\n\
+         Possible causes: code signature issue, dylib not found, or Gatekeeper block.\n\
+         Try: xattr -d com.apple.quarantine <binary path>"
+            .to_string()
+    } else {
+        tail
+    }
 }
 
 fn optimal_thread_count() -> usize {

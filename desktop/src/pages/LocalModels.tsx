@@ -1599,17 +1599,47 @@ function InferenceTab() {
 
 function ServerTab() {
   const [state, actions] = useLlmContext();
-  const { serverStatus, isStarting, downloadedModels, hardwareResult } = state;
+  const {
+    serverStatus,
+    isStarting,
+    startingModelName,
+    serverStartProgress,
+    serverLogs,
+    downloadedModels,
+    hardwareResult,
+    isDetecting,
+  } = state;
   const { startServer, stopServer, getServerStatus, healthCheck, detectHardware } = actions;
 
   const [healthOk, setHealthOk] = useState<boolean | null>(null);
   const [healthLatency, setHealthLatency] = useState<number | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [gpuLayers, setGpuLayers] = useState(99);
+  // Null means "not yet user-edited" — will be set from hardware detection
+  const [gpuLayers, setGpuLayers] = useState<number | null>(null);
   const [contextLen, setContextLen] = useState(8192);
   const [selectedModel, setSelectedModel] = useState(
     downloadedModels[0]?.filename ?? ""
   );
+  // Persisted logs shown after a failed start attempt
+  const [failureLogs, setFailureLogs] = useState<ServerLogLine[]>([]);
+  const [showFailureLogs, setShowFailureLogs] = useState(true);
+
+  // Auto-detect hardware on mount so GPU layers have a real default
+  useEffect(() => {
+    if (!hardwareResult && !isDetecting) {
+      detectHardware().catch(() => {/* non-critical */});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Sync gpuLayers default from hardware detection result (only when not yet user-edited)
+  useEffect(() => {
+    if (hardwareResult && gpuLayers === null) {
+      setGpuLayers(hardwareResult.recommended_gpu_layers ?? 99);
+    }
+  }, [hardwareResult, gpuLayers]);
+
+  const effectiveGpuLayers = gpuLayers ?? 99;
 
   const runHealthCheck = async () => {
     setLocalError(null);
@@ -1621,22 +1651,34 @@ function ServerTab() {
 
   const handleStart = async () => {
     setLocalError(null);
+    setFailureLogs([]);
     const model = selectedModel || downloadedModels[0]?.filename;
     if (!model) return;
     try {
       if (!hardwareResult) await detectHardware();
-      await startServer(model, gpuLayers, contextLen);
+      await startServer(model, effectiveGpuLayers, contextLen);
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : String(e));
+      // Capture whatever logs accumulated during the failed start attempt
+      setFailureLogs(serverLogs.slice());
+      setShowFailureLogs(true);
+    }
+  };
+
+  const handleStop = async () => {
+    try {
+      await stopServer();
     } catch (e) {
       setLocalError(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const handleStop = async () => {
-    await stopServer();
-  };
-
   const handleRefresh = async () => {
-    await getServerStatus();
+    try {
+      await getServerStatus();
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const endpointUrl = serverStatus?.running
@@ -1645,10 +1687,60 @@ function ServerTab() {
 
   return (
     <div className="space-y-4 max-w-2xl">
+      {/* Error banner */}
       {localError && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {localError}
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive space-y-1">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            <pre className="whitespace-pre-wrap font-sans break-words flex-1">{localError}</pre>
+          </div>
+        </div>
+      )}
+
+      {/* Live loading card — shown while server is starting */}
+      {isStarting && (
+        <ModelLoadingCard
+          modelName={startingModelName}
+          progress={serverStartProgress}
+          logs={serverLogs}
+        />
+      )}
+
+      {/* Post-failure log panel — persists after a failed start */}
+      {!isStarting && failureLogs.length > 0 && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+          <button
+            className="w-full flex items-center gap-2 px-4 py-3 text-sm font-medium hover:bg-muted/30 transition-colors"
+            onClick={() => setShowFailureLogs((v) => !v)}
+          >
+            {showFailureLogs ? (
+              <ChevronUp className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span>Server output</span>
+            <span className="ml-auto text-xs text-muted-foreground">
+              {failureLogs.length} line{failureLogs.length !== 1 ? "s" : ""}
+            </span>
+          </button>
+          {showFailureLogs && (
+            <div className="border-t px-4 py-3 space-y-0.5 max-h-64 overflow-y-auto">
+              {failureLogs.map((l, i) => (
+                <p
+                  key={i}
+                  className={`text-xs font-mono leading-relaxed ${
+                    l.kind === "error"
+                      ? "text-destructive"
+                      : l.kind === "ready"
+                      ? "text-green-600"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {l.line}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1660,7 +1752,7 @@ function ServerTab() {
               <Activity className="h-4 w-4" />
               Server Status
             </CardTitle>
-            <Button variant="ghost" size="sm" onClick={handleRefresh}>
+            <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={isStarting}>
               <RotateCcw className="h-4 w-4" />
             </Button>
           </div>
@@ -1737,14 +1829,14 @@ function ServerTab() {
           ) : (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <div className="h-2 w-2 rounded-full bg-muted-foreground/40" />
-              Server not running
+              {isStarting ? "Starting…" : "Server not running"}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Start Server Card */}
-      {!serverStatus?.running && (
+      {/* Start Server Card — hidden while starting or already running */}
+      {!serverStatus?.running && !isStarting && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -1775,17 +1867,30 @@ function ServerTab() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <div className="flex justify-between">
+                    <div className="flex justify-between items-center">
                       <Label className="text-xs">GPU Layers</Label>
-                      <span className="text-xs text-muted-foreground">{gpuLayers}</span>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {effectiveGpuLayers}
+                        {isDetecting && " (detecting…)"}
+                        {!isDetecting && hardwareResult && gpuLayers !== null && (
+                          <span className="text-green-600 ml-1">✓ auto</span>
+                        )}
+                      </span>
                     </div>
                     <Slider
                       min={0} max={99} step={1}
-                      value={[gpuLayers]}
+                      value={[effectiveGpuLayers]}
                       onValueChange={([v]) => setGpuLayers(v)}
+                      disabled={isDetecting}
                     />
                     <p className="text-xs text-muted-foreground">
-                      99 = full GPU offload
+                      {hardwareResult
+                        ? hardwareResult.recommended_gpu_layers === 99
+                          ? "Full GPU offload recommended for your hardware"
+                          : hardwareResult.recommended_gpu_layers === 0
+                          ? "CPU-only mode recommended (no compatible GPU)"
+                          : `Partial offload recommended for your hardware`
+                        : "99 = full GPU offload · 0 = CPU only"}
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -1797,7 +1902,7 @@ function ServerTab() {
                     >
                       <option value={2048}>2048</option>
                       <option value={4096}>4096</option>
-                      <option value={8192}>8192</option>
+                      <option value={8192}>8192 (recommended)</option>
                       <option value={16384}>16384</option>
                       <option value={32768}>32768</option>
                     </select>
@@ -1805,7 +1910,7 @@ function ServerTab() {
                 </div>
                 <Button
                   className="w-full"
-                  disabled={isStarting}
+                  disabled={isStarting || isDetecting}
                   onClick={handleStart}
                 >
                   {isStarting ? "Starting…" : "Start Server"}
