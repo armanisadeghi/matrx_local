@@ -1924,7 +1924,12 @@ function ServerTab() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <Label className="text-xs">GPU Layers</Label>
+                      <Label
+                        className="text-xs"
+                        title="Transformer layers to offload to the GPU accelerator. 99 = offload all layers (fastest, uses GPU memory). 0 = CPU-only. Auto-set from your hardware."
+                      >
+                        GPU Layers (offload to accelerator)
+                      </Label>
                       <span className="text-xs text-muted-foreground tabular-nums">
                         {effectiveGpuLayers}
                         {isDetecting && " (detecting…)"}
@@ -1984,8 +1989,12 @@ function ServerTab() {
 
 function HardwareTab() {
   const [state, actions] = useLlmContext();
-  const { hardwareResult, isDetecting } = state;
-  const { detectHardware } = actions;
+  const { hardwareResult, isDetecting, downloadedModels } = state;
+  const { detectHardware, listModels } = actions;
+
+  useEffect(() => {
+    listModels();
+  }, [listModels]);
 
   return (
     <div className="space-y-4 max-w-2xl">
@@ -2094,6 +2103,11 @@ function HardwareTab() {
                 {hardwareResult.all_models.map((m) => {
                   const isRecommended = m.filename === hardwareResult.recommended_filename;
                   const ramOk = hardwareResult.hardware.total_ram_mb / 1024 >= m.ram_required_gb;
+                  const downloaded = m.is_split
+                    ? downloadedModels.some(
+                        (d) => d.filename === m.filename && d.all_parts_present
+                      )
+                    : downloadedModels.some((d) => d.filename === m.filename);
                   return (
                     <div
                       key={m.filename}
@@ -2112,6 +2126,16 @@ function HardwareTab() {
                       <div className="flex items-center gap-3 text-xs text-muted-foreground">
                         <span>{m.disk_size_gb.toFixed(1)} GB</span>
                         <span>{m.ram_required_gb.toFixed(0)} GB RAM</span>
+                        {downloaded ? (
+                          <Badge variant="outline" className="text-xs text-green-600 border-green-500/40 gap-1">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Downloaded
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                            Not downloaded
+                          </Badge>
+                        )}
                         {!ramOk && (
                           <Badge variant="outline" className="text-xs text-amber-500 border-amber-500/30">
                             Low RAM
