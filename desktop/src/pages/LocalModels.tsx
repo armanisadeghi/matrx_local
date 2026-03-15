@@ -1052,7 +1052,7 @@ interface ConversationMessage {
 function InferenceTab() {
   const [state, actions] = useLlmContext();
   const { serverStatus, isStarting, hardwareResult, downloadedModels } = state;
-  const { startServer, stopServer, detectHardware } = actions;
+  const { startServer, stopServer, detectHardware, listModels } = actions;
 
   const [mode, setMode] = useState<InferenceMode>("chat");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -1106,14 +1106,31 @@ function InferenceTab() {
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(0.8);
   const [maxTokens, setMaxTokens] = useState(1024);
+  const [maxTokensRaw, setMaxTokensRaw] = useState("1024");
 
   // Server override controls
   const [gpuLayersOverride, setGpuLayersOverride] = useState(99);
+  const [gpuLayersRaw, setGpuLayersRaw] = useState("99");
   const [contextLengthOverride, setContextLengthOverride] = useState(8192);
+  const [contextLengthRaw, setContextLengthRaw] = useState("8192");
   const [selectedModel, setSelectedModel] = useState("");
 
   const stopRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Load downloaded models on mount so the start-server form is populated
+  useEffect(() => {
+    listModels();
+  }, [listModels]);
+
+  // Seed GPU layers from hardware detection result when available
+  useEffect(() => {
+    if (hardwareResult?.recommended_gpu_layers !== undefined) {
+      const layers = hardwareResult.recommended_gpu_layers;
+      setGpuLayersOverride(layers);
+      setGpuLayersRaw(String(layers));
+    }
+  }, [hardwareResult?.recommended_gpu_layers]);
 
   const port = serverStatus?.running ? serverStatus.port : null;
 
@@ -1222,8 +1239,11 @@ function InferenceTab() {
   };
 
   const handleStartServer = async () => {
-    if (!selectedModel && downloadedModels.length === 0) return;
     const modelToLoad = selectedModel || downloadedModels[0]?.filename;
+    if (!modelToLoad) {
+      setError("No model selected. Download a model from the Models tab first.");
+      return;
+    }
     try {
       if (!hardwareResult) await detectHardware();
       await startServer(modelToLoad, gpuLayersOverride, contextLengthOverride);
@@ -1272,18 +1292,36 @@ function InferenceTab() {
                     <Label className="text-xs">GPU Layers</Label>
                     <Input
                       type="number"
-                      value={gpuLayersOverride}
-                      onChange={(e) => setGpuLayersOverride(parseInt(e.target.value) || 0)}
+                      value={gpuLayersRaw}
+                      onChange={(e) => {
+                        setGpuLayersRaw(e.target.value);
+                        const n = parseInt(e.target.value);
+                        if (!isNaN(n)) setGpuLayersOverride(n);
+                      }}
+                      onBlur={() => {
+                        const n = parseInt(gpuLayersRaw);
+                        const clamped = isNaN(n) ? 0 : n;
+                        setGpuLayersOverride(clamped);
+                        setGpuLayersRaw(String(clamped));
+                      }}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label className="text-xs">Context Length</Label>
                     <Input
                       type="number"
-                      value={contextLengthOverride}
-                      onChange={(e) =>
-                        setContextLengthOverride(parseInt(e.target.value) || 4096)
-                      }
+                      value={contextLengthRaw}
+                      onChange={(e) => {
+                        setContextLengthRaw(e.target.value);
+                        const n = parseInt(e.target.value);
+                        if (!isNaN(n)) setContextLengthOverride(n);
+                      }}
+                      onBlur={() => {
+                        const n = parseInt(contextLengthRaw);
+                        const clamped = isNaN(n) ? 4096 : n;
+                        setContextLengthOverride(clamped);
+                        setContextLengthRaw(String(clamped));
+                      }}
                     />
                   </div>
                 </div>
@@ -1415,8 +1453,18 @@ function InferenceTab() {
                   <Label className="text-xs">Max Tokens</Label>
                   <Input
                     type="number"
-                    value={maxTokens}
-                    onChange={(e) => setMaxTokens(parseInt(e.target.value) || 256)}
+                    value={maxTokensRaw}
+                    onChange={(e) => {
+                      setMaxTokensRaw(e.target.value);
+                      const n = parseInt(e.target.value);
+                      if (!isNaN(n)) setMaxTokens(n);
+                    }}
+                    onBlur={() => {
+                      const n = parseInt(maxTokensRaw);
+                      const clamped = isNaN(n) ? 256 : n;
+                      setMaxTokens(clamped);
+                      setMaxTokensRaw(String(clamped));
+                    }}
                     className="h-8 text-xs"
                   />
                 </div>

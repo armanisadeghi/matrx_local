@@ -1,9 +1,11 @@
 """First-run setup status & installation endpoints.
 
 Provides:
-- GET  /setup/status   → comprehensive check of what is installed / configured
-- POST /setup/install  → SSE stream that installs missing components with live progress
-- POST /setup/install-transcription → Download a GGML whisper model (optional)
+- GET  /setup/status                 → comprehensive check of what is installed / configured
+- POST /setup/install                → SSE stream that installs missing components with live progress
+- POST /setup/install-transcription  → Download a GGML whisper model (optional)
+- GET  /setup/logs                   → SSE stream of the live system.log (tail -f style)
+- GET  /setup/debug                  → Full diagnostic snapshot of the system state
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.common.system_logger import get_logger
-from app.config import MATRX_HOME_DIR
+from app.config import MATRX_HOME_DIR, LOG_DIR
 
 logger = get_logger()
 router = APIRouter(prefix="/setup", tags=["setup"])
@@ -584,11 +586,118 @@ async def _create_storage_directories():
     })
 
 
-async def _install_stream(request: Request):
+def _emit_total(total_percent: int, message: str):
+    """Build a total_progress SSE event (non-blocking progress update for the grand bar)."""
+    return _sse_event("total_progress", {
+        "total_percent": min(max(total_percent, 0), 100),
+        "message": message,
+    })
+
+
+async def _download_transcription_model(model: str, request: Request):
+    """Download a GGML whisper model, yielding SSE events (reused by first_run stream)."""
+    model_dir = os.path.join(str(MATRX_HOME_DIR), "models")
+    os.makedirs(model_dir, exist_ok=True)
+    model_file = f"ggml-{model}.bin"
+    model_path = os.path.join(model_dir, model_file)
+
+    if os.path.isfile(model_path):
+        yield await _sse_event("progress", {
+            "component": "transcription",
+            "status": "ready",
+            "message": f"Model {model_file} already downloaded",
+            "percent": 100,
+        })
+        return
+
+    yield await _sse_event("progress", {
+        "component": "transcription",
+        "status": "installing",
+        "message": f"Downloading {model_file} (~150 MB) from HuggingFace...",
+        "percent": 2,
+    })
+
+    model_url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{model_file}"
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(follow_redirects=True, timeout=300) as client:
+            async with client.stream("GET", model_url) as resp:
+                if resp.status_code != 200:
+                    yield await _sse_event("progress", {
+                        "component": "transcription",
+                        "status": "error",
+                        "message": f"Download failed: HTTP {resp.status_code}",
+                        "percent": 0,
+                    })
+                    return
+
+                total = int(resp.headers.get("content-length", 0))
+                downloaded = 0
+
+                with open(model_path, "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        if await request.is_disconnected():
+                            f.close()
+                            if os.path.exists(model_path):
+                                os.remove(model_path)
+                            yield await _sse_event("cancelled", {"message": "Download cancelled by user"})
+                            return
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        pct = int((downloaded / total * 90) + 5) if total > 0 else 50
+                        if downloaded % (256 * 1024) < len(chunk):
+                            mb_done = downloaded / (1024 * 1024)
+                            mb_total = total / (1024 * 1024) if total > 0 else 0
+                            yield await _sse_event("progress", {
+                                "component": "transcription",
+                                "status": "installing",
+                                "message": f"Downloading {model_file}: {mb_done:.1f} / {mb_total:.0f} MB",
+                                "percent": min(pct, 99),
+                                "bytes_downloaded": downloaded,
+                                "total_bytes": total,
+                            })
+
+        yield await _sse_event("progress", {
+            "component": "transcription",
+            "status": "ready",
+            "message": f"Model {model_file} installed successfully",
+            "percent": 100,
+        })
+
+    except Exception as e:
+        if os.path.exists(model_path):
+            os.remove(model_path)
+        logger.error(f"Transcription model download failed: {e}", exc_info=True)
+        yield await _sse_event("progress", {
+            "component": "transcription",
+            "status": "error",
+            "message": f"Download failed: {str(e)}",
+            "percent": 0,
+        })
+
+
+async def _install_stream(request: Request, first_run: bool = False):
     """Generator that orchestrates all installation steps and yields SSE events.
+
+    first_run=True adds transcription model download to the flow so everything
+    is installed in one pass on first launch.
 
     Guarantees: always emits a 'complete' event at the end (even if some
     components failed), so the frontend never sees 'stream ended unexpectedly'.
+
+    Grand progress weighting (first_run=True):
+      storage_dirs     ~2%
+      core_packages    ~3%
+      browser_engine  ~60%
+      transcription   ~30%
+      permissions      ~5%
+
+    Standard (first_run=False):
+      storage_dirs    ~5%
+      core_packages   ~5%
+      browser_engine ~85%
+      permissions     ~5%
     """
     had_error = False
     error_summary: list[str] = []
@@ -598,17 +707,20 @@ async def _install_stream(request: Request):
             "component": "_system",
             "message": "Starting setup...",
             "timestamp": time.time(),
-            "percent": 0,
+            "total_percent": 0,
+            "first_run": first_run,
         })
 
-        # Step 1: Storage directories
+        # ── Step 1: Storage directories (fast) ────────────────────────────────
+        yield await _emit_total(0, "Creating storage directories...")
         async for event in _create_storage_directories():
             if await request.is_disconnected():
                 yield await _sse_event("cancelled", {"message": "Setup cancelled by user"})
                 return
             yield event
+        yield await _emit_total(2 if first_run else 5, "Storage directories ready")
 
-        # Step 2: Core package verification
+        # ── Step 2: Core package verification (fast) ──────────────────────────
         status = _check_core_packages()
         yield await _sse_event("progress", {
             "component": "core_packages",
@@ -616,24 +728,33 @@ async def _install_stream(request: Request):
             "message": status.detail or "Core packages verified",
             "percent": 100 if status.status == "ready" else 0,
         })
+        yield await _emit_total(5 if first_run else 10, "Core packages verified")
         if status.status != "ready":
             had_error = True
             error_summary.append(f"core_packages: {status.detail}")
 
-        # Step 3: Playwright browsers (the big one)
+        # ── Step 3: Playwright browsers (the big one) ─────────────────────────
         browser_status = _check_playwright_browsers()
         if browser_status.status != "ready":
+            yield await _emit_total(5 if first_run else 10, "Installing browser engine (~280 MB)...")
             async for event in _install_playwright_browsers(_browsers_path()):
                 if await request.is_disconnected():
                     yield await _sse_event("cancelled", {"message": "Setup cancelled by user"})
                     return
                 yield event
-                # Track whether browser install errored
+                # Track whether browser install errored; also update grand bar
                 try:
                     parsed = json.loads(event.split("data: ", 1)[1].split("\n")[0])
                     if parsed.get("status") == "error":
                         had_error = True
                         error_summary.append(f"browser_engine: {parsed.get('message', '')}")
+                    # Map browser sub-percent to grand bar range: 5–65 (first_run) or 10–90
+                    sub = parsed.get("percent", 0)
+                    if first_run:
+                        grand = int(5 + sub * 0.60)
+                    else:
+                        grand = int(10 + sub * 0.80)
+                    yield await _emit_total(grand, parsed.get("message", "Installing browser engine..."))
                 except Exception:
                     pass
         else:
@@ -643,8 +764,38 @@ async def _install_stream(request: Request):
                 "message": browser_status.detail or "Already installed",
                 "percent": 100,
             })
+            yield await _emit_total(65 if first_run else 90, "Browser engine ready")
 
-        # Step 4: Permissions check (informational only — "warning" status, not blocking)
+        # ── Step 4: Transcription model (first_run only) ───────────────────────
+        if first_run:
+            transcription_status = _check_transcription()
+            if transcription_status.status != "ready":
+                yield await _emit_total(65, "Downloading transcription model (~150 MB)...")
+                async for event in _download_transcription_model("base.en", request):
+                    if await request.is_disconnected():
+                        yield await _sse_event("cancelled", {"message": "Setup cancelled by user"})
+                        return
+                    yield event
+                    try:
+                        parsed = json.loads(event.split("data: ", 1)[1].split("\n")[0])
+                        if parsed.get("status") == "error":
+                            had_error = True
+                            error_summary.append(f"transcription: {parsed.get('message', '')}")
+                        sub = parsed.get("percent", 0)
+                        grand = int(65 + sub * 0.30)
+                        yield await _emit_total(grand, parsed.get("message", "Downloading transcription model..."))
+                    except Exception:
+                        pass
+            else:
+                yield await _sse_event("progress", {
+                    "component": "transcription",
+                    "status": "ready",
+                    "message": transcription_status.detail or "Already installed",
+                    "percent": 100,
+                })
+                yield await _emit_total(95, "Transcription model ready")
+
+        # ── Step 5: Permissions check (informational only) ────────────────────
         try:
             perm_status = await _check_permissions()
         except Exception as e:
@@ -664,6 +815,7 @@ async def _install_stream(request: Request):
             "percent": 100,
             "deep_link": perm_status.deep_link,
         })
+        yield await _emit_total(100, "All done!")
 
     except (asyncio.CancelledError, GeneratorExit):
         logger.info("Setup install stream cancelled by client")
@@ -690,6 +842,7 @@ async def _install_stream(request: Request):
                 "had_errors": True,
                 "errors": error_summary,
                 "timestamp": time.time(),
+                "total_percent": 100,
             })
         else:
             yield await _sse_event("complete", {
@@ -697,16 +850,21 @@ async def _install_stream(request: Request):
                 "had_errors": False,
                 "errors": [],
                 "timestamp": time.time(),
+                "total_percent": 100,
             })
     except Exception:
         pass
 
 
 @router.post("/install")
-async def run_install(request: Request):
-    """Run the setup installation as an SSE stream with real-time progress."""
+async def run_install(request: Request, mode: str = "standard"):
+    """Run the setup installation as an SSE stream with real-time progress.
+
+    mode=first_run: also downloads transcription model in one pass.
+    mode=standard:  same as before — only Playwright + storage dirs + packages.
+    """
     return StreamingResponse(
-        _install_stream(request),
+        _install_stream(request, first_run=(mode == "first_run")),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -729,109 +887,29 @@ async def install_transcription(req: TranscriptionInstallRequest, request: Reque
     """Download a GGML whisper model to ~/.matrx/models/. Returns SSE stream."""
 
     async def _stream():
-        model_dir = os.path.join(str(MATRX_HOME_DIR), "models")
-        os.makedirs(model_dir, exist_ok=True)
-        model_file = f"ggml-{req.model}.bin"
-        model_path = os.path.join(model_dir, model_file)
+        had_errors = False
+        errors: list[str] = []
+        async for event in _download_transcription_model(req.model, request):
+            yield event
+            try:
+                parsed = json.loads(event.split("data: ", 1)[1].split("\n")[0])
+                if parsed.get("status") == "error":
+                    had_errors = True
+                    errors.append(parsed.get("message", ""))
+            except Exception:
+                pass
 
-        if os.path.isfile(model_path):
-            yield await _sse_event("progress", {
-                "component": "transcription",
-                "status": "ready",
-                "message": f"Model {model_file} already downloaded",
-                "percent": 100,
-            })
+        if had_errors:
             yield await _sse_event("complete", {
-                "message": "Transcription engine ready",
-                "had_errors": False,
-                "errors": [],
+                "message": "Transcription download failed",
+                "had_errors": True,
+                "errors": errors,
             })
-            return
-
-        yield await _sse_event("progress", {
-            "component": "transcription",
-            "status": "installing",
-            "message": f"Downloading {model_file} from HuggingFace...",
-            "percent": 5,
-        })
-
-        model_url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{model_file}"
-
-        try:
-            import httpx
-            async with httpx.AsyncClient(follow_redirects=True, timeout=300) as client:
-                async with client.stream("GET", model_url) as resp:
-                    if resp.status_code != 200:
-                        yield await _sse_event("progress", {
-                            "component": "transcription",
-                            "status": "error",
-                            "message": f"Download failed: HTTP {resp.status_code} from {model_url}",
-                            "percent": 0,
-                        })
-                        yield await _sse_event("complete", {
-                            "message": "Transcription download failed",
-                            "had_errors": True,
-                            "errors": [f"HTTP {resp.status_code}"],
-                        })
-                        return
-
-                    total = int(resp.headers.get("content-length", 0))
-                    downloaded = 0
-
-                    with open(model_path, "wb") as f:
-                        async for chunk in resp.aiter_bytes(chunk_size=65536):
-                            if await request.is_disconnected():
-                                f.close()
-                                if os.path.exists(model_path):
-                                    os.remove(model_path)
-                                yield await _sse_event("cancelled", {
-                                    "message": "Download cancelled by user",
-                                })
-                                return
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            pct = int((downloaded / total * 90) + 5) if total > 0 else 50
-                            if downloaded % (256 * 1024) < len(chunk):
-                                mb_done = downloaded / (1024 * 1024)
-                                mb_total = total / (1024 * 1024) if total > 0 else 0
-                                yield await _sse_event("progress", {
-                                    "component": "transcription",
-                                    "status": "installing",
-                                    "message": (
-                                        f"Downloading {model_file}: "
-                                        f"{mb_done:.1f} / {mb_total:.0f} MB"
-                                    ),
-                                    "percent": min(pct, 99),
-                                    "bytes_downloaded": downloaded,
-                                    "total_bytes": total,
-                                })
-
-            yield await _sse_event("progress", {
-                "component": "transcription",
-                "status": "ready",
-                "message": f"Model {model_file} installed successfully",
-                "percent": 100,
-            })
+        else:
             yield await _sse_event("complete", {
                 "message": "Transcription model ready",
                 "had_errors": False,
                 "errors": [],
-            })
-
-        except Exception as e:
-            if os.path.exists(model_path):
-                os.remove(model_path)
-            logger.error(f"Transcription model download failed: {e}", exc_info=True)
-            yield await _sse_event("progress", {
-                "component": "transcription",
-                "status": "error",
-                "message": f"Download failed: {str(e)}",
-                "percent": 0,
-            })
-            yield await _sse_event("complete", {
-                "message": "Transcription download failed",
-                "had_errors": True,
-                "errors": [str(e)],
             })
 
     return StreamingResponse(
@@ -843,3 +921,212 @@ async def install_transcription(req: TranscriptionInstallRequest, request: Reque
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /setup/logs — live tail of system.log as SSE (no auth required)
+# ---------------------------------------------------------------------------
+
+@router.get("/logs")
+async def stream_logs(request: Request, lines: int = 200):
+    """Stream the live system.log file as Server-Sent Events.
+
+    First emits the last `lines` lines already in the file (history), then
+    follows the file in real-time — like `tail -f` — until the client
+    disconnects.  Each SSE event has type "log" and data containing a JSON
+    object with fields: { line, level, timestamp }.
+
+    No authentication required — this endpoint is under /setup/ which is
+    already on the public bypass list.
+    """
+    log_path = os.path.join(str(LOG_DIR), "system.log")
+
+    def _parse_level(line: str) -> str:
+        """Extract log level from a line like '2024-01-01 12:00:00,000 - INFO - ...'"""
+        parts = line.split(" - ", 2)
+        if len(parts) >= 2:
+            lvl = parts[1].strip().upper()
+            if lvl in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+                return lvl.lower()
+        return "info"
+
+    async def _generate():
+        # ── Emit a "connected" handshake so the browser knows the stream is live ──
+        yield f"event: connected\ndata: {json.dumps({'log_path': log_path, 'timestamp': time.time()})}\n\n"
+
+        if not os.path.isfile(log_path):
+            yield f"event: log\ndata: {json.dumps({'line': f'[setup/logs] Log file not found: {log_path}', 'level': 'warn', 'timestamp': time.time()})}\n\n"
+        else:
+            # ── Tail the last N lines for history ────────────────────────────────
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                    all_lines = fh.readlines()
+                history = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                for raw in history:
+                    raw = raw.rstrip("\n")
+                    if raw:
+                        yield f"event: log\ndata: {json.dumps({'line': raw, 'level': _parse_level(raw), 'timestamp': time.time()})}\n\n"
+                seek_pos = sum(len(l.encode("utf-8", errors="replace")) for l in all_lines)
+            except Exception as exc:
+                yield f"event: log\ndata: {json.dumps({'line': f'[setup/logs] Error reading log: {exc}', 'level': 'error', 'timestamp': time.time()})}\n\n"
+                seek_pos = 0
+
+            yield f"event: history_end\ndata: {json.dumps({'lines_sent': len(history)})}\n\n"
+
+            # ── Follow new lines in real-time ─────────────────────────────────────
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                    fh.seek(seek_pos)
+                    while True:
+                        if await request.is_disconnected():
+                            return
+                        chunk = fh.read(65536)
+                        if chunk:
+                            for raw in chunk.splitlines():
+                                raw = raw.strip()
+                                if raw:
+                                    yield f"event: log\ndata: {json.dumps({'line': raw, 'level': _parse_level(raw), 'timestamp': time.time()})}\n\n"
+                        else:
+                            # No new data — send a keepalive comment and wait
+                            yield ": keepalive\n\n"
+                            await asyncio.sleep(0.5)
+            except (asyncio.CancelledError, GeneratorExit):
+                return
+            except Exception as exc:
+                yield f"event: log\ndata: {json.dumps({'line': f'[setup/logs] Follow error: {exc}', 'level': 'error', 'timestamp': time.time()})}\n\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /setup/debug — full diagnostic snapshot (no auth required)
+# ---------------------------------------------------------------------------
+
+@router.get("/debug")
+async def debug_state() -> dict[str, Any]:
+    """Full diagnostic snapshot — visible in the Dashboard without auth.
+
+    Returns the state of every system component: matrx-ai init, client mode,
+    Supabase config, SQLite counts, sync status, and a live probe of the
+    PostgREST connection.
+    """
+    import matrx_ai as _matrx_ai
+    from app.services.ai.engine import is_client_mode, is_initialized, tools_loaded, has_db
+    from app.services.local_db.repositories import (
+        ModelsRepo, AgentsRepo, ToolsRepo, SyncMetaRepo,
+    )
+
+    report: dict[str, Any] = {}
+
+    # ── 1. matrx-ai state ────────────────────────────────────────────
+    report["matrx_ai"] = {
+        "initialized": _matrx_ai._initialized,
+        "client_mode": _matrx_ai.is_client_mode() if _matrx_ai._initialized else False,
+        "engine_is_initialized": is_initialized(),
+        "engine_client_mode_active": is_client_mode(),
+        "engine_tools_loaded": tools_loaded(),
+        "engine_has_db": has_db(),
+    }
+    logger.info("[setup/debug] matrx-ai state: %s", report["matrx_ai"])
+
+    # ── 2. Environment / config ───────────────────────────────────────
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    anon_key = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "")
+    report["env"] = {
+        "SUPABASE_URL": supabase_url or "(NOT SET)",
+        "SUPABASE_PUBLISHABLE_KEY": "SET ✓" if anon_key else "(NOT SET ✗)",
+        "MATRX_AI_CLIENT_MODE": os.environ.get("MATRX_AI_CLIENT_MODE", "(not in env)"),
+        "log_dir": str(LOG_DIR),
+        "log_file": os.path.join(str(LOG_DIR), "system.log"),
+        "log_file_exists": os.path.isfile(os.path.join(str(LOG_DIR), "system.log")),
+    }
+    logger.info("[setup/debug] env: %s", report["env"])
+
+    # ── 3. Client singleton check ─────────────────────────────────────
+    if _matrx_ai._initialized and _matrx_ai.is_client_mode():
+        try:
+            from matrx_ai.db import get_client_singleton
+            config, auth = get_client_singleton()
+            report["client_singleton"] = {
+                "ok": True,
+                "url": config.url,
+                "anon_key_set": bool(config.anon_key),
+                "session_active": auth.session is not None,
+                "session_user_id": auth.session.user_id if auth.session else None,
+            }
+            logger.info("[setup/debug] client singleton: %s", report["client_singleton"])
+        except Exception as exc:
+            report["client_singleton"] = {"ok": False, "error": str(exc)}
+            logger.error("[setup/debug] client singleton FAILED: %s", exc)
+    else:
+        report["client_singleton"] = {"ok": False, "reason": "not in client mode or not initialized"}
+
+    # ── 4. Live PostgREST probe ───────────────────────────────────────
+    if report.get("client_singleton", {}).get("ok"):
+        probes: dict[str, Any] = {}
+        for table in ("ai_model", "prompt_builtins", "prompts"):
+            try:
+                from matrx_orm.client import SupabaseManager
+                from matrx_ai.db import get_client_singleton
+                cfg, ath = get_client_singleton()
+                mgr = SupabaseManager(table, config=cfg, auth=ath)
+                count = await mgr.count()
+                probes[table] = {"ok": True, "count": count}
+                logger.info("[setup/debug] probe %r → count=%s", table, count)
+            except Exception as exc:
+                probes[table] = {"ok": False, "error": str(exc)}
+                logger.error("[setup/debug] probe %r FAILED: %s", table, exc, exc_info=True)
+        report["postgrest_probes"] = probes
+    else:
+        report["postgrest_probes"] = {"skipped": "client singleton not available"}
+
+    # ── 5. SQLite counts ──────────────────────────────────────────────
+    try:
+        models_repo = ModelsRepo()
+        agents_repo = AgentsRepo()
+        tools_repo = ToolsRepo()
+        sync_meta = SyncMetaRepo()
+        report["sqlite"] = {
+            "ai_models_cached": await models_repo.count(),
+            "agents_cached_builtin": len(await agents_repo.list_all(source="builtin")),
+            "agents_cached_user": len(await agents_repo.list_all(source="user")),
+            "tools_cached": await tools_repo.count(),
+            "sync_status": await sync_meta.get_all_sync_status(),
+        }
+        logger.info("[setup/debug] SQLite: %s", report["sqlite"])
+    except Exception as exc:
+        report["sqlite"] = {"error": str(exc)}
+        logger.error("[setup/debug] SQLite probe FAILED: %s", exc)
+
+    # ── Summary ───────────────────────────────────────────────────────
+    problems = []
+    if not report["matrx_ai"]["initialized"]:
+        problems.append("matrx-ai not initialized")
+    if not supabase_url:
+        problems.append("SUPABASE_URL not set")
+    if not anon_key:
+        problems.append("SUPABASE_PUBLISHABLE_KEY not set")
+    if not report.get("client_singleton", {}).get("ok"):
+        problems.append("client singleton not available")
+    for tbl, probe in report.get("postgrest_probes", {}).items():
+        if isinstance(probe, dict) and not probe.get("ok"):
+            problems.append(f"PostgREST probe failed for {tbl}: {probe.get('error', '?')}")
+
+    report["summary"] = {
+        "healthy": len(problems) == 0,
+        "problems": problems,
+    }
+    if problems:
+        logger.error("[setup/debug] PROBLEMS DETECTED: %s", problems)
+    else:
+        logger.info("[setup/debug] All systems healthy ✓")
+
+    return report

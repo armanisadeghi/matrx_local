@@ -3,6 +3,7 @@ import { engine, type SystemInfo, type BrowserStatus } from "@/lib/api";
 import { isTauri, startSidecar, stopSidecar, waitForEngine, discoverEnginePort } from "@/lib/sidecar";
 import { syncAllSettings } from "@/lib/settings";
 import supabase from "@/lib/supabase";
+import { emitClientLog } from "@/hooks/use-client-log";
 
 export type EngineStatus = "discovering" | "starting" | "connected" | "disconnected" | "error";
 
@@ -56,7 +57,15 @@ export function useEngine(authenticated = true) {
 
   const update = useCallback((partial: Partial<EngineState>) => {
     if (mountedRef.current) {
-      setState((prev) => ({ ...prev, ...partial }));
+      setState((prev) => {
+        if (partial.status && partial.status !== prev.status) {
+          emitClientLog("info", `Engine status: ${prev.status} → ${partial.status}`, "engine");
+        }
+        if (partial.error && partial.error !== prev.error) {
+          emitClientLog("error", `Engine error: ${partial.error}`, "engine");
+        }
+        return { ...prev, ...partial };
+      });
     }
   }, []);
 
@@ -78,13 +87,17 @@ export function useEngine(authenticated = true) {
 
     try {
       update({ status: "discovering", error: null });
+      emitClientLog("cmd", "Engine initialization started", "engine");
 
       // In Tauri, start the sidecar first
       if (isTauri()) {
         update({ status: "starting" });
+        emitClientLog("info", "Starting sidecar process...", "engine");
         try {
           await startSidecar();
+          emitClientLog("success", "Sidecar process spawned", "engine");
         } catch (err) {
+          emitClientLog("error", `startSidecar failed: ${err}`, "engine");
           update({
             status: "error",
             error: `Failed to start engine: ${err}`,
@@ -96,23 +109,31 @@ export function useEngine(authenticated = true) {
         // startSidecar() returns as soon as the process is spawned.
         // The PyInstaller binary takes 5-30s to boot and bind a port.
         // We poll the default port (and the range) until it responds.
+        emitClientLog("info", "Waiting for engine to become reachable (up to 60s)...", "engine");
         const ready = await waitForEngine("http://127.0.0.1:22140", 60, 1000);
         if (!ready) {
+          emitClientLog("warn", "Default port not responding — scanning port range...", "engine");
           // Try the full port range in case it bound to a different port
           const altUrl = await discoverEnginePort();
           if (!altUrl) {
+            emitClientLog("error", "Engine never became reachable — sidecar may have crashed", "engine");
             update({
               status: "error",
               error: "Engine process started but never became reachable. The sidecar may have crashed during startup.",
             });
             return;
           }
+          emitClientLog("success", `Engine found at alternate URL: ${altUrl}`, "engine");
+        } else {
+          emitClientLog("success", "Engine is responding on port 22140", "engine");
         }
       }
 
       // Discover the engine (port scan)
+      emitClientLog("info", "Discovering engine URL...", "engine");
       const url = await engine.discover();
       if (!url) {
+        emitClientLog("error", "Engine not found on any port 22140-22159", "engine");
         update({
           status: "error",
           error: "Engine not found on any port (22140-22159). Make sure the Python server is running.",
@@ -120,6 +141,7 @@ export function useEngine(authenticated = true) {
         return;
       }
 
+      emitClientLog("success", `Engine discovered at ${url}`, "engine");
       connectedAtRef.current = Date.now();
       update({ url, status: "connected", error: null });
 
@@ -127,14 +149,16 @@ export function useEngine(authenticated = true) {
       try {
         const tools = await engine.listTools();
         update({ tools });
+        emitClientLog("info", `Loaded ${tools.length} tools`, "engine");
       } catch {
-        // Non-critical
+        emitClientLog("warn", "Could not load tools list (non-critical)", "engine");
       }
 
       // Load engine version
       try {
         const engineVersion = await engine.getVersion();
         update({ engineVersion });
+        emitClientLog("info", `Engine version: ${engineVersion}`, "engine");
       } catch { /* non-critical */ }
 
       // Load system info
@@ -161,9 +185,12 @@ export function useEngine(authenticated = true) {
         if (session?.access_token) {
           await engine.connectWebSocket();
           update({ wsConnected: true });
+          emitClientLog("success", "WebSocket connected", "engine");
+        } else {
+          emitClientLog("warn", "No session token — skipping WebSocket (REST still works)", "engine");
         }
-      } catch {
-        // WS is optional, REST still works
+      } catch (err) {
+        emitClientLog("warn", `WebSocket connection failed (non-critical): ${err}`, "engine");
       }
 
       // Sync persisted settings to Tauri + engine.

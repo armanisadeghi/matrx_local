@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { RefreshCw } from "lucide-react";
 import type { EngineStatus } from "@/hooks/use-engine";
+import { TerminalToggleButton } from "@/components/DevTerminalPanel";
 
 interface StatusBarProps {
   engineStatus: EngineStatus;
@@ -71,8 +72,9 @@ export function StatusBar({ engineStatus, engineUrl, engineVersion, onRefresh, o
         )}
       </button>
 
-      {/* Right side — version + reconnect */}
+      {/* Right side — terminal toggle, version, reconnect */}
       <div className="flex items-center gap-2">
+        <TerminalToggleButton />
         {engineVersion && (
           <span className="text-[10px] text-muted-foreground">
             v{engineVersion}

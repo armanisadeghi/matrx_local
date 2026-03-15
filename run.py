@@ -466,16 +466,21 @@ def _handle_exit(signum: int, frame: object) -> None:  # noqa: ARG001
 
 
 def main() -> None:
+    print("[phase:starting] Engine initializing...", flush=True)
+
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _handle_exit)
     if hasattr(signal, "SIGINT"):
         signal.signal(signal.SIGINT, _handle_exit)
 
+    print("[phase:port] Finding available port...", flush=True)
     port = find_available_port()
     logger.info("Starting Matrx Local on port %d", port)
+    print(f"[phase:port] Engine will bind to port {port}", flush=True)
 
     write_discovery_file(port)
 
+    print("[phase:server] Starting server...", flush=True)
     server_thread = threading.Thread(target=start_server, args=(port,), daemon=True)
     server_thread.start()
 

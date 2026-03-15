@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
@@ -308,6 +308,15 @@ function HardwareInfoCard({
   actions: ReturnType<typeof useTranscription>[1];
 }) {
   const hw = state.hardwareResult;
+  const didAutoDetect = useRef(false);
+
+  // Auto-detect on first render if we have no hardware info yet
+  useEffect(() => {
+    if (!hw && !state.isDetecting && !didAutoDetect.current) {
+      didAutoDetect.current = true;
+      actions.detectHardware();
+    }
+  }, [hw, state.isDetecting, actions]);
 
   return (
     <div className="rounded-xl border bg-card p-6 space-y-4">
@@ -324,15 +333,15 @@ function HardwareInfoCard({
           ) : (
             <RefreshCw className="mr-1 h-3 w-3" />
           )}
-          {hw ? "Rescan" : "Detect"}
+          Rescan
         </Button>
       </div>
 
       {!hw ? (
-        <p className="text-sm text-muted-foreground">
-          Click Detect to scan your system hardware and get a model
-          recommendation.
-        </p>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />
+          Scanning system hardware…
+        </div>
       ) : (
         <div className="space-y-4">
           {/* Hardware specs grid */}
@@ -508,31 +517,50 @@ function TranscribeTab({
     );
   }
 
+  // Resolve which device is actually active (for display when "Default" is selected)
+  const defaultDevice = state.audioDevices.find((d) => d.is_default);
+  const activeDeviceName = state.selectedDevice ?? defaultDevice?.name ?? "System default";
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
+      {/* Active configuration status bar */}
+      <div className="rounded-xl border bg-card px-5 py-4">
+        <div className="flex items-center gap-6 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            <Cpu className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">Model</p>
+              <p className="text-sm font-medium truncate">
+                {state.activeModel ?? (
+                  <span className="text-amber-500 italic">No model loaded</span>
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="w-px h-8 bg-border flex-shrink-0 hidden sm:block" />
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <Mic className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">
+                Microphone{state.selectedDevice ? "" : " (system default)"}
+              </p>
+              <p className="text-sm font-medium truncate">{activeDeviceName}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Recording controls */}
       <div className="rounded-xl border bg-card p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-semibold">Live Transcription</h3>
-            <p className="text-sm text-muted-foreground">
-              {state.isRecording
-                ? "Listening… speak into your microphone"
-                : "Click the microphone to start transcribing"}
-            </p>
-          </div>
-          <div className="text-right space-y-1">
-            <div className="text-xs text-muted-foreground font-mono">
-              {state.activeModel ?? "No model"}
-            </div>
-            {/* Device indicator */}
-            <div className="flex items-center justify-end gap-1 text-xs text-muted-foreground">
-              <Mic className="h-3 w-3" />
-              <span className="max-w-[160px] truncate">
-                {state.selectedDevice ?? "System default"}
-              </span>
-            </div>
-          </div>
+        <div className="mb-4">
+          <h3 className="font-semibold">Live Transcription</h3>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {state.isRecording
+              ? "Listening… speak into your microphone"
+              : state.isProcessingTail
+              ? "Processing remaining audio…"
+              : "Click the microphone to start transcribing"}
+          </p>
         </div>
 
         {/* Device quick-select */}
@@ -549,13 +577,16 @@ function TranscribeTab({
             >
               <Volume2 className="h-3 w-3" />
               Default
+              {!state.selectedDevice && defaultDevice && (
+                <span className="text-primary/70 ml-1">({defaultDevice.name})</span>
+              )}
             </button>
             {state.audioDevices.map((dev, i) => (
               <button
                 key={i}
                 onClick={() => actions.setSelectedDevice(dev.name)}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors max-w-[200px]",
+                  "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors max-w-[220px]",
                   state.selectedDevice === dev.name
                     ? "border-primary bg-primary/10 text-primary font-medium"
                     : "border-border text-muted-foreground hover:border-primary/40"
@@ -584,11 +615,20 @@ function TranscribeTab({
           )}
 
           <button
-            onClick={state.isRecording ? actions.stopRecording : handleStartRecording}
+            onClick={
+              state.isRecording
+                ? actions.stopRecording
+                : state.isProcessingTail
+                ? undefined // disabled while flushing
+                : handleStartRecording
+            }
+            disabled={state.isProcessingTail}
             className={cn(
               "flex h-20 w-20 items-center justify-center rounded-full transition-all duration-300",
               state.isRecording
                 ? "bg-red-500 text-white shadow-lg shadow-red-500/25 hover:bg-red-600"
+                : state.isProcessingTail
+                ? "bg-amber-500 text-white shadow-lg shadow-amber-500/25 cursor-wait"
                 : "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90"
             )}
             style={
@@ -597,12 +637,20 @@ function TranscribeTab({
                 : undefined
             }
           >
-            {state.isRecording ? (
+            {state.isProcessingTail ? (
+              <Loader2 className="h-8 w-8 animate-spin" />
+            ) : state.isRecording ? (
               <MicOff className="h-8 w-8" />
             ) : (
               <Mic className="h-8 w-8" />
             )}
           </button>
+
+          {state.isProcessingTail && (
+            <p className="text-xs text-amber-500 text-center">
+              Finishing transcription of last audio chunk…
+            </p>
+          )}
 
           {/* Live audio level meter */}
           {state.isRecording && (
@@ -678,7 +726,9 @@ function TranscribeTab({
         {state.segments.length === 0 ? (
           <p className="text-sm text-muted-foreground italic">
             {state.isRecording
-              ? "Waiting for speech..."
+              ? "Waiting for speech…"
+              : state.isProcessingTail
+              ? "Processing last audio chunk…"
               : "No transcript yet. Start recording to begin."}
           </p>
         ) : (

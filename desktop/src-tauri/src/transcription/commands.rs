@@ -288,9 +288,7 @@ pub async fn start_transcription(
         let mut accumulated = Vec::<f32>::with_capacity(target_samples + 4096);
 
         loop {
-            if !*recording_flag.lock().unwrap() {
-                break;
-            }
+            let still_recording = *recording_flag.lock().unwrap();
 
             let samples = capture.drain();
             if !samples.is_empty() {
@@ -326,44 +324,58 @@ pub async fn start_transcription(
 
             loop_ticks += 1;
 
-            if accumulated.len() >= target_samples {
-                let audio_chunk = accumulated.drain(0..target_samples).collect::<Vec<f32>>();
+            // Flush a full chunk, or flush whatever is left when recording stops.
+            let flush_now = accumulated.len() >= target_samples;
+            let flush_tail = !still_recording && !accumulated.is_empty();
+
+            if flush_now || flush_tail {
+                // On stop, flush whatever remains (may be < 5 s). On normal chunks,
+                // always consume exactly target_samples to keep alignment stable.
+                let chunk_len = if flush_now { target_samples } else { accumulated.len() };
+                let audio_chunk = accumulated.drain(0..chunk_len).collect::<Vec<f32>>();
 
                 // Gate on RMS energy — skip Whisper for silent/near-silent chunks to
                 // prevent hallucinated output ("Thanks for watching", "you", etc.)
                 let rms = rms_energy(&audio_chunk);
-                if rms < silence_threshold {
-                    continue;
-                }
+                if rms >= silence_threshold {
+                    let params = TranscriptionParams::builder()
+                        .language("en")
+                        .n_threads(n_threads)
+                        .build();
 
-                let params = TranscriptionParams::builder()
-                    .language("en")
-                    .n_threads(n_threads)
-                    .build();
-
-                match ctx.transcribe_with_params(&audio_chunk, params) {
-                    Ok(transcription) => {
-                        for seg in &transcription.segments {
-                            let text = seg.text.trim().to_string();
-                            // Skip empty and common hallucination strings
-                            if text.is_empty() || is_hallucination(&text) {
-                                continue;
+                    match ctx.transcribe_with_params(&audio_chunk, params) {
+                        Ok(transcription) => {
+                            for seg in &transcription.segments {
+                                let text = seg.text.trim().to_string();
+                                // Skip empty and common hallucination strings
+                                if text.is_empty() || is_hallucination(&text) {
+                                    continue;
+                                }
+                                let _ = app_events.emit(
+                                    "whisper-segment",
+                                    serde_json::json!({
+                                        "text": text,
+                                        "start_sec": seg.start_seconds(),
+                                        "end_sec": seg.end_seconds(),
+                                    }),
+                                );
                             }
+                        }
+                        Err(e) => {
                             let _ = app_events.emit(
-                                "whisper-segment",
-                                serde_json::json!({
-                                    "text": text,
-                                    "start_sec": seg.start_seconds(),
-                                    "end_sec": seg.end_seconds(),
-                                }),
+                                "whisper-error",
+                                format!("Transcription error: {}", e),
                             );
                         }
                     }
-                    Err(e) => {
-                        let _ =
-                            app_events.emit("whisper-error", format!("Transcription error: {}", e));
-                    }
                 }
+            }
+
+            // After draining the tail, signal the frontend that all audio has
+            // been processed, then exit the loop.
+            if !still_recording {
+                let _ = app_events.emit("whisper-stopped", serde_json::Value::Null);
+                break;
             }
 
             std::thread::sleep(std::time::Duration::from_millis(50));

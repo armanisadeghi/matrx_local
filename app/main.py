@@ -200,45 +200,54 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # This MUST be the first phase — all data reads come from SQLite.
     # The database lives at ~/.matrx/matrx.db (outside the app folder) so it
     # survives reinstalls and updates.
+    print("[phase:database] Opening local database...", flush=True)
     logger.info("[app/main.py] Phase 0a: Opening local database...")
     try:
         local_db = get_db()
         await local_db.connect()
         logger.info("[app/main.py] Phase 0a: Local database ready ✓ (%s)", local_db.path)
+        print("[phase:database] Local database ready", flush=True)
     except Exception:
         logger.error(
             "[app/main.py] Phase 0a: Local database FAILED — data endpoints will use fallbacks",
             exc_info=True,
         )
+        print("[phase:database] Local database FAILED (fallbacks active)", flush=True)
 
     # Phase 0b: Ensure Playwright browsers are installed (auto-installs if missing).
     # Browsers are NOT bundled in the PyInstaller binary (bundling causes macOS
     # codesign failures with Chrome's nested framework structure). They are
     # downloaded on first startup to PLAYWRIGHT_BROWSERS_PATH (~/.matrx/playwright-browsers
     # when running as a frozen binary, or the default Playwright cache in development).
+    print("[phase:browsers] Checking browser engine...", flush=True)
     logger.info("[app/main.py] Phase 0b: Checking Playwright browsers...")
     try:
         await _ensure_playwright_browsers()
         logger.info("[app/main.py] Phase 0b: Playwright browsers ready ✓")
+        print("[phase:browsers] Browser engine ready", flush=True)
     except Exception:
         logger.warning(
             "[app/main.py] Phase 0b: Playwright browser check failed — browser automation may not work",
             exc_info=True,
         )
+        print("[phase:browsers] Browser engine check failed (scraping limited)", flush=True)
 
     # Phase 1: Initialize matrx-ai (loads env, registers DB if credentials present)
     # This MUST run before build_ai_sub_app() is called — the matrx_ai imports
     # inside that function try to access the DB config registered here.
+    print("[phase:ai] Initializing AI engine...", flush=True)
     logger.info("[app/main.py] Phase 1: Initializing matrx-ai engine...")
     try:
         initialize_matrx_ai()
         logger.info("[app/main.py] Phase 1: matrx-ai initialized ✓")
+        print("[phase:ai] AI engine initialized", flush=True)
     except Exception:
         logger.error(
             "[app/main.py] Phase 1: matrx-ai initialization FAILED — AI endpoints will not work. "
             "Check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in .env",
             exc_info=True,
         )
+        print("[phase:ai] AI engine init FAILED", flush=True)
 
     # Phase 1b: Mount the matrx-ai sub-app now that the DB config is registered.
     # This must happen after initialize_matrx_ai() because the matrx_ai module-level
@@ -256,15 +265,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     # Phase 2: Load tool registry from DB and register all local OS tools.
+    print("[phase:tools] Loading tool registry...", flush=True)
     logger.info("[app/main.py] Phase 2: Loading tool registry...")
     try:
         await load_tools_and_register()
         logger.info("[app/main.py] Phase 2: Tool registry loaded ✓")
+        print("[phase:tools] Tool registry loaded", flush=True)
     except Exception:
         logger.error(
             "[app/main.py] Phase 2: Tool registration FAILED — AI may not have tool access",
             exc_info=True,
         )
+        print("[phase:tools] Tool registry FAILED", flush=True)
 
     # Phase 2b: Start background sync engine (cloud → local SQLite).
     # This pulls models, agents, and tools from Supabase into the local DB
@@ -281,16 +293,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
     # Phase 3: Start scraper engine
+    print("[phase:scraper] Starting scraper engine...", flush=True)
     logger.info("[app/main.py] Phase 3: Starting scraper engine...")
     engine = get_scraper_engine()
     try:
         await engine.start()
         logger.info("[app/main.py] Phase 3: Scraper engine started ✓")
+        print("[phase:scraper] Scraper engine ready", flush=True)
     except Exception:
         logger.error(
             "[app/main.py] Phase 3: Scraper engine FAILED to start — scraping tools will be unavailable",
             exc_info=True,
         )
+        print("[phase:scraper] Scraper engine FAILED (scraping unavailable)", flush=True)
 
     restored = await restore_scheduled_tasks()
     if restored:
@@ -304,6 +319,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     proxy_enabled = settings_sync.get("proxy_enabled", True)
     logger.info("[app/main.py] Phase 4: HTTP proxy enabled=%s", proxy_enabled)
     if proxy_enabled:
+        print("[phase:proxy] Starting local HTTP proxy...", flush=True)
         try:
             proxy = get_proxy_server()
             proxy_port = settings_sync.get("proxy_port", 22180)
@@ -314,6 +330,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info(
                 "[app/main.py] Phase 4: HTTP proxy started ✓ on port %d", proxy_port
             )
+            print(f"[phase:proxy] HTTP proxy ready on port {proxy_port}", flush=True)
         except OSError as exc:
             logger.error(
                 "[app/main.py] Phase 4: HTTP proxy FAILED to start — port %d is already in use. "
@@ -323,10 +340,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 settings_sync.get("proxy_port", 22180),
                 exc,
             )
+            print("[phase:proxy] HTTP proxy FAILED (port in use)", flush=True)
         except Exception:
             logger.error(
                 "[app/main.py] Phase 4: HTTP proxy FAILED to start", exc_info=True
             )
+            print("[phase:proxy] HTTP proxy FAILED", flush=True)
 
     # Phase 5: Start Cloudflare tunnel (quick tunnel for all users — no account needed).
     # Each instance gets a unique random URL from Cloudflare's trycloudflare.com pool.
@@ -335,12 +354,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     tunnel_enabled = settings_sync.get("tunnel_enabled", TUNNEL_ENABLED)
     logger.info("[app/main.py] Phase 5: Tunnel enabled=%s", tunnel_enabled)
     if tunnel_enabled:
+        print("[phase:tunnel] Starting Cloudflare tunnel...", flush=True)
         try:
             from app.services.tunnel.manager import get_tunnel_manager as _get_tm
             _tm = _get_tm()
             _tunnel_url = await _tm.start(port=22140)
             if _tunnel_url:
                 logger.info("[app/main.py] Phase 5: Tunnel active ✓ → %s", _tunnel_url)
+                print(f"[phase:tunnel] Tunnel active: {_tunnel_url}", flush=True)
                 try:
                     from app.services.cloud_sync.instance_manager import get_instance_manager as _get_im
                     await _get_im().update_tunnel_url(_tunnel_url, active=True)
@@ -348,8 +369,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     pass
             else:
                 logger.warning("[app/main.py] Phase 5: Tunnel started but no URL captured within timeout")
+                print("[phase:tunnel] Tunnel started but no URL captured", flush=True)
         except Exception:
             logger.error("[app/main.py] Phase 5: Tunnel FAILED to start", exc_info=True)
+            print("[phase:tunnel] Tunnel FAILED to start", flush=True)
 
     # Background heartbeat: updates last_seen and retries failed syncs
     async def _heartbeat_loop() -> None:
@@ -375,6 +398,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         engine.is_ready,
         get_proxy_server().running,
     )
+    print(f"[phase:ready] Engine ready in {elapsed:.1f}s", flush=True)
 
     yield
 

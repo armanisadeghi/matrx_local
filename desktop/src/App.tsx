@@ -29,7 +29,12 @@ import { EngineMonitor } from "@/components/EngineRecoveryModal";
 import { UpdateDialog } from "@/components/UpdateDialog";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
-import { Loader2 } from "lucide-react";
+import { StartupScreen } from "@/components/StartupScreen";
+import { FirstRunScreen } from "@/components/FirstRunScreen";
+import { DevTerminalPanel } from "@/components/DevTerminalPanel";
+import { engine } from "@/lib/api";
+
+const SETUP_DISMISSED_KEY = "matrx-setup-dismissed";
 
 // ---------------------------------------------------------------------------
 // HashRouter + OAuth callback bridge
@@ -72,6 +77,34 @@ export default function App() {
 
   // Keep only the 3 most recent for the toast stack
   const toasts = notif.notifications.slice(0, 3);
+
+  // First-run detection — fetch setup status once engine connects
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
+  const setupCheckedRef = useRef(false);
+
+  useEffect(() => {
+    if (status === "connected" && url && !setupCheckedRef.current) {
+      setupCheckedRef.current = true;
+      engine.getSetupStatus().then((s) => {
+        setSetupComplete(s?.setup_complete ?? true);
+      }).catch(() => {
+        // If we can't fetch status, assume complete to not block
+        setSetupComplete(true);
+      });
+    }
+  }, [status, url]);
+
+  // Whether we should show the first-run installation screen
+  const isFirstRun =
+    status === "connected" &&
+    url !== null &&
+    setupComplete === false &&
+    !localStorage.getItem(SETUP_DISMISSED_KEY);
+
+  const handleFirstRunComplete = useCallback(() => {
+    localStorage.setItem(SETUP_DISMISSED_KEY, "1");
+    setSetupComplete(true);
+  }, []);
 
   // Engine Monitor — user-controlled but auto-opens on error
   const [monitorOpen, setMonitorOpen] = useState(false);
@@ -196,11 +229,18 @@ export default function App() {
     typeof window !== "undefined" &&
     window.location.hash.startsWith("#/auth/callback");
 
-  if (auth.loading && !isCallbackRoute && !auth.oauthPending) {
+  // Show startup screen while auth is loading OR engine is starting/discovering
+  const isEngineStarting =
+    auth.isAuthenticated &&
+    (status === "discovering" || status === "starting") &&
+    !isCallbackRoute;
+
+  if ((auth.loading && !isCallbackRoute && !auth.oauthPending) || isEngineStarting) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
+      <StartupScreen
+        authLoading={auth.loading}
+        engineStatus={status}
+      />
     );
   }
 
@@ -214,6 +254,18 @@ export default function App() {
         <OAuthPending
           onCancel={auth.cancelOAuth}
           completeOAuthExchange={auth.completeOAuthExchange}
+        />
+      </ErrorBoundary>
+    );
+  }
+
+  // First-run: engine is connected but setup is not complete — show dedicated install screen
+  if (isFirstRun) {
+    return (
+      <ErrorBoundary>
+        <FirstRunScreen
+          engineUrl={url!}
+          onComplete={handleFirstRunComplete}
         />
       </ErrorBoundary>
     );
@@ -273,6 +325,8 @@ export default function App() {
         <UpdateBanner state={updateState} actions={updateActions} />
         {/* Full dialog — only opens when user clicks Details/Install in the banner, or from Settings */}
         <UpdateDialog state={updateState} actions={updateActions} />
+        {/* Persistent debug terminal — toggled via TerminalToggleButton in AppLayout */}
+        <DevTerminalPanel />
       </TooltipProvider>
     </ErrorBoundary>
   );

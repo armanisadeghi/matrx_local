@@ -1575,6 +1575,87 @@ class EngineAPI {
       callbacks.onError("Transcription install stream ended without completion event");
     }
   }
+
+  /**
+   * Stream live log lines from the engine's system.log via SSE.
+   *
+   * First delivers the last `lines` lines of history, then follows the file
+   * in real-time until `signal` is aborted or the stream ends.
+   *
+   * Each SSE "log" event carries: { line: string; level: string; timestamp: number }
+   */
+  streamLogs(callbacks: {
+    onLine: (data: { line: string; level: string; timestamp: number }) => void;
+    onHistoryEnd?: (linesSent: number) => void;
+    onConnected?: (logPath: string) => void;
+    onError?: (error: string) => void;
+    signal?: AbortSignal;
+    lines?: number;
+  }): () => void {
+    if (!this.baseUrl) {
+      callbacks.onError?.("Engine not discovered");
+      return () => {};
+    }
+    const url = `${this.baseUrl}/setup/logs?lines=${callbacks.lines ?? 200}`;
+    let active = true;
+
+    const run = async () => {
+      try {
+        const resp = await fetch(url, { signal: callbacks.signal });
+        if (!resp.ok) {
+          callbacks.onError?.(`Log stream failed: ${resp.status}`);
+          return;
+        }
+        const reader = resp.body?.getReader();
+        if (!reader) { callbacks.onError?.("No response body"); return; }
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let eventType = "";
+
+        while (active) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (eventType === "log") {
+                  callbacks.onLine(data as { line: string; level: string; timestamp: number });
+                } else if (eventType === "history_end") {
+                  callbacks.onHistoryEnd?.(data.lines_sent ?? 0);
+                } else if (eventType === "connected") {
+                  callbacks.onConnected?.(data.log_path ?? "");
+                }
+              } catch { /* skip malformed */ }
+              eventType = "";
+            }
+          }
+        }
+      } catch (err) {
+        if (active) {
+          callbacks.onError?.(err instanceof Error ? err.message : String(err));
+        }
+      }
+    };
+
+    run();
+    return () => { active = false; };
+  }
+
+  /** Fetch the full diagnostic snapshot from /setup/debug (no auth required). */
+  async getDebugState(): Promise<Record<string, unknown>> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/setup/debug`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`Debug state failed: ${resp.status}`);
+    return resp.json();
+  }
 }
 
 // ---- Document types ----

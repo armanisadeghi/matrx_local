@@ -30,6 +30,12 @@ export interface TranscriptionState {
 
   // Recording
   isRecording: boolean;
+  /**
+   * True while the mic has been stopped but Rust is still flushing the last
+   * audio chunk through Whisper. Listeners are kept alive until whisper-stopped
+   * fires, so no transcription is lost.
+   */
+  isProcessingTail: boolean;
   segments: WhisperSegment[];
   fullTranscript: string;
   activeModel: string | null;
@@ -77,6 +83,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingTail, setIsProcessingTail] = useState(false);
   const [segments, setSegments] = useState<WhisperSegment[]>([]);
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
@@ -238,6 +245,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     setSegments([]);
     setLiveRms(0);
     setIsCalibrating(true);
+    setIsProcessingTail(false);
 
     const segmentUnlisten = await tauriListen<WhisperSegment>(
       "whisper-segment",
@@ -249,6 +257,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     const errorUnlisten = await tauriListen<string>("whisper-error", (event) => {
       setError(event.payload);
       setIsRecording(false);
+      setIsProcessingTail(false);
       setLiveRms(0);
       setIsCalibrating(false);
     });
@@ -264,7 +273,23 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
       }
     );
 
-    unlistenersRef.current.push(segmentUnlisten, errorUnlisten, rmsUnlisten, calibratedUnlisten);
+    // whisper-stopped fires after the Rust thread has flushed the final
+    // audio chunk through Whisper. Only at this point do we tear down the
+    // listeners — ensuring no segments are lost.
+    const stoppedUnlisten = await tauriListen<null>("whisper-stopped", () => {
+      setIsProcessingTail(false);
+      setLiveRms(0);
+      unlistenersRef.current.forEach((fn) => fn());
+      unlistenersRef.current = [];
+    });
+
+    unlistenersRef.current.push(
+      segmentUnlisten,
+      errorUnlisten,
+      rmsUnlisten,
+      calibratedUnlisten,
+      stoppedUnlisten,
+    );
 
     // Prefer explicitly passed device, fall back to persisted selectedDevice state
     const resolvedDevice = deviceName ?? selectedDevice ?? undefined;
@@ -279,21 +304,31 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
       setError(msg);
       segmentUnlisten();
       errorUnlisten();
+      rmsUnlisten();
+      calibratedUnlisten();
+      stoppedUnlisten();
+      unlistenersRef.current = [];
     }
   }, [selectedDevice]);
 
   const stopRecording = useCallback(async () => {
+    // Tell Rust to stop capturing audio. The recording thread will flush any
+    // buffered audio through Whisper and then emit "whisper-stopped". We stay
+    // in isProcessingTail state until that event arrives so the UI can show
+    // "Processing…" and the segment listener stays alive.
+    setIsRecording(false);
+    setIsCalibrating(false);
+    // Keep liveRms until whisper-stopped so the meter fades naturally
     try {
       await tauriInvoke("stop_transcription");
+      setIsProcessingTail(true);
     } catch {
       // Ignore — the recording may have already stopped
+      setIsProcessingTail(false);
+      setLiveRms(0);
+      unlistenersRef.current.forEach((fn) => fn());
+      unlistenersRef.current = [];
     }
-    setIsRecording(false);
-    setLiveRms(0);
-    setIsCalibrating(false);
-
-    unlistenersRef.current.forEach((fn) => fn());
-    unlistenersRef.current = [];
   }, []);
 
   const checkModelExists = useCallback(async (filename: string) => {
@@ -358,6 +393,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     isDownloading,
     isInitializing,
     isRecording,
+    isProcessingTail,
     segments,
     fullTranscript,
     activeModel,

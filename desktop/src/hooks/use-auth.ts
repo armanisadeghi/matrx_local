@@ -55,6 +55,7 @@ import {
   clearOAuthPending,
   isOAuthPending,
 } from "@/lib/oauth";
+import { emitClientLog } from "@/hooks/use-client-log";
 
 export interface AuthState {
   user: User | null;
@@ -113,6 +114,11 @@ export function useAuth() {
     mountedRef.current = true;
 
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        emitClientLog("success", `Auth: session restored for ${session.user.email ?? session.user.id}`, "auth");
+      } else {
+        emitClientLog("info", "Auth: no active session — login required", "auth");
+      }
       update({
         session,
         user: session?.user ?? null,
@@ -123,7 +129,12 @@ export function useAuth() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      emitClientLog(
+        session ? "success" : "warn",
+        `Auth state: ${event}${session ? ` (${session.user.email ?? session.user.id})` : ""}`,
+        "auth",
+      );
       update({
         session,
         user: session?.user ?? null,
@@ -151,6 +162,7 @@ export function useAuth() {
    * event emitted by the Rust deep-link handler.
    */
   const signInWithOAuth = useCallback(async () => {
+    emitClientLog("cmd", "OAuth sign-in initiated", "auth");
     update({ loading: true, error: null });
 
     const isInTauri =
@@ -276,6 +288,7 @@ export function useAuth() {
   }, [update]);
 
   const signOut = useCallback(async () => {
+    emitClientLog("cmd", "Sign-out initiated", "auth");
     update({ loading: true, error: null });
     try {
       const result = await Promise.race([
