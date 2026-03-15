@@ -12,6 +12,17 @@ Provides:
   POST /chat/ai/agents/{agent_id}    — start agent conversation (matrx-ai)
   POST /chat/ai/conversations/{id}   — continue conversation (matrx-ai)
   POST /chat/ai/cancel/{request_id}  — cancel in-flight request (matrx-ai)
+
+Data access strategy
+--------------------
+matrx-local always runs in client mode (PostgREST + RLS, no direct asyncpg).
+All reads for models and agents go through matrx_orm.client.SupabaseManager,
+which uses the publishable anon key + the user's JWT.
+
+The asyncpg-based ORM managers (ai_model_manager_instance, PromptBuiltinsBase,
+PromptsBase) require a registered 'supabase_automation_matrix' database — that
+registration never happens in client mode, so calling them raises an error.
+We detect client mode and use SupabaseManager instead.
 """
 
 from __future__ import annotations
@@ -92,13 +103,7 @@ async def list_anthropic_tool_schemas() -> dict:
 
 @router.get("/local-tools")
 async def list_local_tools() -> dict[str, Any]:
-    """Return all local OS tools registered in the matrx-ai ToolRegistry.
-
-    These are the tools AI models can call to interact with the local system —
-    read/write files, run shell commands, manage processes, control the browser, etc.
-
-    Each entry includes name, description, category, parameters, and version.
-    """
+    """Return all local OS tools registered in the matrx-ai ToolRegistry."""
     try:
         from app.tools.local_tool_manifest import LOCAL_TOOL_MANIFEST
         from matrx_ai.tools.registry import ToolRegistryV2
@@ -134,7 +139,29 @@ async def list_local_tools() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Models endpoint — live from Supabase DB via matrx-ai
+# Client-mode helpers — PostgREST via SupabaseManager
+# ---------------------------------------------------------------------------
+
+def _get_supabase_manager(table: str):
+    """Return a SupabaseManager for the given table using the stored client singleton.
+
+    Raises RuntimeError if matrx-ai is not initialized in client mode.
+    Logs the attempt so startup issues are visible in the debug terminal.
+    """
+    from matrx_orm.client import SupabaseManager
+    from matrx_ai.db import get_client_singleton
+
+    config, auth = get_client_singleton()
+    logger.debug(
+        "[chat_routes] SupabaseManager created for table=%r url=%s",
+        table,
+        config.url,
+    )
+    return SupabaseManager(table, config=config, auth=auth)
+
+
+# ---------------------------------------------------------------------------
+# Models endpoint — live from Supabase DB
 # ---------------------------------------------------------------------------
 
 
@@ -142,23 +169,118 @@ async def list_local_tools() -> dict[str, Any]:
 async def list_models() -> dict[str, Any]:
     """Return all active AI models from the Supabase database.
 
-    Falls back to an empty list if the DB is not configured.
-    Each model includes: id (DB uuid), name (API id), common_name, provider,
-    endpoints, capabilities, context_window, max_tokens, controls.
+    Client mode: queries the 'ai_model' table via PostgREST + RLS.
+    Falls back to an empty list with diagnostic info if anything fails.
     """
     import matrx_ai as _matrx_ai
 
-    if not _matrx_ai._initialized:
-        return {"models": [], "total": 0, "source": "fallback"}
+    logger.info("[chat_routes /models] Request received")
 
+    if not _matrx_ai._initialized:
+        logger.warning(
+            "[chat_routes /models] matrx-ai is NOT initialized — returning empty. "
+            "Check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in .env and that "
+            "initialize_matrx_ai() ran successfully at startup."
+        )
+        return {"models": [], "total": 0, "source": "fallback", "error": "matrx-ai not initialized"}
+
+    client_mode = _matrx_ai.is_client_mode()
+    logger.info("[chat_routes /models] matrx-ai initialized. client_mode=%s", client_mode)
+
+    if client_mode:
+        return await _list_models_client()
+    else:
+        return await _list_models_server()
+
+
+async def _list_models_client() -> dict[str, Any]:
+    """Fetch models via Supabase PostgREST (client mode)."""
+    logger.info("[chat_routes /models] Using PostgREST path (client mode)")
+    try:
+        mgr = _get_supabase_manager("ai_model")
+        logger.debug("[chat_routes /models] Calling mgr.load_items() on ai_model table")
+
+        raw_rows: list[dict[str, Any]] = await mgr.load_items()
+        logger.info(
+            "[chat_routes /models] PostgREST returned %d raw rows from ai_model",
+            len(raw_rows),
+        )
+
+        if not raw_rows:
+            logger.warning(
+                "[chat_routes /models] ai_model table returned 0 rows. "
+                "Possible causes: RLS policy blocking anon key, table is empty, "
+                "or the user is not signed in (no JWT)."
+            )
+
+        models_out: list[dict[str, Any]] = []
+        skipped_deprecated = 0
+        skipped_no_provider = 0
+
+        for row in raw_rows:
+            if row.get("is_deprecated"):
+                skipped_deprecated += 1
+                continue
+            endpoints: list[str] = row.get("endpoints") or []
+            if isinstance(endpoints, str):
+                import json
+                try:
+                    endpoints = json.loads(endpoints)
+                except Exception:
+                    endpoints = []
+            provider = _endpoint_to_provider(endpoints)
+            if not provider:
+                skipped_no_provider += 1
+                logger.debug(
+                    "[chat_routes /models] Skipping model %r — no supported provider endpoint. endpoints=%r",
+                    row.get("name"),
+                    endpoints,
+                )
+                continue
+
+            models_out.append({
+                "id": row.get("id", ""),
+                "name": row.get("name", ""),
+                "common_name": row.get("common_name", ""),
+                "provider": provider,
+                "endpoints": endpoints,
+                "capabilities": row.get("capabilities") or [],
+                "context_window": row.get("context_window"),
+                "max_tokens": row.get("max_tokens"),
+                "is_primary": bool(row.get("is_primary", False)),
+                "is_premium": bool(row.get("is_premium", False)),
+            })
+
+        models_out.sort(key=lambda x: (not x["is_primary"], x["provider"], x["common_name"]))
+
+        logger.info(
+            "[chat_routes /models] Returning %d models "
+            "(skipped: %d deprecated, %d no-provider) source=postgrest",
+            len(models_out),
+            skipped_deprecated,
+            skipped_no_provider,
+        )
+        return {"models": models_out, "total": len(models_out), "source": "postgrest"}
+
+    except Exception:
+        logger.error(
+            "[chat_routes /models] PostgREST fetch FAILED. "
+            "Check that SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are correct, "
+            "that the ai_model table exists, and that RLS allows anon reads.",
+            exc_info=True,
+        )
+        return {"models": [], "total": 0, "source": "error"}
+
+
+async def _list_models_server() -> dict[str, Any]:
+    """Fetch models via asyncpg ORM managers (server mode)."""
+    logger.info("[chat_routes /models] Using asyncpg ORM path (server mode)")
     try:
         from matrx_ai.db.custom.ai_models.ai_model_manager import ai_model_manager_instance
-        # from matrx_utils import vcprint
 
         mgr = ai_model_manager_instance
         all_models = await mgr.load_all_models()
-        
-        # vcprint(all_models, "[CHAT ROUTES API] list_models All Models", color="yellow")
+        logger.info("[chat_routes /models] ORM returned %d models", len(all_models))
 
         models_out: list[dict[str, Any]] = []
         for m in all_models:
@@ -168,11 +290,11 @@ async def list_models() -> dict[str, Any]:
             endpoints: list[str] = d.get("endpoints") or []
             provider = _endpoint_to_provider(endpoints)
             if not provider:
-                continue  # skip models with no supported provider endpoint
+                continue
 
             models_out.append({
                 "id": d["id"],
-                "name": d["name"],              # the API model_id to send in requests
+                "name": d["name"],
                 "common_name": d["common_name"],
                 "provider": provider,
                 "endpoints": endpoints,
@@ -183,13 +305,12 @@ async def list_models() -> dict[str, Any]:
                 "is_premium": d.get("is_premium", False),
             })
 
-        # Sort: primaries first, then alphabetically by provider then name
         models_out.sort(key=lambda x: (not x["is_primary"], x["provider"], x["common_name"]))
-
+        logger.info("[chat_routes /models] Returning %d models source=database", len(models_out))
         return {"models": models_out, "total": len(models_out), "source": "database"}
 
     except Exception:
-        logger.warning("Failed to load models from DB", exc_info=True)
+        logger.error("[chat_routes /models] ORM fetch FAILED", exc_info=True)
         return {"models": [], "total": 0, "source": "error"}
 
 
@@ -201,11 +322,17 @@ async def list_models() -> dict[str, Any]:
 def _shape_agent(d: dict[str, Any], source: str) -> dict[str, Any]:
     """Normalize a prompt/builtin DB row into a consistent agent shape."""
     settings: dict[str, Any] = d.get("settings") or {}
+    if isinstance(settings, str):
+        import json
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
     return {
         "id": d.get("id", ""),
         "name": d.get("name", ""),
         "description": d.get("description") or "",
-        "source": source,                          # "builtin" | "user" | "shared"
+        "source": source,
         "variable_defaults": d.get("variable_defaults") or [],
         "category": d.get("category") or None,
         "tags": d.get("tags") or [],
@@ -229,15 +356,100 @@ async def list_agents() -> dict[str, Any]:
       - user:     from prompts table (user's own agents)
       - shared:   TODO — requires user JWT; returns empty for now
 
-    Falls back gracefully if DB not configured.
-    Full variable_defaults (with customComponent config) are included so the
-    frontend can render the correct input widgets per variable.
+    Client mode: queries via PostgREST + RLS.
+    Falls back gracefully with diagnostic info if anything fails.
     """
     import matrx_ai as _matrx_ai
 
-    if not _matrx_ai._initialized:
-        return {"builtins": [], "user": [], "shared": [], "source": "fallback"}
+    logger.info("[chat_routes /agents] Request received")
 
+    if not _matrx_ai._initialized:
+        logger.warning(
+            "[chat_routes /agents] matrx-ai is NOT initialized — returning empty. "
+            "Check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in .env."
+        )
+        return {"builtins": [], "user": [], "shared": [], "source": "fallback", "error": "matrx-ai not initialized"}
+
+    client_mode = _matrx_ai.is_client_mode()
+    logger.info("[chat_routes /agents] matrx-ai initialized. client_mode=%s", client_mode)
+
+    if client_mode:
+        return await _list_agents_client()
+    else:
+        return await _list_agents_server()
+
+
+async def _list_agents_client() -> dict[str, Any]:
+    """Fetch agents via Supabase PostgREST (client mode)."""
+    logger.info("[chat_routes /agents] Using PostgREST path (client mode)")
+    try:
+        builtins_mgr = _get_supabase_manager("prompt_builtins")
+        prompts_mgr = _get_supabase_manager("prompts")
+
+        logger.debug("[chat_routes /agents] Fetching prompt_builtins and prompts concurrently")
+        builtins_raw, prompts_raw = await asyncio.gather(
+            builtins_mgr.load_items(),
+            prompts_mgr.load_items(),
+        )
+
+        logger.info(
+            "[chat_routes /agents] PostgREST returned %d builtins, %d user prompts",
+            len(builtins_raw),
+            len(prompts_raw),
+        )
+
+        if not builtins_raw:
+            logger.warning(
+                "[chat_routes /agents] prompt_builtins table returned 0 rows. "
+                "Possible causes: RLS policy blocking anon reads, table is empty, "
+                "or RLS requires is_active=true filter."
+            )
+
+        builtins = sorted(
+            [
+                _shape_agent(b, "builtin")
+                for b in builtins_raw
+                if b.get("is_active", True)
+            ],
+            key=lambda x: x["name"],
+        )
+        user_agents = sorted(
+            [_shape_agent(p, "user") for p in prompts_raw],
+            key=lambda x: x["name"],
+        )
+
+        logger.info(
+            "[chat_routes /agents] Returning %d builtins, %d user agents source=postgrest",
+            len(builtins),
+            len(user_agents),
+        )
+        return {
+            "builtins": builtins,
+            "user": user_agents,
+            "shared": [],
+            "source": "postgrest",
+            "totals": {
+                "builtins": len(builtins),
+                "user": len(user_agents),
+                "shared": 0,
+                "total": len(builtins) + len(user_agents),
+            },
+        }
+
+    except Exception:
+        logger.error(
+            "[chat_routes /agents] PostgREST fetch FAILED. "
+            "Check that SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY are correct, "
+            "that prompt_builtins and prompts tables exist, "
+            "and that RLS allows anon reads on prompt_builtins.",
+            exc_info=True,
+        )
+        return {"builtins": [], "user": [], "shared": [], "source": "error"}
+
+
+async def _list_agents_server() -> dict[str, Any]:
+    """Fetch agents via asyncpg ORM managers (server mode)."""
+    logger.info("[chat_routes /agents] Using asyncpg ORM path (server mode)")
     try:
         from matrx_ai.db.managers.prompt_builtins import PromptBuiltinsBase
         from matrx_ai.db.managers.prompts import PromptsBase
@@ -256,6 +468,12 @@ async def list_agents() -> dict[str, Any]:
             pm_mgr.load_items(),
         )
 
+        logger.info(
+            "[chat_routes /agents] ORM returned %d builtins, %d user prompts",
+            len(builtins_raw),
+            len(prompts_raw),
+        )
+
         builtins = sorted(
             [_shape_agent(b.to_dict(), "builtin") for b in builtins_raw if b.to_dict().get("is_active", True)],
             key=lambda x: x["name"],
@@ -268,7 +486,7 @@ async def list_agents() -> dict[str, Any]:
         return {
             "builtins": builtins,
             "user": user_agents,
-            "shared": [],   # populated once we have a user JWT to call get_prompts_shared_with_me
+            "shared": [],
             "source": "database",
             "totals": {
                 "builtins": len(builtins),
@@ -279,7 +497,7 @@ async def list_agents() -> dict[str, Any]:
         }
 
     except Exception:
-        logger.warning("Failed to load agents from DB", exc_info=True)
+        logger.error("[chat_routes /agents] ORM fetch FAILED", exc_info=True)
         return {"builtins": [], "user": [], "shared": [], "source": "error"}
 
 

@@ -318,3 +318,127 @@ async def get_sync_status() -> dict[str, Any]:
     """Return the current sync status for all entity types."""
     engine = get_sync_engine()
     return await engine.get_status()
+
+
+# ------------------------------------------------------------------
+# Diagnostics
+# ------------------------------------------------------------------
+
+@router.get("/debug")
+async def debug_state() -> dict[str, Any]:
+    """Full diagnostic snapshot — call this when things aren't loading.
+
+    Returns the state of every system component: matrx-ai init, client mode,
+    Supabase config, SQLite counts, sync status, and a live probe of the
+    PostgREST connection.
+
+    Hit this endpoint from the dashboard terminal to get the full picture:
+        curl http://localhost:22140/data/debug | python3 -m json.tool
+    """
+    import os
+    import matrx_ai as _matrx_ai
+    from app.services.ai.engine import is_client_mode, is_initialized, tools_loaded, has_db
+
+    report: dict[str, Any] = {}
+
+    # ── 1. matrx-ai state ────────────────────────────────────────────
+    report["matrx_ai"] = {
+        "initialized": _matrx_ai._initialized,
+        "client_mode": _matrx_ai.is_client_mode() if _matrx_ai._initialized else False,
+        "engine_is_initialized": is_initialized(),
+        "engine_client_mode_active": is_client_mode(),
+        "engine_tools_loaded": tools_loaded(),
+        "engine_has_db": has_db(),
+    }
+    logger.info("[debug] matrx-ai state: %s", report["matrx_ai"])
+
+    # ── 2. Environment / config ───────────────────────────────────────
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    anon_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+    report["env"] = {
+        "SUPABASE_URL": supabase_url or "(NOT SET)",
+        "SUPABASE_PUBLISHABLE_KEY": "SET ✓" if anon_key else "(NOT SET ✗)",
+        "MATRX_AI_CLIENT_MODE": os.getenv("MATRX_AI_CLIENT_MODE", "(not in env)"),
+    }
+    logger.info("[debug] env: %s", report["env"])
+
+    # ── 3. Client singleton check ─────────────────────────────────────
+    if _matrx_ai._initialized and _matrx_ai.is_client_mode():
+        try:
+            from matrx_ai.db import get_client_singleton
+            config, auth = get_client_singleton()
+            report["client_singleton"] = {
+                "ok": True,
+                "url": config.url,
+                "anon_key_set": bool(config.anon_key),
+                "session_active": auth.session is not None,
+                "session_user_id": auth.session.user_id if auth.session else None,
+            }
+            logger.info("[debug] client singleton: %s", report["client_singleton"])
+        except Exception as exc:
+            report["client_singleton"] = {"ok": False, "error": str(exc)}
+            logger.error("[debug] client singleton FAILED: %s", exc)
+    else:
+        report["client_singleton"] = {"ok": False, "reason": "not in client mode"}
+
+    # ── 4. Live PostgREST probe ───────────────────────────────────────
+    if report.get("client_singleton", {}).get("ok"):
+        probes: dict[str, Any] = {}
+        for table in ("ai_model", "prompt_builtins", "prompts"):
+            try:
+                from matrx_orm.client import SupabaseManager
+                from matrx_ai.db import get_client_singleton
+                cfg, ath = get_client_singleton()
+                mgr = SupabaseManager(table, config=cfg, auth=ath)
+                count = await mgr.count()
+                probes[table] = {"ok": True, "count": count}
+                logger.info("[debug] probe %r → count=%s", table, count)
+            except Exception as exc:
+                probes[table] = {"ok": False, "error": str(exc)}
+                logger.error("[debug] probe %r FAILED: %s", table, exc, exc_info=True)
+        report["postgrest_probes"] = probes
+    else:
+        report["postgrest_probes"] = {"skipped": "client singleton not available"}
+
+    # ── 5. SQLite counts ──────────────────────────────────────────────
+    try:
+        models_repo = ModelsRepo()
+        agents_repo = AgentsRepo()
+        tools_repo = ToolsRepo()
+        sync_meta = SyncMetaRepo()
+        report["sqlite"] = {
+            "ai_models_cached": await models_repo.count(),
+            "agents_cached_builtin": len(await agents_repo.list_all(source="builtin")),
+            "agents_cached_user": len(await agents_repo.list_all(source="user")),
+            "tools_cached": await tools_repo.count(),
+            "sync_status": await sync_meta.get_all_sync_status(),
+        }
+        logger.info("[debug] SQLite: %s", report["sqlite"])
+    except Exception as exc:
+        report["sqlite"] = {"error": str(exc)}
+        logger.error("[debug] SQLite probe FAILED: %s", exc)
+
+    # ── Summary ───────────────────────────────────────────────────────
+    problems = []
+    if not report["matrx_ai"]["initialized"]:
+        problems.append("matrx-ai not initialized")
+    if not report["env"]["SUPABASE_URL"] or report["env"]["SUPABASE_URL"] == "(NOT SET)":
+        problems.append("SUPABASE_URL not set")
+    if "(NOT SET" in report["env"]["SUPABASE_PUBLISHABLE_KEY"]:
+        problems.append("SUPABASE_PUBLISHABLE_KEY not set")
+    if not report.get("client_singleton", {}).get("ok"):
+        problems.append("client singleton not available")
+    for tbl, probe in report.get("postgrest_probes", {}).items():
+        if isinstance(probe, dict) and not probe.get("ok"):
+            problems.append(f"PostgREST probe failed for {tbl}: {probe.get('error', '?')}")
+
+    report["summary"] = {
+        "healthy": len(problems) == 0,
+        "problems": problems,
+    }
+    if problems:
+        logger.error("[debug] PROBLEMS DETECTED: %s", problems)
+    else:
+        logger.info("[debug] All systems healthy ✓")
+
+    return report

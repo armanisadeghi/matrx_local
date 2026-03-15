@@ -48,6 +48,7 @@ def initialize_matrx_ai() -> None:
     """
     global _ai_initialized, _client_mode_active
     if _ai_initialized:
+        logger.debug("[engine] initialize_matrx_ai() called again — already initialized, skipping")
         return
 
     import matrx_ai
@@ -55,10 +56,22 @@ def initialize_matrx_ai() -> None:
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     supabase_anon_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
-    logger.info(
-        "[engine] matrx-ai: initializing in client mode (PostgREST + RLS). url=%s",
-        supabase_url,
-    )
+    logger.info("=" * 60)
+    logger.info("[engine] matrx-ai STARTUP — client mode (PostgREST + RLS)")
+    logger.info("[engine]   SUPABASE_URL          = %s", supabase_url or "(NOT SET)")
+    logger.info("[engine]   SUPABASE_PUBLISHABLE_KEY = %s", "SET ✓" if supabase_anon_key else "(NOT SET ✗)")
+    logger.info("=" * 60)
+
+    if not supabase_url:
+        logger.error(
+            "[engine] SUPABASE_URL is not set — models and agents will NOT load. "
+            "Add SUPABASE_URL to .env"
+        )
+    if not supabase_anon_key:
+        logger.error(
+            "[engine] SUPABASE_PUBLISHABLE_KEY is not set — models and agents will NOT load. "
+            "Add SUPABASE_PUBLISHABLE_KEY to .env"
+        )
 
     try:
         matrx_ai.initialize(
@@ -67,15 +80,20 @@ def initialize_matrx_ai() -> None:
             supabase_anon_key=supabase_anon_key,
         )
         _client_mode_active = True
-        logger.info("[engine] matrx-ai: initialized in client mode ✓")
+        logger.info(
+            "[engine] matrx-ai: initialized in client mode ✓ "
+            "(models and agents will be fetched via PostgREST on first request)"
+        )
     except Exception:
         logger.error(
             "[engine] matrx-ai: client mode initialization FAILED — "
-            "check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in .env",
+            "SUPABASE_URL=%r  key_set=%s",
+            supabase_url,
+            bool(supabase_anon_key),
             exc_info=True,
         )
         # Mark initialized anyway so the tool registry load proceeds.
-        # AI provider calls still work; only DB-backed features are unavailable.
+        # AI provider calls still work; DB-backed features (models, agents) unavailable.
         matrx_ai._initialized = True
 
     _ai_initialized = True
