@@ -1246,7 +1246,7 @@ wheels = [
 
 [[package]]
 name = "matrx-ai"
-version = "0.1.21"
+version = "0.1.22"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -1270,14 +1270,14 @@ dependencies = [
     { name = "update" },
     { name = "xai-sdk" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/68/75/efff06f54eb0516aaa3a35bb31938959d7858edc2661ea8c42be2911c785/matrx_ai-0.1.21.tar.gz", hash = "sha256:630fdcf3d3679811e03c9ed1a227554c7cad754215364e77417823837f3b0009", size = 728546, upload-time = "2026-03-16T07:25:31.361Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/0e/80ccf09aa3597505951990ac461fedf2a47d27686631074466517e0a0987/matrx_ai-0.1.22.tar.gz", hash = "sha256:bb22424ddae1c2f992eb03302e7e2d5eec892a27af954bedf0849ff5792d08cc", size = 728633, upload-time = "2026-03-16T08:01:18.887Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/99/ed7543dc5abc7f256f3c7fc2b002f0c8dc4d45093c24695f6af70e971bbb/matrx_ai-0.1.21-py3-none-any.whl", hash = "sha256:9ec2b1e4a1d4a95ed5ac37dd3ced2919d1969f52b52d76711690c1aca21c5695", size = 487408, upload-time = "2026-03-16T07:25:29.403Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/88/1865c5fa8fd06a35c1adf37359c348ed5cc813df019cceb45bd1cfb539a2/matrx_ai-0.1.22-py3-none-any.whl", hash = "sha256:e491dd80dcc059f4313e708a7d822fb2c817356d5c3ffb6d1948d57bb3b75f5c", size = 487648, upload-time = "2026-03-16T08:01:16.943Z" },
 ]
 
 [[package]]
 name = "matrx-local"
-version = "1.2.63"
+version = "1.2.64"
 source = { virtual = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -1359,7 +1359,7 @@ requires-dist = [
     { name = "imageio-ffmpeg", specifier = ">=0.5.1" },
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "markdownify", specifier = ">=0.14.1" },
-    { name = "matrx-ai", specifier = ">=0.1.21" },
+    { name = "matrx-ai", specifier = ">=0.1.22" },
     { name = "matrx-orm", specifier = ">=3.0.25" },
     { name = "matrx-utils", specifier = ">=1.0.19" },
     { name = "mss", specifier = ">=9.0.1" },
