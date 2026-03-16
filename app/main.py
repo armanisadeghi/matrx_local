@@ -29,7 +29,7 @@ from app.services.scraper.engine import get_scraper_engine
 from app.services.proxy.server import get_proxy_server
 from app.services.tunnel.manager import get_tunnel_manager
 from app.services.cloud_sync.settings_sync import get_settings_sync
-from app.services.ai.engine import initialize_matrx_ai, load_tools_and_register
+from app.services.ai.engine import initialize_matrx_ai, load_tools_and_register, warm_jwt_cache
 from app.services.local_db.database import get_db
 from app.services.local_db.sync_engine import get_sync_engine
 from app.tools.tools.scheduler import restore_scheduled_tasks
@@ -214,6 +214,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             exc_info=True,
         )
         print("[phase:database] Local database FAILED (fallbacks active)", flush=True)
+
+    # Phase 0a (post): Warm the in-memory JWT cache from SQLite so matrx-ai has
+    # the user's token available immediately on first authenticated API call.
+    try:
+        await warm_jwt_cache()
+    except Exception:
+        logger.warning("[app/main.py] Phase 0a: JWT cache warm failed (non-fatal)", exc_info=True)
 
     # Phase 0b: Ensure Playwright browsers are installed (auto-installs if missing).
     # Browsers are NOT bundled in the PyInstaller binary (bundling causes macOS

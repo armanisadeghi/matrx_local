@@ -275,10 +275,43 @@ CREATE TABLE IF NOT EXISTS app_settings (
 """
 
 # ------------------------------------------------------------------
+# Migration 3: Conversation persistence tables for matrx-ai client mode
+# ------------------------------------------------------------------
+
+_V3_CONVERSATION_PERSISTENCE = """
+-- User requests: one per AI interaction, status tracks lifecycle
+CREATE TABLE IF NOT EXISTS user_requests (
+    id                 TEXT PRIMARY KEY,
+    conversation_id    TEXT NOT NULL,
+    user_id            TEXT NOT NULL DEFAULT '',
+    status             TEXT NOT NULL DEFAULT 'pending',
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_requests_conv ON user_requests(conversation_id, created_at DESC);
+
+-- Tool call logs: one row per tool invocation within a request
+CREATE TABLE IF NOT EXISTS tool_call_logs (
+    id             TEXT PRIMARY KEY,
+    conversation_id TEXT,
+    user_request_id TEXT,
+    status         TEXT NOT NULL DEFAULT 'running',
+    data           TEXT NOT NULL DEFAULT '{}',
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_call_logs_request ON tool_call_logs(user_request_id, created_at DESC);
+"""
+
+# ------------------------------------------------------------------
 # All migrations in order
 # ------------------------------------------------------------------
 
 MIGRATIONS: list[tuple[int, str]] = [
     (1, _V1_CORE),
     (2, _V2_EXTENDED),
+    (3, _V3_CONVERSATION_PERSISTENCE),
 ]

@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from app.common.system_logger import get_logger
 from app.services.local_db.repositories import TokenRepo
+from app.services.ai.engine import clear_jwt_cache, set_jwt_cache
 
 logger = get_logger()
 router = APIRouter(prefix="/auth", tags=["auth-token"])
@@ -58,6 +59,8 @@ async def save_token(req: TokenRequest) -> dict[str, Any]:
         refresh_token=req.refresh_token,
         expires_at=expires_at,
     )
+    # Keep the in-memory cache hot so matrx-ai picks up the new token immediately.
+    set_jwt_cache(req.access_token)
     logger.info(
         "[token_routes] JWT saved for user_id=%s expires_at=%s",
         req.user_id,
@@ -94,5 +97,6 @@ async def clear_token() -> dict[str, Any]:
     """Clear the stored JWT on logout."""
     repo = TokenRepo()
     await repo.clear()
+    clear_jwt_cache()
     logger.info("[token_routes] JWT cleared (logout)")
     return {"status": "ok"}

@@ -1,24 +1,28 @@
 """matrx-ai engine lifecycle management.
 
-Handles one-time initialization of the matrx_ai library (DB registration,
-env loading) at startup, then registers all local OS tools into matrx-ai's
-ToolRegistry so AI models can invoke them.
+Handles one-time initialization of the matrx_ai library at startup, then
+registers all local OS tools into matrx-ai's ToolRegistry so AI models can
+invoke them.
 
 Initialization sequence
 -----------------------
-  1. ``initialize_matrx_ai()`` — sync phase: sets up Supabase client mode.
+  1. ``initialize_matrx_ai()`` — sync phase: sets up client mode with a
+     fully-configured ClientModeConfig (server_url, supabase_url, anon_key,
+     get_jwt callable, and a SQLite-backed ConversationHandler).
   2. ``load_tools_and_register()`` — async phase:
-       a. Loads the matrx-ai tool registry from the DB (cloud tools).
+       a. Loads the matrx-ai tool registry from the AIDream server API.
        b. Registers all local OS tools via ``LocalToolBridge``.
-       c. Starts the tool executor and lifecycle sweep.
 
 matrx-local ALWAYS runs in client mode
 ---------------------------------------
-  - Uses Supabase PostgREST API (anon key + user JWT + RLS).
-  - No direct DB credentials are stored on the user's machine.
-  - Conversation persistence is skipped server-side — RLS enforces per-user isolation.
+  - No direct PostgreSQL / asyncpg connection is ever opened.
+  - Public data (models, tools, prompt builtins) is fetched from the AIDream
+    REST API by the matrx-ai library itself.
+  - Conversation persistence is handled by LocalConversationHandler, which
+    writes to local SQLite (~/.matrx/matrx.db).
+  - The user JWT is read from the auth_tokens SQLite table at call time so
+    it automatically picks up token refreshes without re-initializing.
   - AI provider calls (OpenAI, Anthropic, etc.) work in full.
-  - Local tool registration failures are logged but don't block startup.
 """
 
 from __future__ import annotations
@@ -38,13 +42,66 @@ _tools_loaded = False
 _client_mode_active = False
 
 
+# ------------------------------------------------------------------
+# In-memory JWT cache — the single synchronous read point for matrx-ai
+# ------------------------------------------------------------------
+# matrx-ai calls get_jwt() synchronously (no await), so we maintain a
+# module-level string cache that is:
+#   1. Pre-loaded from SQLite during the async startup phase (warm_jwt_cache)
+#   2. Updated instantly whenever React pushes a new token via POST /auth/token
+#      (call set_jwt_cache from token_routes.py)
+#   3. Cleared on logout (call clear_jwt_cache)
+#
+# This means matrx-ai always gets the latest known token with a simple
+# dict lookup, no event-loop juggling required.
+
+_jwt_cache: str | None = None
+
+
+def set_jwt_cache(token: str | None) -> None:
+    """Update the in-memory JWT so matrx-ai picks it up on next call."""
+    global _jwt_cache
+    _jwt_cache = token
+
+
+def clear_jwt_cache() -> None:
+    global _jwt_cache
+    _jwt_cache = None
+
+
+def _get_jwt() -> str | None:
+    """Synchronous getter passed to ClientModeConfig.get_jwt."""
+    return _jwt_cache
+
+
+async def warm_jwt_cache() -> None:
+    """Load the persisted JWT from SQLite into the in-memory cache.
+
+    Call once during the async startup phase so matrx-ai has a token
+    immediately if the user was previously logged in.
+    """
+    try:
+        from app.services.local_db.repositories import TokenRepo
+        row = await TokenRepo().get()
+        if row and row.get("access_token"):
+            set_jwt_cache(row["access_token"])
+            logger.info("[engine] JWT cache warmed from SQLite (user_id=%s)", row.get("user_id"))
+        else:
+            logger.debug("[engine] No stored JWT — cache stays empty")
+    except Exception as exc:
+        logger.warning("[engine] Could not warm JWT cache: %s", exc)
+
+
 def initialize_matrx_ai() -> None:
     """Initialize the matrx_ai library once at startup (synchronous phase).
 
-    matrx-local always uses client mode: Supabase PostgREST + RLS.
-    Reads SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY from .env.
+    Builds a ClientModeConfig with:
+      - server_url from AIDREAM_SERVER_URL_LIVE env var
+      - supabase_url / supabase_anon_key from SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY
+      - get_jwt: callable that reads the stored JWT from SQLite at request time
+      - conversation_handler: LocalConversationHandler (SQLite-backed)
 
-    Call this from the FastAPI lifespan handler BEFORE the async phase.
+    Call from the FastAPI lifespan handler BEFORE the async phase.
     """
     global _ai_initialized, _client_mode_active
     if _ai_initialized:
@@ -52,48 +109,56 @@ def initialize_matrx_ai() -> None:
         return
 
     import matrx_ai
+    from matrx_ai.client_mode.config import ClientModeConfig
 
+    server_url = os.getenv("AIDREAM_SERVER_URL_LIVE", "").strip()
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     supabase_anon_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
     logger.info("=" * 60)
-    logger.info("[engine] matrx-ai STARTUP — client mode (PostgREST + RLS)")
-    logger.info("[engine]   SUPABASE_URL          = %s", supabase_url or "(NOT SET)")
+    logger.info("[engine] matrx-ai STARTUP — client mode")
+    logger.info("[engine]   AIDREAM_SERVER_URL_LIVE  = %s", server_url or "(NOT SET ✗)")
+    logger.info("[engine]   SUPABASE_URL             = %s", supabase_url or "(NOT SET ✗)")
     logger.info("[engine]   SUPABASE_PUBLISHABLE_KEY = %s", "SET ✓" if supabase_anon_key else "(NOT SET ✗)")
     logger.info("=" * 60)
 
+    missing = []
+    if not server_url:
+        missing.append("AIDREAM_SERVER_URL_LIVE")
     if not supabase_url:
-        logger.error(
-            "[engine] SUPABASE_URL is not set — models and agents will NOT load. "
-            "Add SUPABASE_URL to .env"
-        )
+        missing.append("SUPABASE_URL")
     if not supabase_anon_key:
+        missing.append("SUPABASE_PUBLISHABLE_KEY")
+    if missing:
         logger.error(
-            "[engine] SUPABASE_PUBLISHABLE_KEY is not set — models and agents will NOT load. "
-            "Add SUPABASE_PUBLISHABLE_KEY to .env"
+            "[engine] Missing env vars: %s — AI models/agents may not load. "
+            "Add them to .env",
+            ", ".join(missing),
         )
 
+    from app.services.ai.conversation_handler import get_conversation_handler
+
     try:
-        matrx_ai.initialize(
-            client_mode=True,
+        config = ClientModeConfig(
+            server_url=server_url,
             supabase_url=supabase_url,
             supabase_anon_key=supabase_anon_key,
+            get_jwt=_get_jwt,
+            conversation_handler=get_conversation_handler(),
         )
+        matrx_ai.initialize(client_mode=True, client_config=config)
         _client_mode_active = True
         logger.info(
-            "[engine] matrx-ai: initialized in client mode ✓ "
-            "(models and agents will be fetched via PostgREST on first request)"
+            "[engine] matrx-ai: initialized in client mode ✓  "
+            "(conversations → SQLite, data → AIDream API)"
         )
     except Exception:
         logger.error(
-            "[engine] matrx-ai: client mode initialization FAILED — "
-            "SUPABASE_URL=%r  key_set=%s",
-            supabase_url,
-            bool(supabase_anon_key),
+            "[engine] matrx-ai: client mode initialization FAILED",
             exc_info=True,
         )
-        # Mark initialized anyway so the tool registry load proceeds.
-        # AI provider calls still work; DB-backed features (models, agents) unavailable.
+        # Mark initialized anyway so tool registration proceeds on the async phase.
+        # AI provider calls still work; DB-backed features unavailable.
         matrx_ai._initialized = True
 
     _ai_initialized = True
