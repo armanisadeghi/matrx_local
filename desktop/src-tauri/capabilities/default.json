@@ -25,6 +25,7 @@
     "process:allow-restart",
     "deep-link:default",
     "deep-link:allow-get-current",
+    "deep-link:allow-register",
     "macos-permissions:default"
   ]
 }

@@ -314,6 +314,18 @@ if [[ -n "${TESSDATA_PATH:-}" && -d "$TESSDATA_PATH" ]]; then
     export TESSDATA_PATH_ARG="$TESSDATA_PATH:tessdata"
 fi
 
+# ---------------------------------------------------------------------------
+# Step 3b: Bake API URLs and publishable keys into app/bundled_config.py
+# ---------------------------------------------------------------------------
+# Required env vars (must be set in CI or local environment):
+#   AIDREAM_SERVER_URL_LIVE, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY
+echo ""
+echo "=== Writing bundled config ==="
+"$PYTHON_CMD" "$PROJECT_ROOT/scripts/write_bundled_config.py" || {
+    echo "WARNING: write_bundled_config.py failed — API URLs may not be available in the binary."
+    echo "         Set AIDREAM_SERVER_URL_LIVE, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY in your environment."
+}
+
 # ── macOS code signing: re-sign Python dylibs AT SOURCE before PyInstaller ──
 #
 # ROOT CAUSE FIX: codesign --deep on a PyInstaller --onefile binary cannot

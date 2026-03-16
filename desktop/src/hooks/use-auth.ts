@@ -72,22 +72,20 @@ export interface AuthState {
  * DEV:        Vite dev server at localhost:1420 — browser tab navigates back.
  * Production: aimatrx:// custom scheme — OS deep link → Tauri event.
  *
- * Note: platform() from @tauri-apps/plugin-os is NOT needed here. The
- * aimatrx:// scheme works identically on macOS, Linux, and Windows because
+ * The aimatrx:// scheme works identically on macOS, Linux, and Windows because
  * tauri-plugin-deep-link handles the OS-level registration for all three.
- * The tauri://localhost and https://tauri.localhost schemes are for the
- * Tauri *webview* URL scheme, which is a different concept entirely.
+ *
+ * NOTE: We do NOT use a web intermediary (aimatrx.com/oauth/callback) because
+ * Windows browsers (Chrome/Edge) silently block custom URI scheme navigations
+ * triggered by server redirects with no user gesture. Using aimatrx:// directly
+ * as the Supabase redirect_uri bypasses the browser entirely — the OS intercepts
+ * the URL before any browser policy can block it.
  */
 function getRedirectUri(): string {
   if (import.meta.env.DEV) {
     return "http://localhost:1420/auth/callback";
   }
-  // Use the web intermediary page on aimatrx.com instead of the direct
-  // deep link. The web page receives the OAuth code from Supabase, then
-  // triggers the aimatrx:// deep link to hand off to the desktop app.
-  // This gives the user a polished success page instead of a blank browser
-  // tab showing the aimatrx:// URL.
-  return "https://www.aimatrx.com/oauth/callback/matrx-local";
+  return "aimatrx://auth/callback";
 }
 
 export function useAuth() {

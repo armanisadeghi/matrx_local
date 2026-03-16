@@ -8,13 +8,40 @@ from pathlib import Path
 from typing import Optional
 
 def _read_version() -> str:
-    """Read version directly from pyproject.toml — works without package install."""
+    """Read version — tries importlib.metadata first (works in packaged binary),
+    then falls back to parsing pyproject.toml (works in dev mode and PyInstaller)."""
+    # importlib.metadata works when the package is installed (dev: uv install, prod: PyInstaller)
     try:
-        text = (Path(__file__).parent.parent.parent / "pyproject.toml").read_text()
-        m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-        return m.group(1) if m else "0.0.0"
+        from importlib.metadata import version as _meta_version, PackageNotFoundError
+        try:
+            return _meta_version("matrx-local")
+        except PackageNotFoundError:
+            pass
+    except ImportError:
+        pass
+
+    # Fallback: read pyproject.toml. Check several candidate locations:
+    # 1. sys._MEIPASS — PyInstaller extraction dir (pyproject.toml bundled via datas)
+    # 2. project root via __file__ traversal — works in dev mode
+    try:
+        import sys as _sys
+        candidates: list[Path] = []
+        if hasattr(_sys, "_MEIPASS"):
+            candidates.append(Path(_sys._MEIPASS) / "pyproject.toml")
+        candidates += [
+            Path(__file__).parent.parent.parent / "pyproject.toml",  # dev layout
+            Path(__file__).parent.parent / "pyproject.toml",         # shallow edge case
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                text = candidate.read_text()
+                m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+                if m:
+                    return m.group(1)
     except Exception:
-        return "0.0.0"
+        pass
+
+    return "0.0.0"
 
 _APP_VERSION = _read_version()
 

@@ -3,11 +3,10 @@ import { engine } from "@/lib/api";
 import { Zap, ArrowLeft, ExternalLink, CheckCircle2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-// Production redirect URI — points to the web intermediary page on aimatrx.com
-// which receives the OAuth code from Supabase, then triggers the aimatrx://
-// deep link to hand off to the desktop app. This must match the redirect_uri
-// used in the authorization request (see use-auth.ts getRedirectUri()).
-const TAURI_REDIRECT_URI = "https://www.aimatrx.com/oauth/callback/matrx-local";
+// Production redirect URI — must exactly match the redirect_uri sent in the
+// authorization request (see use-auth.ts getRedirectUri()). The OS intercepts
+// the aimatrx:// scheme and routes it to the Rust on_open_url handler.
+const TAURI_REDIRECT_URI = "aimatrx://auth/callback";
 
 const BRAND_COLOR = "hsl(var(--primary))";
 
@@ -62,7 +61,8 @@ export function OAuthPending({ onCancel, completeOAuthExchange }: OAuthPendingPr
     //   1. shell.open() sent the system browser to the Supabase authorize URL
     //   2. User approved on aimatrx.com/oauth/consent
     //   3. Supabase redirected the browser to aimatrx://auth/callback?code=XXX
-    //   4. OS intercepted the aimatrx:// scheme → called Rust on_open_url handler
+    //   4. OS intercepted the aimatrx:// scheme before any browser policy ran
+    //      → called Rust on_open_url handler
     //   5a. Rust stored the URL in PendingOAuthUrl app state (for the race case)
     //   5b. Rust emitted Tauri event "oauth-callback" with the full URL string
     //   6. We receive via event listener OR via the 500ms polling loop (whichever wins)

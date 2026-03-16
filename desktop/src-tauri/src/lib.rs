@@ -457,6 +457,25 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Single-instance must be registered before deep-link so that on Windows,
+        // when the OS launches a second instance to deliver an aimatrx:// deep-link
+        // URL, this plugin intercepts it, terminates the new instance, and forwards
+        // the argv (which contains the aimatrx:// URL) to the already-running app.
+        // The callback below handles that forwarded URL the same way on_open_url does.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // Find the aimatrx:// URL in the forwarded arguments and process it.
+            if let Some(url_str) = argv.iter().find(|a| a.starts_with("aimatrx://")) {
+                println!("[single-instance] Received deep-link via argv: {}", url_str);
+                show_main_window(app);
+                if let Some(state) = app.try_state::<PendingOAuthUrl>() {
+                    *state.0.lock().unwrap() = Some(url_str.clone());
+                }
+                let _ = app.emit("oauth-callback", url_str.clone());
+            } else {
+                // No deep-link URL — just bring the existing window to front.
+                show_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_macos_permissions::init())

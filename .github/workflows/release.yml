@@ -73,6 +73,11 @@ jobs:
       - name: Build Python sidecar binary
         env:
           APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-15' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          # These are baked into the binary by scripts/write_bundled_config.py
+          # (called inside build-sidecar.sh). All three are publishable/public values.
+          AIDREAM_SERVER_URL_LIVE: ${{ secrets.AIDREAM_SERVER_URL_LIVE }}
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY }}
         run: |
           chmod +x scripts/build-sidecar.sh
           if [[ "${{ matrix.args }}" == *"x86_64-apple-darwin"* ]]; then

@@ -295,11 +295,18 @@ class DocumentFileManager:
 
     # ── Sync state persistence ───────────────────────────────────────────────
 
+    def _state_file(self) -> Path:
+        return _notes_dir() / ".sync" / "state.json"
+
+    def _mappings_file(self) -> Path:
+        return _notes_dir() / ".sync" / "mappings.json"
+
     def load_sync_state(self) -> dict[str, Any]:
         _ensure_dirs()
-        if STATE_FILE.is_file():
+        state_file = self._state_file()
+        if state_file.is_file():
             try:
-                return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+                return json.loads(state_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 logger.warning("Corrupt sync state, resetting")
         return {
@@ -311,7 +318,7 @@ class DocumentFileManager:
 
     def save_sync_state(self, state: dict[str, Any]) -> None:
         _ensure_dirs()
-        STATE_FILE.write_text(
+        self._state_file().write_text(
             json.dumps(state, indent=2, default=str), encoding="utf-8"
         )
 
@@ -321,16 +328,17 @@ class DocumentFileManager:
         Returns {folder_id: [local_path, ...]}.
         """
         _ensure_dirs()
-        if MAPPINGS_FILE.is_file():
+        mappings_file = self._mappings_file()
+        if mappings_file.is_file():
             try:
-                return json.loads(MAPPINGS_FILE.read_text(encoding="utf-8"))
+                return json.loads(mappings_file.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 pass
         return {}
 
     def save_local_mappings(self, mappings: dict[str, list[str]]) -> None:
         _ensure_dirs()
-        MAPPINGS_FILE.write_text(
+        self._mappings_file().write_text(
             json.dumps(mappings, indent=2), encoding="utf-8"
         )
 
