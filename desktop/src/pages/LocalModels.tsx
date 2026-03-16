@@ -1044,9 +1044,104 @@ type InferenceMode = "chat" | "tools" | "raw";
 
 interface ConversationMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+}
+
+interface SavedConversation {
+  id: string;
+  title: string;
+  messages: ConversationMessage[];
+  systemPrompt: string;
+  createdAt: number;
+  updatedAt: number;
+  modelName?: string;
+}
+
+const CONVERSATIONS_STORE_KEY = "llm-playground-conversations";
+const MAX_CONVERSATIONS = 50;
+
+function makeTitle(firstUserMsg: string): string {
+  return firstUserMsg.length > 40
+    ? firstUserMsg.slice(0, 40).trimEnd() + "…"
+    : firstUserMsg;
+}
+
+function loadConversations(): SavedConversation[] {
+  try {
+    const raw = localStorage.getItem(CONVERSATIONS_STORE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveConversations(convs: SavedConversation[]): void {
+  try {
+    localStorage.setItem(CONVERSATIONS_STORE_KEY, JSON.stringify(convs.slice(0, MAX_CONVERSATIONS)));
+  } catch {
+    // storage full — ignore silently
+  }
+}
+
+// Model switcher used inside the inference header bar
+function ModelSwitcher() {
+  const [state, actions] = useLlmContext();
+  const { serverStatus, downloadedModels, isStarting, hardwareResult } = state;
+  const { startServer, stopServer, detectHardware, listModels } = actions;
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => { listModels(); }, [listModels]);
+
+  const currentModel = serverStatus?.model_name ?? serverStatus?.model_path?.split("/").pop() ?? "";
+
+  const handleSwitch = async (filename: string) => {
+    if (switching || isStarting) return;
+    setSwitching(true);
+    try {
+      const hw = hardwareResult ?? await detectHardware();
+      const modelInfo = downloadedModels.find((m) => m.filename === filename);
+      const ctx = 8192;
+      await stopServer();
+      await startServer(filename, hw.recommended_gpu_layers, ctx);
+    } catch {
+      // error surfaced by server tab
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  if (downloadedModels.length <= 1) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+        <span className="font-medium truncate max-w-[160px]">{currentModel || "Running"}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
+      <select
+        className="text-xs bg-transparent border-0 outline-none cursor-pointer font-medium text-foreground max-w-[200px] truncate"
+        value={downloadedModels.find((m) => serverStatus?.model_path?.includes(m.filename))?.filename ?? ""}
+        onChange={(e) => handleSwitch(e.target.value)}
+        disabled={switching || isStarting}
+        title="Switch model"
+      >
+        {downloadedModels.map((m) => (
+          <option key={m.filename} value={m.filename} className="bg-background">
+            {m.name} ({m.size_gb} GB)
+          </option>
+        ))}
+      </select>
+      {(switching || isStarting) && (
+        <span className="text-xs text-muted-foreground animate-pulse">switching…</span>
+      )}
+    </div>
+  );
 }
 
 function InferenceTab() {
@@ -1054,90 +1149,118 @@ function InferenceTab() {
   const { serverStatus, isStarting, hardwareResult, downloadedModels } = state;
   const { startServer, stopServer, detectHardware, listModels } = actions;
 
-  const [mode, setMode] = useState<InferenceMode>("chat");
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  // ── Conversation list ──────────────────────────────────────────────────
+  const [conversations, setConversations] = useState<SavedConversation[]>(() => loadConversations());
+  const [activeConvId, setActiveConvId] = useState<string | null>(
+    () => loadConversations()[0]?.id ?? null
+  );
+
+  // ── Active conversation state ──────────────────────────────────────────
+  const activeConv = conversations.find((c) => c.id === activeConvId) ?? null;
+  const messages: ConversationMessage[] = activeConv?.messages ?? [];
   const [input, setInput] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [showSystem, setShowSystem] = useState(false);
-  const [showSampling, setShowSampling] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Tool test mode state
-  const [toolDef, setToolDef] = useState(
-    JSON.stringify(
-      {
-        type: "function",
-        function: {
-          name: "get_weather",
-          description: "Get current weather for a location",
-          parameters: {
-            type: "object",
-            properties: {
-              location: { type: "string", description: "City name" },
-            },
-            required: ["location"],
-          },
-        },
-      },
-      null,
-      2
-    )
-  );
-  const [toolResult, setToolResult] = useState<string | null>(null);
-
-  // Raw JSON mode state
-  const [rawJson, setRawJson] = useState(
-    JSON.stringify(
-      {
-        model: "local",
-        messages: [{ role: "user", content: "Hello!" }],
-        max_tokens: 256,
-        temperature: 0.7,
-        stream: false,
-      },
-      null,
-      2
-    )
-  );
-  const [rawResult, setRawResult] = useState<string | null>(null);
-
-  // Sampling params
-  const [temperature, setTemperature] = useState(0.7);
-  const [topP, setTopP] = useState(0.8);
-  const [maxTokens, setMaxTokens] = useState(1024);
-  const [maxTokensRaw, setMaxTokensRaw] = useState("1024");
-
-  // Server override controls
-  const [gpuLayersOverride, setGpuLayersOverride] = useState(99);
-  const [gpuLayersRaw, setGpuLayersRaw] = useState("99");
-  const [contextLengthOverride, setContextLengthOverride] = useState(8192);
-  const [contextLengthRaw, setContextLengthRaw] = useState("8192");
-  const [selectedModel, setSelectedModel] = useState("");
-
   const stopRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load downloaded models on mount so the start-server form is populated
-  useEffect(() => {
-    listModels();
-  }, [listModels]);
+  // ── Settings panel ─────────────────────────────────────────────────────
+  const [showSettings, setShowSettings] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState(activeConv?.systemPrompt ?? "");
+  const [temperature, setTemperature] = useState(0.7);
+  const [topP, setTopP] = useState(0.8);
+  const [maxTokens, setMaxTokens] = useState(1024);
+  const [mode, setMode] = useState<InferenceMode>("chat");
 
-  // Seed GPU layers from hardware detection result when available
+  // Tool / Raw state
+  const [toolDef, setToolDef] = useState(
+    JSON.stringify({ type: "function", function: { name: "get_weather", description: "Get current weather for a location", parameters: { type: "object", properties: { location: { type: "string", description: "City name" } }, required: ["location"] } } }, null, 2)
+  );
+  const [toolResult, setToolResult] = useState<string | null>(null);
+  const [rawJson, setRawJson] = useState(
+    JSON.stringify({ model: "local", messages: [{ role: "user", content: "Hello!" }], max_tokens: 256, temperature: 0.7, stream: false }, null, 2)
+  );
+  const [rawResult, setRawResult] = useState<string | null>(null);
+
+  // ── Server launch state ────────────────────────────────────────────────
+  const [gpuLayersOverride, setGpuLayersOverride] = useState(99);
+  const [gpuLayersRaw, setGpuLayersRaw] = useState("99");
+  const [contextLengthOverride, setContextLengthOverride] = useState(8192);
+  const [selectedModel, setSelectedModel] = useState("");
+
+  useEffect(() => { listModels(); }, [listModels]);
+
   useEffect(() => {
     if (hardwareResult?.recommended_gpu_layers !== undefined) {
-      const layers = hardwareResult.recommended_gpu_layers;
-      setGpuLayersOverride(layers);
-      setGpuLayersRaw(String(layers));
+      setGpuLayersOverride(hardwareResult.recommended_gpu_layers);
+      setGpuLayersRaw(String(hardwareResult.recommended_gpu_layers));
     }
   }, [hardwareResult?.recommended_gpu_layers]);
 
+  // Sync system prompt when switching conversations
+  useEffect(() => {
+    setSystemPrompt(activeConv?.systemPrompt ?? "");
+  }, [activeConvId]);
+
   const port = serverStatus?.running ? serverStatus.port : null;
+
+  // ── Conversation helpers ───────────────────────────────────────────────
+  const persistConvs = (updated: SavedConversation[]) => {
+    setConversations(updated);
+    saveConversations(updated);
+  };
+
+  const newConversation = () => {
+    const conv: SavedConversation = {
+      id: crypto.randomUUID(),
+      title: "New conversation",
+      messages: [],
+      systemPrompt: "",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      modelName: serverStatus?.model_name,
+    };
+    const updated = [conv, ...conversations];
+    persistConvs(updated);
+    setActiveConvId(conv.id);
+    setSystemPrompt("");
+    setInput("");
+    setError(null);
+  };
+
+  const deleteConversation = (id: string) => {
+    const updated = conversations.filter((c) => c.id !== id);
+    persistConvs(updated);
+    if (activeConvId === id) {
+      setActiveConvId(updated[0]?.id ?? null);
+    }
+  };
+
+  const updateMessages = (id: string, msgs: ConversationMessage[], sysPrompt?: string) => {
+    setConversations((prev) => {
+      const updated = prev.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              messages: msgs,
+              systemPrompt: sysPrompt !== undefined ? sysPrompt : c.systemPrompt,
+              title: msgs.find((m) => m.role === "user")
+                ? makeTitle(msgs.find((m) => m.role === "user")!.content)
+                : c.title,
+              updatedAt: Date.now(),
+            }
+          : c
+      );
+      saveConversations(updated);
+      return updated;
+    });
+  };
 
   const scrollToBottom = () => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
 
+  // ── Send message ───────────────────────────────────────────────────────
   const handleSend = async () => {
     if (!port || !input.trim() || isGenerating) return;
     const userMsg = input.trim();
@@ -1145,54 +1268,74 @@ function InferenceTab() {
     setError(null);
     stopRef.current = false;
 
+    // Ensure we have an active conversation
+    let convId = activeConvId;
+    if (!convId) {
+      const conv: SavedConversation = {
+        id: crypto.randomUUID(),
+        title: makeTitle(userMsg),
+        messages: [],
+        systemPrompt,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        modelName: serverStatus?.model_name,
+      };
+      persistConvs([conv, ...conversations]);
+      convId = conv.id;
+      setActiveConvId(convId);
+    }
+
     const chatMessages: ChatMessage[] = [
       ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
       ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
       { role: "user" as const, content: userMsg },
     ];
 
-    setMessages((prev) => [
-      ...prev,
+    const assistantId = crypto.randomUUID();
+    const newMessages: ConversationMessage[] = [
+      ...messages,
       { id: crypto.randomUUID(), role: "user", content: userMsg },
-      { id: crypto.randomUUID(), role: "assistant", content: "", isStreaming: true },
-    ]);
+      { id: assistantId, role: "assistant", content: "", isStreaming: true },
+    ];
+
+    updateMessages(convId, newMessages, systemPrompt);
     setIsGenerating(true);
     scrollToBottom();
 
     let accumulated = "";
-    const assistantId = crypto.randomUUID();
-
-    setMessages((prev) => {
-      const copy = [...prev];
-      copy[copy.length - 1] = {
-        id: assistantId,
-        role: "assistant",
-        content: "",
-        isStreaming: true,
-      };
-      return copy;
-    });
-
     try {
       const stream = streamCompletion(port, chatMessages, { temperature, maxTokens });
       for await (const token of stream) {
         if (stopRef.current) break;
         accumulated += token;
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, content: accumulated } : m
-          )
-        );
+        setConversations((prev) => {
+          const updated = prev.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === assistantId ? { ...m, content: accumulated } : m
+                  ),
+                }
+              : c
+          );
+          saveConversations(updated);
+          return updated;
+        });
         scrollToBottom();
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, isStreaming: false } : m
-        )
-      );
+      setConversations((prev) => {
+        const updated = prev.map((c) =>
+          c.id === convId
+            ? { ...c, messages: c.messages.map((m) => m.id === assistantId ? { ...m, isStreaming: false } : m) }
+            : c
+        );
+        saveConversations(updated);
+        return updated;
+      });
       setIsGenerating(false);
     }
   };
@@ -1204,11 +1347,7 @@ function InferenceTab() {
     setIsGenerating(true);
     try {
       const tool = JSON.parse(toolDef);
-      const result = await callWithTools(
-        port,
-        [{ role: "user", content: input }],
-        [tool]
-      );
+      const result = await callWithTools(port, [{ role: "user", content: input }], [tool]);
       setToolResult(JSON.stringify(result, null, 2));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -1253,17 +1392,18 @@ function InferenceTab() {
     }
   };
 
+  // ── No server running — launch screen ─────────────────────────────────
   if (!port) {
     return (
-      <div className="space-y-6 max-w-2xl">
-        <Card>
+      <div className="flex items-center justify-center h-[calc(100vh-16rem)]">
+        <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Server className="h-4 w-4" />
               Start Inference Server
             </CardTitle>
             <CardDescription>
-              Load a model to enable the inference playground.
+              Load a model to open the playground.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1273,9 +1413,15 @@ function InferenceTab() {
                 <span>{error}</span>
               </div>
             )}
+            {isStarting && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                Starting server…
+              </div>
+            )}
             {downloadedModels.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No models downloaded yet. Go to the Models tab to download one.
+                No models downloaded yet. Go to the <strong>Models</strong> tab to download one.
               </p>
             ) : (
               <>
@@ -1293,51 +1439,32 @@ function InferenceTab() {
                     ))}
                   </select>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-xs" title="Number of transformer layers to offload to the GPU accelerator. Set to 99 to offload all layers (recommended for Metal/CUDA). Use 0 for CPU-only inference.">
-                      GPU Layers (offload to accelerator)
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs" title="Transformer layers to offload to GPU. 99 = all layers (Metal/CUDA). 0 = CPU only.">
+                      GPU Layers
                     </Label>
                     <Input
                       type="number"
                       value={gpuLayersRaw}
-                      onChange={(e) => {
-                        setGpuLayersRaw(e.target.value);
-                        const n = parseInt(e.target.value);
-                        if (!isNaN(n)) setGpuLayersOverride(n);
-                      }}
-                      onBlur={() => {
-                        const n = parseInt(gpuLayersRaw);
-                        const clamped = isNaN(n) ? 0 : n;
-                        setGpuLayersOverride(clamped);
-                        setGpuLayersRaw(String(clamped));
-                      }}
+                      onChange={(e) => { setGpuLayersRaw(e.target.value); const n = parseInt(e.target.value); if (!isNaN(n)) setGpuLayersOverride(n); }}
+                      onBlur={() => { const n = parseInt(gpuLayersRaw); const c = isNaN(n) ? 0 : n; setGpuLayersOverride(c); setGpuLayersRaw(String(c)); }}
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs">Context Length</Label>
-                    <Input
-                      type="number"
-                      value={contextLengthRaw}
-                      onChange={(e) => {
-                        setContextLengthRaw(e.target.value);
-                        const n = parseInt(e.target.value);
-                        if (!isNaN(n)) setContextLengthOverride(n);
-                      }}
-                      onBlur={() => {
-                        const n = parseInt(contextLengthRaw);
-                        const clamped = isNaN(n) ? 4096 : n;
-                        setContextLengthOverride(clamped);
-                        setContextLengthRaw(String(clamped));
-                      }}
-                    />
+                    <select
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      value={contextLengthOverride}
+                      onChange={(e) => setContextLengthOverride(parseInt(e.target.value))}
+                    >
+                      {[2048, 4096, 8192, 16384, 32768].map((n) => (
+                        <option key={n} value={n}>{n.toLocaleString()}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
-                <Button
-                  className="w-full"
-                  disabled={isStarting}
-                  onClick={handleStartServer}
-                >
+                <Button className="w-full" disabled={isStarting} onClick={handleStartServer}>
                   {isStarting ? "Starting…" : "Start Server"}
                 </Button>
               </>
@@ -1348,303 +1475,346 @@ function InferenceTab() {
     );
   }
 
+  // ── Full playground layout ─────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-[calc(100vh-12rem)] gap-4">
-      {/* Header: mode + server status */}
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1 rounded-lg border p-1 bg-muted/30">
-          {(["chat", "tools", "raw"] as InferenceMode[]).map((m) => (
-            <Button
-              key={m}
-              size="sm"
-              variant={mode === m ? "default" : "ghost"}
-              className="h-7 px-3 text-xs gap-1"
-              onClick={() => setMode(m)}
-            >
-              {m === "chat" && <MessageSquare className="h-3 w-3" />}
-              {m === "tools" && <Wrench className="h-3 w-3" />}
-              {m === "raw" && <Code className="h-3 w-3" />}
-              {m.charAt(0).toUpperCase() + m.slice(1)}
-            </Button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-green-600">
-            <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-            Port {port}
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs"
-            onClick={stopServer}
-          >
-            <Square className="h-3 w-3 mr-1" />
-            Stop
+    <div className="flex h-[calc(100vh-13rem)] gap-0 rounded-xl border overflow-hidden bg-background">
+
+      {/* ── Left sidebar: conversation list ── */}
+      <div className="w-56 shrink-0 flex flex-col border-r bg-muted/20">
+        <div className="flex items-center justify-between px-3 py-2.5 border-b">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Conversations</span>
+          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={newConversation} title="New conversation">
+            <Plus className="h-3.5 w-3.5" />
           </Button>
         </div>
+        <ScrollArea className="flex-1">
+          <div className="p-1.5 space-y-0.5">
+            {conversations.length === 0 && (
+              <p className="text-xs text-muted-foreground text-center py-6 px-2">
+                No conversations yet. Start chatting!
+              </p>
+            )}
+            {conversations.map((conv) => (
+              <div
+                key={conv.id}
+                className={`group flex items-center gap-1 rounded-lg px-2 py-2 cursor-pointer text-sm transition-colors ${
+                  conv.id === activeConvId
+                    ? "bg-primary/10 text-primary"
+                    : "hover:bg-muted/60 text-foreground"
+                }`}
+                onClick={() => { setActiveConvId(conv.id); setError(null); }}
+              >
+                <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                <span className="flex-1 truncate text-xs leading-tight">{conv.title}</span>
+                <button
+                  className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-destructive transition-opacity"
+                  onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }}
+                  title="Delete"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
       </div>
 
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </div>
-      )}
+      {/* ── Main chat area ── */}
+      <div className="flex-1 flex flex-col min-w-0">
 
-      {/* Chat Mode */}
-      {mode === "chat" && (
-        <>
-          {/* Collapsible system prompt */}
-          <div className="rounded-lg border">
-            <button
-              className="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-muted/30 transition-colors"
-              onClick={() => setShowSystem((v) => !v)}
+        {/* Header bar */}
+        <div className="flex items-center justify-between px-4 py-2 border-b bg-background shrink-0">
+          <div className="flex items-center gap-3">
+            {/* Mode switcher */}
+            <div className="flex gap-0.5 rounded-md border p-0.5 bg-muted/30">
+              {(["chat", "tools", "raw"] as InferenceMode[]).map((m) => (
+                <button
+                  key={m}
+                  className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                    mode === m ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  onClick={() => setMode(m)}
+                >
+                  {m === "chat" && <MessageSquare className="h-3 w-3" />}
+                  {m === "tools" && <Wrench className="h-3 w-3" />}
+                  {m === "raw" && <Code className="h-3 w-3" />}
+                  {m.charAt(0).toUpperCase() + m.slice(1)}
+                </button>
+              ))}
+            </div>
+            <ModelSwitcher />
+          </div>
+          <div className="flex items-center gap-2">
+            {mode === "chat" && activeConv && messages.length > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs text-muted-foreground gap-1"
+                onClick={() => { updateMessages(activeConvId!, [], systemPrompt); setError(null); }}
+                title="Clear messages"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Clear
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              className={`h-7 w-7 ${showSettings ? "bg-muted" : ""}`}
+              onClick={() => setShowSettings((v) => !v)}
+              title="Settings"
             >
-              <span className="font-medium text-muted-foreground">System Prompt</span>
-              {showSystem ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
+              <Settings className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+              onClick={stopServer}
+            >
+              <Square className="h-3 w-3" />
+              Stop
+            </Button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 px-4 py-2 text-sm text-destructive bg-destructive/10 border-b shrink-0">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {error}
+            <button className="ml-auto text-xs underline" onClick={() => setError(null)}>Dismiss</button>
+          </div>
+        )}
+
+        {/* ── Chat mode ── */}
+        {mode === "chat" && (
+          <>
+            <ScrollArea className="flex-1">
+              <div className="p-4 space-y-6 max-w-3xl mx-auto w-full">
+                {messages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                      <MessageSquare className="h-6 w-6 text-primary/60" />
+                    </div>
+                    <p className="text-sm text-muted-foreground max-w-xs">
+                      Start a conversation with the local model. Your chats are saved automatically.
+                    </p>
+                  </div>
+                )}
+                {messages.map((msg) => (
+                  <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                    {msg.role === "assistant" && (
+                      <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0 mt-0.5">
+                        <Cpu className="h-3.5 w-3.5 text-primary" />
+                      </div>
+                    )}
+                    <div
+                      className={`max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground rounded-tr-sm"
+                          : "bg-muted/60 rounded-tl-sm"
+                      }`}
+                    >
+                      <pre className="whitespace-pre-wrap font-sans break-words">{msg.content}</pre>
+                      {msg.isStreaming && (
+                        <span className="inline-block h-4 w-0.5 bg-current opacity-70 animate-pulse ml-0.5 align-middle" />
+                      )}
+                    </div>
+                    {msg.role === "user" && (
+                      <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
+                        <span className="text-xs font-semibold text-muted-foreground">U</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div ref={bottomRef} />
+              </div>
+            </ScrollArea>
+
+            {/* Input area */}
+            <div className="border-t p-3 shrink-0 bg-background">
+              <div className="max-w-3xl mx-auto flex gap-2 items-end">
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+                  }}
+                  placeholder="Message the local model… (Enter to send, Shift+Enter for newline)"
+                  className="text-sm resize-none flex-1 min-h-[44px] max-h-[200px] rounded-xl border-muted-foreground/20"
+                  disabled={isGenerating}
+                  rows={1}
+                />
+                {isGenerating ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-10 w-10 shrink-0 rounded-xl"
+                    onClick={() => (stopRef.current = true)}
+                    title="Stop generation"
+                  >
+                    <Square className="h-4 w-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="h-10 w-10 shrink-0 rounded-xl"
+                    disabled={!input.trim()}
+                    onClick={handleSend}
+                    title="Send"
+                  >
+                    <Play className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ── Tools mode ── */}
+        {mode === "tools" && (
+          <div className="flex-1 overflow-auto p-4">
+            <div className="grid grid-cols-2 gap-4 h-full max-w-4xl mx-auto">
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">Tool Definition (JSON)</Label>
+                <Textarea value={toolDef} onChange={(e) => setToolDef(e.target.value)} className="font-mono text-xs h-48 resize-none" />
+                <Label className="text-sm font-medium">User Prompt</Label>
+                <Textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="What is the weather in San Francisco?" className="text-sm resize-none h-24" />
+                <Button disabled={isGenerating || !input.trim()} onClick={handleToolTest} className="w-full">
+                  {isGenerating ? "Running…" : "Run Tool Call"}
+                </Button>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Response</Label>
+                  {toolResult && <CopyButton text={toolResult} />}
+                </div>
+                {toolResult ? (
+                  <ScrollArea className="h-96 rounded-lg border bg-muted/30">
+                    <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{toolResult}</pre>
+                  </ScrollArea>
+                ) : (
+                  <div className="h-96 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">Response will appear here</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Raw JSON mode ── */}
+        {mode === "raw" && (
+          <div className="flex-1 overflow-auto p-4">
+            <div className="grid grid-cols-2 gap-4 max-w-4xl mx-auto">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Request Body</Label>
+                  <span className="text-xs text-muted-foreground font-mono">POST /v1/chat/completions</span>
+                </div>
+                <Textarea value={rawJson} onChange={(e) => setRawJson(e.target.value)} className="font-mono text-xs h-64 resize-none" />
+                <Button disabled={isGenerating} onClick={handleRawJson} className="w-full">
+                  {isGenerating ? "Running…" : "Send Request"}
+                </Button>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Raw Response</Label>
+                  {rawResult && <CopyButton text={rawResult} />}
+                </div>
+                {rawResult ? (
+                  <ScrollArea className="h-96 rounded-lg border bg-muted/30">
+                    <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{rawResult}</pre>
+                  </ScrollArea>
+                ) : (
+                  <div className="h-96 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">Response will appear here</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Right settings panel ── */}
+      {showSettings && (
+        <div className="w-64 shrink-0 flex flex-col border-l bg-muted/10">
+          <div className="flex items-center justify-between px-3 py-2.5 border-b">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Settings</span>
+            <button onClick={() => setShowSettings(false)} className="text-muted-foreground hover:text-foreground">
+              <X className="h-3.5 w-3.5" />
             </button>
-            {showSystem && (
-              <div className="px-4 pb-3">
+          </div>
+          <ScrollArea className="flex-1">
+            <div className="p-3 space-y-5">
+              {/* System prompt */}
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">System Prompt</Label>
                 <Textarea
                   value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                  placeholder="Optional system prompt…"
-                  className="text-sm resize-none h-20"
+                  onChange={(e) => {
+                    setSystemPrompt(e.target.value);
+                    if (activeConvId) updateMessages(activeConvId, messages, e.target.value);
+                  }}
+                  placeholder="You are a helpful assistant…"
+                  className="text-xs resize-none h-28"
                 />
               </div>
-            )}
-          </div>
 
-          {/* Sampling controls */}
-          <div className="rounded-lg border">
-            <button
-              className="w-full flex items-center justify-between px-4 py-2.5 text-sm hover:bg-muted/30 transition-colors"
-              onClick={() => setShowSampling((v) => !v)}
-            >
-              <span className="font-medium text-muted-foreground">Sampling Parameters</span>
-              {showSampling ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </button>
-            {showSampling && (
-              <div className="px-4 pb-4 grid grid-cols-3 gap-4">
+              <Separator />
+
+              {/* Sampling params */}
+              <div className="space-y-4">
+                <p className="text-xs font-medium">Sampling</p>
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <Label className="text-xs">Temperature</Label>
-                    <span className="text-xs text-muted-foreground">{temperature.toFixed(2)}</span>
+                    <Label className="text-xs text-muted-foreground">Temperature</Label>
+                    <span className="text-xs tabular-nums">{temperature.toFixed(2)}</span>
                   </div>
-                  <Slider
-                    min={0} max={2} step={0.05}
-                    value={[temperature]}
-                    onValueChange={([v]) => setTemperature(v)}
-                  />
+                  <Slider min={0.01} max={2} step={0.01} value={[temperature]} onValueChange={([v]) => setTemperature(v)} />
+                  <p className="text-xs text-muted-foreground">0.7 balanced · 0.1 precise · 1.5 creative</p>
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <Label className="text-xs">Top-P</Label>
-                    <span className="text-xs text-muted-foreground">{topP.toFixed(2)}</span>
+                    <Label className="text-xs text-muted-foreground">Top-P</Label>
+                    <span className="text-xs tabular-nums">{topP.toFixed(2)}</span>
                   </div>
-                  <Slider
-                    min={0} max={1} step={0.05}
-                    value={[topP]}
-                    onValueChange={([v]) => setTopP(v)}
-                  />
+                  <Slider min={0.1} max={1} step={0.05} value={[topP]} onValueChange={([v]) => setTopP(v)} />
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">Max Tokens</Label>
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Max Tokens</Label>
                   <Input
                     type="number"
-                    value={maxTokensRaw}
-                    onChange={(e) => {
-                      setMaxTokensRaw(e.target.value);
-                      const n = parseInt(e.target.value);
-                      if (!isNaN(n)) setMaxTokens(n);
-                    }}
-                    onBlur={() => {
-                      const n = parseInt(maxTokensRaw);
-                      const clamped = isNaN(n) ? 256 : n;
-                      setMaxTokens(clamped);
-                      setMaxTokensRaw(String(clamped));
-                    }}
+                    value={maxTokens}
+                    onChange={(e) => { const n = parseInt(e.target.value); if (!isNaN(n) && n > 0) setMaxTokens(n); }}
                     className="h-8 text-xs"
                   />
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* Conversation */}
-          <ScrollArea className="flex-1 rounded-lg border bg-muted/10">
-            <div className="p-4 space-y-4">
-              {messages.length === 0 && (
-                <p className="text-center text-sm text-muted-foreground py-8">
-                  Start a conversation with the local model.
-                </p>
-              )}
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-xl px-4 py-3 text-sm ${
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted/60"
-                    }`}
-                  >
-                    <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
-                    {msg.isStreaming && (
-                      <span className="inline-block h-3.5 w-0.5 bg-current opacity-70 animate-pulse ml-0.5" />
-                    )}
+              <Separator />
+
+              {/* Server info */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium">Server</p>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <div className="flex justify-between">
+                    <span>Port</span>
+                    <span className="font-mono">{port}</span>
                   </div>
+                  {serverStatus?.gpu_layers !== undefined && (
+                    <div className="flex justify-between">
+                      <span>GPU layers</span>
+                      <span className="font-mono">{serverStatus.gpu_layers}</span>
+                    </div>
+                  )}
+                  {serverStatus?.context_length !== undefined && (
+                    <div className="flex justify-between">
+                      <span>Context</span>
+                      <span className="font-mono">{serverStatus.context_length.toLocaleString()}</span>
+                    </div>
+                  )}
                 </div>
-              ))}
-              <div ref={bottomRef} />
+              </div>
             </div>
           </ScrollArea>
-
-          {/* Input */}
-          <div className="flex gap-2">
-            {isGenerating && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => (stopRef.current = true)}
-              >
-                <Square className="h-4 w-4" />
-              </Button>
-            )}
-            <Textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
-              className="text-sm resize-none h-20 flex-1"
-              disabled={isGenerating}
-            />
-            <div className="flex flex-col gap-2">
-              <Button
-                size="sm"
-                disabled={isGenerating || !input.trim()}
-                onClick={handleSend}
-                className="h-full"
-              >
-                Send
-              </Button>
-              {messages.length > 0 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setMessages([])}
-                  title="Clear chat"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Tool Test Mode */}
-      {mode === "tools" && (
-        <div className="flex-1 overflow-auto space-y-4">
-          <div className="grid grid-cols-2 gap-4 h-full">
-            <div className="space-y-3">
-              <Label className="text-sm font-medium">Tool Definition (JSON)</Label>
-              <Textarea
-                value={toolDef}
-                onChange={(e) => setToolDef(e.target.value)}
-                className="font-mono text-xs h-48 resize-none"
-              />
-              <Label className="text-sm font-medium">User Prompt</Label>
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="What is the weather in San Francisco?"
-                className="text-sm resize-none h-24"
-              />
-              <Button
-                disabled={isGenerating || !input.trim()}
-                onClick={handleToolTest}
-                className="w-full"
-              >
-                {isGenerating ? "Running…" : "Run Tool Call"}
-              </Button>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Response</Label>
-                {toolResult && <CopyButton text={toolResult} />}
-              </div>
-              {toolResult ? (
-                <ScrollArea className="h-80 rounded-lg border bg-muted/30">
-                  <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{toolResult}</pre>
-                </ScrollArea>
-              ) : (
-                <div className="h-80 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
-                  Response will appear here
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Raw JSON Mode */}
-      {mode === "raw" && (
-        <div className="flex-1 overflow-auto space-y-4">
-          <div className="grid grid-cols-2 gap-4 h-full">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Request Body</Label>
-                <span className="text-xs text-muted-foreground font-mono">
-                  POST /v1/chat/completions
-                </span>
-              </div>
-              <Textarea
-                value={rawJson}
-                onChange={(e) => setRawJson(e.target.value)}
-                className="font-mono text-xs h-64 resize-none"
-              />
-              <Button
-                disabled={isGenerating}
-                onClick={handleRawJson}
-                className="w-full"
-              >
-                {isGenerating ? "Running…" : "Send Request"}
-              </Button>
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Raw Response</Label>
-                {rawResult && <CopyButton text={rawResult} />}
-              </div>
-              {rawResult ? (
-                <ScrollArea className="h-80 rounded-lg border bg-muted/30">
-                  <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{rawResult}</pre>
-                </ScrollArea>
-              ) : (
-                <div className="h-80 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
-                  Response will appear here
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       )}
     </div>

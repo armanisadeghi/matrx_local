@@ -2,6 +2,7 @@ import { useLocation } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { StatusBar } from "./StatusBar";
 import { NotificationCenter } from "@/components/notifications/NotificationCenter";
+import { useDevTerminalHeight } from "@/components/DevTerminalPanel";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { AppNotification } from "@/hooks/use-notifications";
 import type { User } from "@supabase/supabase-js";
@@ -58,11 +59,15 @@ export function AppLayout({
   pages,
 }: AppLayoutProps) {
   const location = useLocation();
+  const terminalHeight = useDevTerminalHeight();
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <AppSidebar engineStatus={engineStatus} user={user} onSignOut={onSignOut} />
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div
+        className="flex flex-1 flex-col overflow-hidden transition-[padding-bottom] duration-150"
+        style={{ paddingBottom: terminalHeight }}
+      >
         {/* Top-right notification bell */}
         <div className="flex justify-end px-4 pt-2 pb-0">
           <NotificationCenter

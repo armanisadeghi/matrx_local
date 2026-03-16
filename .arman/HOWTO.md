@@ -1,12 +1,10 @@
 # How-To Guide
 
-_Last updated: 2026-03-02_
+_Last updated: 2026-03-15_
 
 ---
 
 ## Releasing
-
-v1.0.1 is already pushed and CI is running. For future releases:
 
 ```bash
 git add . && git commit -m "your changes"
@@ -16,106 +14,67 @@ git add . && git commit -m "your changes"
 ./scripts/release.sh 2.3.4        # set exact version
 ```
 
-The script auto-bumps the version, syncs it across `pyproject.toml`, `tauri.conf.json`, `package.json`, and `run.py`, commits, tags, and pushes — triggering GitHub Actions CI.
-
----
-
-## Apple Developer Setup
-
-Required for notarizing macOS DMG so Gatekeeper doesn't block it.
-
-1. Enroll at https://developer.apple.com ($99/yr)
-2. Get your `APPLE_ID` (your Apple ID email)
-3. Create an App-Specific Password at https://appleid.apple.com → "App-Specific Passwords" — this becomes `APPLE_PASSWORD`
-4. Find your `APPLE_TEAM_ID` in Xcode → Settings → Accounts → your team (10-character code)
-5. Add all three to GitHub Actions secrets: Settings → Secrets → Actions → New repository secret
-
----
-
-## Windows Code Signing
-
-Purchase an EV code-signing cert ($200–500/yr) from DigiCert or Sectigo. Without it, SmartScreen shows "Windows protected your PC" warning. Users _can_ click "More info → Run anyway" but it's not ideal. Skip for beta; add before public launch.
+The script bumps the version in `pyproject.toml`, `tauri.conf.json`, `package.json`, and `run.py`, commits, tags, and pushes — triggering GitHub Actions CI for all 4 platforms.
 
 ---
 
 ## Testing Locally
 
-### Quick test (daily development — no build needed)
+### Daily development (fast, no build)
 
 ```bash
 # Terminal 1 — Python engine
 uv run python run.py
 
-# Terminal 2 — React web UI only (fast, no Tauri)
+# Terminal 2 — React UI
 cd desktop && pnpm dev
-# → Opens http://localhost:1420 in browser
+# → http://localhost:1420
 ```
 
-This tests: engine API, all tools, all UI pages, auth, scraping.
-**Does NOT test:** Tauri-specific features (tray, autostart, sidecar lifecycle, system dialogs, OS file pickers).
+Tests: engine API, all tools, all UI pages, auth, scraping.
+Does **not** test: tray icon, autostart, sidecar lifecycle, OS file pickers, Tauri dialogs.
 
-### Full desktop test (weekly / before releases)
+### Full desktop test (before releases)
 
 ```bash
 bash scripts/launch.sh
-# → Launches engine + pnpm tauri:dev
-# → Opens actual native desktop window
+# → Launches engine + tauri:dev, opens native window
+# First run: 60–90s Rust compile
 ```
 
-This tests everything including Tauri features. First run: 60–90s Rust compile.
-
-### After changes to the Python sidecar binary (rarely needed)
+### Rebuild the Python sidecar binary
 
 ```bash
-bash scripts/build-sidecar.sh  # ~5 min build
-# Then pnpm tauri:dev uses the new binary
+bash scripts/build-sidecar.sh   # ~5 min
 ```
 
-### Cleanup (stuck ports or multiple windows)
+### Stop stuck processes
 
 ```bash
-bash scripts/stop.sh          # graceful
-bash scripts/stop.sh --force  # immediate kill
+bash scripts/stop.sh            # graceful
+bash scripts/stop.sh --force    # immediate kill
+# Windows PowerShell: Get-Process -Name python | Stop-Process -Force
 ```
 
 ---
 
-## Cloud Sync Verification
+## Apple Developer Setup (for notarization)
 
-### app_settings table
-In Supabase SQL Editor at https://app.supabase.com, run:
-```sql
-SELECT * FROM app_settings LIMIT 1;
-```
-If error "table does not exist": re-run `migrations/002_app_instances_settings.sql`.
-
-### note_folders table (Documents "New Folder" broken)
-Run in Supabase SQL Editor:
-```sql
-SELECT * FROM note_folders LIMIT 1;
-```
-Then check RLS:
-```sql
-SELECT * FROM pg_policies WHERE tablename = 'note_folders';
-```
-Policy must allow INSERT for `auth.uid() = user_id`. If missing, re-run `migrations/001_documents_schema.sql`.
-
-### BRAVE_API_KEY for web search
-Get a key at https://api.search.brave.com, then add to root `.env`:
-```
-BRAVE_API_KEY=<your-key>
-```
-Restart engine to enable web search in Tools page.
+1. Enroll at https://developer.apple.com ($99/yr)
+2. `APPLE_ID` = your Apple ID email
+3. `APPLE_PASSWORD` = App-Specific Password from https://appleid.apple.com → App-Specific Passwords
+4. `APPLE_TEAM_ID` = 10-character code from Xcode → Settings → Accounts
+5. Add all three to GitHub Actions secrets
 
 ---
 
 ## macOS Permissions
 
-First time a tool requiring them runs, macOS will prompt. Or grant manually in System Settings → Privacy & Security:
+Grant manually in **System Settings → Privacy & Security**:
 
-- **Accessibility** → AI Matrx (for TypeText, MouseClick, Hotkey, FocusWindow)
-- **Screen Recording** → AI Matrx (for Screenshot tool)
-- **Microphone** → AI Matrx (for RecordAudio, TranscribeAudio)
-
-
-POWERSHELL KILL: Get-Process -Name python | Stop-Process -Force
+| Permission | Tools that need it |
+|---|---|
+| Accessibility | TypeText, MouseClick, Hotkey, FocusWindow |
+| Screen Recording | Screenshot |
+| Microphone | RecordAudio, TranscribeAudio |
+| Full Disk Access | iMessage read, TCC.db access |

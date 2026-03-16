@@ -31,7 +31,7 @@ import { UpdateBanner } from "@/components/UpdateBanner";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { StartupScreen } from "@/components/StartupScreen";
 import { FirstRunScreen } from "@/components/FirstRunScreen";
-import { DevTerminalPanel } from "@/components/DevTerminalPanel";
+import { DevTerminalPanel, DevTerminalProvider } from "@/components/DevTerminalPanel";
 import { engine } from "@/lib/api";
 
 const SETUP_DISMISSED_KEY = "matrx-setup-dismissed";
@@ -274,6 +274,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      <DevTerminalProvider>
       <TooltipProvider>
         <HashRouter>
           <Routes>
@@ -329,6 +330,7 @@ export default function App() {
         {/* Persistent debug terminal — toggled via TerminalToggleButton in AppLayout */}
         <DevTerminalPanel />
       </TooltipProvider>
+      </DevTerminalProvider>
     </ErrorBoundary>
   );
 }

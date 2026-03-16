@@ -17,7 +17,7 @@
  */
 
 import {
-  useCallback, useEffect, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useRef, useState,
 } from "react";
 import { Terminal, X, Copy, Check, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,10 +30,51 @@ import {
 import type { LogLevel } from "@/hooks/use-client-log";
 
 // ---------------------------------------------------------------------------
+// Context — lets AppLayout know the panel height so it can shrink <main>
+// ---------------------------------------------------------------------------
+
+interface DevTerminalContextValue {
+  /** Height of the panel in px when open; 0 when closed. */
+  panelHeight: number;
+}
+
+const DevTerminalContext = createContext<DevTerminalContextValue>({ panelHeight: 0 });
+
+export function useDevTerminalHeight(): number {
+  return useContext(DevTerminalContext).panelHeight;
+}
+
+interface DevTerminalProviderProps {
+  children: React.ReactNode;
+}
+
+export function DevTerminalProvider({ children }: DevTerminalProviderProps) {
+  const [panelHeight, setPanelHeight] = useState(0);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<number>;
+      setPanelHeight(custom.detail ?? 0);
+    };
+    window.addEventListener(DEV_TERMINAL_HEIGHT_EVENT, handler);
+    return () => window.removeEventListener(DEV_TERMINAL_HEIGHT_EVENT, handler);
+  }, []);
+
+  return (
+    <DevTerminalContext.Provider value={{ panelHeight }}>
+      {children}
+    </DevTerminalContext.Provider>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Custom DOM event used to toggle the panel from anywhere in the tree
 // ---------------------------------------------------------------------------
 
 export const DEV_TERMINAL_TOGGLE_EVENT = "dev-terminal-toggle";
+
+/** Fired whenever the panel height changes (open/resize/close). detail = height in px (0 when closed). */
+export const DEV_TERMINAL_HEIGHT_EVENT = "dev-terminal-height";
 
 export function toggleDevTerminal() {
   window.dispatchEvent(new CustomEvent(DEV_TERMINAL_TOGGLE_EVENT));
@@ -112,12 +153,28 @@ export function DevTerminalPanel() {
   const [copiedServer, setCopiedServer] = useState(false);
   const [copiedClient, setCopiedClient] = useState(false);
 
+  // Broadcast current panel height so layout can compensate
+  const broadcastHeight = useCallback((isOpen: boolean, h: number) => {
+    window.dispatchEvent(
+      new CustomEvent<number>(DEV_TERMINAL_HEIGHT_EVENT, { detail: isOpen ? h : 0 })
+    );
+  }, []);
+
   // Toggle via custom DOM event
   useEffect(() => {
-    const handler = () => setOpen((v) => !v);
+    const handler = () => setOpen((v) => {
+      const next = !v;
+      broadcastHeight(next, height);
+      return next;
+    });
     window.addEventListener(DEV_TERMINAL_TOGGLE_EVENT, handler);
-    return () => window.removeEventListener(DEV_TERMINAL_TOGGLE_EVENT, handler);
-  }, []);
+    return () => {
+      window.removeEventListener(DEV_TERMINAL_TOGGLE_EVENT, handler);
+      // Ensure layout resets if the panel unmounts while open
+      window.dispatchEvent(new CustomEvent<number>(DEV_TERMINAL_HEIGHT_EVENT, { detail: 0 }));
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [height]);
 
   // Subscribe to sidecar-log Tauri events
   useEffect(() => {
@@ -191,8 +248,9 @@ export function DevTerminalPanel() {
 
     const onMove = (ev: MouseEvent) => {
       if (!isDragging.current) return;
-      const delta = dragStartY.current - ev.clientY;
-      setHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, dragStartH.current + delta)));
+      const next = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, dragStartH.current + (dragStartY.current - ev.clientY)));
+      setHeight(next);
+      broadcastHeight(true, next);
     };
     const onUp = () => {
       isDragging.current = false;
@@ -201,7 +259,7 @@ export function DevTerminalPanel() {
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-  }, [height]);
+  }, [height, broadcastHeight]);
 
   const copyServerLogs = useCallback(async () => {
     const text = `=== Matrx Server Log — ${new Date().toLocaleString()} ===\n${serverLogs.map((l) => `${l.time} ${l.text}`).join("\n")}\n=== END ===`;
@@ -313,7 +371,7 @@ export function DevTerminalPanel() {
 
         {/* Close */}
         <button
-          onClick={() => setOpen(false)}
+          onClick={() => { setOpen(false); broadcastHeight(false, height); }}
           className="flex h-6 w-6 items-center justify-center rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 transition-colors ml-1"
           title="Close terminal"
         >

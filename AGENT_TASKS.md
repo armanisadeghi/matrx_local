@@ -1,6 +1,6 @@
 # Matrx Local — Task Tracker
 
-_Last updated: 2026-03-12_
+_Last updated: 2026-03-15_
 
 > Living document. Log every discovered bug, issue, and improvement immediately.
 > Keep active items concise and actionable. Completed items go in the History section at the bottom.
@@ -101,6 +101,7 @@ _Last updated: 2026-03-12_
 ### Tools
 - [ ] **Tools UI is not user-friendly** — PR #1 (`codex/create-user-friendly-ui-for-tools-tab`) needs review and merge.
 - [ ] **Some tools lack clear error messages** for missing system dependencies (e.g., tesseract for OCR).
+- [ ] **Brave Search must route through AIDream server** — `BRAVE_API_KEY` cannot be embedded in the desktop binary (it would be exposed to all users). The `Search` and `Research` tools in `app/tools/tools/network.py` currently call the Brave API directly using `os.getenv("BRAVE_API_KEY")`. They must be rewritten to call a server-side proxy endpoint on `AIDREAM_SERVER_URL_LIVE` (e.g. `POST /api/search/brave`) that holds the key server-side. The Python engine passes the user's JWT for auth. Remove `BRAVE_API_KEY` from `.env`, `HOWTO.md`, and all references.
 
 ### CI/CD & Shipping
 - [ ] **Windows MSI looks outdated** — Consider switching from WiX (.msi) to NSIS (.exe) for a modern install experience.
@@ -120,6 +121,20 @@ _Last updated: 2026-03-12_
 
 ---
 
+## ✅ COMPLETED — Recent (2026-03-15)
+
+- [x] **`NameError: STATE_FILE / MAPPINGS_FILE` in `file_manager.py`** — Module-level path constants were removed during refactor but still referenced in `load_sync_state`, `save_sync_state`, `load_local_mappings`, `save_local_mappings`. Fixed by adding `_state_file()` and `_mappings_file()` instance methods that resolve paths dynamically via `_notes_dir()`.
+- [x] **Env vars missing in PyInstaller binary** — `AIDREAM_SERVER_URL_LIVE`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` were never available in the frozen sidecar (no `.env` file next to binary). Added `app/bundled_config.py` + `scripts/write_bundled_config.py` (runs in CI before PyInstaller) + updated `hooks/runtime_hook.py` to call `apply()` on startup. CI workflow now passes the vars to the sidecar build step.
+- [x] **`tauri.conf.json` resources block broke cross-platform builds** — Removed explicit `.dylib` entries from base config; macOS glob in `tauri.macos.conf.json` handles them per-platform.
+- [x] **Agent search / user filtering** — Added `user_id`, `category`, `tags`, `is_favorite` columns to `agents` table (migrations V4+V5). `AgentsRepo` and `sync_engine` updated to populate and filter by `user_id`.
+- [x] **"Agent not found" error on agent invocation** — Patched `matrx_ai/agents/manager.py` `to_config` methods to handle plain dicts (client mode) not just ORM objects.
+- [x] **`matrx-ai` ORM source_app filtering** — Added `source_app="matrx_local"` to `ClientModeConfig`; upstream `matrx-ai` patched to read and forward it.
+- [x] **Terminal auto-scroll / log verbosity** — Silenced high-frequency polling routes in `_SILENT_PATHS` and `OPTIONS` preflight requests; WebSocket monitor tools demoted to DEBUG.
+- [x] **Dark mode error color** — Fixed `--destructive` CSS variable from dark maroon to readable red.
+- [x] **`matrx-ai` init failed with wrong kwargs** — Refactored `initialize_matrx_ai()` to build `ClientModeConfig` correctly.
+- [x] **JWT cache warmup** — Added `warm_jwt_cache()` called at async startup; `set/clear_jwt_cache` wired into `token_routes.py`.
+- [x] **`/chat/agents` returned 401 before login** — Added to `_PUBLIC_PATHS` in `auth.py`.
+
 ## ✅ COMPLETED — Recent (2026-03-12)
 
 ### macOS Permissions Full Audit (2026-03-12)
@@ -138,7 +153,7 @@ _Last updated: 2026-03-12_
 
 ---
 
-## ✅ COMPLETED — Recent (2026-03-12)
+### Other (2026-03-12)
 
 - [x] **Repeated macOS permission prompts on every window focus** — `SCShareableContent.getShareableContentWithCompletionHandler_()` was being used as a status check for screen recording. It is an *active capture operation* that triggers the macOS Sequoia 30-day recurring consent dialog every time it is called. Fixed: replaced with `CGPreflightScreenCaptureAccess()` (read-only, no prompt). Removed the engine cross-check in `use-permissions.ts` that called it. Removed the `onFocusChanged` listener that was firing `checkAll()` across 5 simultaneous hook instances on every System Settings round-trip.
 
