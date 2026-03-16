@@ -392,7 +392,12 @@ def _build_log_config() -> dict:
     }
 
 
+_uvicorn_server: uvicorn.Server | None = None
+_server_thread: threading.Thread | None = None
+
+
 def start_server(port: int) -> None:
+    global _uvicorn_server
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
@@ -401,13 +406,17 @@ def start_server(port: int) -> None:
         log_config=_build_log_config(),
     )
     server = uvicorn.Server(config)
+    _uvicorn_server = server
     server.run()
 
 
 def on_quit(icon: Icon, item: MenuItem) -> None:
     remove_discovery_file()
     icon.stop()
-    os._exit(0)
+    if _uvicorn_server is not None:
+        _uvicorn_server.should_exit = True
+    else:
+        os._exit(0)
 
 
 def _is_tauri_sidecar() -> bool:
@@ -437,7 +446,13 @@ def _has_system_tray() -> bool:
 
 
 def _wait_forever() -> None:
-    """Block the main thread until Ctrl-C or SIGTERM."""
+    """Block the main thread until Ctrl-C or SIGTERM.
+
+    In Tauri sidecar mode this is the main thread — we just park here.
+    The signal handler (_handle_exit) will set _uvicorn_server.should_exit
+    which wakes up the server thread; we wait for it to finish so lifespan
+    teardown completes before the process exits.
+    """
     import time
 
     try:
@@ -445,6 +460,12 @@ def _wait_forever() -> None:
             time.sleep(1)
     except (KeyboardInterrupt, SystemExit):
         remove_discovery_file()
+        if _uvicorn_server is not None:
+            _uvicorn_server.should_exit = True
+            # Give uvicorn up to 5 seconds to finish lifespan teardown.
+            server_thread_ref = _server_thread
+            if server_thread_ref is not None:
+                server_thread_ref.join(timeout=5)
         os._exit(0)
 
 
@@ -480,13 +501,21 @@ def setup_tray(port: int) -> None:
 
 
 def _handle_exit(signum: int, frame: object) -> None:  # noqa: ARG001
-    """Graceful shutdown: clean up the discovery file then exit.
+    """Graceful shutdown: stop uvicorn (triggers lifespan teardown) then exit.
 
-    Uses os._exit() to guarantee the process terminates immediately — sys.exit()
-    raises SystemExit which can be swallowed by loops or background threads.
+    Telling uvicorn to shut down via server.should_exit lets the FastAPI
+    lifespan teardown run (stops proxy on 22180, tunnel, scraper, SQLite, etc.)
+    before the process terminates. We fall back to os._exit() only if the
+    server reference is not available yet (e.g. signal arrived before startup).
     """
     remove_discovery_file()
-    os._exit(0)
+    if _uvicorn_server is not None:
+        # Set the flag that uvicorn's main loop checks — it will call the
+        # ASGI lifespan shutdown and exit cleanly within its event loop.
+        _uvicorn_server.should_exit = True
+    else:
+        # Server not started yet (signal arrived very early) — hard exit.
+        os._exit(0)
 
 
 def main() -> None:
@@ -505,7 +534,9 @@ def main() -> None:
     write_discovery_file(port)
 
     print("[phase:server] Starting server...", flush=True)
+    global _server_thread
     server_thread = threading.Thread(target=start_server, args=(port,), daemon=True)
+    _server_thread = server_thread
     server_thread.start()
 
     try:

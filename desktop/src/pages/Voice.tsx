@@ -23,7 +23,7 @@ import {
   Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DebugTerminal, useDebugTerminal } from "@/components/DebugTerminal";
+import { emitClientLog } from "@/hooks/use-client-log";
 import type {
   WhisperModelTier,
   HardwareDetectionResult,
@@ -37,82 +37,90 @@ const TABS = [
   { value: "devices", label: "Audio Devices" },
 ];
 
+const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
+  emitClientLog(level, msg, "voice");
+
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const [state, actions] = useTranscription();
-  const { logs, logLine, logData, clearLogs } = useDebugTerminal();
 
-  // Wire Tauri events to the debug terminal
+  // Wire state changes to the unified log bus
   useEffect(() => {
-    // Log download progress events
     if (state.downloadProgress) {
-      logData("[whisper] download-progress", state.downloadProgress);
+      try {
+        LOG("data", `[whisper] download-progress: ${JSON.stringify(state.downloadProgress)}`);
+      } catch {
+        LOG("data", "[whisper] download-progress: [unserializable]");
+      }
     }
-  }, [state.downloadProgress, logData]);
+  }, [state.downloadProgress]);
 
   useEffect(() => {
     if (state.error) {
-      logLine("error", `[whisper] ERROR: ${state.error}`);
+      LOG("error", `[whisper] ERROR: ${state.error}`);
     }
-  }, [state.error, logLine]);
+  }, [state.error]);
 
-  // Wrapped actions that also log to the terminal
+  // Wrapped actions that also log to the unified bus
   const wrappedDetectHardware = useCallback(async () => {
-    logLine("cmd", "invoke detect_hardware");
+    LOG("cmd", "invoke detect_hardware");
     try {
       const result = await actions.detectHardware();
-      logData("[whisper] hardware-result", result);
+      try {
+        LOG("data", `[whisper] hardware-result: ${JSON.stringify(result)}`);
+      } catch {
+        LOG("data", "[whisper] hardware-result: [unserializable]");
+      }
       return result;
     } catch (e) {
-      logLine("error", `detect_hardware failed: ${e}`);
+      LOG("error", `detect_hardware failed: ${e}`);
       throw e;
     }
-  }, [actions, logLine, logData]);
+  }, [actions]);
 
   const wrappedDownloadModel = useCallback(async (filename: string) => {
-    logLine("cmd", `invoke download_whisper_model: ${filename}`);
-    logLine("info", `Starting download from HuggingFace: ggml/${filename}`);
+    LOG("cmd", `invoke download_whisper_model: ${filename}`);
+    LOG("info", `Starting download from HuggingFace: ggml/${filename}`);
     try {
       await actions.downloadModel(filename);
-      logLine("success", `Model downloaded: ${filename}`);
+      LOG("success", `Model downloaded: ${filename}`);
     } catch (e) {
-      logLine("error", `download_whisper_model failed: ${e}`);
+      LOG("error", `download_whisper_model failed: ${e}`);
       throw e;
     }
-  }, [actions, logLine]);
+  }, [actions]);
 
   const wrappedInitTranscription = useCallback(async (filename: string) => {
-    logLine("cmd", `invoke init_transcription: ${filename}`);
+    LOG("cmd", `invoke init_transcription: ${filename}`);
     try {
       await actions.initTranscription(filename);
-      logLine("success", `Transcription engine initialized with: ${filename}`);
+      LOG("success", `Transcription engine initialized with: ${filename}`);
     } catch (e) {
-      logLine("error", `init_transcription failed: ${e}`);
+      LOG("error", `init_transcription failed: ${e}`);
       throw e;
     }
-  }, [actions, logLine]);
+  }, [actions]);
 
   const wrappedQuickSetup = useCallback(async () => {
-    logLine("info", "=== Starting Voice Quick Setup ===");
-    // quickSetup handles: detect hardware → download model → download VAD → init
-    logLine("cmd", "quickSetup (detect + download + VAD + init)");
+    LOG("info", "=== Starting Voice Quick Setup ===");
+    LOG("cmd", "quickSetup (detect + download + VAD + init)");
     try {
       await actions.quickSetup();
-      logLine("success", "=== Voice Quick Setup complete ===");
+      LOG("success", "=== Voice Quick Setup complete ===");
     } catch (e) {
-      logLine("error", `Quick setup failed: ${e}`);
+      LOG("error", `Quick setup failed: ${e}`);
     }
-  }, [actions, logLine]);
+  }, [actions]);
 
   const wrappedDeleteModel = useCallback(async (filename: string) => {
-    logLine("cmd", `invoke delete_model: ${filename}`);
+    LOG("cmd", `invoke delete_model: ${filename}`);
     try {
       await actions.deleteModel(filename);
-      logLine("success", `Model deleted: ${filename}`);
+      LOG("success", `Model deleted: ${filename}`);
     } catch (e) {
-      logLine("error", `delete_model failed: ${e}`);
+      LOG("error", `delete_model failed: ${e}`);
     }
-  }, [actions, logLine]);
+  }, [actions]);
 
   const wrappedActions = {
     ...actions,
@@ -132,23 +140,13 @@ export function Voice() {
       <SubTabBar tabs={TABS} value={tab} onValueChange={setTab} />
       <div className="flex-1 overflow-y-auto p-6">
         {tab === "setup" && (
-          <SetupTab
-            state={state}
-            actions={wrappedActions}
-            logs={logs}
-            onClearLogs={clearLogs}
-          />
+          <SetupTab state={state} actions={wrappedActions} />
         )}
         {tab === "transcribe" && (
           <TranscribeTab state={state} actions={actions} />
         )}
         {tab === "models" && (
-          <ModelsTab
-            state={state}
-            actions={wrappedActions}
-            logs={logs}
-            onClearLogs={clearLogs}
-          />
+          <ModelsTab state={state} actions={wrappedActions} />
         )}
         {tab === "devices" && <DevicesTab state={state} actions={actions} />}
       </div>
@@ -161,13 +159,9 @@ export function Voice() {
 function SetupTab({
   state,
   actions,
-  logs,
-  onClearLogs,
 }: {
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
-  logs: import("@/components/DebugTerminal").LogLine[];
-  onClearLogs: () => void;
 }) {
   const isSetupDone = state.setupStatus?.setup_complete ?? false;
   const isActive = state.isDetecting || state.isDownloading || state.isInitializing;
@@ -264,14 +258,6 @@ function SetupTab({
       {/* Hardware Info */}
       <HardwareInfoCard state={state} actions={actions} />
 
-      {/* Debug Terminal — always visible, auto-opens during active operations */}
-      <DebugTerminal
-        logs={logs}
-        onClear={onClearLogs}
-        title="Voice Setup Log"
-        defaultOpen={isActive}
-        maxHeight="260px"
-      />
 
       {/* How it works */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
@@ -763,13 +749,9 @@ function TranscribeTab({
 function ModelsTab({
   state,
   actions,
-  logs,
-  onClearLogs,
 }: {
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
-  logs: import("@/components/DebugTerminal").LogLine[];
-  onClearLogs: () => void;
 }) {
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const hw = state.hardwareResult;
@@ -939,14 +921,6 @@ function ModelsTab({
         </div>
       </div>
 
-      {/* Debug Terminal */}
-      <DebugTerminal
-        logs={logs}
-        onClear={onClearLogs}
-        title="Model Download Log"
-        defaultOpen={downloadingFile !== null}
-        maxHeight="260px"
-      />
     </div>
   );
 }

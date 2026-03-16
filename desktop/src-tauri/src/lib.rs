@@ -144,6 +144,46 @@ async fn stop_sidecar(state: tauri::State<'_, SidecarState>) -> Result<(), Strin
     Ok(())
 }
 
+/// Send SIGTERM to the sidecar's PID and wait briefly for it to exit,
+/// then SIGKILL if it is still alive. This gives Python's signal handler
+/// (_handle_exit) time to set uvicorn.should_exit, which triggers the
+/// FastAPI lifespan teardown (stops proxy on 22180, tunnel, scraper, etc.)
+/// before the OS reclaims the ports.
+///
+/// On Windows `child.kill()` is the only option (no SIGTERM concept), so we
+/// fall through to the kill() call directly.
+#[cfg(unix)]
+fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
+    use std::time::{Duration, Instant};
+
+    let pid = child.pid();
+
+    // Send SIGTERM — gives Python's signal handler time to run lifespan teardown.
+    // SAFETY: kill(2) with SIGTERM is safe; the PID comes from our own child.
+    let term_sent = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } == 0;
+
+    if term_sent {
+        // Wait up to 3 seconds for the process to exit cleanly.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            std::thread::sleep(Duration::from_millis(100));
+            // Check if the process is still alive (signal 0 = existence check).
+            let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+            if !alive || Instant::now() >= deadline {
+                break;
+            }
+        }
+    }
+
+    // Final guarantee: SIGKILL if it did not exit in time (or SIGTERM failed).
+    let _ = child.kill();
+}
+
+#[cfg(not(unix))]
+fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
+    let _ = child.kill();
+}
+
 /// Shared graceful-shutdown sequence used by both Quit and Restart.
 ///
 /// SIGABRT root cause: whisper.cpp and llama.cpp embed the GGML C library
@@ -161,9 +201,11 @@ fn graceful_shutdown_sync(
     transcription_state: &TranscriptionState,
     llm_state: &llm::commands::LlmServerState,
 ) {
-    // 1. Kill the Python sidecar — no GGML, but good hygiene.
+    // 1. Send SIGTERM to the Python sidecar so its signal handler can run
+    //    the FastAPI lifespan teardown (proxy, tunnel, scraper, SQLite).
+    //    Falls back to SIGKILL after 3 s if Python doesn't exit on its own.
     if let Some(child) = sidecar_state.child.lock().unwrap().take() {
-        let _ = child.kill();
+        sigterm_then_kill(child);
     }
 
     // 2. Drop the WhisperContext — this runs GGML cleanup in Rust before
@@ -651,17 +693,44 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // On macOS, clicking the Dock icon when all windows are hidden fires
-            // RunEvent::Reopen. Without this handler the click does nothing — the
-            // app stays invisible. We re-show the main window here so the standard
-            // Mac UX (click Dock icon → app comes back) works as expected.
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
-                if !has_visible_windows {
-                    show_main_window(app);
+            match event {
+                // On macOS, clicking the Dock icon when all windows are hidden fires
+                // RunEvent::Reopen. Without this handler the click does nothing — the
+                // app stays invisible. We re-show the main window here so the standard
+                // Mac UX (click Dock icon → app comes back) works as expected.
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { has_visible_windows, .. } => {
+                    if !has_visible_windows {
+                        show_main_window(app);
+                    }
                 }
+
+                // RunEvent::ExitRequested fires when macOS (or the OS) sends a
+                // termination signal — e.g. from Activity Monitor, `kill`, system
+                // shutdown, or logout. Without this handler the process is terminated
+                // immediately by the OS without running Rust destructors or child
+                // process cleanup, which causes:
+                //   • macOS crash reports ("did not exit cleanly")
+                //   • The Python sidecar left running with its ports still bound
+                //   • GGML atexit handlers calling abort() → SIGABRT
+                //
+                // We intentionally do NOT call api.prevent_exit() here — we just
+                // run cleanup synchronously before the exit proceeds.
+                tauri::RunEvent::ExitRequested { api: _, code, .. } => {
+                    // Only run cleanup on a real exit (code None = normal quit,
+                    // Some(0) = app.exit(0)). Skip if Tauri is restarting itself
+                    // via request_restart() which already called graceful_shutdown_sync.
+                    let _ = code;
+                    if let (Some(sidecar), Some(transcription), Some(llm)) = (
+                        app.try_state::<SidecarState>(),
+                        app.try_state::<TranscriptionState>(),
+                        app.try_state::<llm::commands::LlmServerState>(),
+                    ) {
+                        graceful_shutdown_sync(&sidecar, &transcription, &llm);
+                    }
+                }
+
+                _ => {}
             }
-            #[cfg(not(target_os = "macos"))]
-            let _ = (app, event);
         });
 }

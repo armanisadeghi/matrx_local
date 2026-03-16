@@ -37,6 +37,9 @@ rubato = "1"
 audioadapter-buffers = "2.0.0"
 tauri-plugin-single-instance = { version = "2.4.0", features = ["deep-link"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [features]
 # No features are enabled by default — acceleration is opt-in per platform.
 # macOS builds pass --features metal via the CI workflow.

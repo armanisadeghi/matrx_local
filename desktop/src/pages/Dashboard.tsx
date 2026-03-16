@@ -25,10 +25,6 @@ import {
   LogOut,
   Battery,
   MemoryStick,
-  FileText,
-  RefreshCw,
-  Square,
-  Play,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SetupWizard } from "@/components/SetupWizard";
@@ -42,7 +38,8 @@ import type { SystemInfo, BrowserStatus, PermissionInfo } from "@/lib/api";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { PermissionsModal } from "@/components/PermissionsModal";
 import { usePermissions } from "@/hooks/use-permissions";
-import { DebugTerminal, useDebugTerminal, type LogLevel } from "@/components/DebugTerminal";
+import { emitClientLog } from "@/hooks/use-client-log";
+import type { LogLevel } from "@/hooks/use-client-log";
 
 interface DashboardProps {
   engineStatus: EngineStatus;
@@ -85,46 +82,39 @@ export function Dashboard({
   const [browserInstallMessage, setBrowserInstallMessage] = useState<string | null>(null);
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
 
-  // ── Live log stream ────────────────────────────────────────────────────────
-  const { logs, logLine, clearLogs } = useDebugTerminal();
-  const [logStreaming, setLogStreaming] = useState(false);
+  // ── Live log stream → unified terminal ────────────────────────────────────
   const logStopRef = useRef<(() => void) | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  // Ref-based guard prevents duplicate streams when React re-renders before
-  // setLogStreaming(true) has committed (e.g. StrictMode double-invoke or
-  // engineStatus flip triggering the effect twice in the same tick).
   const streamActiveRef = useRef(false);
 
   const startLogStream = useCallback(() => {
     if (streamActiveRef.current) return;
     streamActiveRef.current = true;
-    clearLogs();
-    setLogStreaming(true);
     abortRef.current = new AbortController();
+
+    const lvlMap: Record<string, LogLevel> = {
+      debug: "info",
+      info: "info",
+      warning: "warn",
+      error: "error",
+      critical: "error",
+    };
 
     const stop = engine.streamLogs({
       signal: abortRef.current.signal,
       lines: 300,
       onConnected: (logPath) => {
-        logLine("info", `Connected — streaming from ${logPath}`);
+        emitClientLog("info", `Connected — streaming from ${logPath}`, "server");
       },
       onHistoryEnd: (n) => {
-        logLine("info", `── History (${n} lines) ──────────────────────────`);
+        emitClientLog("info", `── History (${n} lines) ──────────────────────────`, "server");
       },
       onLine: (data) => {
-        const lvlMap: Record<string, LogLevel> = {
-          debug: "info",
-          info: "info",
-          warning: "warn",
-          error: "error",
-          critical: "error",
-        };
-        logLine(lvlMap[data.level] ?? "info", data.line);
+        emitClientLog(lvlMap[data.level] ?? "info", data.line, "server");
       },
       onError: (err) => {
-        logLine("error", `Stream error: ${err}`);
+        emitClientLog("error", `Stream error: ${err}`, "server");
         streamActiveRef.current = false;
-        setLogStreaming(false);
       },
     });
 
@@ -132,9 +122,8 @@ export function Dashboard({
       stop();
       abortRef.current?.abort();
       streamActiveRef.current = false;
-      setLogStreaming(false);
     };
-  }, [clearLogs, logLine]);
+  }, []);
 
   const stopLogStream = useCallback(() => {
     logStopRef.current?.();
@@ -567,61 +556,6 @@ export function Dashboard({
             </Card>
           </div>
 
-          {/* Live Engine Logs */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center justify-between text-base">
-                <span className="flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-primary" />
-                  Live Engine Logs
-                </span>
-                <div className="flex items-center gap-1.5">
-                  {logStreaming && (
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-emerald-400 border-emerald-600 animate-pulse">
-                      LIVE
-                    </Badge>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs gap-1"
-                    onClick={logStreaming ? stopLogStream : startLogStream}
-                    disabled={engineStatus !== "connected"}
-                  >
-                    {logStreaming ? (
-                      <><Square className="h-3 w-3" />Stop</>
-                    ) : (
-                      <><Play className="h-3 w-3" />Start</>
-                    )}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs gap-1"
-                    onClick={() => { stopLogStream(); setTimeout(startLogStream, 100); }}
-                    disabled={engineStatus !== "connected"}
-                    title="Restart stream"
-                  >
-                    <RefreshCw className="h-3 w-3" />
-                  </Button>
-                </div>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <DebugTerminal
-                logs={logs}
-                onClear={clearLogs}
-                defaultOpen={true}
-                title="system.log"
-                maxHeight="400px"
-              />
-              {engineStatus !== "connected" && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Connect to the engine to stream live logs.
-                </p>
-              )}
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>

@@ -19,12 +19,13 @@ dependencies = [
 
 [[package]]
 name = "aimatrx-desktop"
-version = "1.2.66"
+version = "1.2.68"
 dependencies = [
  "audioadapter-buffers",
  "base64 0.22.1",
  "cpal",
  "futures-util",
+ "libc",
  "reqwest 0.12.28",
  "rubato",
  "serde",

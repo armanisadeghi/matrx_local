@@ -30,7 +30,7 @@ import { usePermissions } from "@/hooks/use-permissions";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { VoiceSetupStatus } from "@/lib/transcription/types";
 import type { LlmSetupStatus, LlmHardwareResult, LlmDownloadProgress } from "@/lib/llm/types";
-import { DebugTerminal, useDebugTerminal } from "@/components/DebugTerminal";
+import { emitClientLog } from "@/hooks/use-client-log";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -99,7 +99,18 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
   const runInstallRef = useRef<(() => void) | null>(null);
   const autoInstallFiredRef = useRef(false);
 
-  const { logs, logLine, logData, clearLogs } = useDebugTerminal();
+  // Stable log helpers — emitClientLog is a module-level singleton, no deps needed
+  const logLine = useCallback(
+    (level: Parameters<typeof emitClientLog>[0], msg: string) => emitClientLog(level, msg, "setup"),
+    [],
+  );
+  const logData = useCallback((label: string, payload: unknown) => {
+    try {
+      emitClientLog("data", `${label}: ${typeof payload === "string" ? payload : JSON.stringify(payload)}`, "setup");
+    } catch {
+      emitClientLog("data", `${label}: [unserializable]`, "setup");
+    }
+  }, []);
   const { permissions: permissionStates } = usePermissions();
 
   // ── Load Tauri optional status ─────────────────────────────────────────
@@ -832,16 +843,6 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
             </div>
           )}
 
-          {/* ── Debug Terminal — always visible ───────────────── */}
-          <div className="border-t border-border/50 pt-3 mt-2">
-            <DebugTerminal
-              logs={logs}
-              onClear={clearLogs}
-              title="Setup Log"
-              defaultOpen={phase === "installing"}
-              maxHeight="220px"
-            />
-          </div>
 
           {/* ── System info footer ────────────────────────────── */}
           {setupStatus && (

@@ -115,6 +115,17 @@ const LEVEL_LABEL: Record<LogLevel, string> = {
   cmd:     "CMD  ",
 };
 
+const ALL_LEVELS = ["info", "success", "warn", "error", "data", "cmd"] as const;
+
+const LEVEL_FILTER_CLASSES: Record<LogLevel, { active: string; inactive: string }> = {
+  info:    { active: "bg-zinc-700 text-zinc-200 border-zinc-500",    inactive: "text-zinc-600 border-zinc-700 hover:text-zinc-400" },
+  success: { active: "bg-emerald-900/60 text-emerald-300 border-emerald-700", inactive: "text-zinc-600 border-zinc-700 hover:text-emerald-500" },
+  warn:    { active: "bg-amber-900/60 text-amber-300 border-amber-700",   inactive: "text-zinc-600 border-zinc-700 hover:text-amber-500" },
+  error:   { active: "bg-red-900/60 text-red-300 border-red-700",     inactive: "text-zinc-600 border-zinc-700 hover:text-red-500" },
+  data:    { active: "bg-sky-900/60 text-sky-300 border-sky-700",     inactive: "text-zinc-600 border-zinc-700 hover:text-sky-500" },
+  cmd:     { active: "bg-cyan-900/60 text-cyan-300 border-cyan-700",  inactive: "text-zinc-600 border-zinc-700 hover:text-cyan-500" },
+};
+
 export function DebugTerminal({
   logs,
   onClear,
@@ -125,7 +136,7 @@ export function DebugTerminal({
 }: DebugTerminalProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [activeFilters, setActiveFilters] = useState<Set<LogLevel>>(new Set(ALL_LEVELS));
   const prevLogCount = useRef(0);
 
   // Auto-expand when new logs arrive (during active operations)
@@ -136,12 +147,23 @@ export function DebugTerminal({
     prevLogCount.current = logs.length;
   }, [logs.length, open]);
 
-  // Auto-scroll to bottom — scroll only within the terminal container, never the page
-  useEffect(() => {
-    if (open && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [logs, open]);
+  const toggleFilter = useCallback((level: LogLevel) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) {
+        // Don't allow deselecting the last active filter
+        if (next.size === 1) return prev;
+        next.delete(level);
+      } else {
+        next.add(level);
+      }
+      return next;
+    });
+  }, []);
+
+  const visibleLogs = activeFilters.size === ALL_LEVELS.length
+    ? logs
+    : logs.filter((l) => activeFilters.has(l.level));
 
   const copyAll = useCallback(async () => {
     if (logs.length === 0) return;
@@ -151,14 +173,14 @@ export function DebugTerminal({
       hour12: false,
     });
     const header = `=== Matrx Debug Log — ${now} ===`;
-    const body = logs
+    const body = visibleLogs
       .map((l) => `${l.time} ${LEVEL_LABEL[l.level]} ${l.message}`)
       .join("\n");
     const footer = "=== END ===";
     await navigator.clipboard.writeText(`${header}\n${body}\n${footer}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [logs]);
+  }, [logs, visibleLogs]);
 
   const hasErrors = logs.some((l) => l.level === "error");
   const hasWarns = logs.some((l) => l.level === "warn");
@@ -185,7 +207,9 @@ export function DebugTerminal({
                   : "text-zinc-500",
               )}
             >
-              {logs.length}
+              {visibleLogs.length === logs.length
+                ? logs.length
+                : `${visibleLogs.length}/${logs.length}`}
             </Badge>
           )}
           {open ? (
@@ -201,7 +225,7 @@ export function DebugTerminal({
             size="icon"
             className="h-6 w-6 text-zinc-500 hover:text-zinc-200"
             onClick={copyAll}
-            title="Copy all logs to clipboard"
+            title="Copy visible logs to clipboard"
             disabled={logs.length === 0}
           >
             {copied ? (
@@ -223,19 +247,48 @@ export function DebugTerminal({
         </div>
       </div>
 
+      {/* Filter bar — only shown when the pane is open */}
+      {open && (
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-zinc-800/60 flex-wrap">
+          <span className="text-[10px] text-zinc-600 font-mono mr-1 select-none">filter:</span>
+          {ALL_LEVELS.map((level) => {
+            const isActive = activeFilters.has(level);
+            const count = logs.filter((l) => l.level === level).length;
+            const cls = LEVEL_FILTER_CLASSES[level];
+            return (
+              <button
+                key={level}
+                onClick={() => toggleFilter(level)}
+                title={`${isActive ? "Hide" : "Show"} ${level} logs`}
+                className={cn(
+                  "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0 h-4 rounded border transition-colors select-none",
+                  isActive ? cls.active : cls.inactive,
+                )}
+              >
+                {LEVEL_LABEL[level].trim()}
+                {count > 0 && (
+                  <span className="opacity-70">{count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Log pane */}
       {open && (
         <div
-          ref={scrollRef}
           className="overflow-y-auto font-mono text-[11px] leading-relaxed p-2 space-y-0.5"
           style={{ maxHeight }}
         >
-          {logs.length === 0 && (
+          {visibleLogs.length === 0 && (
             <div className="text-zinc-600 py-3 text-center select-none">
-              No output yet — logs will appear here when operations run
+              {logs.length === 0
+                ? "No output yet — logs will appear here when operations run"
+                : "No logs match the active filters"}
             </div>
           )}
-          {logs.map((line) => (
+          {visibleLogs.map((line) => (
             <div key={line.id} className="flex gap-2 min-w-0">
               <span className="text-zinc-600 shrink-0 select-none tabular-nums">
                 {line.time}

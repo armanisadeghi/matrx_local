@@ -1,9 +1,19 @@
 # Matrx Local — Task Tracker
 
-_Last updated: 2026-03-15_
+_Last updated: 2026-03-16_
 
 > Living document. Log every discovered bug, issue, and improvement immediately.
 > Keep active items concise and actionable. Completed items go in the History section at the bottom.
+
+
+# New bugs:
+- ## Chat
+  - Trying to use an agent returns Error: {"detail":"Agent not found: ce657368-415b-4acd-bad6-823cb6752d94"} even for ones I know are ok.
+  - We need to incorporate a tab just like chat, co-work, and code, but call it "Local" which will allow us to work with the local models, which we already have in the local models tab but it needs to be here in this ui as well.
+  - There is a problem with the agenets and they are not properly synced with my real agents. I need to identify the cause of this. More importantly, since we are trying to sync this and many other things like these, we need a clear and simply way for the user to open a popup that shows the exact current live data from the cloud, the exact local data so we can debug these things.
+- 
+
+
 
 ---
 
@@ -104,6 +114,10 @@ _Last updated: 2026-03-15_
 - [ ] **Brave Search must route through AIDream server** — `BRAVE_API_KEY` cannot be embedded in the desktop binary (it would be exposed to all users). The `Search` and `Research` tools in `app/tools/tools/network.py` currently call the Brave API directly using `os.getenv("BRAVE_API_KEY")`. They must be rewritten to call a server-side proxy endpoint on `AIDREAM_SERVER_URL_LIVE` (e.g. `POST /api/search/brave`) that holds the key server-side. The Python engine passes the user's JWT for auth. Remove `BRAVE_API_KEY` from `.env`, `HOWTO.md`, and all references.
 
 ### CI/CD & Shipping
+- [x] **macOS "did not exit cleanly" crash reports on any quit/force-quit** — Fixed 2026-03-16. Three root causes:
+  1. `RunEvent::ExitRequested` was not handled in Rust — OS-triggered termination (Activity Monitor, `kill`, system shutdown) bypassed all cleanup. Added `ExitRequested` arm in the `.run()` closure that calls `graceful_shutdown_sync()` before allowing the exit.
+  2. `child.kill()` sent SIGKILL directly (no Python signal handler ran) — Rust now sends SIGTERM first, waits up to 3s for Python to exit cleanly, then falls back to SIGKILL. Requires `libc` dependency (`[target.'cfg(unix)'.dependencies]`).
+  3. `os._exit(0)` in Python's `_handle_exit` hard-killed before uvicorn lifespan teardown ran — ports 22140 and 22180 (proxy) stayed bound. Python now sets `_uvicorn_server.should_exit = True` to trigger the FastAPI lifespan shutdown (stops proxy, tunnel, scraper, SQLite) before exiting.
 - [ ] **Windows MSI looks outdated** — Consider switching from WiX (.msi) to NSIS (.exe) for a modern install experience.
 - [ ] **Verify "Launch on Startup" and "Minimize to Tray"** actually work at the OS level when the setting is toggled.
 
