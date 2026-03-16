@@ -288,6 +288,10 @@ class SyncEngine:
                 "name": b["name"],
                 "description": b["description"],
                 "source": "builtin",
+                "user_id": "",
+                "category": b.get("category", ""),
+                "tags": b.get("tags") or [],
+                "is_favorite": False,
                 "variable_defaults": b["variable_defaults"],
                 "settings": b["settings"],
                 "is_active": True,
@@ -300,6 +304,10 @@ class SyncEngine:
                 "name": p["name"],
                 "description": p["description"],
                 "source": "user",
+                "user_id": user_id,
+                "category": p.get("category", ""),
+                "tags": p.get("tags") or [],
+                "is_favorite": bool(p.get("is_favorite", False)),
                 "variable_defaults": p["variable_defaults"],
                 "settings": p["settings"],
                 "is_active": True,
@@ -309,10 +317,11 @@ class SyncEngine:
         await self._agents_repo.upsert_many(user_agents)
 
         builtin_ids = {a["id"] for a in builtin_agents}
-        user_ids = {a["id"] for a in user_agents}
+        user_ids_set = {a["id"] for a in user_agents}
         await self._agents_repo.delete_by_source("builtin", builtin_ids)
-        if user_ids or user_id:
-            await self._agents_repo.delete_by_source("user", user_ids)
+        if user_ids_set or user_id:
+            # Scope the delete to this user — don't touch other users' agents
+            await self._agents_repo.delete_by_source("user", user_ids_set, user_id=user_id or None)
 
         data_hash = _hash_list(builtins_to_save + user_prompts_to_save)
         await self._sync_meta.set_last_sync("agents", last_hash=data_hash)

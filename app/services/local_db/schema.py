@@ -307,6 +307,32 @@ CREATE INDEX IF NOT EXISTS idx_tool_call_logs_request ON tool_call_logs(user_req
 """
 
 # ------------------------------------------------------------------
+# Migration 4: Add user_id to agents table for per-user isolation
+# ------------------------------------------------------------------
+
+_V4_AGENTS_USER_ID = """
+-- Add user_id column to agents so user-sourced agents can be filtered
+-- per authenticated user.  Builtins always have user_id = '' (empty string).
+ALTER TABLE agents ADD COLUMN user_id TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS idx_agents_user_id ON agents(user_id);
+"""
+
+# ------------------------------------------------------------------
+# Migration 5: Add category, tags, is_favorite to agents table
+# ------------------------------------------------------------------
+
+_V5_AGENTS_METADATA = """
+-- category and tags are used for search/filtering in the AgentPicker UI.
+-- is_favorite allows users to star their most-used agents.
+ALTER TABLE agents ADD COLUMN category TEXT NOT NULL DEFAULT '';
+ALTER TABLE agents ADD COLUMN tags     TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE agents ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_agents_category ON agents(category);
+"""
+
+# ------------------------------------------------------------------
 # All migrations in order
 # ------------------------------------------------------------------
 
@@ -314,4 +340,6 @@ MIGRATIONS: list[tuple[int, str]] = [
     (1, _V1_CORE),
     (2, _V2_EXTENDED),
     (3, _V3_CONVERSATION_PERSISTENCE),
+    (4, _V4_AGENTS_USER_ID),
+    (5, _V5_AGENTS_METADATA),
 ]

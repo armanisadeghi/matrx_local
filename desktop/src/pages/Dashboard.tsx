@@ -90,9 +90,14 @@ export function Dashboard({
   const [logStreaming, setLogStreaming] = useState(false);
   const logStopRef = useRef<(() => void) | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Ref-based guard prevents duplicate streams when React re-renders before
+  // setLogStreaming(true) has committed (e.g. StrictMode double-invoke or
+  // engineStatus flip triggering the effect twice in the same tick).
+  const streamActiveRef = useRef(false);
 
   const startLogStream = useCallback(() => {
-    if (logStreaming) return;
+    if (streamActiveRef.current) return;
+    streamActiveRef.current = true;
     clearLogs();
     setLogStreaming(true);
     abortRef.current = new AbortController();
@@ -118,6 +123,7 @@ export function Dashboard({
       },
       onError: (err) => {
         logLine("error", `Stream error: ${err}`);
+        streamActiveRef.current = false;
         setLogStreaming(false);
       },
     });
@@ -125,9 +131,10 @@ export function Dashboard({
     logStopRef.current = () => {
       stop();
       abortRef.current?.abort();
+      streamActiveRef.current = false;
       setLogStreaming(false);
     };
-  }, [logStreaming, clearLogs, logLine]);
+  }, [clearLogs, logLine]);
 
   const stopLogStream = useCallback(() => {
     logStopRef.current?.();
@@ -136,9 +143,9 @@ export function Dashboard({
 
   // Auto-start when engine connects, stop when it disconnects
   useEffect(() => {
-    if (engineStatus === "connected" && !logStreaming) {
+    if (engineStatus === "connected" && !streamActiveRef.current) {
       startLogStream();
-    } else if (engineStatus !== "connected" && logStreaming) {
+    } else if (engineStatus !== "connected" && streamActiveRef.current) {
       stopLogStream();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps

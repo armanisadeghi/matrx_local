@@ -134,8 +134,26 @@ class AgentsRepo:
     def __init__(self, db: LocalDatabase | None = None):
         self._db = db or get_db()
 
-    async def list_all(self, source: str | None = None) -> list[dict[str, Any]]:
-        if source:
+    async def list_all(
+        self,
+        source: str | None = None,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return active agents.
+
+        For user-sourced agents, pass user_id to restrict results to that user.
+        Builtins (source='builtin') are always returned regardless of user_id.
+        If user_id is None, all agents are returned (use only for admin/debug).
+        """
+        if user_id is not None:
+            # Return builtins unconditionally + user agents only for this user.
+            rows = await self._db.fetchall(
+                "SELECT * FROM agents WHERE is_active = 1 "
+                "AND (source = 'builtin' OR user_id = ?) "
+                "ORDER BY source, name",
+                (user_id,),
+            )
+        elif source:
             rows = await self._db.fetchall(
                 "SELECT * FROM agents WHERE source = ? AND is_active = 1 ORDER BY name",
                 (source,),
@@ -152,12 +170,16 @@ class AgentsRepo:
 
     async def upsert(self, agent: dict[str, Any]) -> None:
         await self._db.execute(
-            """INSERT INTO agents (id, name, description, source, variable_defaults,
-               settings, is_active, raw_json, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO agents (id, name, description, source, user_id,
+               category, tags, is_favorite, variable_defaults, settings,
+               is_active, raw_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  name=excluded.name, description=excluded.description,
-                 source=excluded.source, variable_defaults=excluded.variable_defaults,
+                 source=excluded.source, user_id=excluded.user_id,
+                 category=excluded.category, tags=excluded.tags,
+                 is_favorite=excluded.is_favorite,
+                 variable_defaults=excluded.variable_defaults,
                  settings=excluded.settings, is_active=excluded.is_active,
                  raw_json=excluded.raw_json, updated_at=excluded.updated_at""",
             (
@@ -165,6 +187,10 @@ class AgentsRepo:
                 agent.get("name", ""),
                 agent.get("description", ""),
                 agent.get("source", "builtin"),
+                agent.get("user_id", ""),
+                agent.get("category", ""),
+                _json_dumps(agent.get("tags", [])),
+                int(bool(agent.get("is_favorite", False))),
                 _json_dumps(agent.get("variable_defaults", [])),
                 _json_dumps(agent.get("settings", {})),
                 int(agent.get("is_active", True)),
@@ -178,16 +204,27 @@ class AgentsRepo:
         for a in agents:
             await self.upsert(a)
 
-    async def delete_by_source(self, source: str, keep_ids: set[str]) -> int:
+    async def delete_by_source(
+        self, source: str, keep_ids: set[str], user_id: str | None = None
+    ) -> int:
+        """Delete agents by source, keeping only keep_ids.
+
+        For user-sourced agents, pass user_id to scope the delete to that user
+        only — prevents one user's sync from removing another user's agents.
+        """
+        user_clause = " AND user_id = ?" if (source == "user" and user_id is not None) else ""
+        user_args: tuple = (user_id,) if (source == "user" and user_id is not None) else ()
+
         if not keep_ids:
             cursor = await self._db.execute(
-                "DELETE FROM agents WHERE source = ?", (source,)
+                f"DELETE FROM agents WHERE source = ?{user_clause}",
+                (source, *user_args),
             )
         else:
             placeholders = ",".join("?" for _ in keep_ids)
             cursor = await self._db.execute(
-                f"DELETE FROM agents WHERE source = ? AND id NOT IN ({placeholders})",
-                (source, *keep_ids),
+                f"DELETE FROM agents WHERE source = ? AND id NOT IN ({placeholders}){user_clause}",
+                (source, *keep_ids, *user_args),
             )
         await self._db.commit()
         return cursor.rowcount

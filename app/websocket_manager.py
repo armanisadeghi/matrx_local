@@ -113,9 +113,15 @@ class WebSocketManager:
             return
 
         req_id = request_id or f"auto-{id(msg)}"
+
+        # High-frequency monitoring tools — log at DEBUG to avoid flooding the terminal.
+        # These fire every 10s from the Dashboard/Ports pages and produce repetitive output.
+        _QUIET_TOOLS = frozenset({"ListPorts", "SystemResources", "SystemInfo", "ListProcesses"})
+        ws_log = logger.debug if tool_name in _QUIET_TOOLS else logger.info
+
         import json as _json
         input_str = _json.dumps(tool_input, indent=2, ensure_ascii=False) if tool_input else "{}"
-        logger.info("→ WS tool=%s  id=%s\n%s", tool_name, req_id, input_str)
+        ws_log("→ WS tool=%s  id=%s\n%s", tool_name, req_id, input_str)
         task = asyncio.create_task(self._run_tool(conn, req_id, tool_name, tool_input))
         conn._running_tasks[req_id] = task
         task.add_done_callback(lambda _: conn._running_tasks.pop(req_id, None))
@@ -124,6 +130,8 @@ class WebSocketManager:
         self, conn: Connection, request_id: str, tool_name: str, tool_input: dict
     ) -> None:
         import time as _time
+        _QUIET_TOOLS = frozenset({"ListPorts", "SystemResources", "SystemInfo", "ListProcesses"})
+        ws_log = logger.debug if tool_name in _QUIET_TOOLS else logger.info
         t0 = _time.monotonic()
         try:
             result = await dispatch(tool_name, tool_input, conn.session)
@@ -145,7 +153,7 @@ class WebSocketManager:
                 out_preview = out[:300] + f"… (+{len(result.output) - 300} chars)"
             else:
                 out_preview = out
-            logger.info("← WS tool=%s  type=%s  (%.0fms)\n%s", tool_name, result.type.value, duration_ms, out_preview)
+            ws_log("← WS tool=%s  type=%s  (%.0fms)\n%s", tool_name, result.type.value, duration_ms, out_preview)
 
             await self._send(conn, response)
 

@@ -521,8 +521,8 @@ async def log_requests(request: Request, call_next):
     query = str(request.url.query) if request.url.query else ""
     display_path = f"{path}?{query}" if query else path
 
-    # High-frequency polling routes — log at DEBUG to avoid flooding the terminal.
-    # These fire every few seconds and produce no actionable information at INFO level.
+    # High-frequency polling routes and CORS preflights — log at DEBUG to keep
+    # the terminal readable.  Only genuinely interesting one-off requests stay at INFO.
     _SILENT_PATHS = frozenset({
         "/health",
         "/tools/list",
@@ -530,8 +530,30 @@ async def log_requests(request: Request, call_next):
         "/ports",
         "/version",
         "/logs/access",
+        # Setup/dashboard polling (fires every 2-5s)
+        "/setup/status",
+        # Device monitoring polling (fires every 2-10s)
+        "/devices/system",
+        "/devices/permissions",
+        "/devices/audio",
+        # Notes polling
+        "/notes/tree",
+        "/notes/notes",
+        "/notes/sync/status",
+        # Settings reads (fetched on every page mount)
+        "/settings/paths",
+        "/settings/forbidden-urls",
+        # Status endpoints polled by Settings page
+        "/proxy/status",
+        "/tunnel/status",
+        "/cloud/instance",
+        "/cloud/instances",
+        "/capabilities",
     })
-    log = logger.debug if path in _SILENT_PATHS else logger.info
+
+    # OPTIONS preflights are always silent — they carry no data.
+    is_options = request.method == "OPTIONS"
+    log = logger.debug if (path in _SILENT_PATHS or is_options) else logger.info
 
     # Read body for mutating methods (doesn't consume the ASGI stream).
     body = None

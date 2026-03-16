@@ -239,8 +239,20 @@ async def list_agents() -> dict[str, Any]:
 
     logger.info("[chat_routes /agents] Request received")
 
+    # Resolve the authenticated user_id from the stored JWT so we only return
+    # this user's own agents (builtins are always included).
+    user_id: str | None = None
+    try:
+        from app.services.local_db.repositories import TokenRepo
+        token_repo = TokenRepo()
+        token_row = await token_repo.get()
+        if token_row:
+            user_id = token_row.get("user_id") or None
+    except Exception:
+        pass
+
     repo = AgentsRepo()
-    all_agents = await repo.list_all()
+    all_agents = await repo.list_all(user_id=user_id)
 
     builtins = [_shape_agent_from_sqlite(a) for a in all_agents if a.get("source") == "builtin"]
     user_agents = [_shape_agent_from_sqlite(a) for a in all_agents if a.get("source") == "user"]
