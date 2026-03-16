@@ -1396,7 +1396,34 @@ async def _macos_check_tcc(service: str, label: str) -> PermissionStatus:
 
 
 async def check_all_permissions() -> list[dict[str, Any]]:
-    """Run all permission checks concurrently and return structured results."""
+    """Run all permission checks concurrently and return structured results.
+
+    Logs one line per permission showing exactly what was checked and what
+    value came back, so the log tells the full story on every platform.
+    """
+    names = [
+        "microphone",
+        "camera",
+        "accessibility",
+        "bluetooth",
+        "network",
+        "wifi",
+        "screen_recording",
+        "location",
+        "contacts",
+        "calendar",
+        "reminders",
+        "photos",
+        "messages",
+        "mail",
+        "speech_recognition",
+    ]
+
+    logger.info(
+        "[permissions] check_all_permissions — platform=%s %s — checking %d permissions",
+        platform.system(), platform.machine(), len(names),
+    )
+
     results = await asyncio.gather(
         check_microphone(),
         check_camera(),
@@ -1416,36 +1443,35 @@ async def check_all_permissions() -> list[dict[str, Any]]:
         return_exceptions=True,
     )
 
-    names = [
-        "microphone",
-        "camera",
-        "accessibility",
-        "bluetooth",
-        "network",
-        "wifi",
-        "screen_recording",
-        "location",
-        "contacts",
-        "calendar",
-        "reminders",
-        "photos",
-        "messages",
-        "mail",
-        "speech_recognition",
-    ]
-
     output: list[dict[str, Any]] = []
     for i, result in enumerate(results):
+        name = names[i]
         if isinstance(result, Exception):
+            logger.warning(
+                "[permissions] %-20s → ERROR: %s",
+                name, result,
+            )
             output.append(
                 {
-                    "permission": names[i],
+                    "permission": name,
                     "status": "unknown",
                     "details": f"Check failed: {result}",
                     "grant_instructions": "",
                 }
             )
         else:
-            output.append(result.to_dict())
+            d = result.to_dict()
+            logger.info(
+                "[permissions] %-20s → status=%-15s details=%s",
+                name, d.get("status", "?"), d.get("details", ""),
+            )
+            output.append(d)
+
+    granted = sum(1 for d in output if d.get("status") == "granted")
+    unavailable = sum(1 for d in output if d.get("status") == "unavailable")
+    logger.info(
+        "[permissions] Summary: %d/%d granted (%d unavailable on this platform)",
+        granted, len(names) - unavailable, unavailable,
+    )
 
     return output
