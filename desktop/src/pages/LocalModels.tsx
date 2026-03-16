@@ -1101,7 +1101,6 @@ function ModelSwitcher() {
     setSwitching(true);
     try {
       const hw = hardwareResult ?? await detectHardware();
-      const modelInfo = downloadedModels.find((m) => m.filename === filename);
       const ctx = 8192;
       await stopServer();
       await startServer(filename, hw.recommended_gpu_layers, ctx);
