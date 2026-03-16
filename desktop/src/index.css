@@ -82,7 +82,9 @@
     --accent-foreground: 240 20% 96%;
 
     /* ── Semantic ─────────────────────────────────────── */
-    --destructive: 0 63% 31%;
+    /* Bright red — readable as both background fill and text on dark surfaces.
+       Previously 0 63% 31% (dark maroon) which was invisible in dark mode. */
+    --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
     /* ── Borders / Inputs ─────────────────────────────── */
