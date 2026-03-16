@@ -44,16 +44,6 @@
       "sidecar/cloudflared",
       "binaries/llama-server"
     ],
-    "resources": {
-      "binaries/libggml.0.dylib": "binaries/libggml.0.dylib",
-      "binaries/libggml-base.0.dylib": "binaries/libggml-base.0.dylib",
-      "binaries/libggml-blas.0.dylib": "binaries/libggml-blas.0.dylib",
-      "binaries/libggml-cpu.0.dylib": "binaries/libggml-cpu.0.dylib",
-      "binaries/libggml-metal.0.dylib": "binaries/libggml-metal.0.dylib",
-      "binaries/libggml-rpc.0.dylib": "binaries/libggml-rpc.0.dylib",
-      "binaries/libllama.0.dylib": "binaries/libllama.0.dylib",
-      "binaries/libmtmd.0.dylib": "binaries/libmtmd.0.dylib"
-    },
     "windows": {
       "wix": {
         "language": "en-US"
