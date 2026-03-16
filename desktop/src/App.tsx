@@ -229,26 +229,12 @@ export default function App() {
     typeof window !== "undefined" &&
     window.location.hash.startsWith("#/auth/callback");
 
-  // Show startup screen while auth is loading OR engine is starting/discovering
-  const isEngineStarting =
-    auth.isAuthenticated &&
-    (status === "discovering" || status === "starting") &&
-    !isCallbackRoute;
-
-  if ((auth.loading && !isCallbackRoute && !auth.oauthPending) || isEngineStarting) {
-    return (
-      <StartupScreen
-        authLoading={auth.loading}
-        engineStatus={status}
-      />
-    );
-  }
-
-  // OAuthPending is rendered at the App level (not inside Login) so it
-  // survives the app being backgrounded and re-activated by the OS deep link.
-  // oauthPending is persisted to localStorage so it's still true after the
-  // app window comes back to front following browser-side OAuth approval.
-  if (auth.oauthPending && !auth.isAuthenticated) {
+  // OAuthPending MUST be checked before any engine-state gate.
+  // After completeOAuthExchange() sets isAuthenticated=true, the engine starts
+  // discovering immediately. If we checked isEngineStarting first, StartupScreen
+  // would replace OAuthPending and the deep-link event handler would lose its
+  // listener before it could complete the exchange.
+  if (auth.oauthPending) {
     return (
       <ErrorBoundary>
         <OAuthPending
@@ -256,6 +242,21 @@ export default function App() {
           completeOAuthExchange={auth.completeOAuthExchange}
         />
       </ErrorBoundary>
+    );
+  }
+
+  // Show startup screen while auth is loading OR engine is starting/discovering
+  const isEngineStarting =
+    auth.isAuthenticated &&
+    (status === "discovering" || status === "starting") &&
+    !isCallbackRoute;
+
+  if ((auth.loading && !isCallbackRoute) || isEngineStarting) {
+    return (
+      <StartupScreen
+        authLoading={auth.loading}
+        engineStatus={status}
+      />
     );
   }
 

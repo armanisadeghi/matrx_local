@@ -72,10 +72,11 @@ download_target() {
     # Ensure version is resolved
     ensure_llama_version
 
-    # On macOS, check if dylibs also need to be downloaded (they live in the same archive)
+    # On macOS, check if dylibs also need to be downloaded (they live in the same archive).
+    # Check for the soname variant (.0.dylib) — this is what the binary's @rpath looks for.
     local dylibs_needed=false
     if [[ "$triple" == *"apple-darwin"* ]]; then
-        if ! ls "$BINARIES_DIR"/libggml.dylib &>/dev/null; then
+        if ! ls "$BINARIES_DIR"/libggml.0.dylib &>/dev/null; then
             dylibs_needed=true
         fi
     fi
@@ -113,15 +114,33 @@ download_target() {
             echo "  ✓ Saved: $(basename "$dest")"
         fi
 
-        # On macOS: copy all .dylib files so the server can find them at runtime
+        # On macOS: copy all .dylib files so the server can find them at runtime.
+        # Use -type f -o -type l to capture both real files AND symlinks — the
+        # llama.cpp archive ships versioned files (e.g. libmtmd.0.0.8281.dylib)
+        # plus soname symlinks (libmtmd.0.dylib) and unversioned symlinks
+        # (libmtmd.dylib). The binary's @rpath entries reference the soname
+        # variant (libmtmd.0.dylib), so all three variants must be present.
         if [[ "$triple" == *"apple-darwin"* ]]; then
             local dylib_count=0
             while IFS= read -r -d '' lib; do
-                cp "$lib" "$BINARIES_DIR/"
-                (( dylib_count++ )) || true
-            done < <(find "$extracted_dir" -name "*.dylib" -type f -print0)
+                local libname
+                libname="$(basename "$lib")"
+                if [[ -L "$lib" ]]; then
+                    # Resolve symlink target and copy as a plain file so the
+                    # bundle contains real files (not dangling symlinks).
+                    local resolved
+                    resolved="$(readlink -f "$lib" 2>/dev/null)" || resolved=""
+                    if [[ -n "$resolved" && -f "$resolved" ]]; then
+                        cp "$resolved" "$BINARIES_DIR/$libname"
+                        (( dylib_count++ )) || true
+                    fi
+                else
+                    cp "$lib" "$BINARIES_DIR/$libname"
+                    (( dylib_count++ )) || true
+                fi
+            done < <(find "$extracted_dir" \( -name "*.dylib" -type f -o -name "*.dylib" -type l \) -print0)
             if (( dylib_count > 0 )); then
-                echo "  ✓ Copied ${dylib_count} dylib(s) to binaries/"
+                echo "  ✓ Copied ${dylib_count} dylib file(s)/symlink(s) to binaries/"
             fi
 
             # Rewrite the llama-server binary's rpath so it can locate the dylibs
