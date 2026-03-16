@@ -1,6 +1,19 @@
+/**
+ * Agents hook — reads all agent/prompt data from the local Python engine.
+ *
+ * Data flow:
+ *   React → GET /chat/agents → Python engine → SQLite
+ *
+ * The engine's SyncEngine populates SQLite from the AIDream server API in the
+ * background.  This hook never touches Supabase directly for data — only the
+ * engine API is used.
+ *
+ * If the engine returns syncing=true (SQLite never synced), the hook exposes
+ * isLoading=true so the UI can show a spinner.
+ */
+
 import { useState, useEffect, useCallback, useRef } from "react";
-import supabase from "@/lib/supabase";
-import type { AgentInfo, AgentsResponse, PromptVariable } from "@/types/agents";
+import type { AgentInfo, AgentsResponse } from "@/types/agents";
 
 interface UseAgentsOptions {
   engineUrl: string | null;
@@ -13,122 +26,32 @@ interface UseAgentsState {
   all: AgentInfo[];
   isLoading: boolean;
   error: string | null;
+  syncing: boolean;
   source: AgentsResponse["source"] | null;
   refresh: () => void;
 }
 
-/** Cache keyed by engineUrl so we don't re-fetch on every component mount. */
+/** In-memory cache keyed by engineUrl to avoid re-fetching on every mount. */
 const cache = new Map<string, { data: AgentsResponse; ts: number }>();
 const CACHE_TTL_MS = 60_000; // 1 minute
-
-// ---------------------------------------------------------------------------
-// Supabase direct fetch — fills in user prompts + shared prompts using the
-// session JWT so the engine doesn't need to be authenticated per-user.
-// ---------------------------------------------------------------------------
-
-interface RawPromptRow {
-  id: string;
-  name: string;
-  description: string | null;
-  variable_defaults: PromptVariable[] | null;
-  model_id?: string | null;
-  temperature?: number | null;
-  max_tokens?: number | null;
-  is_active?: boolean;
-  category?: string | null;
-  tags?: string[] | null;
-  is_favorite?: boolean;
-}
-
-function shapeFromRow(row: RawPromptRow, source: AgentInfo["source"]): AgentInfo {
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description ?? "",
-    source,
-    variable_defaults: row.variable_defaults ?? [],
-    category: row.category ?? null,
-    tags: row.tags ?? [],
-    is_favorite: row.is_favorite ?? false,
-    settings: {
-      model_id: row.model_id ?? null,
-      temperature: row.temperature ?? null,
-      max_tokens: row.max_tokens ?? null,
-      stream: true,
-      tools: [],
-    },
-  };
-}
-
-async function fetchUserPromptsFromSupabase(): Promise<{
-  user: AgentInfo[];
-  shared: AgentInfo[];
-}> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.user) return { user: [], shared: [] };
-
-  const userId = session.user.id;
-
-  const [ownResult, sharedResult] = await Promise.allSettled([
-    supabase
-      .from("prompts")
-      .select("id, name, description, variable_defaults, model_id, temperature, max_tokens, category, tags, is_favorite")
-      .eq("user_id", userId)
-      .order("name", { ascending: true }),
-
-    supabase
-      .from("prompt_permissions")
-      .select("prompt_id, prompts(id, name, description, variable_defaults, model_id, temperature, max_tokens, category, tags, is_favorite)")
-      .eq("user_id", userId)
-      .in("permission", ["read", "comment", "edit", "admin"]),
-  ]);
-
-  const user: AgentInfo[] = [];
-  const shared: AgentInfo[] = [];
-
-  if (ownResult.status === "fulfilled" && !ownResult.value.error && ownResult.value.data) {
-    for (const row of ownResult.value.data as RawPromptRow[]) {
-      user.push(shapeFromRow(row, "user"));
-    }
-  }
-
-  if (sharedResult.status === "fulfilled" && !sharedResult.value.error && sharedResult.value.data) {
-    for (const row of (sharedResult.value.data as unknown as { prompt_id: string; prompts: RawPromptRow | null }[])) {
-      if (row.prompts) {
-        shared.push(shapeFromRow(row.prompts, "shared"));
-      }
-    }
-  }
-
-  return { user, shared };
-}
-
-// ---------------------------------------------------------------------------
 
 export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
   const [builtins, setBuiltins] = useState<AgentInfo[]>([]);
   const [userAgents, setUserAgents] = useState<AgentInfo[]>([]);
-  const [sharedAgents, setSharedAgents] = useState<AgentInfo[]>([]);
+  const [sharedAgents] = useState<AgentInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<AgentsResponse["source"] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Re-poll after a short delay when the engine reports it's still syncing.
+  const syncRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const applyResponse = useCallback((data: AgentsResponse, directUser?: AgentInfo[], directShared?: AgentInfo[]) => {
+  const applyResponse = useCallback((data: AgentsResponse) => {
     setBuiltins(data.builtins);
-
-    // Merge engine user agents with direct Supabase user agents (dedupe by id)
-    const mergedUser = directUser
-      ? mergeById(data.user, directUser)
-      : data.user;
-    setUserAgents(mergedUser);
-
-    const mergedShared = directShared
-      ? mergeById(data.shared, directShared)
-      : data.shared;
-    setSharedAgents(mergedShared);
-
+    setUserAgents(data.user);
     setSource(data.source);
+    setSyncing((data as unknown as Record<string, unknown>).syncing === true);
     setError(null);
   }, []);
 
@@ -138,10 +61,7 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
 
       const cached = cache.get(engineUrl);
       if (!force && cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-        // Still fetch Supabase user prompts in the background so shared agents
-        // are populated even from cache.
-        const { user, shared } = await fetchUserPromptsFromSupabase().catch(() => ({ user: [], shared: [] }));
-        applyResponse(cached.data, user, shared);
+        applyResponse(cached.data);
         return;
       }
 
@@ -153,35 +73,20 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
       setError(null);
 
       try {
-        // Fetch session token to authenticate engine requests.
-        // Fall back to the local API key so agents load even before login.
-        const { data: { session } } = await supabase.auth.getSession();
-        const token = session?.access_token ?? import.meta.env.VITE_ENGINE_API_KEY ?? "";
-        const authHeader: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+        const resp = await fetch(`${engineUrl}/chat/agents`, {
+          signal: abort.signal,
+        });
 
-        const [engineResult, supabaseResult] = await Promise.allSettled([
-          fetch(`${engineUrl}/chat/agents`, {
-            signal: abort.signal,
-            headers: authHeader,
-          }).then((r) => {
-            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-            return r.json() as Promise<AgentsResponse>;
-          }),
-          fetchUserPromptsFromSupabase(),
-        ]);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-        if (engineResult.status === "rejected") {
-          if ((engineResult.reason as Error).name === "AbortError") return;
-          throw engineResult.reason;
-        }
-
-        const data = engineResult.value;
+        const data = (await resp.json()) as AgentsResponse & { syncing?: boolean };
         cache.set(engineUrl, { data, ts: Date.now() });
+        applyResponse(data);
 
-        const { user: directUser, shared: directShared } =
-          supabaseResult.status === "fulfilled" ? supabaseResult.value : { user: [], shared: [] };
-
-        applyResponse(data, directUser, directShared);
+        // If the engine is still syncing (SQLite empty, first run), retry in 3s
+        if (data.syncing) {
+          syncRetryRef.current = setTimeout(() => load(true), 3_000);
+        }
       } catch (err: unknown) {
         if ((err as Error).name === "AbortError") return;
         setError((err as Error).message || "Failed to load agents");
@@ -189,13 +94,14 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
         setIsLoading(false);
       }
     },
-    [engineUrl, applyResponse]
+    [engineUrl, applyResponse],
   );
 
   useEffect(() => {
     load();
     return () => {
       abortRef.current?.abort();
+      if (syncRetryRef.current) clearTimeout(syncRetryRef.current);
     };
   }, [load]);
 
@@ -208,17 +114,8 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
     all,
     isLoading,
     error,
+    syncing,
     source,
     refresh: () => load(true),
   };
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function mergeById(primary: AgentInfo[], secondary: AgentInfo[]): AgentInfo[] {
-  const seen = new Set(primary.map((a) => a.id));
-  const extras = secondary.filter((a) => !seen.has(a.id));
-  return [...primary, ...extras];
 }

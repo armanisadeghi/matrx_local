@@ -11,7 +11,7 @@ from __future__ import annotations
 # ------------------------------------------------------------------
 
 _V1_CORE = """
--- AI models: cached from Supabase ai_models table
+-- AI models: cached from AIDream server /api/ai-models
 CREATE TABLE IF NOT EXISTS ai_models (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS ai_models (
 CREATE INDEX IF NOT EXISTS idx_ai_models_provider ON ai_models(provider);
 CREATE INDEX IF NOT EXISTS idx_ai_models_name ON ai_models(name);
 
--- Agents / prompts: cached from Supabase prompt_builtins + prompts tables
+-- Agents / prompts: merged view of builtins + user prompts (backward-compat read layer)
 CREATE TABLE IF NOT EXISTS agents (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL DEFAULT '',
@@ -119,9 +119,166 @@ CREATE INDEX IF NOT EXISTS idx_sync_queue_entity ON sync_queue(entity_type, crea
 """
 
 # ------------------------------------------------------------------
+# Migration 2: Extended tables — prompts, notes, auth, instance
+# ------------------------------------------------------------------
+
+_V2_EXTENDED = """
+-- Auth tokens: persists the user JWT so Python survives restarts.
+-- Single row keyed by 'current_user'. Both Python and React keep this in sync.
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    key           TEXT PRIMARY KEY,
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT,
+    user_id       TEXT,
+    expires_at    INTEGER,
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Prompt builtins: system-wide prompts from AIDream /api/prompts/builtins (no auth needed)
+CREATE TABLE IF NOT EXISTS prompt_builtins (
+    id                TEXT PRIMARY KEY,
+    name              TEXT NOT NULL DEFAULT '',
+    description       TEXT NOT NULL DEFAULT '',
+    category          TEXT NOT NULL DEFAULT '',
+    tags              TEXT NOT NULL DEFAULT '[]',
+    variable_defaults TEXT NOT NULL DEFAULT '[]',
+    settings          TEXT NOT NULL DEFAULT '{}',
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    raw_json          TEXT NOT NULL DEFAULT '{}',
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_builtins_name ON prompt_builtins(name);
+CREATE INDEX IF NOT EXISTS idx_prompt_builtins_category ON prompt_builtins(category);
+
+-- User prompts: the authenticated user's own prompts from AIDream /api/prompts
+CREATE TABLE IF NOT EXISTS prompts (
+    id                TEXT PRIMARY KEY,
+    user_id           TEXT NOT NULL DEFAULT '',
+    name              TEXT NOT NULL DEFAULT '',
+    description       TEXT NOT NULL DEFAULT '',
+    category          TEXT NOT NULL DEFAULT '',
+    tags              TEXT NOT NULL DEFAULT '[]',
+    variable_defaults TEXT NOT NULL DEFAULT '[]',
+    settings          TEXT NOT NULL DEFAULT '{}',
+    is_favorite       INTEGER NOT NULL DEFAULT 0,
+    raw_json          TEXT NOT NULL DEFAULT '{}',
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompts_user ON prompts(user_id);
+CREATE INDEX IF NOT EXISTS idx_prompts_name ON prompts(name);
+
+-- Notes: local copy of the user's notes (Supabase is sync target, not source of truth)
+CREATE TABLE IF NOT EXISTS notes (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT '',
+    folder_id   TEXT,
+    title       TEXT NOT NULL DEFAULT '',
+    content     TEXT NOT NULL DEFAULT '',
+    content_hash TEXT,
+    file_path   TEXT,
+    is_deleted  INTEGER NOT NULL DEFAULT 0,
+    is_pinned   INTEGER NOT NULL DEFAULT 0,
+    tags        TEXT NOT NULL DEFAULT '[]',
+    sync_version INTEGER NOT NULL DEFAULT 0,
+    supabase_updated_at TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_notes_folder ON notes(folder_id);
+CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC);
+
+-- Note folders
+CREATE TABLE IF NOT EXISTS note_folders (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT '',
+    parent_id   TEXT,
+    name        TEXT NOT NULL DEFAULT '',
+    path        TEXT NOT NULL DEFAULT '',
+    is_deleted  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_folders_user ON note_folders(user_id, is_deleted);
+
+-- Note versions: snapshot history for a note
+CREATE TABLE IF NOT EXISTS note_versions (
+    id          TEXT PRIMARY KEY,
+    note_id     TEXT NOT NULL,
+    user_id     TEXT NOT NULL DEFAULT '',
+    content     TEXT NOT NULL DEFAULT '',
+    content_hash TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_versions_note ON note_versions(note_id, created_at DESC);
+
+-- Note shares
+CREATE TABLE IF NOT EXISTS note_shares (
+    id          TEXT PRIMARY KEY,
+    note_id     TEXT NOT NULL,
+    owner_id    TEXT NOT NULL DEFAULT '',
+    shared_with TEXT NOT NULL DEFAULT '',
+    permission  TEXT NOT NULL DEFAULT 'read',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_shares_note ON note_shares(note_id);
+CREATE INDEX IF NOT EXISTS idx_note_shares_user ON note_shares(shared_with);
+
+-- Note devices: registered devices for multi-device sync tracking
+CREATE TABLE IF NOT EXISTS note_devices (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT '',
+    device_id   TEXT NOT NULL DEFAULT '',
+    device_name TEXT NOT NULL DEFAULT '',
+    platform    TEXT NOT NULL DEFAULT '',
+    last_seen   TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_devices_user ON note_devices(user_id);
+
+-- App instance: single-row table describing this installation
+-- Row key is always 'self'. Use INSERT OR REPLACE to update.
+CREATE TABLE IF NOT EXISTS app_instance (
+    key            TEXT PRIMARY KEY DEFAULT 'self',
+    instance_id    TEXT NOT NULL DEFAULT '',
+    instance_name  TEXT NOT NULL DEFAULT 'My Computer',
+    user_id        TEXT NOT NULL DEFAULT '',
+    platform       TEXT NOT NULL DEFAULT '',
+    os_version     TEXT NOT NULL DEFAULT '',
+    architecture   TEXT NOT NULL DEFAULT '',
+    hostname       TEXT NOT NULL DEFAULT '',
+    registered_at  TEXT,
+    last_heartbeat TEXT,
+    raw_json       TEXT NOT NULL DEFAULT '{}',
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- App settings: single-row JSON blob for all user/instance settings
+-- Row key is always 'settings'. Use INSERT OR REPLACE to update.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY DEFAULT 'settings',
+    settings   TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+# ------------------------------------------------------------------
 # All migrations in order
 # ------------------------------------------------------------------
 
 MIGRATIONS: list[tuple[int, str]] = [
     (1, _V1_CORE),
+    (2, _V2_EXTENDED),
 ]

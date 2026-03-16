@@ -481,3 +481,469 @@ class SyncMetaRepo:
     async def pending_count(self) -> int:
         row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM sync_queue")
         return row["cnt"] if row else 0
+
+
+# ==================================================================
+# TokenRepo — auth_tokens table (single row: key='current_user')
+# ==================================================================
+
+_TOKEN_KEY = "current_user"
+
+
+class TokenRepo:
+    def __init__(self, db: LocalDatabase | None = None):
+        self._db = db or get_db()
+
+    async def get(self) -> dict[str, Any] | None:
+        row = await self._db.fetchone(
+            "SELECT * FROM auth_tokens WHERE key = ?", (_TOKEN_KEY,)
+        )
+        return _row_to_dict(row) if row else None
+
+    async def save(
+        self,
+        access_token: str,
+        user_id: str,
+        refresh_token: str | None = None,
+        expires_at: int | None = None,
+    ) -> None:
+        await self._db.execute(
+            """INSERT INTO auth_tokens (key, access_token, refresh_token, user_id, expires_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                 access_token=excluded.access_token,
+                 refresh_token=excluded.refresh_token,
+                 user_id=excluded.user_id,
+                 expires_at=excluded.expires_at,
+                 updated_at=excluded.updated_at""",
+            (_TOKEN_KEY, access_token, refresh_token, user_id, expires_at, _now()),
+        )
+        await self._db.commit()
+
+    async def clear(self) -> None:
+        await self._db.execute("DELETE FROM auth_tokens WHERE key = ?", (_TOKEN_KEY,))
+        await self._db.commit()
+
+    def is_expired(self, token_row: dict[str, Any]) -> bool:
+        import time
+        expires_at = token_row.get("expires_at")
+        if not expires_at:
+            return False
+        return int(time.time()) >= int(expires_at)
+
+
+# ==================================================================
+# PromptBuiltinsRepo — prompt_builtins table
+# ==================================================================
+
+class PromptBuiltinsRepo:
+    def __init__(self, db: LocalDatabase | None = None):
+        self._db = db or get_db()
+
+    async def list_all(self, active_only: bool = True) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM prompt_builtins"
+        if active_only:
+            sql += " WHERE is_active = 1"
+        sql += " ORDER BY name"
+        rows = await self._db.fetchall(sql)
+        return [self._deserialize(r) for r in rows]
+
+    async def get(self, builtin_id: str) -> dict[str, Any] | None:
+        row = await self._db.fetchone(
+            "SELECT * FROM prompt_builtins WHERE id = ?", (builtin_id,)
+        )
+        return self._deserialize(row) if row else None
+
+    async def upsert(self, builtin: dict[str, Any]) -> None:
+        await self._db.execute(
+            """INSERT INTO prompt_builtins
+               (id, name, description, category, tags, variable_defaults, settings, is_active, raw_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 name=excluded.name, description=excluded.description,
+                 category=excluded.category, tags=excluded.tags,
+                 variable_defaults=excluded.variable_defaults,
+                 settings=excluded.settings, is_active=excluded.is_active,
+                 raw_json=excluded.raw_json, updated_at=excluded.updated_at""",
+            (
+                builtin["id"],
+                builtin.get("name", ""),
+                builtin.get("description", ""),
+                builtin.get("category", ""),
+                _json_dumps(builtin.get("tags", [])),
+                _json_dumps(builtin.get("variable_defaults", [])),
+                _json_dumps(builtin.get("settings", {})),
+                int(builtin.get("is_active", True)),
+                _json_dumps(builtin),
+                _now(),
+            ),
+        )
+        await self._db.commit()
+
+    async def upsert_many(self, builtins: list[dict[str, Any]]) -> None:
+        for b in builtins:
+            await self.upsert(b)
+
+    async def delete_missing(self, keep_ids: set[str]) -> int:
+        if not keep_ids:
+            return 0
+        placeholders = ",".join("?" for _ in keep_ids)
+        cursor = await self._db.execute(
+            f"DELETE FROM prompt_builtins WHERE id NOT IN ({placeholders})",
+            tuple(keep_ids),
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
+    async def count(self) -> int:
+        row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM prompt_builtins WHERE is_active = 1")
+        return row["cnt"] if row else 0
+
+    def _deserialize(self, row) -> dict[str, Any]:
+        d = _row_to_dict(row)
+        d["tags"] = _json_loads(d.get("tags", "[]")) or []
+        d["variable_defaults"] = _json_loads(d.get("variable_defaults", "[]")) or []
+        d["settings"] = _json_loads(d.get("settings", "{}")) or {}
+        d["is_active"] = bool(d.get("is_active", 1))
+        d["raw_json"] = _json_loads(d.get("raw_json", "{}")) or {}
+        return d
+
+
+# ==================================================================
+# PromptsRepo — prompts table (user-owned prompts)
+# ==================================================================
+
+class PromptsRepo:
+    def __init__(self, db: LocalDatabase | None = None):
+        self._db = db or get_db()
+
+    async def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
+        rows = await self._db.fetchall(
+            "SELECT * FROM prompts WHERE user_id = ? ORDER BY name",
+            (user_id,),
+        )
+        return [self._deserialize(r) for r in rows]
+
+    async def list_all(self) -> list[dict[str, Any]]:
+        rows = await self._db.fetchall("SELECT * FROM prompts ORDER BY name")
+        return [self._deserialize(r) for r in rows]
+
+    async def get(self, prompt_id: str) -> dict[str, Any] | None:
+        row = await self._db.fetchone("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        return self._deserialize(row) if row else None
+
+    async def upsert(self, prompt: dict[str, Any]) -> None:
+        await self._db.execute(
+            """INSERT INTO prompts
+               (id, user_id, name, description, category, tags, variable_defaults,
+                settings, is_favorite, raw_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 user_id=excluded.user_id, name=excluded.name,
+                 description=excluded.description, category=excluded.category,
+                 tags=excluded.tags, variable_defaults=excluded.variable_defaults,
+                 settings=excluded.settings, is_favorite=excluded.is_favorite,
+                 raw_json=excluded.raw_json, updated_at=excluded.updated_at""",
+            (
+                prompt["id"],
+                prompt.get("user_id", ""),
+                prompt.get("name", ""),
+                prompt.get("description", ""),
+                prompt.get("category", ""),
+                _json_dumps(prompt.get("tags", [])),
+                _json_dumps(prompt.get("variable_defaults", [])),
+                _json_dumps(prompt.get("settings", {})),
+                int(prompt.get("is_favorite", False)),
+                _json_dumps(prompt),
+                _now(),
+            ),
+        )
+        await self._db.commit()
+
+    async def upsert_many(self, prompts: list[dict[str, Any]]) -> None:
+        for p in prompts:
+            await self.upsert(p)
+
+    async def delete_for_user(self, user_id: str, keep_ids: set[str]) -> int:
+        if not keep_ids:
+            cursor = await self._db.execute(
+                "DELETE FROM prompts WHERE user_id = ?", (user_id,)
+            )
+        else:
+            placeholders = ",".join("?" for _ in keep_ids)
+            cursor = await self._db.execute(
+                f"DELETE FROM prompts WHERE user_id = ? AND id NOT IN ({placeholders})",
+                (user_id, *keep_ids),
+            )
+        await self._db.commit()
+        return cursor.rowcount
+
+    async def count(self) -> int:
+        row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM prompts")
+        return row["cnt"] if row else 0
+
+    def _deserialize(self, row) -> dict[str, Any]:
+        d = _row_to_dict(row)
+        d["tags"] = _json_loads(d.get("tags", "[]")) or []
+        d["variable_defaults"] = _json_loads(d.get("variable_defaults", "[]")) or []
+        d["settings"] = _json_loads(d.get("settings", "{}")) or {}
+        d["is_favorite"] = bool(d.get("is_favorite", 0))
+        d["raw_json"] = _json_loads(d.get("raw_json", "{}")) or {}
+        return d
+
+
+# ==================================================================
+# NotesRepo — notes table
+# ==================================================================
+
+class NotesRepo:
+    def __init__(self, db: LocalDatabase | None = None):
+        self._db = db or get_db()
+
+    async def list_for_user(
+        self,
+        user_id: str,
+        folder_id: str | None = None,
+        include_deleted: bool = False,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [user_id]
+        sql = "SELECT * FROM notes WHERE user_id = ?"
+        if not include_deleted:
+            sql += " AND is_deleted = 0"
+        if folder_id is not None:
+            sql += " AND folder_id = ?"
+            params.append(folder_id)
+        sql += " ORDER BY updated_at DESC"
+        rows = await self._db.fetchall(sql, tuple(params))
+        return [self._deserialize(r) for r in rows]
+
+    async def get(self, note_id: str) -> dict[str, Any] | None:
+        row = await self._db.fetchone("SELECT * FROM notes WHERE id = ?", (note_id,))
+        return self._deserialize(row) if row else None
+
+    async def upsert(self, note: dict[str, Any]) -> None:
+        await self._db.execute(
+            """INSERT INTO notes
+               (id, user_id, folder_id, title, content, content_hash, file_path,
+                is_deleted, is_pinned, tags, sync_version, supabase_updated_at,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 user_id=excluded.user_id, folder_id=excluded.folder_id,
+                 title=excluded.title, content=excluded.content,
+                 content_hash=excluded.content_hash, file_path=excluded.file_path,
+                 is_deleted=excluded.is_deleted, is_pinned=excluded.is_pinned,
+                 tags=excluded.tags, sync_version=excluded.sync_version,
+                 supabase_updated_at=excluded.supabase_updated_at,
+                 updated_at=excluded.updated_at""",
+            (
+                note["id"],
+                note.get("user_id", ""),
+                note.get("folder_id"),
+                note.get("title", ""),
+                note.get("content", ""),
+                note.get("content_hash"),
+                note.get("file_path"),
+                int(note.get("is_deleted", False)),
+                int(note.get("is_pinned", False)),
+                _json_dumps(note.get("tags", [])),
+                note.get("sync_version", 0),
+                note.get("supabase_updated_at") or note.get("updated_at"),
+                note.get("created_at", _now()),
+                note.get("updated_at", _now()),
+            ),
+        )
+        await self._db.commit()
+
+    async def upsert_many(self, notes: list[dict[str, Any]]) -> None:
+        for n in notes:
+            await self.upsert(n)
+
+    async def soft_delete(self, note_id: str) -> None:
+        await self._db.execute(
+            "UPDATE notes SET is_deleted = 1, updated_at = ? WHERE id = ?",
+            (_now(), note_id),
+        )
+        await self._db.commit()
+
+    async def hard_delete(self, note_id: str) -> None:
+        await self._db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+        await self._db.commit()
+
+    async def count(self, user_id: str | None = None) -> int:
+        if user_id:
+            row = await self._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM notes WHERE user_id = ? AND is_deleted = 0",
+                (user_id,),
+            )
+        else:
+            row = await self._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM notes WHERE is_deleted = 0"
+            )
+        return row["cnt"] if row else 0
+
+    def _deserialize(self, row) -> dict[str, Any]:
+        d = _row_to_dict(row)
+        d["tags"] = _json_loads(d.get("tags", "[]")) or []
+        d["is_deleted"] = bool(d.get("is_deleted", 0))
+        d["is_pinned"] = bool(d.get("is_pinned", 0))
+        return d
+
+
+# ==================================================================
+# NoteFoldersRepo — note_folders table
+# ==================================================================
+
+class NoteFoldersRepo:
+    def __init__(self, db: LocalDatabase | None = None):
+        self._db = db or get_db()
+
+    async def list_for_user(
+        self, user_id: str, include_deleted: bool = False
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM note_folders WHERE user_id = ?"
+        if not include_deleted:
+            sql += " AND is_deleted = 0"
+        sql += " ORDER BY path"
+        rows = await self._db.fetchall(sql, (user_id,))
+        return [self._deserialize(r) for r in rows]
+
+    async def get(self, folder_id: str) -> dict[str, Any] | None:
+        row = await self._db.fetchone(
+            "SELECT * FROM note_folders WHERE id = ?", (folder_id,)
+        )
+        return self._deserialize(row) if row else None
+
+    async def upsert(self, folder: dict[str, Any]) -> None:
+        await self._db.execute(
+            """INSERT INTO note_folders
+               (id, user_id, parent_id, name, path, is_deleted, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 user_id=excluded.user_id, parent_id=excluded.parent_id,
+                 name=excluded.name, path=excluded.path,
+                 is_deleted=excluded.is_deleted, updated_at=excluded.updated_at""",
+            (
+                folder["id"],
+                folder.get("user_id", ""),
+                folder.get("parent_id"),
+                folder.get("name", ""),
+                folder.get("path", ""),
+                int(folder.get("is_deleted", False)),
+                folder.get("created_at", _now()),
+                folder.get("updated_at", _now()),
+            ),
+        )
+        await self._db.commit()
+
+    async def upsert_many(self, folders: list[dict[str, Any]]) -> None:
+        for f in folders:
+            await self.upsert(f)
+
+    def _deserialize(self, row) -> dict[str, Any]:
+        d = _row_to_dict(row)
+        d["is_deleted"] = bool(d.get("is_deleted", 0))
+        return d
+
+
+# ==================================================================
+# AppInstanceRepo — app_instance table (single-row: key='self')
+# ==================================================================
+
+_INSTANCE_KEY = "self"
+
+
+class AppInstanceRepo:
+    def __init__(self, db: LocalDatabase | None = None):
+        self._db = db or get_db()
+
+    async def get(self) -> dict[str, Any] | None:
+        row = await self._db.fetchone(
+            "SELECT * FROM app_instance WHERE key = ?", (_INSTANCE_KEY,)
+        )
+        if not row:
+            return None
+        d = _row_to_dict(row)
+        d["raw_json"] = _json_loads(d.get("raw_json", "{}")) or {}
+        return d
+
+    async def save(self, data: dict[str, Any]) -> None:
+        await self._db.execute(
+            """INSERT INTO app_instance
+               (key, instance_id, instance_name, user_id, platform, os_version,
+                architecture, hostname, registered_at, last_heartbeat, raw_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                 instance_id=excluded.instance_id, instance_name=excluded.instance_name,
+                 user_id=excluded.user_id, platform=excluded.platform,
+                 os_version=excluded.os_version, architecture=excluded.architecture,
+                 hostname=excluded.hostname, registered_at=excluded.registered_at,
+                 last_heartbeat=excluded.last_heartbeat,
+                 raw_json=excluded.raw_json, updated_at=excluded.updated_at""",
+            (
+                _INSTANCE_KEY,
+                data.get("instance_id", ""),
+                data.get("instance_name", "My Computer"),
+                data.get("user_id", ""),
+                data.get("platform", ""),
+                data.get("os_version", ""),
+                data.get("architecture", ""),
+                data.get("hostname", ""),
+                data.get("registered_at"),
+                data.get("last_heartbeat"),
+                _json_dumps(data),
+                _now(),
+            ),
+        )
+        await self._db.commit()
+
+    async def update_heartbeat(self) -> None:
+        await self._db.execute(
+            "UPDATE app_instance SET last_heartbeat = ?, updated_at = ? WHERE key = ?",
+            (_now(), _now(), _INSTANCE_KEY),
+        )
+        await self._db.commit()
+
+
+# ==================================================================
+# AppSettingsRepo — app_settings table (single-row: key='settings')
+# ==================================================================
+
+_SETTINGS_KEY = "settings"
+
+
+class AppSettingsRepo:
+    def __init__(self, db: LocalDatabase | None = None):
+        self._db = db or get_db()
+
+    async def get_all(self) -> dict[str, Any]:
+        row = await self._db.fetchone(
+            "SELECT settings FROM app_settings WHERE key = ?", (_SETTINGS_KEY,)
+        )
+        if not row:
+            return {}
+        return _json_loads(row["settings"]) or {}
+
+    async def save_all(self, settings: dict[str, Any]) -> None:
+        await self._db.execute(
+            """INSERT INTO app_settings (key, settings, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                 settings=excluded.settings, updated_at=excluded.updated_at""",
+            (_SETTINGS_KEY, _json_dumps(settings), _now()),
+        )
+        await self._db.commit()
+
+    async def get(self, key: str, default: Any = None) -> Any:
+        all_settings = await self.get_all()
+        return all_settings.get(key, default)
+
+    async def set(self, key: str, value: Any) -> None:
+        all_settings = await self.get_all()
+        all_settings[key] = value
+        await self.save_all(all_settings)
+
+    async def set_many(self, updates: dict[str, Any]) -> None:
+        all_settings = await self.get_all()
+        all_settings.update(updates)
+        await self.save_all(all_settings)

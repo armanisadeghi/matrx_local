@@ -10,10 +10,13 @@ _Last updated: 2026-03-12_
 ## 🔴 P0 — Blockers (Fix Before Any Shipping)
 
 ### ORM / Database Architecture (CRITICAL)
-- [ ] **Python engine uses server-side ORM DB access** — Works in local dev because env vars are set, but breaks in a built/shipped app. Direct DB access from a user's machine is a security hole (credentials in binary) AND breaks when env vars aren't set.
-  - **Chosen fix:** Update ORM usage to use newly available client-side logic. Arman has the documentation for this — get it, implement it.
-  - **Affected:** All `/chat/ai/*` routes, `matrx-ai` engine, `initialize_matrx_ai()`, anything touching `supabase_automation_matrix` DB config.
+- [x] **`chat_routes.py` dead asyncpg/ORM paths removed** — `_list_models_server()`, `_list_agents_server()`, `_get_supabase_manager()`, and all `SupabaseManager` + asyncpg ORM imports removed from `chat_routes.py`. Both endpoints now read from local SQLite only (2026-03-15).
+- [x] **`sync_engine.py` dead ORM paths removed** — `if not has_db(): return` guards and all `matrx_ai` asyncpg ORM import blocks removed. SyncEngine now uses `AIDreamClient` HTTP calls (2026-03-15).
+- [ ] **`matrx-ai` engine still uses server-side ORM for `/chat/ai/*` routes** — The AI streaming endpoints (chat, agent, conversation) are mounted from `matrx_ai.app.routers` which internally still uses the asyncpg ORM path. This path requires a direct DB connection and will fail in a shipped binary. Must be fixed before shipping.
+  - **Scope:** `build_ai_sub_app()` in `chat_routes.py`, `matrx_ai.app.middleware.auth`, `matrx_ai.app.routers.*`
+  - **Approach:** Update `matrx-ai` package to use client mode (PostgREST/AIDream API) for all DB reads in the AI engine routes.
   - **Without this fix:** The app cannot be safely shipped to users.
+- [ ] **`tool_sync.py` CLI still uses raw asyncpg SQL** — `app/tools/tool_sync.py` calls `Tools.raw_sql(INSERT INTO tools ...)` via asyncpg. This is a CLI utility, not a live route, but should be updated to use the AIDream server API (`GET /api/ai-tools`) for reads. Track for future cleanup.
 
 ### Cloud Instance Registration
 - [ ] **Verify `register_instance` now succeeds** — Hit `GET /cloud/debug` after login. Confirm `is_orphan=false` and `last_registration_result="ok"`. Migration 005 was applied (adds `board_id`, `hardware_uuid`, `serial_number`), but RLS may still block the upsert.

@@ -995,6 +995,40 @@ class EngineAPI {
     await fetch(`${this.baseUrl}/cloud/heartbeat`, { method: "POST", headers }).catch(() => { });
   }
 
+  /**
+   * Push the current Supabase JWT to Python so it persists in SQLite across restarts.
+   * Called automatically on every auth state change (login, token refresh).
+   * Python reads this on startup so it can make authenticated API calls without
+   * waiting for React to boot.
+   */
+  async syncTokenToPython(
+    accessToken: string,
+    userId: string,
+    refreshToken?: string,
+    expiresIn?: number,
+  ): Promise<void> {
+    if (!this.baseUrl) return;
+    await fetch(`${this.baseUrl}/auth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        access_token: accessToken,
+        refresh_token: refreshToken ?? null,
+        user_id: userId,
+        expires_in: expiresIn ?? null,
+      }),
+    }).catch(() => {
+      // Non-critical — Python will work without the persisted token,
+      // it just won't survive a restart until React pushes again.
+    });
+  }
+
+  /** Clear the stored JWT on logout. */
+  async clearPythonToken(): Promise<void> {
+    if (!this.baseUrl) return;
+    await fetch(`${this.baseUrl}/auth/token`, { method: "DELETE" }).catch(() => { });
+  }
+
   // ---- Documents API ----
 
   private async docRequest<T>(

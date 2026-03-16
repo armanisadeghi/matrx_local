@@ -274,12 +274,20 @@ export function useEngine(authenticated = true) {
       update({ wsConnected: false })
     );
 
-    // Re-configure cloud sync whenever auth state changes.
+    // Re-configure cloud sync and sync JWT to Python whenever auth state changes.
     const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!engine.engineUrl) return;
         if (event === "SIGNED_IN" || event === "INITIAL_SESSION") {
           if (session?.access_token && session?.user?.id) {
+            // Push the JWT to Python so it persists across restarts.
+            engine.syncTokenToPython(
+              session.access_token,
+              session.user.id,
+              session.refresh_token ?? undefined,
+              session.expires_in ?? undefined,
+            ).catch(() => {});
+
             // Skip if initialize() already sent configure within the last 10s
             // to avoid a duplicate call on the INITIAL_SESSION event.
             if (Date.now() - lastCloudConfigureRef.current < 10_000) return;
@@ -293,12 +301,21 @@ export function useEngine(authenticated = true) {
           }
         } else if (event === "TOKEN_REFRESHED") {
           if (session?.access_token && session?.user?.id) {
+            // Push refreshed JWT to Python immediately.
+            engine.syncTokenToPython(
+              session.access_token,
+              session.user.id,
+              session.refresh_token ?? undefined,
+              session.expires_in ?? undefined,
+            ).catch(() => {});
             try {
               await engine.reconfigureCloudSync(session.access_token, session.user.id);
             } catch {
               // Non-critical
             }
           }
+        } else if (event === "SIGNED_OUT") {
+          engine.clearPythonToken().catch(() => {});
         }
       }
     );

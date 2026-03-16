@@ -60,7 +60,8 @@ export interface AgentsResponse {
   builtins: AgentInfo[];
   user: AgentInfo[];
   shared: AgentInfo[];
-  source: "database" | "fallback" | "error";
+  source: "sqlite" | "database" | "postgrest" | "fallback" | "error";
+  syncing?: boolean;
   totals: {
     builtins: number;
     user: number;

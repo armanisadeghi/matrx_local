@@ -1,13 +1,31 @@
 """Background sync engine — pulls cloud data into local SQLite.
 
-Runs as a background task during the engine lifecycle:
+Architecture
+------------
+SQLite is the single source of truth for all data.  This engine is the ONLY
+component allowed to write cloud data into SQLite.  All other components read
+from SQLite only.
+
+Sync sources:
+  - AIDream server (/api/ai-models, /api/prompts/builtins, /api/prompts)
+    → ai_models, prompt_builtins, prompts, agents tables
+  - Local tool manifest (LOCAL_TOOL_MANIFEST)
+    → tools table
+
+Lifecycle:
   1. On startup: full sync of models, agents, tools
   2. Periodic: re-syncs every N minutes
-  3. On demand: triggered by API call or WebSocket event
+  3. On demand: call sync_all() or an individual sync_* method
 
-All reads come from SQLite.  This engine only *writes* to SQLite after
-fetching from Supabase/matrx-ai.  The app works fully offline — sync
-failures are logged and retried on the next cycle.
+Offline behaviour:
+  If the AIDream server is unreachable, the sync cycle is skipped with a
+  warning.  SQLite keeps whatever was cached from the last successful sync
+  and the app continues to work normally.
+
+User JWT:
+  For user-specific data (prompts), the engine reads the JWT from the
+  auth_tokens SQLite table (written by React via POST /auth/token).
+  If no token is stored, user prompts sync is skipped (builtins still sync).
 """
 
 from __future__ import annotations
@@ -19,20 +37,22 @@ from typing import Any, Optional
 
 from app.common.system_logger import get_logger
 from app.services.local_db.database import get_db
-from app.services.ai.engine import has_db
 from app.services.local_db.repositories import (
     ModelsRepo,
     AgentsRepo,
     ToolsRepo,
     SyncMetaRepo,
+    PromptBuiltinsRepo,
+    PromptsRepo,
+    TokenRepo,
 )
+from app.services.aidream.client import get_aidream_client, AIDreamOfflineError
 
 logger = get_logger()
 
 _instance: Optional["SyncEngine"] = None
 
-# Default sync interval: 10 minutes
-DEFAULT_SYNC_INTERVAL = 600
+DEFAULT_SYNC_INTERVAL = 600  # 10 minutes
 
 
 class SyncEngine:
@@ -46,6 +66,9 @@ class SyncEngine:
         self._agents_repo = AgentsRepo()
         self._tools_repo = ToolsRepo()
         self._sync_meta = SyncMetaRepo()
+        self._builtins_repo = PromptBuiltinsRepo()
+        self._prompts_repo = PromptsRepo()
+        self._token_repo = TokenRepo()
 
     @property
     def running(self) -> bool:
@@ -75,7 +98,6 @@ class SyncEngine:
 
     async def _sync_loop(self) -> None:
         """Run a full sync on startup, then periodically."""
-        # Initial sync immediately
         await self.sync_all()
 
         while self._running:
@@ -100,6 +122,9 @@ class SyncEngine:
             try:
                 await fn()
                 results[name] = "success"
+            except AIDreamOfflineError as exc:
+                results[name] = "offline"
+                logger.warning("[sync_engine] %s sync skipped — server offline: %s", name, exc)
             except Exception:
                 results[name] = "error"
                 logger.warning("[sync_engine] %s sync failed", name, exc_info=True)
@@ -111,209 +136,192 @@ class SyncEngine:
     # ------------------------------------------------------------------
 
     async def sync_models(self) -> None:
-        """Pull AI models from Supabase via matrx-ai and cache locally."""
-        try:
-            import matrx_ai as _matrx_ai
-        except ImportError:
-            logger.debug("[sync_engine] matrx_ai not available — skipping model sync")
-            return
-
-        if not _matrx_ai._initialized:
-            logger.debug("[sync_engine] matrx_ai not initialized — skipping model sync")
+        """Pull AI models from AIDream server and cache in SQLite."""
+        client = get_aidream_client()
+        if client is None:
+            logger.debug("[sync_engine] AIDream client not available — skipping model sync")
             await self._sync_meta.set_last_sync(
-                "models", status="skipped", error_message="matrx_ai not initialized"
+                "models", status="skipped", error_message="AIDREAM_SERVER_URL_LIVE not set"
             )
             return
 
-        if not has_db():
-            logger.debug(
-                "[sync_engine] Skipping model sync — matrx-local runs in client mode "
-                "(no direct DB connection). Models are loaded via Supabase PostgREST."
-            )
-            await self._sync_meta.set_last_sync(
-                "models", status="skipped", error_message="client mode — no direct DB connection"
-            )
-            return
+        models_raw = await client.fetch_models()
 
-        try:
-            from matrx_ai.db.custom.ai_models.ai_model_manager import ai_model_manager_instance
+        endpoint_map = {
+            "anthropic_chat": "anthropic",
+            "anthropic_adaptive": "anthropic",
+            "openai_chat": "openai",
+            "google_chat": "google",
+            "groq_chat": "groq",
+            "together_chat": "together",
+            "xai_chat": "xai",
+            "cerebras_chat": "cerebras",
+        }
 
-            mgr = ai_model_manager_instance
-            all_models = await mgr.load_all_models()
+        models_to_save: list[dict[str, Any]] = []
+        for row in models_raw:
+            if row.get("is_deprecated"):
+                continue
+            endpoints: list[str] = row.get("endpoints") or []
+            if isinstance(endpoints, str):
+                try:
+                    endpoints = json.loads(endpoints)
+                except Exception:
+                    endpoints = []
+            provider = None
+            for ep in endpoints:
+                p = endpoint_map.get(ep)
+                if p:
+                    provider = p
+                    break
+            if not provider:
+                continue
 
-            # Map endpoint → provider (same logic as chat_routes.py)
-            endpoint_map = {
-                "anthropic_chat": "anthropic",
-                "anthropic_adaptive": "anthropic",
-                "openai_chat": "openai",
-                "google_chat": "google",
-                "groq_chat": "groq",
-                "together_chat": "together",
-                "xai_chat": "xai",
-                "cerebras_chat": "cerebras",
-            }
+            models_to_save.append({
+                "id": row.get("id", ""),
+                "name": row.get("name", ""),
+                "common_name": row.get("common_name", ""),
+                "provider": provider,
+                "endpoints": endpoints,
+                "capabilities": row.get("capabilities") or [],
+                "context_window": row.get("context_window"),
+                "max_tokens": row.get("max_tokens"),
+                "is_primary": bool(row.get("is_primary", False)),
+                "is_premium": bool(row.get("is_premium", False)),
+                "is_deprecated": False,
+            })
 
-            models_to_save = []
-            for m in all_models:
-                d = m.to_dict()
-                endpoints = d.get("endpoints") or []
-                provider = None
-                for ep in endpoints:
-                    p = endpoint_map.get(ep)
-                    if p:
-                        provider = p
-                        break
-                if not provider:
-                    continue
+        await self._models_repo.upsert_many(models_to_save)
 
-                models_to_save.append({
-                    "id": d["id"],
-                    "name": d["name"],
-                    "common_name": d.get("common_name", ""),
-                    "provider": provider,
-                    "endpoints": endpoints,
-                    "capabilities": d.get("capabilities") or [],
-                    "context_window": d.get("context_window"),
-                    "max_tokens": d.get("max_tokens"),
-                    "is_primary": d.get("is_primary", False),
-                    "is_premium": d.get("is_premium", False),
-                    "is_deprecated": d.get("is_deprecated", False),
-                })
+        keep_ids = {m["id"] for m in models_to_save}
+        removed = await self._models_repo.delete_missing(keep_ids)
 
-            await self._models_repo.upsert_many(models_to_save)
+        data_hash = _hash_list(models_to_save)
+        await self._sync_meta.set_last_sync("models", last_hash=data_hash)
 
-            # Remove models that no longer exist in cloud
-            keep_ids = {m["id"] for m in models_to_save}
-            removed = await self._models_repo.delete_missing(keep_ids)
-
-            data_hash = _hash_list(models_to_save)
-            await self._sync_meta.set_last_sync("models", last_hash=data_hash)
-
-            count = await self._models_repo.count()
-            logger.info(
-                "[sync_engine] Models synced: %d cached, %d removed", count, removed
-            )
-
-        except Exception:
-            await self._sync_meta.set_last_sync(
-                "models", status="error", error_message="sync failed"
-            )
-            raise
+        count = await self._models_repo.count()
+        logger.info(
+            "[sync_engine] Models synced: %d cached (%d removed)", count, removed
+        )
 
     # ------------------------------------------------------------------
-    # Agents sync
+    # Agents sync (builtins + user prompts → prompt_builtins, prompts, agents)
     # ------------------------------------------------------------------
 
     async def sync_agents(self) -> None:
-        """Pull agents/prompts from Supabase via matrx-ai and cache locally."""
-        try:
-            import matrx_ai as _matrx_ai
-        except ImportError:
-            logger.debug("[sync_engine] matrx_ai not available — skipping agent sync")
-            return
+        """Pull prompt builtins and user prompts from AIDream server.
 
-        if not _matrx_ai._initialized:
-            logger.debug("[sync_engine] matrx_ai not initialized — skipping agent sync")
+        Writes to three tables:
+          - prompt_builtins: the canonical builtin records
+          - prompts: the authenticated user's own prompts (if JWT available)
+          - agents: merged view of builtins + user prompts (backward-compat)
+        """
+        client = get_aidream_client()
+        if client is None:
+            logger.debug("[sync_engine] AIDream client not available — skipping agent sync")
             await self._sync_meta.set_last_sync(
-                "agents", status="skipped", error_message="matrx_ai not initialized"
+                "agents", status="skipped", error_message="AIDREAM_SERVER_URL_LIVE not set"
             )
             return
 
-        if not has_db():
-            logger.debug(
-                "[sync_engine] Skipping agent sync — matrx-local runs in client mode "
-                "(no direct DB connection). Agents are loaded via Supabase PostgREST."
-            )
-            await self._sync_meta.set_last_sync(
-                "agents", status="skipped", error_message="client mode — no direct DB connection"
-            )
-            return
+        # ── Builtins (public) ──────────────────────────────────────────
+        builtins_raw = await client.fetch_prompt_builtins()
 
-        try:
-            from matrx_ai.db.managers.prompt_builtins import PromptBuiltinsBase
-            from matrx_ai.db.managers.prompts import PromptsBase
+        builtins_to_save: list[dict[str, Any]] = []
+        for b in builtins_raw:
+            if not b.get("is_active", True):
+                continue
+            builtins_to_save.append({
+                "id": b.get("id", ""),
+                "name": b.get("name", ""),
+                "description": b.get("description", ""),
+                "category": b.get("category", ""),
+                "tags": b.get("tags") or [],
+                "variable_defaults": b.get("variable_defaults") or [],
+                "settings": _extract_settings(b),
+                "is_active": True,
+            })
 
-            class _PB(PromptBuiltinsBase):
-                pass
+        await self._builtins_repo.upsert_many(builtins_to_save)
+        builtin_keep = {b["id"] for b in builtins_to_save}
+        await self._builtins_repo.delete_missing(builtin_keep)
 
-            class _PM(PromptsBase):
-                pass
+        # ── User prompts (requires JWT) ────────────────────────────────
+        user_prompts_to_save: list[dict[str, Any]] = []
+        token_row = await self._token_repo.get()
+        jwt: str | None = None
 
-            pb_mgr = _PB()
-            pm_mgr = _PM()
+        if token_row and not self._token_repo.is_expired(token_row):
+            jwt = token_row.get("access_token")
+            user_id = token_row.get("user_id", "")
+        else:
+            user_id = ""
+            if token_row:
+                logger.debug("[sync_engine] Stored JWT is expired — skipping user prompt sync")
+            else:
+                logger.debug("[sync_engine] No stored JWT — skipping user prompt sync")
 
-            builtins_raw, prompts_raw = await asyncio.gather(
-                pb_mgr.load_items(),
-                pm_mgr.load_items(),
-            )
-
-            # Process builtins
-            builtin_agents = []
-            for b in builtins_raw:
-                d = b.to_dict()
-                if not d.get("is_active", True):
-                    continue
-                settings = d.get("settings") or {}
-                builtin_agents.append({
-                    "id": d.get("id", ""),
-                    "name": d.get("name", ""),
-                    "description": d.get("description", ""),
-                    "source": "builtin",
-                    "variable_defaults": d.get("variable_defaults") or [],
-                    "settings": {
-                        "model_id": settings.get("model_id"),
-                        "temperature": settings.get("temperature"),
-                        "max_tokens": settings.get("max_tokens") or settings.get("max_output_tokens"),
-                        "stream": settings.get("stream", True),
-                        "tools": settings.get("tools") or [],
-                    },
-                    "is_active": True,
-                })
-
-            # Process user prompts
-            user_agents = []
+        if jwt and user_id:
+            prompts_raw = await client.fetch_user_prompts(jwt)
             for p in prompts_raw:
-                d = p.to_dict()
-                settings = d.get("settings") or {}
-                user_agents.append({
-                    "id": d.get("id", ""),
-                    "name": d.get("name", ""),
-                    "description": d.get("description", ""),
-                    "source": "user",
-                    "variable_defaults": d.get("variable_defaults") or [],
-                    "settings": {
-                        "model_id": settings.get("model_id"),
-                        "temperature": settings.get("temperature"),
-                        "max_tokens": settings.get("max_tokens") or settings.get("max_output_tokens"),
-                        "stream": settings.get("stream", True),
-                        "tools": settings.get("tools") or [],
-                    },
-                    "is_active": True,
+                user_prompts_to_save.append({
+                    "id": p.get("id", ""),
+                    "user_id": user_id,
+                    "name": p.get("name", ""),
+                    "description": p.get("description", ""),
+                    "category": p.get("category", ""),
+                    "tags": p.get("tags") or [],
+                    "variable_defaults": p.get("variable_defaults") or [],
+                    "settings": _extract_settings(p),
+                    "is_favorite": bool(p.get("is_favorite", False)),
                 })
 
-            await self._agents_repo.upsert_many(builtin_agents)
-            await self._agents_repo.upsert_many(user_agents)
+            await self._prompts_repo.upsert_many(user_prompts_to_save)
+            user_keep = {p["id"] for p in user_prompts_to_save}
+            await self._prompts_repo.delete_for_user(user_id, user_keep)
 
-            # Clean up removed agents per source
-            builtin_ids = {a["id"] for a in builtin_agents}
-            user_ids = {a["id"] for a in user_agents}
-            await self._agents_repo.delete_by_source("builtin", builtin_ids)
+        # ── Populate agents table (merged, backward-compat) ───────────
+        builtin_agents: list[dict[str, Any]] = []
+        for b in builtins_to_save:
+            builtin_agents.append({
+                "id": b["id"],
+                "name": b["name"],
+                "description": b["description"],
+                "source": "builtin",
+                "variable_defaults": b["variable_defaults"],
+                "settings": b["settings"],
+                "is_active": True,
+            })
+
+        user_agents: list[dict[str, Any]] = []
+        for p in user_prompts_to_save:
+            user_agents.append({
+                "id": p["id"],
+                "name": p["name"],
+                "description": p["description"],
+                "source": "user",
+                "variable_defaults": p["variable_defaults"],
+                "settings": p["settings"],
+                "is_active": True,
+            })
+
+        await self._agents_repo.upsert_many(builtin_agents)
+        await self._agents_repo.upsert_many(user_agents)
+
+        builtin_ids = {a["id"] for a in builtin_agents}
+        user_ids = {a["id"] for a in user_agents}
+        await self._agents_repo.delete_by_source("builtin", builtin_ids)
+        if user_ids or user_id:
             await self._agents_repo.delete_by_source("user", user_ids)
 
-            data_hash = _hash_list(builtin_agents + user_agents)
-            await self._sync_meta.set_last_sync("agents", last_hash=data_hash)
+        data_hash = _hash_list(builtins_to_save + user_prompts_to_save)
+        await self._sync_meta.set_last_sync("agents", last_hash=data_hash)
 
-            logger.info(
-                "[sync_engine] Agents synced: %d builtins, %d user",
-                len(builtin_agents),
-                len(user_agents),
-            )
-
-        except Exception:
-            await self._sync_meta.set_last_sync(
-                "agents", status="error", error_message="sync failed"
-            )
-            raise
+        logger.info(
+            "[sync_engine] Agents synced: %d builtins, %d user prompts",
+            len(builtins_to_save),
+            len(user_prompts_to_save),
+        )
 
     # ------------------------------------------------------------------
     # Tools sync
@@ -321,35 +329,28 @@ class SyncEngine:
 
     async def sync_tools(self) -> None:
         """Cache the local tool manifest into SQLite for fast access."""
-        try:
-            from app.tools.local_tool_manifest import LOCAL_TOOL_MANIFEST
+        from app.tools.local_tool_manifest import LOCAL_TOOL_MANIFEST
 
-            tools_to_save = []
-            for entry in LOCAL_TOOL_MANIFEST:
-                tools_to_save.append({
-                    "id": entry.name,
-                    "name": entry.name,
-                    "description": entry.description,
-                    "category": entry.category,
-                    "tags": entry.tags,
-                    "parameters": entry.parameters,
-                    "source": "local",
-                    "version": str(entry.version),
-                })
+        tools_to_save = []
+        for entry in LOCAL_TOOL_MANIFEST:
+            tools_to_save.append({
+                "id": entry.name,
+                "name": entry.name,
+                "description": entry.description,
+                "category": entry.category,
+                "tags": entry.tags,
+                "parameters": entry.parameters,
+                "source": "local",
+                "version": str(entry.version),
+            })
 
-            await self._tools_repo.upsert_many(tools_to_save)
+        await self._tools_repo.upsert_many(tools_to_save)
 
-            data_hash = _hash_list(tools_to_save)
-            await self._sync_meta.set_last_sync("tools", last_hash=data_hash)
+        data_hash = _hash_list(tools_to_save)
+        await self._sync_meta.set_last_sync("tools", last_hash=data_hash)
 
-            count = await self._tools_repo.count()
-            logger.info("[sync_engine] Tools synced: %d cached", count)
-
-        except Exception:
-            await self._sync_meta.set_last_sync(
-                "tools", status="error", error_message="sync failed"
-            )
-            raise
+        count = await self._tools_repo.count()
+        logger.info("[sync_engine] Tools synced: %d cached", count)
 
     # ------------------------------------------------------------------
     # Status
@@ -374,6 +375,27 @@ class SyncEngine:
 def _hash_list(items: list[dict]) -> str:
     raw = json.dumps(items, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _extract_settings(row: dict[str, Any]) -> dict[str, Any]:
+    """Extract a normalized settings dict from a raw prompt/builtin row."""
+    settings = row.get("settings") or {}
+    if isinstance(settings, str):
+        try:
+            settings = json.loads(settings)
+        except Exception:
+            settings = {}
+    return {
+        "model_id": settings.get("model_id") or row.get("model_id"),
+        "temperature": settings.get("temperature") or row.get("temperature"),
+        "max_tokens": (
+            settings.get("max_tokens")
+            or settings.get("max_output_tokens")
+            or row.get("max_tokens")
+        ),
+        "stream": settings.get("stream", True),
+        "tools": settings.get("tools") or [],
+    }
 
 
 def get_sync_engine() -> SyncEngine:

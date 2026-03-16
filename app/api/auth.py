@@ -62,6 +62,9 @@ _PUBLIC_PATHS = frozenset(
         "/setup/status",
         "/setup/install",
         "/setup/install-transcription",
+        # Token sync — the JWT is the credential being *given* to Python.
+        # Must be public for the same reason as /cloud/configure.
+        "/auth/token",
     }
 )
 

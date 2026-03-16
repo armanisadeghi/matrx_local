@@ -87,6 +87,24 @@ TUNNEL_ENABLED = os.getenv("TUNNEL_ENABLED", "False").lower() in ("true", "1")
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
 SCRAPER_SERVER_URL = os.getenv("SCRAPER_SERVER_URL", "https://scraper.app.matrxserver.com")
 
+# ---------------------------------------------------------------------------
+# AIDream Server — REST API for shared data (models, prompts, tools, cx data)
+#
+# The active URL is read from AIDREAM_SERVER_URL_LIVE.  All four variants are
+# loaded so the UI can present a server-picker in debug/dev mode.
+#
+# NEVER fall back to a hardcoded URL here — if the env var is absent, sync is
+# simply disabled (logged as a warning).  This prevents stale hardcoded URLs
+# from shipping in production builds.
+# ---------------------------------------------------------------------------
+AIDREAM_SERVER_URL_LIVE       = os.getenv("AIDREAM_SERVER_URL_LIVE", "")
+AIDREAM_SERVER_URL_PRODUCTION = os.getenv("AIDREAM_SERVER_URL_PRODUCTION", "")
+AIDREAM_SERVER_URL_DEV        = os.getenv("AIDREAM_SERVER_URL_DEV", "")
+AIDREAM_SERVER_URL_LOCAL      = os.getenv("AIDREAM_SERVER_URL_LOCAL", "")
+
+# Active URL — everything in the codebase that needs the AIDream server reads this.
+AIDREAM_SERVER_URL = AIDREAM_SERVER_URL_LIVE
+
 # Supabase (for document sync — uses PostgREST API with user JWTs)
 # These are publishable values — safe to embed in the binary (RLS enforces security).
 # The env var overrides are for local dev; shipped users get the baked-in defaults.

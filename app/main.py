@@ -18,6 +18,7 @@ from app.api.data_routes import router as data_router
 from app.api.permissions_routes import router as permissions_router
 from app.api.capabilities_routes import router as capabilities_router
 from app.api.auth import AuthMiddleware, auth_router
+from app.api.token_routes import router as token_router
 from app.api.fetch_proxy_routes import router as fetch_proxy_router
 from app.api.tunnel_routes import router as tunnel_router
 from app.api.setup_routes import router as setup_router
@@ -462,6 +463,7 @@ app = FastAPI(
 )
 
 app.include_router(auth_router)  # OAuth callback — must be before AuthMiddleware
+app.include_router(token_router)  # Token sync — React pushes JWT to Python
 app.include_router(api_router)
 app.include_router(tool_router, prefix="/tools", tags=["tools"])
 app.include_router(remote_scraper_router)
