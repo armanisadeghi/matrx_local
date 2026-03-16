@@ -263,68 +263,235 @@ def _check_transcription() -> ComponentStatus:
 async def _check_permissions() -> ComponentStatus:
     """Check OS-level permissions — advisory only, never blocks setup_complete.
 
-    Uses only fast, read-only TCC database probes — no AVFoundation, no
-    CNContactStore, no ScreenCaptureKit. Those APIs trigger native OS dialogs
-    when status is notDetermined. The full permission detail is available via
-    GET /devices/permissions which the Permissions modal uses separately.
+    Logs the exact check method and raw value returned for every permission on
+    every platform so failures are always diagnosable.
     """
     system = platform.system()
+    machine = platform.machine()
     PRIVACY_DEEP_LINK = (
         "x-apple.systempreferences:com.apple.preference.security?Privacy"
     )
 
-    if system != "Darwin":
-        return ComponentStatus(
-            id="permissions",
-            label="Device Permissions",
-            description="OS-level access for microphone, screen recording, and accessibility",
-            status="ready",
-            detail="No special permissions required on this platform",
-        )
+    logger.info("[permissions] Platform: %s %s", system, machine)
 
-    # Fast read-only check: probe TCC DB for the three most important services.
-    # This never triggers any dialog.
-    try:
-        import asyncio as _asyncio
-        from app.services.permissions.checker import _tcc_db_status
+    if system == "Darwin":
+        return await _check_permissions_macos(PRIVACY_DEEP_LINK)
+    elif system == "Windows":
+        return await _check_permissions_windows()
+    else:
+        return await _check_permissions_linux()
 
-        loop = _asyncio.get_event_loop()
-        mic, cam, screen = await _asyncio.gather(
-            loop.run_in_executor(None, _tcc_db_status, "kTCCServiceMicrophone"),
-            loop.run_in_executor(None, _tcc_db_status, "kTCCServiceCamera"),
-            loop.run_in_executor(None, _tcc_db_status, "kTCCServiceScreenCapture"),
-        )
 
-        from app.services.permissions.checker import PermissionStatus
-        checks = {"Microphone": mic, "Camera": cam, "Screen Recording": screen}
-        not_granted = [name for name, s in checks.items() if s != PermissionStatus.GRANTED]
+async def _check_permissions_macos(deep_link: str) -> ComponentStatus:
+    """macOS: probe TCC.db directly — read-only, never triggers a dialog."""
+    import asyncio as _asyncio
+    from app.services.permissions.checker import _tcc_db_status, PermissionStatus
 
-        if not not_granted:
-            return ComponentStatus(
-                id="permissions",
-                label="Device Permissions",
-                description="OS-level access for microphone, screen recording, and accessibility",
-                status="ready",
-                detail="Core permissions granted (microphone, camera, screen recording)",
+    # Map: display name → TCC service key
+    checks_def = {
+        "Microphone":       "kTCCServiceMicrophone",
+        "Camera":           "kTCCServiceCamera",
+        "Screen Recording": "kTCCServiceScreenCapture",
+    }
+
+    loop = _asyncio.get_event_loop()
+    results: dict[str, PermissionStatus] = {}
+
+    for label, service in checks_def.items():
+        try:
+            status = await loop.run_in_executor(None, _tcc_db_status, service)
+            results[label] = status
+            logger.info(
+                "[permissions] macOS TCC check — service=%s label=%s → %s",
+                service, label, status.value,
+            )
+        except Exception as exc:
+            results[label] = PermissionStatus.UNKNOWN
+            logger.warning(
+                "[permissions] macOS TCC check FAILED — service=%s label=%s → error: %s",
+                service, label, exc,
             )
 
+    not_granted = [name for name, s in results.items() if s != PermissionStatus.GRANTED]
+    detail_parts = [f"{name}={s.value}" for name, s in results.items()]
+    logger.info("[permissions] macOS summary — %s", ", ".join(detail_parts))
+
+    if not not_granted:
         return ComponentStatus(
             id="permissions",
             label="Device Permissions",
-            description="OS-level access for microphone, screen recording, and accessibility",
-            status="warning",
-            detail=f"{', '.join(not_granted)} — click Review & Grant to set up permissions",
-            deep_link=PRIVACY_DEEP_LINK,
+            description="OS-level access for microphone, camera, and screen recording",
+            status="ready",
+            detail="All granted — " + ", ".join(detail_parts),
         )
-    except Exception:
+
+    return ComponentStatus(
+        id="permissions",
+        label="Device Permissions",
+        description="OS-level access for microphone, camera, and screen recording",
+        status="warning",
+        detail=f"Not granted: {', '.join(not_granted)} | All values: {', '.join(detail_parts)} — click Review & Grant",
+        deep_link=deep_link,
+    )
+
+
+async def _check_permissions_windows() -> ComponentStatus:
+    """Windows: check microphone and camera via PowerShell registry probes."""
+    import asyncio as _asyncio
+
+    async def _reg_query(key: str) -> str | None:
+        """Read a registry DWORD and return its string value, or None on error."""
+        try:
+            proc = await _asyncio.create_subprocess_exec(
+                "reg", "query", key, "/v", "Value",
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+            )
+            out, _ = await _asyncio.wait_for(proc.communicate(), timeout=5)
+            text = out.decode(errors="replace")
+            for line in text.splitlines():
+                if "REG_DWORD" in line:
+                    return line.strip().split()[-1]
+        except Exception:
+            pass
+        return None
+
+    # Windows privacy registry paths for mic/camera
+    checks_def = {
+        "Microphone": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone",
+        "Camera":     r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam",
+    }
+
+    results: dict[str, str] = {}
+    for label, reg_key in checks_def.items():
+        try:
+            proc = await _asyncio.create_subprocess_exec(
+                "reg", "query", reg_key, "/v", "Value",
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+            )
+            out, err = await _asyncio.wait_for(proc.communicate(), timeout=5)
+            text = out.decode(errors="replace").strip()
+            # Value is "Allow" or "Deny" stored as a string value
+            val = "unknown"
+            for line in text.splitlines():
+                if "Value" in line and "REG_SZ" in line:
+                    val = line.strip().split()[-1]
+            results[label] = val
+            logger.info(
+                "[permissions] Windows registry check — key=%s label=%s → %r",
+                reg_key, label, val,
+            )
+        except Exception as exc:
+            results[label] = "error"
+            logger.warning(
+                "[permissions] Windows registry check FAILED — key=%s label=%s → %s",
+                reg_key, label, exc,
+            )
+
+    # Screen recording: always available on Windows
+    results["Screen Recording"] = "Allow"
+    logger.info("[permissions] Windows: Screen Recording → always allowed")
+
+    detail_parts = [f"{name}={val}" for name, val in results.items()]
+    logger.info("[permissions] Windows summary — %s", ", ".join(detail_parts))
+
+    not_allowed = [name for name, val in results.items() if val.lower() not in ("allow", "unknown")]
+    if not_allowed:
         return ComponentStatus(
             id="permissions",
             label="Device Permissions",
-            description="OS-level access for microphone, screen recording, and accessibility",
+            description="OS-level access for microphone and camera",
             status="warning",
-            detail="Permissions can be reviewed in the Devices tab",
-            deep_link=PRIVACY_DEEP_LINK,
+            detail=f"Restricted: {', '.join(not_allowed)} | All values: {', '.join(detail_parts)} — check Settings > Privacy",
         )
+
+    return ComponentStatus(
+        id="permissions",
+        label="Device Permissions",
+        description="OS-level access for microphone and camera",
+        status="ready",
+        detail="All allowed — " + ", ".join(detail_parts),
+    )
+
+
+async def _check_permissions_linux() -> ComponentStatus:
+    """Linux: check device node access and audio group membership."""
+    import grp
+    import os as _os
+    import stat as _stat
+
+    checks: dict[str, str] = {}
+
+    # Microphone: check /dev/snd/* device nodes are accessible
+    snd_devices = []
+    try:
+        import glob as _glob
+        snd_devices = _glob.glob("/dev/snd/pcmC*D*c")  # capture devices
+        readable = [d for d in snd_devices if _os.access(d, _os.R_OK)]
+        val = f"{len(readable)}/{len(snd_devices)} capture nodes readable"
+        checks["Microphone"] = val
+        logger.info("[permissions] Linux mic check — /dev/snd/pcmC*D*c → %s", val)
+    except Exception as exc:
+        checks["Microphone"] = f"error: {exc}"
+        logger.warning("[permissions] Linux mic check FAILED: %s", exc)
+
+    # Audio group membership
+    try:
+        uid = _os.getuid()
+        import pwd
+        username = pwd.getpwuid(uid).pw_name
+        audio_group = grp.getgrnam("audio")
+        in_audio = username in audio_group.gr_mem or _os.getgid() == audio_group.gr_gid
+        val = f"user={username} in_audio_group={in_audio}"
+        checks["Audio Group"] = val
+        logger.info("[permissions] Linux audio group check → %s", val)
+    except Exception as exc:
+        checks["Audio Group"] = f"error: {exc}"
+        logger.warning("[permissions] Linux audio group check FAILED: %s", exc)
+
+    # Camera: check /dev/video* nodes
+    try:
+        import glob as _glob
+        video_devices = _glob.glob("/dev/video*")
+        readable = [d for d in video_devices if _os.access(d, _os.R_OK)]
+        val = f"{len(readable)}/{len(video_devices)} video nodes readable"
+        checks["Camera"] = val
+        logger.info("[permissions] Linux camera check — /dev/video* → %s", val)
+    except Exception as exc:
+        checks["Camera"] = f"error: {exc}"
+        logger.warning("[permissions] Linux camera check FAILED: %s", exc)
+
+    # Screen recording: check for X11 display or Wayland socket
+    try:
+        display = _os.environ.get("DISPLAY", "")
+        wayland = _os.environ.get("WAYLAND_DISPLAY", "")
+        val = f"DISPLAY={display or '(not set)'} WAYLAND_DISPLAY={wayland or '(not set)'}"
+        checks["Screen Recording"] = val
+        logger.info("[permissions] Linux display check → %s", val)
+    except Exception as exc:
+        checks["Screen Recording"] = f"error: {exc}"
+
+    detail_parts = [f"{name}={val}" for name, val in checks.items()]
+    logger.info("[permissions] Linux summary — %s", ", ".join(detail_parts))
+
+    has_issue = not snd_devices  # only flag if no audio devices at all
+    if has_issue:
+        return ComponentStatus(
+            id="permissions",
+            label="Device Permissions",
+            description="OS-level access for audio, camera, and display",
+            status="warning",
+            detail="No audio capture devices found | " + ", ".join(detail_parts),
+        )
+
+    return ComponentStatus(
+        id="permissions",
+        label="Device Permissions",
+        description="OS-level access for audio, camera, and display",
+        status="ready",
+        detail=", ".join(detail_parts),
+    )
 
 
 # ---------------------------------------------------------------------------
