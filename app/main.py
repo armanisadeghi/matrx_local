@@ -521,9 +521,17 @@ async def log_requests(request: Request, call_next):
     query = str(request.url.query) if request.url.query else ""
     display_path = f"{path}?{query}" if query else path
 
-    # Health checks are noisy — log at DEBUG so they don't flood INFO output.
-    is_health = path in ("/health", "/tools/list")
-    log = logger.debug if is_health else logger.info
+    # High-frequency polling routes — log at DEBUG to avoid flooding the terminal.
+    # These fire every few seconds and produce no actionable information at INFO level.
+    _SILENT_PATHS = frozenset({
+        "/health",
+        "/tools/list",
+        "/cloud/heartbeat",
+        "/ports",
+        "/version",
+        "/logs/access",
+    })
+    log = logger.debug if path in _SILENT_PATHS else logger.info
 
     # Read body for mutating methods (doesn't consume the ASGI stream).
     body = None
