@@ -145,6 +145,7 @@ def initialize_matrx_ai() -> None:
             supabase_anon_key=supabase_anon_key,
             get_jwt=_get_jwt,
             conversation_handler=get_conversation_handler(),
+            source_app="matrx_local",
         )
         matrx_ai.initialize(client_mode=True, client_config=config)
         _client_mode_active = True
