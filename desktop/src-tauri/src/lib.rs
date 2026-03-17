@@ -264,6 +264,47 @@ async fn sidecar_status(state: tauri::State<'_, SidecarState>) -> Result<Sidecar
     })
 }
 
+/// Check if the engine health endpoint is responding on a given port.
+///
+/// This runs from Rust (not the WebView), so it is not subject to Windows'
+/// WebView2 loopback network isolation restriction that blocks `fetch()`
+/// calls to 127.0.0.1 from the JS layer on Windows.
+#[tauri::command]
+async fn check_engine_health(port: u16) -> Result<bool, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(2000))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let url = format!("http://127.0.0.1:{}/tools/list", port);
+    match client.get(&url).send().await {
+        Ok(resp) => Ok(resp.status().is_success()),
+        Err(_) => Ok(false),
+    }
+}
+
+/// Scan the engine port range (22140–22159) and return the first port that responds.
+///
+/// Same rationale as check_engine_health — runs from Rust to bypass Windows
+/// WebView2 loopback isolation that prevents JS fetch() from reaching 127.0.0.1.
+#[tauri::command]
+async fn discover_engine_port() -> Result<Option<u16>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(1000))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    for port in 22140u16..22160u16 {
+        let url = format!("http://127.0.0.1:{}/tools/list", port);
+        if let Ok(resp) = client.get(&url).send().await {
+            if resp.status().is_success() {
+                return Ok(Some(port));
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// Get recent sidecar output lines (for recovery modal diagnostics).
 #[tauri::command]
 async fn get_sidecar_logs(state: tauri::State<'_, SidecarLogs>) -> Result<Vec<String>, String> {
@@ -549,6 +590,8 @@ pub fn run() {
             restart_for_update,
             sidecar_status,
             get_sidecar_logs,
+            check_engine_health,
+            discover_engine_port,
             set_close_to_tray,
             get_close_to_tray,
             check_for_updates,

@@ -32,6 +32,14 @@ import sys
 import threading
 from pathlib import Path
 
+# On Windows, the default console encoding (CP1252) can't represent Unicode
+# characters used in log messages (e.g. ✓, ─).  Reconfigure stdout/stderr to
+# UTF-8 immediately so logging never raises UnicodeEncodeError.
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+
 def _read_version() -> str:
     """Read version — tries importlib.metadata first (works in packaged binary),
     then falls back to parsing pyproject.toml (works in dev mode and PyInstaller)."""

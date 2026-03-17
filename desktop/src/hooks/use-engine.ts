@@ -89,6 +89,10 @@ export function useEngine(authenticated = true) {
       update({ status: "discovering", error: null });
       emitClientLog("cmd", "Engine initialization started", "engine");
 
+      // Holds the engine URL confirmed via Rust IPC (bypasses Windows loopback restriction).
+      // Set inside the Tauri block below; used to skip the JS fetch port scan.
+      let tauriConfirmedUrl: string | null = null;
+
       // In Tauri, start the sidecar first
       if (isTauri()) {
         update({ status: "starting" });
@@ -108,14 +112,17 @@ export function useEngine(authenticated = true) {
         // ── KEY FIX: Wait for the sidecar to actually be ready ──────
         // startSidecar() returns as soon as the process is spawned.
         // The PyInstaller binary takes 5-30s to boot and bind a port.
-        // We poll the default port (and the range) until it responds.
+        // We poll via Rust IPC (check_engine_health) which is NOT subject to
+        // the Windows WebView2 loopback network isolation that blocks JS fetch()
+        // calls to 127.0.0.1 from within the WebView sandbox.
         emitClientLog("info", "Waiting for engine to become reachable (up to 60s)...", "engine");
         const ready = await waitForEngine("http://127.0.0.1:22140", 60, 1000);
+        let confirmedUrl: string | null = ready ? "http://127.0.0.1:22140" : null;
         if (!ready) {
           emitClientLog("warn", "Default port not responding — scanning port range...", "engine");
-          // Try the full port range in case it bound to a different port
-          const altUrl = await discoverEnginePort();
-          if (!altUrl) {
+          // discoverEnginePort() uses Rust IPC when in Tauri — not blocked by WebView2
+          confirmedUrl = await discoverEnginePort();
+          if (!confirmedUrl) {
             emitClientLog("error", "Engine never became reachable — sidecar may have crashed", "engine");
             update({
               status: "error",
@@ -123,15 +130,23 @@ export function useEngine(authenticated = true) {
             });
             return;
           }
-          emitClientLog("success", `Engine found at alternate URL: ${altUrl}`, "engine");
+          emitClientLog("success", `Engine found at alternate URL: ${confirmedUrl}`, "engine");
         } else {
           emitClientLog("success", "Engine is responding on port 22140", "engine");
         }
+
+        // Pass the confirmed URL directly so engine.discover() doesn't do another
+        // round of JS fetch() scans (which are blocked on Windows by WebView2).
+        tauriConfirmedUrl = confirmedUrl;
       }
 
-      // Discover the engine (port scan)
+      // Discover the engine URL. In Tauri we pass the Rust-confirmed URL to skip
+      // JS fetch() port scanning (blocked on Windows by WebView2 loopback isolation).
+      // In browser dev mode, fall through to the standard JS port scan.
       emitClientLog("info", "Discovering engine URL...", "engine");
-      const url = await engine.discover();
+      const url = tauriConfirmedUrl
+        ? await engine.discover(tauriConfirmedUrl)
+        : await engine.discover();
       if (!url) {
         emitClientLog("error", "Engine not found on any port 22140-22159", "engine");
         update({

@@ -84,6 +84,8 @@ _Last updated: 2026-03-16_
 - No streaming when `tools` param is provided — always `stream: false` for tool calls
 - GGUF magic bytes are `0x47475546`, NOT the GGML `0x67676d6c` used by Whisper
 - On Windows: add `windowsHideConsole: true` to sidecar config to suppress console window
+- [x] **Windows: UnicodeEncodeError on startup** — Fixed by reconfiguring stdout/stderr to UTF-8 at the top of `run.py` (`sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")`). CP1252 can't encode ✓ and ─ chars used in log messages (2026-03-17).
+- [x] **Windows: Engine starts but Tauri port scan says "No open ports"** — Root cause: Windows WebView2 loopback network isolation blocks `fetch()` from JS to `127.0.0.1`. Fixed by adding `check_engine_health` and `discover_engine_port` Rust commands (reqwest bypasses the sandbox restriction). `waitForEngine()` and `discoverEnginePort()` in `sidecar.ts` now delegate to these Rust commands when inside Tauri (2026-03-17).
 
 ---
 

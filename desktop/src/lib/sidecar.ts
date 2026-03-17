@@ -23,6 +23,19 @@ export function isTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/**
+ * Whether we're running on Windows.
+ *
+ * Used to gate the Rust-IPC health-check path — Windows WebView2 blocks
+ * JS fetch() to 127.0.0.1 due to loopback network isolation, so we route
+ * those calls through Rust (reqwest) instead.  macOS/Linux WKWebView has
+ * no such restriction and keeps using direct JS fetch() to avoid changing
+ * working behaviour on those platforms.
+ */
+export function isWindows(): boolean {
+  return navigator.userAgent.includes("Windows");
+}
+
 /** Start the Python engine sidecar (Tauri only). */
 export async function startSidecar(): Promise<void> {
   const inv = await loadTauriInvoke();
@@ -117,18 +130,38 @@ export async function getSidecarLogs(): Promise<string[]> {
 /**
  * Wait for the engine health endpoint to respond.
  * Defaults tuned for PyInstaller sidecar cold boot (~10-30s).
+ *
+ * On Windows inside Tauri, delegates to the Rust `check_engine_health` command
+ * because Windows WebView2 loopback network isolation blocks JS fetch() to
+ * 127.0.0.1.  On macOS/Linux the original JS fetch() path is preserved — those
+ * platforms have no loopback restriction and the fetch path was already working.
  */
 export async function waitForEngine(
   baseUrl: string,
   maxRetries = 60,
   intervalMs = 1000
 ): Promise<boolean> {
+  // Only use Rust IPC on Windows — macOS/Linux work fine with JS fetch()
+  const useRust = isTauri() && isWindows();
+  const inv = useRust ? await loadTauriInvoke() : null;
+
+  // Extract port from baseUrl for the Rust path
+  const portMatch = baseUrl.match(/:(\d+)/);
+  const port = portMatch ? parseInt(portMatch[1], 10) : 22140;
+
   for (let i = 0; i < maxRetries; i++) {
     try {
-      const resp = await fetch(`${baseUrl}/tools/list`, {
-        signal: AbortSignal.timeout(2000),
-      });
-      if (resp.ok) return true;
+      let healthy: boolean;
+      if (inv) {
+        // Rust HTTP request — not subject to Windows WebView2 loopback isolation
+        healthy = (await inv("check_engine_health", { port })) as boolean;
+      } else {
+        const resp = await fetch(`${baseUrl}/tools/list`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        healthy = resp.ok;
+      }
+      if (healthy) return true;
     } catch {
       // Not ready yet
     }
@@ -140,8 +173,25 @@ export async function waitForEngine(
 /**
  * Scan the engine port range and return the first port that responds.
  * This is a standalone helper so the recovery modal can use it independently.
+ *
+ * On Windows inside Tauri, delegates to the Rust `discover_engine_port` command
+ * to bypass WebView2 loopback isolation.  macOS/Linux use JS fetch() unchanged.
  */
 export async function discoverEnginePort(): Promise<string | null> {
+  // Only use Rust IPC on Windows — preserves existing macOS/Linux behaviour
+  if (isTauri() && isWindows()) {
+    const inv = await loadTauriInvoke();
+    if (inv) {
+      try {
+        const port = (await inv("discover_engine_port")) as number | null;
+        if (port != null) return `http://127.0.0.1:${port}`;
+      } catch {
+        // Fall through to JS scan
+      }
+    }
+  }
+
+  // JS fetch scan — works on macOS/Linux; fallback for Windows if Rust IPC fails
   const ports = Array.from({ length: 20 }, (_, i) => 22140 + i);
   for (const port of ports) {
     try {

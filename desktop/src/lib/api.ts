@@ -132,8 +132,20 @@ class EngineAPI {
     return { Authorization: `Bearer ${token}` };
   }
 
-  /** Discover the engine port by scanning the known range. */
-  async discover(): Promise<string | null> {
+  /**
+   * Discover the engine port by scanning the known range.
+   *
+   * Accepts an optional `knownUrl` that bypasses the port scan — used when
+   * the Rust layer has already identified the port (e.g. via `discover_engine_port`
+   * which bypasses Windows WebView2 loopback network isolation).
+   */
+  async discover(knownUrl?: string): Promise<string | null> {
+    if (knownUrl) {
+      this.baseUrl = knownUrl;
+      this.wsUrl = knownUrl.replace("http://", "ws://") + "/ws";
+      return knownUrl;
+    }
+
     for (const port of DISCOVERY_PORTS) {
       try {
         const resp = await fetch(`http://127.0.0.1:${port}/tools/list`, {
