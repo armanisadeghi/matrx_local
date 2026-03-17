@@ -197,7 +197,7 @@ function LevelFilters({
 
 function LogRow({ line }: { line: ClientLogLine }) {
   return (
-    <div className="flex gap-2 min-w-0 hover:bg-zinc-900/40 px-1 rounded">
+    <div className="flex gap-2 min-w-0 hover:bg-zinc-900 px-1 rounded">
       <span className="text-zinc-700 shrink-0 tabular-nums select-none text-[10px] pt-px">{line.time}</span>
       <span className={cn("shrink-0 select-none tabular-nums font-semibold text-[10px] pt-px w-8", LEVEL_COLOR[line.level])}>
         {LEVEL_LABEL[line.level]}
@@ -214,16 +214,19 @@ function LogRow({ line }: { line: ClientLogLine }) {
 
 // ---------------------------------------------------------------------------
 // Log pane (filterable, no auto-scroll)
+// Accepts onVisibleChange so the parent can copy exactly what's visible.
 // ---------------------------------------------------------------------------
 
 function LogPane({
   logs,
   emptyMessage,
   filterKey,
+  onVisibleChange,
 }: {
   logs: ClientLogLine[];
   emptyMessage: string;
   filterKey: string;
+  onVisibleChange: (visible: ClientLogLine[]) => void;
 }) {
   const [activeFilters, setActiveFilters] = useState<Set<LogLevel>>(
     () => new Set(ALL_LEVELS),
@@ -238,7 +241,7 @@ function LogPane({
     setActiveFilters((prev) => {
       const next = new Set(prev);
       if (next.has(level)) {
-        if (next.size === 1) return prev; // keep at least one
+        if (next.size === 1) return prev;
         next.delete(level);
       } else {
         next.add(level);
@@ -255,6 +258,13 @@ function LogPane({
     [logs, activeFilters],
   );
 
+  // Notify parent whenever the visible set changes so copy always reflects filters
+  const onVisibleChangeRef = useRef(onVisibleChange);
+  onVisibleChangeRef.current = onVisibleChange;
+  useEffect(() => {
+    onVisibleChangeRef.current(visible);
+  }, [visible]);
+
   return (
     <>
       <LevelFilters logs={logs} activeFilters={activeFilters} onToggle={toggleFilter} />
@@ -267,9 +277,6 @@ function LogPane({
           visible.map((line) => <LogRow key={line.id} line={line} />)
         )}
       </div>
-      {/* Expose filtered lines for the copy handler via a data attr trick — we
-          surface them via a callback ref approach instead */}
-      <div data-filtered-count={visible.length} className="hidden" />
     </>
   );
 }
@@ -288,38 +295,92 @@ const SOURCE_LABELS: Record<string, string> = {
   setup:  "Setup Wizard",
 };
 
-function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
-  const sources = useMemo(() => {
-    const map = new Map<string, { info: number; success: number; warn: number; error: number; data: number; cmd: number; lastError: string | null; lastWarn: string | null }>();
+interface SourceStats {
+  info: number; success: number; warn: number;
+  error: number; data: number; cmd: number;
+  errors: string[];
+  warns: string[];
+}
 
-    const knownSources = [...SOURCE_ORDER];
-    // Add any unknown sources
-    logs.forEach((l) => {
-      const s = l.source ?? "unknown";
-      if (!knownSources.includes(s)) knownSources.push(s);
-    });
+function buildSourceMap(logs: ClientLogLine[]): Map<string, SourceStats> {
+  const map = new Map<string, SourceStats>();
+  const knownSources = [...SOURCE_ORDER];
+  logs.forEach((l) => {
+    const s = l.source ?? "unknown";
+    if (!knownSources.includes(s)) knownSources.push(s);
+  });
+  knownSources.forEach((s) => {
+    map.set(s, { info: 0, success: 0, warn: 0, error: 0, data: 0, cmd: 0, errors: [], warns: [] });
+  });
+  logs.forEach((l) => {
+    const s = l.source ?? "unknown";
+    if (!map.has(s)) map.set(s, { info: 0, success: 0, warn: 0, error: 0, data: 0, cmd: 0, errors: [], warns: [] });
+    const e = map.get(s)!;
+    e[l.level]++;
+    if (l.level === "error") e.errors.push(`  ${l.time} ${l.message}`);
+    if (l.level === "warn")  e.warns.push(`  ${l.time} ${l.message}`);
+  });
+  return map;
+}
 
-    knownSources.forEach((s) => {
-      map.set(s, { info: 0, success: 0, warn: 0, error: 0, data: 0, cmd: 0, lastError: null, lastWarn: null });
-    });
-
-    logs.forEach((l) => {
-      const s = l.source ?? "unknown";
-      if (!map.has(s)) map.set(s, { info: 0, success: 0, warn: 0, error: 0, data: 0, cmd: 0, lastError: null, lastWarn: null });
-      const entry = map.get(s)!;
-      entry[l.level]++;
-      if (l.level === "error" && !entry.lastError) entry.lastError = l.message;
-      if (l.level === "warn" && !entry.lastWarn) entry.lastWarn = l.message;
-    });
-
-    return [...map.entries()].filter(([, v]) =>
-      (v.info + v.success + v.warn + v.error + v.data + v.cmd) > 0
-    );
-  }, [logs]);
+function buildIssueReport(logs: ClientLogLine[]): string {
+  const map = buildSourceMap(logs);
+  const now = new Date().toLocaleString("en-US", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  });
 
   const totalErrors = logs.filter((l) => l.level === "error").length;
-  const totalWarns = logs.filter((l) => l.level === "warn").length;
-  const totalLines = logs.length;
+  const totalWarns  = logs.filter((l) => l.level === "warn").length;
+
+  const lines: string[] = [
+    `=== Matrx Issue Report — ${now} ===`,
+    `Total: ${logs.length} log lines | ${totalErrors} errors | ${totalWarns} warnings`,
+    "",
+  ];
+
+  for (const [source, stats] of map.entries()) {
+    if (stats.error === 0 && stats.warn === 0) continue;
+    const label = SOURCE_LABELS[source] ?? source;
+    lines.push(`── ${label} ──`);
+    lines.push(`   errors: ${stats.error}  warnings: ${stats.warn}`);
+    if (stats.errors.length > 0) {
+      lines.push("   ERRORS:");
+      stats.errors.forEach((m) => lines.push(m));
+    }
+    if (stats.warns.length > 0) {
+      lines.push("   WARNINGS:");
+      stats.warns.forEach((m) => lines.push(m));
+    }
+    lines.push("");
+  }
+
+  if (lines[lines.length - 1] === "") lines.pop();
+  lines.push("=== END ===");
+  return lines.join("\n");
+}
+
+function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
+  const [copiedReport, setCopiedReport] = useState(false);
+
+  const sourceMap = useMemo(() => buildSourceMap(logs), [logs]);
+  const sources = useMemo(
+    () => [...sourceMap.entries()].filter(([, v]) =>
+      (v.info + v.success + v.warn + v.error + v.data + v.cmd) > 0
+    ),
+    [sourceMap],
+  );
+
+  const totalErrors = logs.filter((l) => l.level === "error").length;
+  const totalWarns  = logs.filter((l) => l.level === "warn").length;
+  const hasIssues   = totalErrors > 0 || totalWarns > 0;
+
+  const copyIssueReport = useCallback(async () => {
+    const report = buildIssueReport(logs);
+    await navigator.clipboard.writeText(report);
+    setCopiedReport(true);
+    setTimeout(() => setCopiedReport(false), 2000);
+  }, [logs]);
 
   if (logs.length === 0) {
     return (
@@ -332,34 +393,55 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
 
   return (
     <div className="flex-1 overflow-y-auto p-3 space-y-3">
-      {/* Top-line summary */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 flex flex-col gap-1">
-          <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider">Total Lines</span>
-          <span className="text-xl font-mono text-zinc-200">{totalLines.toLocaleString()}</span>
+      {/* Top-line summary + copy report button */}
+      <div className="flex items-stretch gap-2">
+        {/* Stats row */}
+        <div className="flex gap-2 flex-1">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex flex-col gap-0.5 min-w-[80px]">
+            <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider">Lines</span>
+            <span className="text-lg font-mono text-zinc-300">{logs.length.toLocaleString()}</span>
+          </div>
+          <div className={cn(
+            "rounded-lg border px-3 py-2 flex flex-col gap-0.5 min-w-[72px]",
+            totalErrors > 0 ? "border-red-900 bg-red-950" : "border-zinc-800 bg-zinc-900"
+          )}>
+            <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider flex items-center gap-1">
+              <AlertCircle className="h-2.5 w-2.5" />Errors
+            </span>
+            <span className={cn("text-lg font-mono", totalErrors > 0 ? "text-red-400" : "text-zinc-600")}>
+              {totalErrors}
+            </span>
+          </div>
+          <div className={cn(
+            "rounded-lg border px-3 py-2 flex flex-col gap-0.5 min-w-[72px]",
+            totalWarns > 0 ? "border-amber-900 bg-amber-950" : "border-zinc-800 bg-zinc-900"
+          )}>
+            <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider flex items-center gap-1">
+              <AlertTriangle className="h-2.5 w-2.5" />Warns
+            </span>
+            <span className={cn("text-lg font-mono", totalWarns > 0 ? "text-amber-400" : "text-zinc-600")}>
+              {totalWarns}
+            </span>
+          </div>
         </div>
-        <div className={cn(
-          "rounded-lg border p-3 flex flex-col gap-1",
-          totalErrors > 0 ? "border-red-900/60 bg-red-950/30" : "border-zinc-800 bg-zinc-900/60"
-        )}>
-          <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider flex items-center gap-1">
-            <AlertCircle className="h-3 w-3" />Errors
-          </span>
-          <span className={cn("text-xl font-mono", totalErrors > 0 ? "text-red-400" : "text-zinc-600")}>
-            {totalErrors}
-          </span>
-        </div>
-        <div className={cn(
-          "rounded-lg border p-3 flex flex-col gap-1",
-          totalWarns > 0 ? "border-amber-900/60 bg-amber-950/20" : "border-zinc-800 bg-zinc-900/60"
-        )}>
-          <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider flex items-center gap-1">
-            <AlertTriangle className="h-3 w-3" />Warnings
-          </span>
-          <span className={cn("text-xl font-mono", totalWarns > 0 ? "text-amber-400" : "text-zinc-600")}>
-            {totalWarns}
-          </span>
-        </div>
+
+        {/* Copy issue report — prominent when issues exist */}
+        <button
+          onClick={copyIssueReport}
+          disabled={!hasIssues}
+          title="Copy a clean error/warning report grouped by source — paste into AI or support ticket"
+          className={cn(
+            "flex flex-col items-center justify-center gap-1 rounded-lg border px-4 py-2 text-[10px] font-mono transition-colors disabled:opacity-30 min-w-[110px] text-center",
+            hasIssues
+              ? "border-zinc-600 bg-zinc-800 text-zinc-200 hover:bg-zinc-700 hover:border-zinc-500"
+              : "border-zinc-800 bg-zinc-900 text-zinc-600",
+          )}
+        >
+          {copiedReport
+            ? <><Check className="h-4 w-4 text-emerald-400" /><span className="text-emerald-400">Copied!</span></>
+            : <><Copy className="h-4 w-4" /><span>Copy Issue<br />Report</span></>
+          }
+        </button>
       </div>
 
       {/* Per-source breakdown */}
@@ -372,43 +454,36 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
             <div
               key={source}
               className={cn(
-                "rounded-lg border bg-zinc-900/40 p-2.5",
-                counts.error > 0
-                  ? "border-red-900/40"
-                  : counts.warn > 0
-                  ? "border-amber-900/40"
-                  : "border-zinc-800/60",
+                "rounded-lg border bg-zinc-900 p-2.5",
+                counts.error > 0 ? "border-red-900" :
+                counts.warn  > 0 ? "border-amber-900" :
+                "border-zinc-800",
               )}
             >
               <div className="flex items-center justify-between mb-1.5">
                 <span className="text-[11px] font-mono text-zinc-300">{label}</span>
-                <span className="text-[10px] font-mono text-zinc-600">{total} lines</span>
+                <span className="text-[10px] font-mono text-zinc-600">{total.toLocaleString()} lines</span>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 {(["error", "warn", "success", "info", "data", "cmd"] as LogLevel[]).map((level) => {
                   const n = counts[level];
                   if (n === 0) return null;
                   return (
-                    <span
-                      key={level}
-                      className={cn(
-                        "text-[10px] font-mono px-1.5 py-0 rounded border",
-                        LEVEL_PILL_ACTIVE[level],
-                      )}
-                    >
+                    <span key={level} className={cn("text-[10px] font-mono px-1.5 py-0 rounded border", LEVEL_PILL_ACTIVE[level])}>
                       {LEVEL_LABEL[level].trim()} {n}
                     </span>
                   );
                 })}
               </div>
-              {counts.lastError && (
-                <p className="mt-1.5 text-[10px] text-red-400/70 font-mono truncate">
-                  Last error: {counts.lastError}
+              {/* Show last error then last warning inline, truncated */}
+              {counts.errors.length > 0 && (
+                <p className="mt-1.5 text-[10px] text-red-400 font-mono truncate">
+                  ↳ {counts.errors[counts.errors.length - 1].trim()}
                 </p>
               )}
-              {!counts.lastError && counts.lastWarn && (
-                <p className="mt-1.5 text-[10px] text-amber-400/70 font-mono truncate">
-                  Last warning: {counts.lastWarn}
+              {counts.errors.length === 0 && counts.warns.length > 0 && (
+                <p className="mt-1.5 text-[10px] text-amber-400 font-mono truncate">
+                  ↳ {counts.warns[counts.warns.length - 1].trim()}
                 </p>
               )}
             </div>
@@ -590,21 +665,29 @@ export function DevTerminalPanel() {
     [allLogs, activeTabDef],
   );
 
+  // Tracks the currently visible (post-filter) lines reported by LogPane
+  const visibleLinesRef = useRef<ClientLogLine[]>([]);
+  const handleVisibleChange = useCallback((lines: ClientLogLine[]) => {
+    visibleLinesRef.current = lines;
+  }, []);
+
   const handleCopy = useCallback(async () => {
-    if (tabLogs.length === 0) return;
+    const lines = visibleLinesRef.current;
+    if (lines.length === 0) return;
     const now = new Date().toLocaleString("en-US", {
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", second: "2-digit",
       hour12: false,
     });
-    const header = `=== Matrx Log [${activeTabDef.label}] — ${now} ===`;
-    const body = tabLogs
+    const isFiltered = lines.length !== tabLogs.length;
+    const header = `=== Matrx Log [${activeTabDef.label}${isFiltered ? " — filtered" : ""}] — ${now} ===`;
+    const body = lines
       .map((l) => `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? "app"}] ${l.message}`)
       .join("\n");
     await navigator.clipboard.writeText(`${header}\n${body}\n=== END ===`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [tabLogs, activeTabDef]);
+  }, [tabLogs.length, activeTabDef]);
 
   const handleClear = useCallback(() => {
     if (activeTabDef.clearSources === null) {
@@ -631,7 +714,7 @@ export function DevTerminalPanel() {
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-50 flex flex-col border-t border-zinc-700/60 bg-zinc-950/97 backdrop-blur-sm shadow-2xl"
+      className="fixed bottom-0 left-0 right-0 z-50 flex flex-col border-t border-zinc-700/60 bg-zinc-950 shadow-2xl"
       style={{ height }}
     >
       {/* Drag handle */}
@@ -702,11 +785,11 @@ export function DevTerminalPanel() {
             <button
               onClick={handleCopy}
               disabled={tabLogs.length === 0}
-              title="Copy visible logs to clipboard"
+              title="Copy currently visible (filtered) logs to clipboard"
               className="flex items-center gap-1 px-2 py-1 text-[11px] font-mono text-zinc-500 hover:text-zinc-200 transition-colors disabled:opacity-30"
             >
               {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? "Copied!" : "Copy"}
+              {copied ? "Copied!" : "Copy filtered"}
             </button>
             <button
               onClick={handleClear}
@@ -744,6 +827,7 @@ export function DevTerminalPanel() {
             logs={tabLogs}
             emptyMessage={activeTabDef.emptyMessage}
             filterKey={activeTab}
+            onVisibleChange={handleVisibleChange}
           />
         )}
       </div>

@@ -30,7 +30,7 @@ class TokenRequest(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
     user_id: str
-    expires_in: Optional[int] = None
+    expires_in: Optional[float] = None
 
 
 class TokenResponse(BaseModel):
@@ -50,7 +50,7 @@ async def save_token(req: TokenRequest) -> dict[str, Any]:
     """
     expires_at: Optional[int] = None
     if req.expires_in:
-        expires_at = int(time.time()) + req.expires_in
+        expires_at = int(time.time()) + int(req.expires_in)
 
     repo = TokenRepo()
     await repo.save(

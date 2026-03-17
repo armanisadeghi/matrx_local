@@ -232,6 +232,10 @@ class DocumentFileManager:
 
     # ── Conflict handling ────────────────────────────────────────────────────
 
+    @property
+    def _conflicts_dir(self) -> Path:
+        return self.base_dir / ".sync" / "conflicts"
+
     def save_conflict(
         self,
         file_path: str,
@@ -243,7 +247,7 @@ class DocumentFileManager:
 
         Returns the path to the conflict directory.
         """
-        conflict_dir = CONFLICTS_DIR / note_id
+        conflict_dir = self._conflicts_dir / note_id
         conflict_dir.mkdir(parents=True, exist_ok=True)
         (conflict_dir / "local.md").write_text(local_content, encoding="utf-8")
         (conflict_dir / "remote.md").write_text(remote_content, encoding="utf-8")
@@ -251,13 +255,13 @@ class DocumentFileManager:
 
     def list_conflicts(self) -> list[str]:
         """List note IDs that have unresolved conflicts."""
-        if not CONFLICTS_DIR.exists():
+        if not self._conflicts_dir.exists():
             return []
-        return [d.name for d in CONFLICTS_DIR.iterdir() if d.is_dir()]
+        return [d.name for d in self._conflicts_dir.iterdir() if d.is_dir()]
 
     def resolve_conflict(self, note_id: str) -> bool:
         """Remove a conflict directory after resolution."""
-        conflict_dir = CONFLICTS_DIR / note_id
+        conflict_dir = self._conflicts_dir / note_id
         if conflict_dir.exists():
             shutil.rmtree(conflict_dir)
             return True
