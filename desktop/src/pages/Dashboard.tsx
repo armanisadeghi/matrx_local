@@ -37,7 +37,7 @@ import type { EngineStatus } from "@/hooks/use-engine";
 import type { SystemInfo, BrowserStatus, PermissionInfo } from "@/lib/api";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { PermissionsModal } from "@/components/PermissionsModal";
-import { usePermissions } from "@/hooks/use-permissions";
+import { usePermissionsContext } from "@/contexts/PermissionsContext";
 import { emitClientLog } from "@/hooks/use-client-log";
 import type { LogLevel } from "@/hooks/use-client-log";
 
@@ -141,7 +141,7 @@ export function Dashboard({
   }, [engineStatus]);
 
   // Tauri-plugin-backed permission states (authoritative TCC identity for the .app bundle)
-  const { permissions: nativePermissions, isLoading: nativePermsLoading } = usePermissions();
+  const { permissions: nativePermissions, isLoading: nativePermsLoading } = usePermissionsContext();
 
   const loadPermissions = useCallback(async () => {
     if (engineStatus !== "connected") return;

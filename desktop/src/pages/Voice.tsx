@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
-import { usePermissions } from "@/hooks/use-permissions";
+import { usePermissionsContext } from "@/contexts/PermissionsContext";
 import { Button } from "@/components/ui/button";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import {
@@ -411,7 +411,7 @@ function TranscribeTab({
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
 }) {
-  const { permissions, check, request, openSettings } = usePermissions();
+  const { permissions, check, request, openSettings } = usePermissionsContext();
   const [permError, setPermError] = useState<string | null>(null);
 
   // Load device list if not yet populated

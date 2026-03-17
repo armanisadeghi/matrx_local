@@ -52,7 +52,7 @@ import {
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
 import type { PermissionKey, PermissionState, PermissionStatus } from "@/hooks/use-permissions";
-import { usePermissions } from "@/hooks/use-permissions";
+import { usePermissionsContext } from "@/contexts/PermissionsContext";
 
 // ---------------------------------------------------------------------------
 // Icons per permission
@@ -286,7 +286,7 @@ export function PermissionsModal({
   onOpenChange,
   focusKey: _focusKey,
 }: PermissionsModalProps) {
-  const { permissions, isLoading, checkAll, request } = usePermissions();
+  const { permissions, isLoading, checkAll, request } = usePermissionsContext();
   const [requestingKey, setRequestingKey] = useState<PermissionKey | null>(null);
 
   // Re-check all when the modal opens

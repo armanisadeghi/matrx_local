@@ -32,6 +32,8 @@ import { NotificationToastContainer } from "@/components/notifications/Notificat
 import { StartupScreen } from "@/components/StartupScreen";
 import { FirstRunScreen } from "@/components/FirstRunScreen";
 import { DevTerminalPanel, DevTerminalProvider } from "@/components/DevTerminalPanel";
+import { PermissionsProvider } from "@/contexts/PermissionsContext";
+import { AudioDevicesProvider } from "@/contexts/AudioDevicesContext";
 import { engine } from "@/lib/api";
 
 const SETUP_DISMISSED_KEY = "matrx-setup-dismissed";
@@ -275,6 +277,8 @@ export default function App() {
   return (
     <ErrorBoundary>
       <DevTerminalProvider>
+      <PermissionsProvider>
+      <AudioDevicesProvider>
       <TooltipProvider>
         <HashRouter>
           <Routes>
@@ -330,6 +334,8 @@ export default function App() {
         {/* Persistent debug terminal — toggled via TerminalToggleButton in AppLayout */}
         <DevTerminalPanel />
       </TooltipProvider>
+      </AudioDevicesProvider>
+      </PermissionsProvider>
       </DevTerminalProvider>
     </ErrorBoundary>
   );

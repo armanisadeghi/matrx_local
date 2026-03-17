@@ -26,7 +26,7 @@ import type {
   SetupStatus, SetupComponentStatus, SetupProgressEvent, SetupCompleteEvent,
 } from "@/lib/api";
 import { PermissionsModal } from "@/components/PermissionsModal";
-import { usePermissions } from "@/hooks/use-permissions";
+import { usePermissionsContext } from "@/contexts/PermissionsContext";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { VoiceSetupStatus } from "@/lib/transcription/types";
 import type { LlmSetupStatus, LlmHardwareResult, LlmDownloadProgress } from "@/lib/llm/types";
@@ -111,7 +111,7 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
       emitClientLog("data", `${label}: [unserializable]`, "setup");
     }
   }, []);
-  const { permissions: permissionStates } = usePermissions();
+  const { permissions: permissionStates } = usePermissionsContext();
 
   // ── Load Tauri optional status ─────────────────────────────────────────
 

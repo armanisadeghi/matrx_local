@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useContext } from "react";
 import { isTauri } from "@/lib/sidecar";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
@@ -8,6 +8,7 @@ import type {
   VoiceSetupStatus,
   AudioDeviceInfo,
 } from "@/lib/transcription/types";
+import { AudioDevicesContext } from "@/contexts/AudioDevicesContext";
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
@@ -74,6 +75,14 @@ export interface TranscriptionActions {
 }
 
 export function useTranscription(): [TranscriptionState, TranscriptionActions] {
+  // Audio device state comes from the shared AudioDevicesContext — single source of truth.
+  // Fall back gracefully if the hook is used outside the provider (e.g. tests).
+  const audioCtx = useContext(AudioDevicesContext);
+  const audioDevices: AudioDeviceInfo[] = audioCtx?.audioDevices ?? [];
+  const selectedDevice: string | null = audioCtx?.selectedDevice ?? null;
+  const ctxSetSelectedDevice = audioCtx?.setSelectedDevice;
+  const ctxListAudioDevices = audioCtx?.listAudioDevices;
+
   const [setupStatus, setSetupStatus] = useState<VoiceSetupStatus | null>(null);
   const [hardwareResult, setHardwareResult] =
     useState<HardwareDetectionResult | null>(null);
@@ -86,8 +95,6 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const [isProcessingTail, setIsProcessingTail] = useState(false);
   const [segments, setSegments] = useState<WhisperSegment[]>([]);
   const [activeModel, setActiveModel] = useState<string | null>(null);
-  const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
-  const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [liveRms, setLiveRms] = useState(0);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -344,11 +351,18 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     await refreshSetupStatus();
   }, [refreshSetupStatus]);
 
-  const listAudioDevices = useCallback(async () => {
+  const listAudioDevices = useCallback(async (): Promise<AudioDeviceInfo[]> => {
+    if (ctxListAudioDevices) {
+      return ctxListAudioDevices();
+    }
+    // Fallback: call Tauri directly if context is unavailable
     const devices = await tauriInvoke<AudioDeviceInfo[]>("list_audio_input_devices");
-    setAudioDevices(devices);
     return devices;
-  }, []);
+  }, [ctxListAudioDevices]);
+
+  const setSelectedDevice = useCallback((deviceName: string | null) => {
+    ctxSetSelectedDevice?.(deviceName);
+  }, [ctxSetSelectedDevice]);
 
   const clearSegments = useCallback(() => setSegments([]), []);
   const clearError = useCallback(() => setError(null), []);

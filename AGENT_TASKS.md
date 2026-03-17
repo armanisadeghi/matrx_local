@@ -198,6 +198,13 @@ _Last updated: 2026-03-16_
 
 ## ✅ COMPLETED — Earlier Work
 
+### Single Source of Truth — Audio Devices & Permissions (2026-03-16)
+- [x] **`MicrophoneCard` (Devices page) showed "No microphones detected"** — Root cause: `Devices.tsx` called `engine.getAudioDevices()` (Python REST, fails when engine has issues) while `Voice.tsx` called Tauri IPC `list_audio_input_devices` (Rust CPAL, always works). Now both use the same Tauri IPC path via `AudioDevicesContext`.
+- [x] **`usePermissions()` instantiated 5 times simultaneously** — `Dashboard`, `Voice`, `Devices`, `PermissionsModal`, `SetupWizard` each had independent instances running `checkAll()` on mount. Replaced with `PermissionsProvider` + `usePermissionsContext()` singleton at App root.
+- [x] **`selectedDevice` lost on navigation** — was pure React state in `useTranscription`; now persisted to `localStorage` via `AudioDevicesContext`.
+- [x] **`audioDevices` fetched twice on Voice page** — `DevicesTab` always re-fetched on mount; `TranscribeTab` fetched if empty. Now both read from `AudioDevicesContext` which loads once at app startup.
+- New files: `desktop/src/contexts/AudioDevicesContext.tsx`, `desktop/src/contexts/PermissionsContext.tsx`
+
 ### Voice Transcription Pipeline (2026-03-11)
 - [x] Download validation loop — expanded VALID_WHISPER_MAGIC to cover GGUF format + LE variant; added `sync_all()` after `flush()` to fix macOS write-read race.
 - [x] Audio capture wrong sample rate — integrated `rubato` resampler for 44.1kHz/48kHz → 16kHz conversion in `AudioCapture::start()`.

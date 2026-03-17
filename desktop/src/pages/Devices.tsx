@@ -38,7 +38,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { engine } from "@/lib/api";
 import type { PermissionInfo, PermissionStatusValue } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
-import { usePermissions, PLUGIN_KEYS } from "@/hooks/use-permissions";
+import { PLUGIN_KEYS } from "@/hooks/use-permissions";
+import { usePermissionsContext } from "@/contexts/PermissionsContext";
+import { useAudioDevices } from "@/contexts/AudioDevicesContext";
+import type { AudioDeviceInfo } from "@/lib/transcription/types";
 
 interface DevicesProps {
   engineStatus: EngineStatus;
@@ -195,43 +198,31 @@ function PermissionAlert({ perm }: { perm: PermissionInfo | null }) {
 // ---------------------------------------------------------------------------
 
 function MicrophoneCard({ perm }: { perm: PermissionInfo | null }) {
-  const [devices, setDevices] = useState<Array<Record<string, unknown>>>([]);
-  const [selectedDevice, setSelectedDevice] = useState<number | null>(null);
+  // Use the shared audio devices context — same source of truth as Voice page.
+  // Previously this called engine.getAudioDevices() (Python REST), which failed
+  // when the engine wasn't up, while Voice used Tauri IPC which always works.
+  const {
+    audioDevices,
+    selectedDevice,
+    isLoading: loadingDevices,
+    listAudioDevices,
+    setSelectedDevice,
+  } = useAudioDevices();
+
   const [duration, setDuration] = useState(5);
   const [recording, setRecording] = useState(false);
   const [audioB64, setAudioB64] = useState<string | null>(null);
   const [audioMime, setAudioMime] = useState("audio/wav");
   const [error, setError] = useState<string | null>(null);
-  const [loadingDevices, setLoadingDevices] = useState(false);
-
-  const loadDevices = useCallback(async () => {
-    setLoadingDevices(true);
-    try {
-      const result = await engine.getAudioDevices();
-      const meta = result.metadata as Record<string, unknown> | null;
-      const inputs = (meta?.inputs as Array<Record<string, unknown>>) ?? [];
-      setDevices(inputs);
-      if (inputs.length > 0 && selectedDevice === null) {
-        setSelectedDevice(Number(inputs[0].index ?? 0));
-      }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoadingDevices(false);
-    }
-  }, [selectedDevice]);
-
-  useEffect(() => {
-    loadDevices();
-  }, []);
 
   const handleRecord = async () => {
     setError(null);
     setAudioB64(null);
     setRecording(true);
     try {
+      // Test recording uses the system default or first available device.
+      // The selectedDevice preference is for transcription (set on the Voice page).
       const result = await engine.recordAudio({
-        device_index: selectedDevice ?? undefined,
         duration_seconds: duration,
       });
       const meta = result.metadata as Record<string, unknown> | null;
@@ -257,37 +248,48 @@ function MicrophoneCard({ perm }: { perm: PermissionInfo | null }) {
       <PermissionAlert perm={perm} />
 
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={loadDevices} disabled={loadingDevices}>
+        <Button variant="outline" size="sm" onClick={listAudioDevices} disabled={loadingDevices}>
           {loadingDevices ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
           Scan Devices
         </Button>
+        {selectedDevice && (
+          <span className="text-xs text-primary font-medium">
+            Active: {selectedDevice}
+          </span>
+        )}
       </div>
 
-      {devices.length > 0 && (
+      {audioDevices.length > 0 && (
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {devices.map((dev) => (
-              <button
-                key={String(dev.index)}
-                onClick={() => setSelectedDevice(Number(dev.index))}
-                className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:border-primary/40 ${
-                  selectedDevice === Number(dev.index)
-                    ? "border-primary bg-primary/5"
-                    : "border-border bg-background"
-                }`}
-              >
-                <Mic className={`h-4 w-4 flex-shrink-0 ${selectedDevice === Number(dev.index) ? "text-primary" : "text-muted-foreground"}`} />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">{String(dev.name)}</p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {dev.channels ? `${dev.channels}ch` : ""} {dev.sample_rate ? `${Math.round(Number(dev.sample_rate) / 1000)}kHz` : ""}
-                  </p>
-                </div>
-                {selectedDevice === Number(dev.index) && (
-                  <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
-                )}
-              </button>
-            ))}
+            {audioDevices.map((dev: AudioDeviceInfo) => {
+              const isSelected = selectedDevice === dev.name;
+              const isDefault = !selectedDevice && dev.is_default;
+              return (
+                <button
+                  key={dev.name}
+                  onClick={() => setSelectedDevice(isSelected ? null : dev.name)}
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:border-primary/40 ${
+                    isSelected || isDefault
+                      ? "border-primary bg-primary/5"
+                      : "border-border bg-background"
+                  }`}
+                >
+                  <Mic className={`h-4 w-4 flex-shrink-0 ${isSelected || isDefault ? "text-primary" : "text-muted-foreground"}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium">{dev.name}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {dev.channels.length > 0 ? `${Math.max(...dev.channels)}ch` : ""}
+                      {dev.sample_rates.length > 0 ? ` · ${Math.round(Math.max(...dev.sample_rates) / 1000)}kHz` : ""}
+                      {dev.is_default ? " · default" : ""}
+                    </p>
+                  </div>
+                  {(isSelected || isDefault) && (
+                    <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           <div className="flex items-center gap-3">
@@ -310,7 +312,7 @@ function MicrophoneCard({ perm }: { perm: PermissionInfo | null }) {
           <div className="flex items-center gap-2">
             <Button
               onClick={handleRecord}
-              disabled={recording || selectedDevice === null}
+              disabled={recording}
               size="sm"
               className={recording ? "bg-red-500 hover:bg-red-600" : ""}
             >
@@ -330,8 +332,8 @@ function MicrophoneCard({ perm }: { perm: PermissionInfo | null }) {
         </div>
       )}
 
-      {devices.length === 0 && !loadingDevices && (
-        <p className="text-xs text-muted-foreground">No microphones detected. Grant permission and click Scan Devices.</p>
+      {audioDevices.length === 0 && !loadingDevices && (
+        <p className="text-xs text-muted-foreground">No microphones detected. Grant microphone permission and click Scan Devices.</p>
       )}
 
       {error && (
@@ -1478,7 +1480,7 @@ export function Devices({ engineStatus }: DevicesProps) {
 
   // Tauri plugin: authoritative TCC status for microphone, camera, screen_recording,
   // accessibility, full_disk_access, and input_monitoring on macOS.
-  const { permissions: pluginPermissions, checkAll: recheckPlugin, isLoading: pluginLoading } = usePermissions();
+  const { permissions: pluginPermissions, checkAll: recheckPlugin, isLoading: pluginLoading } = usePermissionsContext();
 
   const loadPermissions = useCallback(async () => {
     if (engineStatus !== "connected") return;

@@ -241,7 +241,7 @@ const POST_REQUEST_DELAY_MS = 1200;
 // Hook
 // ---------------------------------------------------------------------------
 
-interface UsePermissionsReturn {
+export interface UsePermissionsReturn {
   permissions: Map<PermissionKey, PermissionState>;
   isLoading: boolean;
   check: (key: PermissionKey) => Promise<PermissionStatus>;
