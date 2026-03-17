@@ -1394,7 +1394,7 @@ function InferenceTab() {
   // ── No server running — launch screen ─────────────────────────────────
   if (!port) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-16rem)]">
+      <div className="flex items-center justify-center h-full">
         <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
@@ -1476,7 +1476,7 @@ function InferenceTab() {
 
   // ── Full playground layout ─────────────────────────────────────────────
   return (
-    <div className="flex h-[calc(100vh-13rem)] gap-0 rounded-xl border overflow-hidden bg-background">
+    <div className="flex h-full gap-0 rounded-xl border overflow-hidden bg-background">
 
       {/* ── Left sidebar: conversation list ── */}
       <div className="w-56 shrink-0 flex flex-col border-r bg-muted/20">
@@ -2341,8 +2341,8 @@ function LocalModelsInner() {
   const { serverStatus } = state;
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <div className="mb-6">
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="shrink-0 px-6 pt-6 pb-4">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -2362,8 +2362,8 @@ function LocalModelsInner() {
         </div>
       </div>
 
-      <Tabs defaultValue="setup" className="flex-1 flex flex-col">
-        <TabsList className="w-fit">
+      <Tabs defaultValue="setup" className="flex-1 flex flex-col min-h-0 px-6">
+        <TabsList className="w-fit shrink-0">
           <TabsTrigger value="setup" className="gap-1.5">
             <Zap className="h-3.5 w-3.5" />
             Setup
@@ -2386,20 +2386,20 @@ function LocalModelsInner() {
           </TabsTrigger>
         </TabsList>
 
-        <div className="flex-1 overflow-auto pt-6">
-          <TabsContent value="setup" className="m-0">
+        <div className="flex-1 min-h-0 pt-6 overflow-hidden">
+          <TabsContent value="setup" className="m-0 h-full overflow-auto">
             <SetupTab />
           </TabsContent>
-          <TabsContent value="models" className="m-0">
+          <TabsContent value="models" className="m-0 h-full overflow-auto">
             <ModelsTab />
           </TabsContent>
           <TabsContent value="inference" className="m-0 h-full">
             <InferenceTab />
           </TabsContent>
-          <TabsContent value="server" className="m-0">
+          <TabsContent value="server" className="m-0 h-full overflow-auto">
             <ServerTab />
           </TabsContent>
-          <TabsContent value="hardware" className="m-0">
+          <TabsContent value="hardware" className="m-0 h-full overflow-auto">
             <HardwareTab />
           </TabsContent>
         </div>
