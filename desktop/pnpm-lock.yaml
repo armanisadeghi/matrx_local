@@ -122,9 +122,6 @@ importers:
       tailwindcss-animate:
         specifier: ^1.0.7
         version: 1.0.7(tailwindcss@3.4.19)
-      tauri-plugin-macos-permissions-api:
-        specifier: ^2.3.0
-        version: 2.3.0
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -159,6 +156,10 @@ importers:
       vite:
         specifier: ^6.0.5
         version: 6.4.1(@types/node@25.3.0)(jiti@1.21.7)
+    optionalDependencies:
+      tauri-plugin-macos-permissions-api:
+        specifier: ^2.3.0
+        version: 2.3.0
 
 packages:
 
@@ -4109,6 +4110,7 @@ snapshots:
   tauri-plugin-macos-permissions-api@2.3.0:
     dependencies:
       '@tauri-apps/api': 2.10.1
+    optional: true
 
   thenify-all@1.6.0:
     dependencies:
