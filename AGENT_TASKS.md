@@ -105,7 +105,8 @@ _Last updated: 2026-03-18_
 ### Devices / Camera
 - [ ] **Camera capture and video recording** — Now uses `opencv-python` (`cv2`) which is installed. Needs testing end-to-end via `GET /devices/camera` and `POST /devices/record-video`. Screen recording uses system `ffmpeg` (if installed) with `mss` as fallback — also needs testing.
 
-### Dashboard
+### Dashboard / System Resources
+- [x] **Disk usage in System Resources is inaccurate on macOS** — Fixed 2026-03-18. `psutil.disk_usage("/")` uses `os.statvfs()` which doesn't account for APFS features (reserved storage, purgeable space, local snapshots). On macOS, `tool_system_resources` now uses `df -P /` output parsing for disk metrics that match "About This Mac".
 - [ ] **Status indicators can lag behind actual engine state** — Investigate if the 10s health poll interval is too slow for the UI to feel responsive.
 
 ### Settings

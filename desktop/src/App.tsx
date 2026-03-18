@@ -35,6 +35,8 @@ import { DevTerminalPanel, DevTerminalProvider } from "@/components/DevTerminalP
 import { PermissionsProvider } from "@/contexts/PermissionsContext";
 import { AudioDevicesProvider } from "@/contexts/AudioDevicesContext";
 import { engine } from "@/lib/api";
+import { initUnifiedLog, initTauriLogStream, stopEngineStreams } from "@/hooks/use-unified-log";
+import supabase from "@/lib/supabase";
 
 const SETUP_DISMISSED_KEY = "matrx-setup-dismissed";
 
@@ -76,6 +78,28 @@ export default function App() {
 
   const notif = useNotifications();
   const [updateState, updateActions] = useAutoUpdate();
+
+  // ---------------------------------------------------------------------------
+  // Unified log streams — self-initiating, independent of which page is open
+  // ---------------------------------------------------------------------------
+
+  // Tauri sidecar listener starts immediately on mount (no engine needed)
+  useEffect(() => {
+    initTauriLogStream();
+  }, []);
+
+  // Engine streams start/stop with engine connection state
+  useEffect(() => {
+    if (status === "connected" && url) {
+      const getToken = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        return session?.access_token ?? null;
+      };
+      initUnifiedLog(url, getToken);
+    } else if (status !== "connected") {
+      stopEngineStreams();
+    }
+  }, [status, url]);
 
   // Keep only the 3 most recent for the toast stack
   const toasts = notif.notifications.slice(0, 3);

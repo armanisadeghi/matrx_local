@@ -38,8 +38,6 @@ import type { SystemInfo, BrowserStatus, PermissionInfo } from "@/lib/api";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { PermissionsModal } from "@/components/PermissionsModal";
 import { usePermissionsContext } from "@/contexts/PermissionsContext";
-import { emitClientLog } from "@/hooks/use-client-log";
-import type { LogLevel } from "@/hooks/use-client-log";
 
 interface DashboardProps {
   engineStatus: EngineStatus;
@@ -81,64 +79,6 @@ export function Dashboard({
   const [installingBrowser, setInstallingBrowser] = useState(false);
   const [browserInstallMessage, setBrowserInstallMessage] = useState<string | null>(null);
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
-
-  // ── Live log stream → unified terminal ────────────────────────────────────
-  const logStopRef = useRef<(() => void) | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const streamActiveRef = useRef(false);
-
-  const startLogStream = useCallback(() => {
-    if (streamActiveRef.current) return;
-    streamActiveRef.current = true;
-    abortRef.current = new AbortController();
-
-    const lvlMap: Record<string, LogLevel> = {
-      debug: "info",
-      info: "info",
-      warning: "warn",
-      error: "error",
-      critical: "error",
-    };
-
-    const stop = engine.streamLogs({
-      signal: abortRef.current.signal,
-      lines: 300,
-      onConnected: (logPath) => {
-        emitClientLog("info", `Connected — streaming from ${logPath}`, "server");
-      },
-      onHistoryEnd: (n) => {
-        emitClientLog("info", `── History (${n} lines) ──────────────────────────`, "server");
-      },
-      onLine: (data) => {
-        emitClientLog(lvlMap[data.level] ?? "info", data.line, "server");
-      },
-      onError: (err) => {
-        emitClientLog("error", `Stream error: ${err}`, "server");
-        streamActiveRef.current = false;
-      },
-    });
-
-    logStopRef.current = () => {
-      stop();
-      abortRef.current?.abort();
-      streamActiveRef.current = false;
-    };
-  }, []);
-
-  const stopLogStream = useCallback(() => {
-    logStopRef.current?.();
-    logStopRef.current = null;
-  }, []);
-
-  // Auto-start when engine connects, stop when it disconnects
-  useEffect(() => {
-    if (engineStatus === "connected" && !streamActiveRef.current) {
-      startLogStream();
-    } else if (engineStatus !== "connected" && streamActiveRef.current) {
-      stopLogStream();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engineStatus]);
 
   // Tauri-plugin-backed permission states (authoritative TCC identity for the .app bundle)
   const { permissions: nativePermissions, isLoading: nativePermsLoading } = usePermissionsContext();

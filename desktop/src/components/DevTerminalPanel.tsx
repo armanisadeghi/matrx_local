@@ -3,16 +3,21 @@
  *
  * Tabs:
  *   Overview  — live summary: counts by source & level, last error/warn per source
- *   Server    — engine SSE / sidecar-log lines (source="server" | source="tauri")
+ *   Server    — engine SSE / sidecar-log / raw system.log (source="server"|"tauri"|"syslog")
  *   Client    — auth, engine discovery, voice, setup (all other sources)
+ *   HTTP      — structured HTTP request log (source="access")
  *   All       — every log line regardless of source
  *
  * Features:
- *   - No auto-scroll ever (user controls scroll position)
  *   - Level filter pills per tab (toggle individual levels; counts shown)
- *   - Copy button copies the currently visible (filtered) lines
+ *   - Group similar toggle — collapses identical INFO/OK/DATA/CMD lines; WARN/ERR always individual
+ *   - Auto-scroll toggle (off by default)
+ *   - Pause/Resume — freezes incoming live events without closing streams
+ *   - Copy button copies the currently visible (filtered+grouped) lines
+ *   - Copy Issue Report on Overview — structured error/warning digest for AI debugging
  *   - Clear scoped to the active tab's source set
  *   - Drag handle to resize height
+ *   - HTTP tab: structured grid with method/status color-coding, text filter, stats bar
  *   - Toggle via DOM event from TerminalToggleButton in the status bar
  */
 
@@ -38,17 +43,23 @@ import {
   AlertTriangle,
   AlertCircle,
   Activity,
+  Pause,
+  Play,
+  ArrowDown,
+  Globe,
+  Clock,
+  CheckCircle,
+  Filter,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { isTauri } from "@/lib/sidecar";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   useClientLogSubscriber,
   clearClientLog,
   clearClientLogBySource,
-  emitClientLog,
-} from "@/hooks/use-client-log";
-import type { LogLevel, ClientLogLine } from "@/hooks/use-client-log";
+  setLogsPaused,
+  useLogsPaused,
+} from "@/hooks/use-unified-log";
+import type { LogLevel, ClientLogLine, AccessEntry } from "@/hooks/use-unified-log";
 
 // ---------------------------------------------------------------------------
 // Context — broadcasts panel height so AppLayout can compensate
@@ -108,11 +119,14 @@ const MAX_HEIGHT = 750;
 
 const ALL_LEVELS: LogLevel[] = ["info", "success", "warn", "error", "data", "cmd"];
 
-// Sources that live in the "Server" tab
-const SERVER_SOURCES = new Set(["server", "tauri"]);
+// Sources that live in the "Server" tab (includes syslog now)
+const SERVER_SOURCES = new Set(["server", "tauri", "syslog"]);
 
 // Sources that live in the "Client" tab
 const CLIENT_SOURCES = new Set(["engine", "auth", "voice", "setup"]);
+
+// Source for the HTTP tab
+const HTTP_SOURCE = "access";
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
   info:    "text-zinc-400",
@@ -143,16 +157,6 @@ const LEVEL_PILL_ACTIVE: Record<LogLevel, string> = {
 
 const LEVEL_PILL_INACTIVE = "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700";
 
-// Heuristic level detection for raw server strings (no structured level)
-function inferServerLevel(text: string): LogLevel {
-  const t = text.toLowerCase();
-  if (t.includes("error") || t.includes("failed") || t.includes("traceback") || t.includes("exception")) return "error";
-  if (t.includes("warning") || t.includes("warn")) return "warn";
-  if (t.includes("ready") || t.includes("✓") || t.includes("started") || t.includes("success")) return "success";
-  if (t.startsWith("[stdout]") || t.includes("info")) return "info";
-  return "info";
-}
-
 // ---------------------------------------------------------------------------
 // Group-similar logic
 // ---------------------------------------------------------------------------
@@ -161,26 +165,24 @@ function inferServerLevel(text: string): LogLevel {
 const GROUPABLE_LEVELS = new Set<LogLevel>(["info", "success", "data", "cmd"]);
 
 interface GroupedLogRow {
-  representative: ClientLogLine; // last occurrence shown
-  count: number;                 // total occurrences in the group
-  key: string;                   // grouping key
+  representative: ClientLogLine;
+  count: number;
+  key: string;
 }
 
-/** Collapse consecutive (or all) identical-key rows for groupable levels. */
 function groupSimilarLogs(logs: ClientLogLine[]): GroupedLogRow[] {
   const rows: GroupedLogRow[] = [];
   const groupMap = new Map<string, GroupedLogRow>();
 
   for (const line of logs) {
     if (!GROUPABLE_LEVELS.has(line.level)) {
-      // Warn/error: always emit individually, flush the group map so ordering is preserved
       rows.push({ representative: line, count: 1, key: String(line.id) });
     } else {
       const key = `${line.level}|${line.source ?? ""}|${line.message}`;
       const existing = groupMap.get(key);
       if (existing) {
         existing.count++;
-        existing.representative = line; // show the latest occurrence
+        existing.representative = line;
       } else {
         const row: GroupedLogRow = { representative: line, count: 1, key };
         groupMap.set(key, row);
@@ -193,6 +195,36 @@ function groupSimilarLogs(logs: ClientLogLine[]): GroupedLogRow[] {
 }
 
 // ---------------------------------------------------------------------------
+// HTTP helpers (from Activity.tsx)
+// ---------------------------------------------------------------------------
+
+function statusColor(code: number): string {
+  if (code < 300) return "text-emerald-400";
+  if (code < 400) return "text-amber-400";
+  if (code < 500) return "text-orange-400";
+  return "text-red-400";
+}
+
+function methodColor(method: string): string {
+  switch (method.toUpperCase()) {
+    case "GET":    return "text-sky-400";
+    case "POST":   return "text-violet-400";
+    case "PUT":    return "text-amber-400";
+    case "DELETE": return "text-red-400";
+    case "PATCH":  return "text-orange-400";
+    default:       return "text-zinc-400";
+  }
+}
+
+function formatAccessTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString("en-US", {
+      hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+  } catch { return "—"; }
+}
+
+// ---------------------------------------------------------------------------
 // Filter pill row sub-component
 // ---------------------------------------------------------------------------
 
@@ -202,12 +234,16 @@ function LevelFilters({
   onToggle,
   groupSimilar,
   onToggleGroup,
+  autoScroll,
+  onToggleAutoScroll,
 }: {
   logs: ClientLogLine[];
   activeFilters: Set<LogLevel>;
   onToggle: (level: LogLevel) => void;
   groupSimilar: boolean;
   onToggleGroup: () => void;
+  autoScroll: boolean;
+  onToggleAutoScroll: () => void;
 }) {
   return (
     <div className="flex items-center gap-1 px-3 py-1.5 border-b border-zinc-800/60 flex-wrap">
@@ -243,6 +279,19 @@ function LevelFilters({
       >
         Group similar
       </button>
+      <button
+        onClick={onToggleAutoScroll}
+        title={autoScroll ? "Auto-scroll ON — click to disable" : "Auto-scroll OFF — click to enable"}
+        className={cn(
+          "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
+          autoScroll
+            ? "bg-zinc-700 text-zinc-200 border-zinc-500"
+            : "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700",
+        )}
+      >
+        <ArrowDown className="h-2.5 w-2.5" />
+        Scroll
+      </button>
     </div>
   );
 }
@@ -274,9 +323,143 @@ function LogRow({ line, repeatCount }: { line: ClientLogLine; repeatCount?: numb
 }
 
 // ---------------------------------------------------------------------------
-// Log pane (filterable, groupable, no auto-scroll)
-// Accepts onVisibleChange so the parent can copy exactly what's visible.
-// The callback receives the condensed copy text (respects grouping).
+// HTTP row (structured access entry display)
+// ---------------------------------------------------------------------------
+
+function HttpRow({ entry }: { entry: AccessEntry }) {
+  return (
+    <div
+      className="grid gap-2 rounded px-2 py-1 text-[11px] font-mono hover:bg-zinc-900 transition-colors"
+      style={{ gridTemplateColumns: "5rem 3.5rem 1fr auto auto" }}
+    >
+      <span className="text-zinc-600 tabular-nums select-none">{formatAccessTime(entry.timestamp)}</span>
+      <span className={cn("font-bold", methodColor(entry.method))}>{entry.method}</span>
+      <span className="text-zinc-300 truncate">
+        {entry.path}
+        {entry.query ? <span className="text-zinc-600">?{entry.query}</span> : null}
+      </span>
+      <span className="text-zinc-600 tabular-nums text-right">{entry.duration_ms.toFixed(0)}ms</span>
+      <span className={cn("font-bold tabular-nums", statusColor(entry.status))}>{entry.status}</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HTTP pane (text-filtered, stats bar, auto-scroll)
+// ---------------------------------------------------------------------------
+
+function HttpPane({
+  logs,
+  onCopyTextChange,
+}: {
+  logs: ClientLogLine[];
+  onCopyTextChange: (text: string) => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const [autoScroll, setAutoScroll] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const entries = useMemo(
+    () => logs.map((l) => l.accessEntry).filter((e): e is AccessEntry => e != null),
+    [logs],
+  );
+
+  const filtered = useMemo(() => {
+    if (!filter) return entries;
+    const q = filter.toLowerCase();
+    return entries.filter(
+      (e) =>
+        e.path.toLowerCase().includes(q) ||
+        e.method.toLowerCase().includes(q) ||
+        e.origin.toLowerCase().includes(q),
+    );
+  }, [entries, filter]);
+
+  // Auto-scroll
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [filtered, autoScroll]);
+
+  // Notify parent with copy text
+  const onCopyTextChangeRef = useRef(onCopyTextChange);
+  onCopyTextChangeRef.current = onCopyTextChange;
+  useEffect(() => {
+    const text = filtered
+      .map((e) => `${formatAccessTime(e.timestamp)} ${e.method.padEnd(7)} ${e.path}${e.query ? `?${e.query}` : ""} ${e.status} ${e.duration_ms.toFixed(0)}ms`)
+      .join("\n");
+    onCopyTextChangeRef.current(text);
+  }, [filtered]);
+
+  const successCount = filtered.filter((e) => e.status < 400).length;
+  const errorCount = filtered.filter((e) => e.status >= 400).length;
+  const avgMs = filtered.length > 0
+    ? Math.round(filtered.reduce((s, e) => s + e.duration_ms, 0) / filtered.length)
+    : 0;
+
+  return (
+    <>
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800/60">
+        <Filter className="h-3 w-3 text-zinc-600 shrink-0" />
+        <input
+          type="text"
+          placeholder="Filter by path, method, origin…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="flex-1 bg-transparent text-[11px] font-mono text-zinc-300 placeholder-zinc-700 outline-none"
+        />
+        <button
+          onClick={() => setAutoScroll((v) => !v)}
+          title={autoScroll ? "Auto-scroll ON" : "Auto-scroll OFF"}
+          className={cn(
+            "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
+            autoScroll
+              ? "bg-zinc-700 text-zinc-200 border-zinc-500"
+              : "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700",
+          )}
+        >
+          <ArrowDown className="h-2.5 w-2.5" />
+        </button>
+      </div>
+      {/* Stats bar */}
+      <div className="flex items-center gap-4 px-3 py-1 border-b border-zinc-800/60 text-[10px] font-mono text-zinc-600">
+        <span className="flex items-center gap-1">
+          <Globe className="h-2.5 w-2.5" />
+          {filtered.length} req
+        </span>
+        <span className="flex items-center gap-1 text-emerald-600">
+          <CheckCircle className="h-2.5 w-2.5" />
+          {successCount} ok
+        </span>
+        <span className={cn("flex items-center gap-1", errorCount > 0 ? "text-red-400" : "text-zinc-600")}>
+          <AlertCircle className="h-2.5 w-2.5" />
+          {errorCount} err
+        </span>
+        {filtered.length > 0 && (
+          <span className="flex items-center gap-1">
+            <Clock className="h-2.5 w-2.5" />
+            avg {avgMs}ms
+          </span>
+        )}
+      </div>
+      {/* Rows */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-1">
+        {filtered.length === 0 ? (
+          <div className="flex h-full min-h-[80px] items-center justify-center text-zinc-700 text-[11px]">
+            {entries.length === 0 ? "No HTTP requests yet" : "No requests match the filter"}
+          </div>
+        ) : (
+          filtered.map((entry, i) => <HttpRow key={i} entry={entry} />)
+        )}
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Log pane (filterable, groupable, auto-scroll, no forced scroll)
 // ---------------------------------------------------------------------------
 
 function LogPane({
@@ -295,8 +478,10 @@ function LogPane({
     () => new Set(ALL_LEVELS),
   );
   const [grouped, setGrouped] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Reset filters/grouping when the tab source set changes
+  // Reset filters when the tab source set changes
   useEffect(() => {
     setActiveFilters(new Set(ALL_LEVELS));
   }, [filterKey]);
@@ -322,23 +507,28 @@ function LogPane({
     [logs, activeFilters],
   );
 
-  // Apply grouping on top of the level-filtered list
   const groupedRows = useMemo(
     () => (grouped ? groupSimilarLogs(filtered) : null),
     [filtered, grouped],
   );
 
-  // Build copy text and notify parent whenever display changes
+  // Auto-scroll
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [filtered, groupedRows, autoScroll]);
+
+  // Build copy text and notify parent
   const onVisibleChangeRef = useRef(onVisibleChange);
   onVisibleChangeRef.current = onVisibleChange;
-
   useEffect(() => {
     let text: string;
     if (groupedRows) {
       text = groupedRows
         .map(({ representative: l, count }) => {
-          const countSuffix = count > 1 ? ` ×${count}` : "";
-          return `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? "app"}] ${l.message}${countSuffix}`;
+          const suffix = count > 1 ? ` ×${count}` : "";
+          return `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? "app"}] ${l.message}${suffix}`;
         })
         .join("\n");
     } else {
@@ -357,8 +547,10 @@ function LogPane({
         onToggle={toggleFilter}
         groupSimilar={grouped}
         onToggleGroup={() => setGrouped((v) => !v)}
+        autoScroll={autoScroll}
+        onToggleAutoScroll={() => setAutoScroll((v) => !v)}
       />
-      <div className="flex-1 overflow-y-auto p-2 space-y-px font-mono">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-2 space-y-px font-mono">
         {filtered.length === 0 ? (
           <div className="flex h-full min-h-[80px] items-center justify-center text-zinc-700 text-[11px]">
             {logs.length === 0 ? emptyMessage : "No logs match the active filters"}
@@ -379,14 +571,16 @@ function LogPane({
 // Overview tab
 // ---------------------------------------------------------------------------
 
-const SOURCE_ORDER = ["server", "tauri", "engine", "auth", "voice", "setup"];
+const SOURCE_ORDER = ["server", "tauri", "syslog", "engine", "auth", "voice", "setup", "access"];
 const SOURCE_LABELS: Record<string, string> = {
-  server: "Engine (SSE)",
-  tauri:  "Sidecar IPC",
-  engine: "Engine Client",
-  auth:   "Auth",
-  voice:  "Voice",
-  setup:  "Setup Wizard",
+  server:  "Engine (SSE)",
+  tauri:   "Sidecar IPC",
+  syslog:  "System Log",
+  engine:  "Engine Client",
+  auth:    "Auth",
+  voice:   "Voice",
+  setup:   "Setup Wizard",
+  access:  "HTTP Requests",
 };
 
 interface SourceStats {
@@ -467,6 +661,8 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
 
   const totalErrors = logs.filter((l) => l.level === "error").length;
   const totalWarns  = logs.filter((l) => l.level === "warn").length;
+  const httpEntries = logs.filter((l) => l.source === "access");
+  const httpErrors  = httpEntries.filter((l) => l.level === "error" || l.level === "warn").length;
   const hasIssues   = totalErrors > 0 || totalWarns > 0;
 
   const copyIssueReport = useCallback(async () => {
@@ -489,8 +685,7 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
     <div className="flex-1 overflow-y-auto p-3 space-y-3">
       {/* Top-line summary + copy report button */}
       <div className="flex items-stretch gap-2">
-        {/* Stats row */}
-        <div className="flex gap-2 flex-1">
+        <div className="flex gap-2 flex-1 flex-wrap">
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex flex-col gap-0.5 min-w-[80px]">
             <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider">Lines</span>
             <span className="text-lg font-mono text-zinc-300">{logs.length.toLocaleString()}</span>
@@ -517,9 +712,16 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
               {totalWarns}
             </span>
           </div>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex flex-col gap-0.5 min-w-[72px]">
+            <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider flex items-center gap-1">
+              <Globe className="h-2.5 w-2.5" />HTTP
+            </span>
+            <span className={cn("text-lg font-mono", httpErrors > 0 ? "text-amber-400" : "text-zinc-300")}>
+              {httpEntries.length.toLocaleString()}
+            </span>
+          </div>
         </div>
 
-        {/* Copy issue report — prominent when issues exist */}
         <button
           onClick={copyIssueReport}
           disabled={!hasIssues}
@@ -569,7 +771,6 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
                   );
                 })}
               </div>
-              {/* Show last error then last warning inline, truncated */}
               {counts.errors.length > 0 && (
                 <p className="mt-1.5 text-[10px] text-red-400 font-mono truncate">
                   ↳ {counts.errors[counts.errors.length - 1].trim()}
@@ -592,14 +793,14 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
 // Tab definition
 // ---------------------------------------------------------------------------
 
-type TabId = "overview" | "server" | "client" | "all";
+type TabId = "overview" | "server" | "client" | "http" | "all";
 
 interface TabDef {
   id: TabId;
   label: string;
   icon: React.ReactNode;
   filter: (l: ClientLogLine) => boolean;
-  clearSources: string[] | null; // null = clear all
+  clearSources: string[] | null;
   emptyMessage: string;
 }
 
@@ -617,7 +818,7 @@ const TABS: TabDef[] = [
     label: "Server",
     icon: <Server className="h-3 w-3" />,
     filter: (l) => SERVER_SOURCES.has(l.source ?? ""),
-    clearSources: ["server", "tauri"],
+    clearSources: ["server", "tauri", "syslog"],
     emptyMessage: "No server logs yet — engine stdout/stderr will appear here",
   },
   {
@@ -626,10 +827,18 @@ const TABS: TabDef[] = [
     icon: <Monitor className="h-3 w-3" />,
     filter: (l) => {
       const s = l.source ?? "";
-      return CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && !CLIENT_SOURCES.has(s));
+      return CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && s !== HTTP_SOURCE && !CLIENT_SOURCES.has(s));
     },
     clearSources: ["engine", "auth", "voice", "setup"],
     emptyMessage: "No client logs yet — engine, auth, voice, and setup events appear here",
+  },
+  {
+    id: "http",
+    label: "HTTP",
+    icon: <Globe className="h-3 w-3" />,
+    filter: (l) => l.source === HTTP_SOURCE,
+    clearSources: ["access"],
+    emptyMessage: "No HTTP requests yet — engine API calls will appear here",
   },
   {
     id: "all",
@@ -650,19 +859,15 @@ export function DevTerminalPanel() {
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [activeTab, setActiveTab] = useState<TabId>("overview");
 
-  // All logs from the unified bus (includes server, client, voice, etc.)
   const allLogs = useClientLogSubscriber();
+  const paused = useLogsPaused();
 
   // Drag resize
   const dragStartY = useRef(0);
   const dragStartH = useRef(0);
   const isDragging = useRef(false);
 
-  // Copy state per tab
   const [copied, setCopied] = useState(false);
-
-  // Tauri sidecar-log listener — feeds into the global bus as source="tauri"
-  const unlistenRef = useRef<UnlistenFn | null>(null);
 
   // Broadcast panel height
   const broadcastHeight = useCallback((isOpen: boolean, h: number) => {
@@ -686,44 +891,6 @@ export function DevTerminalPanel() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height]);
-
-  // Subscribe to Tauri sidecar-log events → emit into unified bus as source="tauri"
-  useEffect(() => {
-    if (!isTauri()) return;
-    let cancelled = false;
-
-    (async () => {
-      // Replay ring buffer from Rust
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const historical = await invoke<string[]>("get_sidecar_logs").catch(() => []);
-        if (!cancelled && historical.length > 0) {
-          historical.forEach((text) => {
-            emitClientLog(inferServerLevel(text), text, "tauri");
-          });
-        }
-      } catch {
-        // Not in Tauri
-      }
-
-      try {
-        const { listen } = await import("@tauri-apps/api/event");
-        const unlisten = await listen<string>("sidecar-log", (event) => {
-          if (cancelled) return;
-          const text = typeof event.payload === "string" ? event.payload : String(event.payload);
-          emitClientLog(inferServerLevel(text), text, "tauri");
-        });
-        unlistenRef.current = unlisten;
-      } catch {
-        // Not in Tauri
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      unlistenRef.current?.();
-    };
-  }, []);
 
   // Drag-to-resize
   const onDragStart = useCallback(
@@ -759,7 +926,7 @@ export function DevTerminalPanel() {
     [allLogs, activeTabDef],
   );
 
-  // Tracks the copy-ready text reported by LogPane (already accounts for grouping)
+  // Tracks the copy-ready text reported by LogPane/HttpPane
   const visibleCopyTextRef = useRef<string>("");
   const handleVisibleChange = useCallback((copyText: string) => {
     visibleCopyTextRef.current = copyText;
@@ -792,19 +959,22 @@ export function DevTerminalPanel() {
   const serverWarns  = allLogs.filter((l) => SERVER_SOURCES.has(l.source ?? "") && l.level === "warn").length;
   const clientErrors = allLogs.filter((l) => {
     const s = l.source ?? "";
-    return (CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && !CLIENT_SOURCES.has(s))) && l.level === "error";
+    return (CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && s !== HTTP_SOURCE && !CLIENT_SOURCES.has(s))) && l.level === "error";
   }).length;
   const clientWarns = allLogs.filter((l) => {
     const s = l.source ?? "";
-    return (CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && !CLIENT_SOURCES.has(s))) && l.level === "warn";
+    return (CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && s !== HTTP_SOURCE && !CLIENT_SOURCES.has(s))) && l.level === "warn";
   }).length;
+  const httpErrors = allLogs.filter((l) => l.source === HTTP_SOURCE && l.level === "error").length;
+  const httpWarns  = allLogs.filter((l) => l.source === HTTP_SOURCE && l.level === "warn").length;
   const totalErrors = allLogs.filter((l) => l.level === "error").length;
-  const totalWarns = allLogs.filter((l) => l.level === "warn").length;
+  const totalWarns  = allLogs.filter((l) => l.level === "warn").length;
 
   if (!open) return null;
 
   const HEADER_H = 36;
-  const FILTER_H = activeTab !== "overview" ? 30 : 0;
+  const HAS_FILTER_BAR = activeTab !== "overview";
+  const FILTER_H = HAS_FILTER_BAR ? 30 : 0;
   const contentH = height - HEADER_H - FILTER_H;
 
   return (
@@ -822,7 +992,6 @@ export function DevTerminalPanel() {
 
       {/* Header */}
       <div className="flex items-center gap-0 border-b border-zinc-800/60 px-2 flex-shrink-0" style={{ height: HEADER_H }}>
-        {/* Terminal icon */}
         <span className="flex items-center gap-1.5 pr-3 text-zinc-600 select-none">
           <Terminal className="h-3.5 w-3.5" />
         </span>
@@ -831,7 +1000,6 @@ export function DevTerminalPanel() {
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
 
-          // Badge: show error count (red), or warn count (amber), or nothing
           let badgeCount: number | null = null;
           let badgeStyle = "bg-zinc-800 text-zinc-500";
           let badgeSuffix = "";
@@ -842,6 +1010,9 @@ export function DevTerminalPanel() {
           } else if (tab.id === "client") {
             if (clientErrors > 0) { badgeCount = clientErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
             else if (clientWarns > 0) { badgeCount = clientWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+          } else if (tab.id === "http") {
+            if (httpErrors > 0) { badgeCount = httpErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
+            else if (httpWarns > 0) { badgeCount = httpWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
           } else if (tab.id === "all") {
             if (totalErrors > 0) { badgeCount = totalErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
             else if (totalWarns > 0) { badgeCount = totalWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
@@ -873,6 +1044,19 @@ export function DevTerminalPanel() {
         })}
 
         <div className="flex-1" />
+
+        {/* Pause/Resume — always visible */}
+        <button
+          onClick={() => setLogsPaused(!paused)}
+          title={paused ? "Resume live log stream" : "Pause live log stream"}
+          className={cn(
+            "flex items-center gap-1 px-2 py-1 text-[11px] font-mono transition-colors",
+            paused ? "text-amber-400 hover:text-amber-300" : "text-zinc-500 hover:text-zinc-200",
+          )}
+        >
+          {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+          {paused && <span className="text-[9px] bg-amber-900/50 text-amber-400 rounded px-1 py-px font-mono">PAUSED</span>}
+        </button>
 
         {/* Actions — only shown for non-overview tabs */}
         {activeTab !== "overview" && (
@@ -917,6 +1101,8 @@ export function DevTerminalPanel() {
       <div className="flex flex-col overflow-hidden" style={{ height: contentH + FILTER_H }}>
         {activeTab === "overview" ? (
           <OverviewTab logs={allLogs} />
+        ) : activeTab === "http" ? (
+          <HttpPane logs={tabLogs} onCopyTextChange={handleVisibleChange} />
         ) : (
           <LogPane
             logs={tabLogs}

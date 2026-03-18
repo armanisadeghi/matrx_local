@@ -14,6 +14,47 @@ from app.tools.types import ToolResult, ToolResultType
 logger = logging.getLogger(__name__)
 
 
+def _disk_usage_macos(path: str = "/") -> tuple[float, float, float, float] | None:
+    """Get disk usage on macOS via df -P for accurate APFS metrics.
+
+    psutil.disk_usage() uses os.statvfs() which overreports free space on APFS
+    (ignores reserved storage, purgeable space, local snapshots). df -P output
+    matches "About This Mac" storage. Returns (total_gb, used_gb, free_gb, percent)
+    or None on failure.
+    """
+    try:
+        result = subprocess.run(
+            ["df", "-P", path],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        lines = result.stdout.strip().split("\n")
+        if len(lines) < 2:
+            return None
+        # df -P format: Filesystem 512-blocks Used Available Capacity Mounted
+        parts = lines[1].split()
+        if len(parts) < 5:
+            return None
+        total_blocks = int(parts[1])
+        used_blocks = int(parts[2])
+        avail_blocks = int(parts[3])
+        block_size = 512
+        total_bytes = total_blocks * block_size
+        used_bytes = used_blocks * block_size
+        avail_bytes = avail_blocks * block_size
+        total_gb = total_bytes / (1024**3)
+        used_gb = used_bytes / (1024**3)
+        free_gb = avail_bytes / (1024**3)
+        percent = (used_bytes / total_bytes * 100) if total_bytes > 0 else 0.0
+        return (total_gb, used_gb, free_gb, percent)
+    except (subprocess.TimeoutExpired, ValueError, IndexError) as e:
+        logger.debug("macOS df disk usage failed: %s", e)
+        return None
+
+
 async def tool_system_resources(
     session: ToolSession,
 ) -> ToolResult:
@@ -33,10 +74,25 @@ async def tool_system_resources(
         swap = psutil.swap_memory()
 
         # Disk (root / or system drive on Windows)
-        disk = psutil.disk_usage(
-            "/" if not PLATFORM["is_windows"]
-            else os.environ.get("SystemDrive", "C:") + "\\"
-        )
+        # On macOS, psutil uses statvfs which overreports free space on APFS
+        # (ignores purgeable, reserved, snapshots). Use df -P for accuracy.
+        disk_path = "/" if not PLATFORM["is_windows"] else os.environ.get("SystemDrive", "C:") + "\\"
+        if PLATFORM["is_mac"]:
+            mac_disk = _disk_usage_macos(disk_path)
+        else:
+            mac_disk = None
+        if mac_disk is not None:
+            total_gb, used_gb, free_gb, percent = mac_disk
+            disk_total_gb = round(total_gb, 1)
+            disk_used_gb = round(used_gb, 1)
+            disk_free_gb = round(free_gb, 1)
+            disk_percent = percent
+        else:
+            disk = psutil.disk_usage(disk_path)
+            disk_total_gb = round(disk.total / (1024**3), 1)
+            disk_used_gb = round(disk.used / (1024**3), 1)
+            disk_free_gb = round(disk.free / (1024**3), 1)
+            disk_percent = disk.percent
 
         # Network I/O
         net = psutil.net_io_counters()
@@ -59,10 +115,10 @@ async def tool_system_resources(
             "ram_percent": mem.percent,
             "swap_total_gb": round(swap.total / (1024**3), 1),
             "swap_used_gb": round(swap.used / (1024**3), 1),
-            "disk_total_gb": round(disk.total / (1024**3), 1),
-            "disk_used_gb": round(disk.used / (1024**3), 1),
-            "disk_free_gb": round(disk.free / (1024**3), 1),
-            "disk_percent": disk.percent,
+            "disk_total_gb": disk_total_gb,
+            "disk_used_gb": disk_used_gb,
+            "disk_free_gb": disk_free_gb,
+            "disk_percent": disk_percent,
             "net_sent_gb": round(net.bytes_sent / (1024**3), 2),
             "net_recv_gb": round(net.bytes_recv / (1024**3), 2),
             "uptime_hours": round(uptime_hours, 1),
@@ -73,7 +129,7 @@ async def tool_system_resources(
             f"  CPU:  {cpu_percent}% ({cpu_count} cores / {cpu_count_logical} threads @ {freq_str})",
             f"  RAM:  {info['ram_used_gb']:.1f} / {info['ram_total_gb']:.1f} GB ({mem.percent}%)",
             f"  Swap: {info['swap_used_gb']:.1f} / {info['swap_total_gb']:.1f} GB",
-            f"  Disk: {info['disk_used_gb']:.1f} / {info['disk_total_gb']:.1f} GB ({disk.percent}%)",
+            f"  Disk: {info['disk_used_gb']:.1f} / {info['disk_total_gb']:.1f} GB ({disk_percent:.0f}%)",
             f"  Net:  Sent {info['net_sent_gb']:.2f} GB / Recv {info['net_recv_gb']:.2f} GB",
             f"  Uptime: {info['uptime_hours']:.1f} hours",
         ]
