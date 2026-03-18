@@ -3,6 +3,30 @@
 Probes the OS for permission status of microphone, camera, accessibility,
 bluetooth, location, and network access.  Returns structured results so the
 frontend can display real status and guide users to grant missing permissions.
+
+Windows permission model
+------------------------
+Windows privacy settings live in the registry under:
+  HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\<key>
+  HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\<key>
+
+Rules:
+  - HKCU = per-user setting (writable without elevation → we can force Allow)
+  - HKLM = system-wide override (requires UAC to write; we only read it)
+  - Effective status = HKLM "Deny" overrides any HKCU value; otherwise HKCU wins
+
+Keys we can force-set (HKCU, no elevation needed):
+  microphone, webcam, location, bluetooth, bluetoothSync, contacts,
+  appointments, userDataTasks, chat, email, userAccountInformation,
+  phoneCall, phoneCallHistory, radios, broadFileSystemAccess,
+  picturesLibrary, videosLibrary, documentsLibrary, musicLibrary,
+  activity, appDiagnostics, wifiData, wiFiDirect, humanInterfaceDevice,
+  usb, serialCommunication, gazeInput, graphicsCaptureWithoutBorder,
+  userNotificationListener
+
+Device enumeration is done via Get-PnpDevice / Win32_SoundDevice (PowerShell)
+because sounddevice's PortAudio backend is unreliable when running as a
+PyInstaller sidecar without a desktop session.
 """
 
 from __future__ import annotations
@@ -82,6 +106,127 @@ async def _run(cmd: list[str], timeout: int = 10) -> tuple[str, str, int]:
 
 
 # ---------------------------------------------------------------------------
+# Windows registry helpers
+# ---------------------------------------------------------------------------
+
+_WIN_CONSENT_HKCU = (
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore"
+)
+_WIN_CONSENT_HKLM = (
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore"
+)
+
+# All HKCU ConsentStore keys that can be set to "Allow" without elevation.
+_WIN_FORCEABLE_KEYS: list[str] = [
+    "microphone", "webcam", "location", "bluetooth", "bluetoothSync",
+    "contacts", "appointments", "userDataTasks", "chat", "email",
+    "userAccountInformation", "phoneCall", "phoneCallHistory",
+    "radios", "broadFileSystemAccess", "picturesLibrary",
+    "videosLibrary", "documentsLibrary", "musicLibrary",
+    "activity", "appDiagnostics", "wifiData", "wiFiDirect",
+    "humanInterfaceDevice", "usb", "serialCommunication",
+    "gazeInput", "graphicsCaptureWithoutBorder", "userNotificationListener",
+]
+
+
+def _win_consent_status(key: str) -> PermissionStatus:
+    """Read the effective Windows privacy consent status for a capability key.
+
+    Reads both HKCU (user) and HKLM (system) registry values.
+    HKLM "Deny" overrides HKCU — returns DENIED.
+    Otherwise uses HKCU: "Allow" → GRANTED, "Deny" → DENIED, missing → NOT_DETERMINED.
+    """
+    try:
+        import winreg
+        hkcu_val: str | None = None
+        hklm_val: str | None = None
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{_WIN_CONSENT_HKCU}\\{key}") as k:
+                hkcu_val, _ = winreg.QueryValueEx(k, "Value")
+        except OSError:
+            pass
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f"{_WIN_CONSENT_HKLM}\\{key}") as k:
+                hklm_val, _ = winreg.QueryValueEx(k, "Value")
+        except OSError:
+            pass
+
+        # System policy overrides user setting
+        if hklm_val and hklm_val.lower() == "deny":
+            return PermissionStatus.DENIED
+        if hkcu_val is None:
+            return PermissionStatus.NOT_DETERMINED
+        return PermissionStatus.GRANTED if hkcu_val.lower() == "allow" else PermissionStatus.DENIED
+    except Exception:
+        return PermissionStatus.UNKNOWN
+
+
+def _win_force_allow(key: str) -> bool:
+    """Force-set a Windows privacy consent key to Allow in HKCU (no elevation needed).
+
+    Returns True on success, False if the key could not be written.
+    Creates the registry key if it doesn't exist.
+    """
+    try:
+        import winreg
+        full_path = f"{_WIN_CONSENT_HKCU}\\{key}"
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, full_path,
+                                access=winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, "Value", 0, winreg.REG_SZ, "Allow")
+        return True
+    except Exception as exc:
+        logger.debug("_win_force_allow(%s) failed: %s", key, exc)
+        return False
+
+
+async def grant_windows_permissions() -> dict[str, bool]:
+    """Force-set all forceable Windows privacy consent keys to Allow.
+
+    Writes HKCU\\...\\ConsentStore\\<key>\\Value = "Allow" for every key in
+    _WIN_FORCEABLE_KEYS.  Runs in a thread pool to avoid blocking the event loop.
+    Returns a dict of {key: success}.
+
+    Keys that require HKLM (system-level) access are NOT touched here because
+    they require UAC elevation which cannot be obtained from a background sidecar.
+    On a well-configured personal machine the HKLM values are already "Allow".
+    """
+    loop = asyncio.get_event_loop()
+
+    def _force_all() -> dict[str, bool]:
+        return {key: _win_force_allow(key) for key in _WIN_FORCEABLE_KEYS}
+
+    return await loop.run_in_executor(None, _force_all)
+
+
+async def _win_enum_audio_endpoints() -> list[dict[str, Any]]:
+    """Enumerate Windows audio endpoints via PowerShell Get-PnpDevice.
+
+    Uses AudioEndpoint class (covers both input and output devices) rather than
+    sounddevice/PortAudio, which is unreliable when running as a sidecar without
+    a desktop audio session.  Filters to input devices by name heuristics.
+    """
+    ps = CAPABILITIES.get("powershell_path")
+    if not ps:
+        return []
+    try:
+        out, _, rc = await _run([
+            ps, "-NoProfile", "-Command",
+            "Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue"
+            " | Select-Object FriendlyName, Status | ConvertTo-Json -Compress",
+        ])
+        if rc != 0 or not out.strip():
+            return []
+        devices = json.loads(out)
+        if isinstance(devices, dict):
+            devices = [devices]
+        return [d for d in devices if isinstance(d, dict)]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Microphone
 # ---------------------------------------------------------------------------
 
@@ -139,6 +284,70 @@ async def check_microphone() -> PermissionResult:
         if PLATFORM["is_mac"] else ""
     )
 
+    # ── Windows: registry-first approach ─────────────────────────────────────
+    if PLATFORM["is_windows"]:
+        status = _win_consent_status("microphone")
+
+        # If denied in user registry, force-allow it now (no elevation needed).
+        if status == PermissionStatus.DENIED:
+            if _win_force_allow("microphone"):
+                status = PermissionStatus.GRANTED
+                logger.info("[permissions] microphone: was Deny → forced Allow in HKCU")
+
+        # Enumerate via PnP AudioEndpoint (reliable from sidecar, unlike sounddevice).
+        all_endpoints = await _win_enum_audio_endpoints()
+        # Filter to input devices by name heuristics: exclude known output-only patterns.
+        _OUTPUT_HINTS = ("speaker", "headphone", "output", "s/pdif", "digital audio",
+                         "nvidia high def", "hdmi", "displayport", "dell")
+        input_devices = [
+            d for d in all_endpoints
+            if not any(h in d.get("FriendlyName", "").lower() for h in _OUTPUT_HINTS)
+        ]
+        if not input_devices and all_endpoints:
+            # If heuristic filtered everything out (unusual system), include all
+            input_devices = all_endpoints
+
+        if not input_devices:
+            # Try sounddevice as fallback
+            try:
+                import sounddevice as sd
+                for i, dev in enumerate(sd.query_devices()):
+                    if dev["max_input_channels"] > 0:
+                        input_devices.append({
+                            "FriendlyName": dev["name"],
+                            "Status": "OK",
+                            "index": i,
+                            "channels": dev["max_input_channels"],
+                        })
+            except Exception:
+                pass
+
+        if not input_devices:
+            return PermissionResult(
+                permission="microphone",
+                status=PermissionStatus.UNAVAILABLE,
+                details="No microphone devices detected",
+                grant_instructions=_microphone_instructions(),
+                user_details="No microphone found — connect one to use voice features",
+                user_instructions="Connect a microphone and check Settings > Privacy > Microphone",
+            )
+
+        devices = [{"name": d.get("FriendlyName", ""), "status": d.get("Status", "OK")}
+                   for d in input_devices]
+        return PermissionResult(
+            permission="microphone",
+            status=status,
+            details=f"{len(devices)} microphone(s) found",
+            devices=devices,
+            grant_instructions=_microphone_instructions(),
+            user_details=f"Microphone is active — {len(devices)} device(s) detected"
+            if status == PermissionStatus.GRANTED
+            else "Microphone access denied by system policy (requires admin)",
+            user_instructions=""
+            if status == PermissionStatus.GRANTED
+            else "A system administrator has blocked microphone access",
+        )
+
     if not devices:
         return PermissionResult(
             permission="microphone",
@@ -170,7 +379,7 @@ async def check_microphone() -> PermissionResult:
             deep_link=_MIC_DEEP_LINK,
         )
 
-    # On Linux/Windows, if devices are listed the OS generally allows access
+    # On Linux, if devices are listed the OS generally allows access
     return PermissionResult(
         permission="microphone",
         status=PermissionStatus.GRANTED,
@@ -234,36 +443,39 @@ async def check_camera() -> PermissionResult:
         )
 
     elif PLATFORM["is_windows"]:
-        try:
-            out, _, _ = await _run(
-                [
-                    CAPABILITIES["powershell_path"],
-                    "-NoProfile",
-                    "-Command",
-                    "Get-PnpDevice -Class Camera -PresentOnly | Select-Object FriendlyName, Status | ConvertTo-Json",
-                ]
-            )
-            cams = json.loads(out) if out.strip() else []
-            if isinstance(cams, dict):
-                cams = [cams]
-            for cam in cams:
-                devices.append(
-                    {
+        # Check registry consent status first
+        cam_status = _win_consent_status("webcam")
+
+        # Force-allow if denied in user registry (no elevation needed)
+        if cam_status == PermissionStatus.DENIED:
+            if _win_force_allow("webcam"):
+                cam_status = PermissionStatus.GRANTED
+                logger.info("[permissions] camera: was Deny → forced Allow in HKCU")
+
+        ps = CAPABILITIES.get("powershell_path")
+        if ps:
+            try:
+                out, _, _ = await _run([
+                    ps, "-NoProfile", "-Command",
+                    "Get-PnpDevice -Class Camera -PresentOnly -ErrorAction SilentlyContinue"
+                    " | Select-Object FriendlyName, Status | ConvertTo-Json -Compress",
+                ])
+                cams = json.loads(out) if out.strip() else []
+                if isinstance(cams, dict):
+                    cams = [cams]
+                for cam in cams:
+                    devices.append({
                         "name": cam.get("FriendlyName", ""),
                         "status": cam.get("Status", ""),
-                    }
-                )
-        except Exception:
-            pass
+                    })
+            except Exception:
+                pass
 
+        effective_status = cam_status if devices else PermissionStatus.UNAVAILABLE
         return PermissionResult(
             permission="camera",
-            status=PermissionStatus.GRANTED
-            if devices
-            else PermissionStatus.UNAVAILABLE,
-            details=f"{len(devices)} camera(s) found"
-            if devices
-            else "No cameras detected",
+            status=effective_status,
+            details=f"{len(devices)} camera(s) found" if devices else "No cameras detected",
             devices=devices,
             grant_instructions="Settings > Privacy > Camera > Allow apps to access your camera",
             user_details=f"Camera is active — {len(devices)} camera(s) detected"
@@ -489,38 +701,55 @@ async def check_bluetooth() -> PermissionResult:
             logger.debug("Bluetooth check failed: %s", e)
 
     elif PLATFORM["is_windows"]:
-        try:
-            out, _, rc = await _run(
-                [
-                    CAPABILITIES["powershell_path"],
-                    "-NoProfile",
-                    "-Command",
-                    "Get-PnpDevice -Class Bluetooth | Where-Object {$_.FriendlyName -ne $null} | "
-                    "Select-Object FriendlyName, Status | ConvertTo-Json",
-                ]
-            )
-            bt_devs = json.loads(out) if out.strip() else []
-            if isinstance(bt_devs, dict):
-                bt_devs = [bt_devs]
-            for d in bt_devs:
-                devices.append(
-                    {"name": d.get("FriendlyName", ""), "status": d.get("Status", "")}
-                )
-            return PermissionResult(
-                permission="bluetooth",
-                status=PermissionStatus.GRANTED
-                if devices
-                else PermissionStatus.UNAVAILABLE,
-                details=f"{len(devices)} Bluetooth device(s) found",
-                devices=devices,
-                grant_instructions="Settings > Bluetooth & devices > Turn on Bluetooth",
-                user_details=f"Bluetooth is active — {len(devices)} device(s) found"
-                if devices
-                else "No Bluetooth devices found",
-                user_instructions="" if devices else "Turn on Bluetooth in Settings",
-            )
-        except Exception:
-            pass
+        # Check registry consent + force-allow if denied
+        bt_status = _win_consent_status("bluetooth")
+        if bt_status == PermissionStatus.DENIED:
+            if _win_force_allow("bluetooth") and _win_force_allow("bluetoothSync"):
+                bt_status = PermissionStatus.GRANTED
+                logger.info("[permissions] bluetooth: was Deny → forced Allow in HKCU")
+
+        ps = CAPABILITIES.get("powershell_path")
+        if ps:
+            try:
+                # Filter to actual user-facing BT devices: exclude LE service noise,
+                # protocol adapters, and Microsoft infrastructure entries.
+                out, _, rc = await _run([
+                    ps, "-NoProfile", "-Command",
+                    "Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue"
+                    " | Where-Object {"
+                    "   $_.FriendlyName -ne $null -and"
+                    "   $_.FriendlyName -notmatch 'LE Generic|Protocol|Enumerator|Profile|Service|Device Information'"
+                    " }"
+                    " | Select-Object FriendlyName, Status | ConvertTo-Json -Compress",
+                ])
+                if rc == 0 and out.strip():
+                    bt_devs = json.loads(out)
+                    if isinstance(bt_devs, dict):
+                        bt_devs = [bt_devs]
+                    for d in bt_devs:
+                        name = d.get("FriendlyName", "")
+                        if name:
+                            devices.append({"name": name, "status": d.get("Status", "")})
+            except Exception:
+                pass
+
+        # If we have devices, Bluetooth is clearly on regardless of registry
+        if devices:
+            bt_status = PermissionStatus.GRANTED
+
+        return PermissionResult(
+            permission="bluetooth",
+            status=bt_status if devices else (
+                PermissionStatus.UNAVAILABLE if bt_status == PermissionStatus.NOT_DETERMINED
+                else bt_status
+            ),
+            details=f"{len(devices)} Bluetooth device(s) found" if devices else "No Bluetooth devices found",
+            devices=devices,
+            grant_instructions="Settings > Bluetooth & devices > Turn on Bluetooth",
+            user_details=f"Bluetooth is active — {len(devices)} device(s) found"
+            if devices else "No Bluetooth devices found or Bluetooth is off",
+            user_instructions="" if devices else "Turn on Bluetooth in Settings",
+        )
 
     else:  # Linux
         if CAPABILITIES["has_bluetoothctl"]:
@@ -1038,6 +1267,25 @@ async def check_location() -> PermissionResult:
             user_details="Location services let AI tools access your GPS/network position.",
             user_instructions=instructions if status != PermissionStatus.GRANTED else "",
             deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices",
+        )
+
+    if PLATFORM["is_windows"]:
+        loc_status = _win_consent_status("location")
+        # Force-allow if denied in user registry
+        if loc_status == PermissionStatus.DENIED:
+            if _win_force_allow("location"):
+                loc_status = PermissionStatus.GRANTED
+                logger.info("[permissions] location: was Deny → forced Allow in HKCU")
+
+        instructions = "Settings > Privacy > Location > Allow apps to access your location"
+        return PermissionResult(
+            permission="location",
+            status=loc_status,
+            details="Location services permission via Windows registry",
+            grant_instructions=instructions,
+            user_details="Location services are enabled" if loc_status == PermissionStatus.GRANTED
+            else "Location access denied by system policy (requires admin)",
+            user_instructions="" if loc_status == PermissionStatus.GRANTED else instructions,
         )
 
     return PermissionResult(

@@ -36,6 +36,7 @@ from app.services.permissions.checker import (
     check_screen_recording,
     check_speech_recognition,
     check_wifi,
+    grant_windows_permissions,
 )
 from app.tools.session import ToolSession
 from app.tools.tools.audio import tool_list_audio_devices, tool_record_audio, tool_play_audio
@@ -146,6 +147,38 @@ async def get_permissions():
     """Get all device/OS permission statuses."""
     results = await check_all_permissions()
     return {"permissions": results, "platform": PLATFORM["system"]}
+
+
+@router.post("/permissions/grant")
+async def grant_permissions():
+    """Force-grant all forceable permissions for the current platform.
+
+    On Windows: writes HKCU ConsentStore registry keys to Allow for all
+    privacy capabilities that do not require admin elevation (microphone,
+    webcam, location, bluetooth, broadFileSystemAccess, contacts, etc.).
+    HKLM keys (system policy) are not touched — they require UAC elevation.
+
+    On macOS/Linux: returns a no-op success (permissions require user action
+    in System Settings / polkit — they cannot be force-granted from a sidecar).
+    """
+    if PLATFORM["is_windows"]:
+        results = await grant_windows_permissions()
+        granted = sum(1 for ok in results.values() if ok)
+        failed = [k for k, ok in results.items() if not ok]
+        return {
+            "platform": "windows",
+            "granted": granted,
+            "total": len(results),
+            "failed": failed,
+            "details": results,
+        }
+    return {
+        "platform": PLATFORM["system"],
+        "granted": 0,
+        "total": 0,
+        "failed": [],
+        "message": "Permissions on this platform require user action in system settings and cannot be force-granted from the engine.",
+    }
 
 
 @router.get("/permissions/{name}")
