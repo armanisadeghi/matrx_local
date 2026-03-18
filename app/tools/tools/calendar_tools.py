@@ -14,17 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
 
 _CALENDAR_HINT = (
     "Calendar access is required. "
@@ -158,7 +156,7 @@ async def tool_list_events(
         calendar_names: Filter to specific calendar names. Omit for all calendars.
         limit: Maximum events to return (default 50, max 500).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Calendar tool is only available on macOS.", type=ToolResultType.ERROR)
 
     days_ahead = max(1, min(days_ahead, 365))
@@ -240,7 +238,7 @@ async def tool_create_event(
         calendar: Calendar name to add the event to. Defaults to the default calendar.
         all_day: Whether this is an all-day event.
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Calendar tool is only available on macOS.", type=ToolResultType.ERROR)
 
     try:
@@ -302,7 +300,7 @@ async def tool_list_reminders(
         include_completed: Include completed reminders (default False).
         limit: Maximum reminders to return (default 50, max 500).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Reminders tool is only available on macOS.", type=ToolResultType.ERROR)
 
     limit = max(1, min(limit, 500))
@@ -382,7 +380,7 @@ async def tool_create_reminder(
         due: Due date/time in ISO 8601 format (e.g. "2026-03-20T09:00:00").
         list_name: Reminders list to add it to. Defaults to the default list.
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Reminders tool is only available on macOS.", type=ToolResultType.ERROR)
 
     try:

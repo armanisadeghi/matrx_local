@@ -10,10 +10,11 @@ import hashlib
 import json
 import logging
 import os
-import platform
 import uuid
 from pathlib import Path
 from typing import Optional
+
+from app.common.platform_ctx import PLATFORM
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +30,12 @@ def _stable_machine_id() -> str:
     The result is SHA-256 hashed to a fixed 32-char hex string.
     """
     parts = [
-        platform.node(),
-        platform.machine(),
-        platform.system(),
+        PLATFORM["hostname"],
+        PLATFORM["machine"],
+        PLATFORM["system"],
     ]
     try:
-        system = platform.system()
+        system = PLATFORM["system"]
         if system == "Darwin":
             import subprocess
             out = subprocess.run(
@@ -99,7 +100,7 @@ def _collect_hardware_ids() -> dict[str, str | None]:
         "board_id": None,
     }
     try:
-        system = platform.system()
+        system = PLATFORM["system"]
         if system == "Darwin":
             import subprocess
             out = subprocess.run(
@@ -162,18 +163,18 @@ def _collect_hardware_ids() -> dict[str, str | None]:
 def collect_system_info() -> dict:
     """Collect comprehensive system identification info."""
     info: dict = {
-        "platform": platform.system().lower(),
-        "os_version": platform.platform(),
-        "architecture": platform.machine(),
-        "hostname": platform.node(),
+        "platform": PLATFORM["system"].lower(),
+        "os_version": PLATFORM["os_version"],
+        "architecture": PLATFORM["machine"],
+        "hostname": PLATFORM["hostname"],
         "username": os.getenv("USER") or os.getenv("USERNAME") or "",
-        "python_version": platform.python_version(),
+        "python_version": PLATFORM["python_version"],
         "home_dir": str(Path.home()),
     }
 
     # CPU info
     try:
-        info["cpu_model"] = platform.processor() or "unknown"
+        info["cpu_model"] = PLATFORM["processor"] or "unknown"
         info["cpu_cores"] = os.cpu_count() or 0
     except Exception:
         info["cpu_model"] = "unknown"

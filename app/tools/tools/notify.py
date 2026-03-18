@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 import time
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
-IS_WINDOWS = platform.system() == "Windows"
-IS_LINUX = platform.system() == "Linux"
 
 
 async def _broadcast_notification(title: str, message: str, level: str = "info") -> None:
@@ -58,7 +54,7 @@ async def send_notification(
     # Platform-specific fallbacks
     if not os_fired:
         try:
-            if IS_MACOS:
+            if PLATFORM["is_mac"]:
                 script = (
                     f'display notification {_osa_str(message)} '
                     f'with title {_osa_str(title)}'
@@ -71,7 +67,7 @@ async def send_notification(
                 await asyncio.wait_for(proc.communicate(), timeout=10)
                 os_fired = proc.returncode == 0
 
-            elif IS_WINDOWS:
+            elif PLATFORM["is_windows"]:
                 ps_script = (
                     f"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; "
                     f"$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
@@ -81,14 +77,14 @@ async def send_notification(
                     f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Matrx Local').Show($toast)"
                 )
                 proc = await asyncio.create_subprocess_exec(
-                    "powershell.exe", "-NonInteractive", "-Command", ps_script,
+                    CAPABILITIES["powershell_path"], "-NonInteractive", "-Command", ps_script,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
                 await asyncio.wait_for(proc.communicate(), timeout=10)
                 os_fired = proc.returncode == 0
 
-            elif IS_LINUX:
+            elif PLATFORM["is_linux"]:
                 proc = await asyncio.create_subprocess_exec(
                     "notify-send", "-t", str(timeout * 1000), title, message,
                     stdout=asyncio.subprocess.PIPE,

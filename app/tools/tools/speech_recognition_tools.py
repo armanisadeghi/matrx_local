@@ -14,17 +14,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 import threading
 from pathlib import Path
 from typing import Any
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
 
 _PERMISSION_HINT = (
     "Speech Recognition access is required. "
@@ -130,7 +128,7 @@ async def tool_transcribe_with_speech(
                 Defaults to "en-US".
         timeout: Maximum seconds to wait for transcription (default 60, max 300).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(
             output="Apple Speech Recognition is only available on macOS.",
             type=ToolResultType.ERROR,
@@ -174,7 +172,7 @@ async def tool_transcribe_with_speech(
 
 async def tool_list_speech_locales(session: ToolSession) -> ToolResult:
     """List all locales supported by SFSpeechRecognizer on this device."""
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Apple Speech Recognition is only available on macOS.", type=ToolResultType.ERROR)
 
     def _list_locales_sync() -> list[str]:

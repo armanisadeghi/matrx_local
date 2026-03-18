@@ -5,10 +5,10 @@ from __future__ import annotations
 import base64
 import logging
 import os
-import platform
 import uuid
 from pathlib import Path
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.config import TEMP_DIR
 from app.tools.session import ToolSession
 from app.tools.types import ImageData, ToolResult, ToolResultType
@@ -18,21 +18,18 @@ logger = logging.getLogger(__name__)
 
 def _detect_chrome() -> tuple[bool, str | None, str | None]:
     """Return (playwright_available, chrome_path, chrome_version)."""
-    import shutil
     import subprocess as _sp
 
-    try:
-        import playwright  # noqa: F401
-
-        pw_available = True
-    except ImportError:
+    if not CAPABILITIES["has_playwright"]:
         return False, None, None
+
+    import playwright  # noqa: F401
+
+    pw_available = True
 
     chrome_path: str | None = None
     chrome_version: str | None = None
-    system = platform.system()
-
-    if system == "Darwin":
+    if PLATFORM["is_mac"]:
         # macOS: check known .app bundle locations
         for loc in [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -68,7 +65,7 @@ def _detect_chrome() -> tuple[bool, str | None, str | None]:
                 except Exception:
                     pass
 
-    elif system == "Windows":
+    elif PLATFORM["is_windows"]:
         # Windows: check common install paths
         for env_var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
             base = os.getenv(env_var)
@@ -81,17 +78,9 @@ def _detect_chrome() -> tuple[bool, str | None, str | None]:
                     break
 
     else:
-        # Linux / WSL: use `which` to find Chrome
-        for binary in (
-            "google-chrome",
-            "google-chrome-stable",
-            "chromium-browser",
-            "chromium",
-        ):
-            found = shutil.which(binary)
-            if found:
-                chrome_path = found
-                break
+        # Linux / WSL: use centralized capability check
+        if CAPABILITIES["has_chrome"]:
+            chrome_path = CAPABILITIES["chrome_path"]
 
         # Playwright headless shell (Linux cache)
         if chrome_path is None:
@@ -130,12 +119,12 @@ async def tool_system_info(
     session: ToolSession,
 ) -> ToolResult:
     info = {
-        "platform": platform.system(),
-        "platform_release": platform.release(),
-        "platform_version": platform.version(),
-        "architecture": platform.machine(),
-        "hostname": platform.node(),
-        "python_version": platform.python_version(),
+        "platform": PLATFORM["system"],
+        "platform_release": PLATFORM["release"],
+        "platform_version": PLATFORM["version"],
+        "architecture": PLATFORM["machine"],
+        "hostname": PLATFORM["hostname"],
+        "python_version": PLATFORM["python_version"],
         "cwd": session.cwd,
         "home": str(Path.home()),
         "user": os.getenv("USER", os.getenv("USERNAME", "unknown")),
@@ -151,7 +140,7 @@ async def tool_system_info(
 def _get_screen_geometry() -> list[dict]:
     """Return a list of monitor dicts with keys: index, x, y, width, height, is_primary."""
     monitors: list[dict] = []
-    try:
+    if CAPABILITIES["has_screeninfo"]:
         import screeninfo
 
         for i, m in enumerate(screeninfo.get_monitors()):
@@ -167,8 +156,6 @@ def _get_screen_geometry() -> list[dict]:
                 }
             )
         return monitors
-    except ImportError:
-        pass
 
     # Fallback: try tkinter for basic primary-screen dimensions
     try:
@@ -288,7 +275,7 @@ def _grab_screenshot_quartz_legacy(
 def _macos_version_tuple() -> tuple[int, int]:
     """Return (major, minor) macOS version, e.g. (15, 1) for Sequoia 15.1."""
     try:
-        ver = platform.mac_ver()[0]  # e.g. "15.1.0"
+        ver = PLATFORM["mac_version"]  # e.g. "15.1.0"
         parts = ver.split(".")
         return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
     except Exception:
@@ -308,7 +295,7 @@ def _grab_screenshot(
        is somehow unavailable (highly unlikely in practice).
     3. PIL ImageGrab — last resort or non-macOS.
     """
-    if platform.system() == "Darwin":
+    if PLATFORM["is_mac"]:
         try:
             return _grab_screenshot_screencapture(bbox=bbox)
         except OSError:
@@ -317,11 +304,9 @@ def _grab_screenshot(
             pass  # unexpected error — try Quartz legacy
 
         mac_major, mac_minor = _macos_version_tuple()
-        if mac_major < 15:
+        if mac_major < 15 and CAPABILITIES["has_quartz"]:
             try:
                 return _grab_screenshot_quartz_legacy(bbox=bbox, all_screens=all_screens)
-            except ImportError:
-                pass
             except OSError:
                 raise
 
@@ -373,9 +358,7 @@ async def tool_screenshot(
                 Coordinates are absolute screen pixels when monitor="all", or relative to the
                 chosen monitor's top-left corner otherwise.
     """
-    try:
-        from PIL import Image  # noqa: F401 – verify Pillow is available
-    except ImportError:
+    if not CAPABILITIES["has_pil"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output="Screenshot requires Pillow.",

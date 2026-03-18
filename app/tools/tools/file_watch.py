@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.common.platform_ctx import CAPABILITIES
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
@@ -82,8 +83,7 @@ async def tool_watch_directory(
         patterns=patterns,
     )
 
-    # Try watchfiles (fast, Rust-based)
-    try:
+    if CAPABILITIES["has_watchfiles"]:
         import watchfiles
 
         async def _watcher():
@@ -125,7 +125,7 @@ async def tool_watch_directory(
             metadata={"watch_id": watch_id, "path": resolved},
         )
 
-    except ImportError:
+    else:
         # Fallback: polling-based watcher
         async def _poll_watcher():
             snapshot: dict[str, float] = {}

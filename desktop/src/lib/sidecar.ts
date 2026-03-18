@@ -5,6 +5,8 @@
  * In development, the engine is expected to be running separately.
  */
 
+import { PLATFORM } from "@/lib/platformCtx";
+
 let invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
 
 async function loadTauriInvoke() {
@@ -21,19 +23,6 @@ async function loadTauriInvoke() {
 /** Whether we're running inside a Tauri window. */
 export function isTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
-}
-
-/**
- * Whether we're running on Windows.
- *
- * Used to gate the Rust-IPC health-check path — Windows WebView2 blocks
- * JS fetch() to 127.0.0.1 due to loopback network isolation, so we route
- * those calls through Rust (reqwest) instead.  macOS/Linux WKWebView has
- * no such restriction and keeps using direct JS fetch() to avoid changing
- * working behaviour on those platforms.
- */
-export function isWindows(): boolean {
-  return navigator.userAgent.includes("Windows");
 }
 
 /** Start the Python engine sidecar (Tauri only). */
@@ -142,7 +131,7 @@ export async function waitForEngine(
   intervalMs = 1000
 ): Promise<boolean> {
   // Only use Rust IPC on Windows — macOS/Linux work fine with JS fetch()
-  const useRust = isTauri() && isWindows();
+  const useRust = isTauri() && PLATFORM.is_windows;
   const inv = useRust ? await loadTauriInvoke() : null;
 
   // Extract port from baseUrl for the Rust path
@@ -179,7 +168,7 @@ export async function waitForEngine(
  */
 export async function discoverEnginePort(): Promise<string | null> {
   // Only use Rust IPC on Windows — preserves existing macOS/Linux behaviour
-  if (isTauri() && isWindows()) {
+  if (isTauri() && PLATFORM.is_windows) {
     const inv = await loadTauriInvoke();
     if (inv) {
       try {

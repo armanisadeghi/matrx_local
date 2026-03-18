@@ -5,17 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import platform
 import re
 import subprocess
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
 
 
 async def tool_wifi_networks(
@@ -24,9 +21,9 @@ async def tool_wifi_networks(
 ) -> ToolResult:
     """List available WiFi networks with signal strength, security, and channel."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             return await _wifi_macos(rescan)
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             return await _wifi_windows(rescan)
         else:
             return await _wifi_linux(rescan)
@@ -319,9 +316,9 @@ async def tool_bluetooth_devices(
 ) -> ToolResult:
     """List paired and nearby Bluetooth devices."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             return await _bluetooth_macos()
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             return await _bluetooth_windows()
         else:
             return await _bluetooth_linux(scan_duration)
@@ -385,7 +382,7 @@ ForEach-Object {
 }
 """
     proc = await asyncio.create_subprocess_exec(
-        "powershell.exe", "-NoProfile", "-Command", ps_script,
+        CAPABILITIES["powershell_path"], "-NoProfile", "-Command", ps_script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -453,9 +450,9 @@ async def tool_connected_devices(
 ) -> ToolResult:
     """List all connected peripheral devices (USB, Bluetooth, monitors, etc.)."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             return await _connected_macos()
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             return await _connected_windows()
         else:
             return await _connected_linux()
@@ -636,7 +633,7 @@ Get-PnpDevice -PresentOnly | Where-Object {
 ForEach-Object { "$($_.Class)|||$($_.FriendlyName)|||$($_.Status)|||$($_.InstanceId)" }
 """
     proc = await asyncio.create_subprocess_exec(
-        "powershell.exe", "-NoProfile", "-Command", ps_script,
+        CAPABILITIES["powershell_path"], "-NoProfile", "-Command", ps_script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -672,7 +669,7 @@ ForEach-Object { "$($_.Name)|||$($_.ScreenWidth)x$($_.ScreenHeight)|||$($_.Monit
 """
     try:
         proc2 = await asyncio.create_subprocess_exec(
-            "powershell.exe", "-NoProfile", "-Command", ps_disp,
+            CAPABILITIES["powershell_path"], "-NoProfile", "-Command", ps_disp,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -736,8 +733,7 @@ async def _connected_linux() -> ToolResult:
         pass
 
     # Displays via xrandr
-    import shutil
-    if shutil.which("xrandr"):
+    if CAPABILITIES["has_xrandr"]:
         try:
             proc2 = await asyncio.create_subprocess_exec(
                 "xrandr", "--query",

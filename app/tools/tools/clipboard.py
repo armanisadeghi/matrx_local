@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from app.common.platform_ctx import CAPABILITIES
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
@@ -20,13 +21,13 @@ _CLIPBOARD_HELP = (
 async def tool_clipboard_read(
     session: ToolSession,
 ) -> ToolResult:
-    try:
-        import pyperclip
-    except ImportError:
+    if not CAPABILITIES["has_pyperclip"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output="Clipboard support requires pyperclip. Install it with: uv add pyperclip",
         )
+
+    import pyperclip
 
     try:
         content = pyperclip.paste()
@@ -48,13 +49,13 @@ async def tool_clipboard_write(
     session: ToolSession,
     content: str,
 ) -> ToolResult:
-    try:
-        import pyperclip
-    except ImportError:
+    if not CAPABILITIES["has_pyperclip"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output="Clipboard support requires pyperclip. Install it with: uv add pyperclip",
         )
+
+    import pyperclip
 
     try:
         pyperclip.copy(content)

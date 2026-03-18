@@ -20,11 +20,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+from app.common.platform_ctx import PLATFORM
 
 from app.services.documents.file_manager import (
     DocumentFileManager,
@@ -454,8 +455,8 @@ class SyncEngine:
         return await self.sb.register_device(
             user_id=self._user_id,
             device_id=self.device_id,
-            device_name=platform.node() or "Unknown",
-            platform=platform.system(),
+            device_name=PLATFORM["hostname"] or "Unknown",
+            platform=PLATFORM["system"],
             base_path=str(self.fm.base_dir),
         )
 

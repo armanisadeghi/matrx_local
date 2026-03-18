@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { engine, type SystemInfo, type BrowserStatus } from "@/lib/api";
 import { isTauri, startSidecar, stopSidecar, waitForEngine, discoverEnginePort } from "@/lib/sidecar";
+import { initPlatformCtx } from "@/lib/platformCtx";
 import { syncAllSettings } from "@/lib/settings";
 import supabase from "@/lib/supabase";
 import { emitClientLog } from "@/hooks/use-client-log";
@@ -159,6 +160,15 @@ export function useEngine(authenticated = true) {
       emitClientLog("success", `Engine discovered at ${url}`, "engine");
       connectedAtRef.current = Date.now();
       update({ url, status: "connected", error: null });
+
+      // Populate the frontend platform context from the engine
+      try {
+        const ctx = await engine.getPlatformContext();
+        initPlatformCtx(ctx);
+        emitClientLog("info", "Platform context initialised from engine", "engine");
+      } catch {
+        emitClientLog("warn", "Could not load platform context (browser fallback active)", "engine");
+      }
 
       // Load tools list
       try {

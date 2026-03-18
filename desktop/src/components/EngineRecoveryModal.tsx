@@ -49,6 +49,7 @@ import {
   waitForEngine,
   discoverEnginePort,
 } from "@/lib/sidecar";
+import { getPlatformSnapshot } from "@/lib/platformCtx";
 import type { EngineStatus } from "@/hooks/use-engine";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -360,7 +361,7 @@ export function EngineMonitor({
       `Engine Status: ${engineStatus}`,
       `Engine Error: ${engineError || "none"}`,
       `Environment: ${isTauri() ? "Tauri Desktop" : "Browser Dev Mode"}`,
-      `User Agent: ${navigator.userAgent}`,
+      `Platform: ${JSON.stringify(getPlatformSnapshot().platform)}`,
       "",
       "=== Diagnostic Steps ===",
       ...steps.map(

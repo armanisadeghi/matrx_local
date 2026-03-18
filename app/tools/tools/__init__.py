@@ -1,77 +1,30 @@
-"""Shared helpers for OS/platform detection used across tool modules."""
+"""Shared helpers for OS/platform detection used across tool modules.
+
+All platform detection is delegated to the canonical platform_ctx module.
+This file re-exports commonly used symbols for backward compatibility.
+"""
 
 from __future__ import annotations
 
-import functools
-import platform
-import shutil
-import subprocess
-from pathlib import Path
+from app.common.platform_ctx import (
+    PLATFORM,
+    CAPABILITIES,
+    open_path_cross_platform,
+)
 
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
-IS_LINUX = platform.system() == "Linux"
+IS_WINDOWS: bool = PLATFORM["is_windows"]
+IS_MACOS: bool = PLATFORM["is_mac"]
+IS_LINUX: bool = PLATFORM["is_linux"]
 
 
-@functools.lru_cache(maxsize=1)
 def is_wsl() -> bool:
     """Detect if running inside Windows Subsystem for Linux."""
-    if not IS_LINUX:
-        return False
-    try:
-        return "microsoft" in Path("/proc/version").read_text().lower()
-    except Exception:
-        return False
+    return PLATFORM["is_wsl"]
 
 
 def has_display() -> bool:
-    """Check whether a desktop/display environment is available on Linux."""
-    if IS_MACOS or IS_WINDOWS:
-        return True
-    import os
-
-    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-
-
-def open_path_cross_platform(path_str: str) -> tuple[bool, str]:
-    """Open a file or folder in the OS file manager.
-
-    Returns (success, message).
-    """
-    # Strip trailing separator — explorer.exe chokes on "C:\\foo\\" but handles "C:\\foo"
-    clean = path_str.rstrip("/\\") or path_str
-
-    system = platform.system()
-    try:
-        if system == "Darwin":
-            subprocess.Popen(["open", clean])
-        elif system == "Windows":
-            # explorer.exe is more reliable than os.startfile() when the Python
-            # process runs without a window station (e.g. as a background service).
-            # /select highlights the item if it's a file; for directories it just opens them.
-            import os
-
-            if os.path.isfile(clean):
-                subprocess.Popen(["explorer.exe", f"/select,{clean}"])
-            else:
-                subprocess.Popen(["explorer.exe", clean])
-        elif is_wsl():
-            wsl_path = subprocess.check_output(
-                ["wslpath", "-w", clean], text=True
-            ).strip()
-            # Strip trailing backslash from wslpath output too
-            wsl_clean = wsl_path.rstrip("\\")
-            subprocess.Popen(["explorer.exe", wsl_clean])
-        else:
-            if shutil.which("xdg-open"):
-                subprocess.Popen(["xdg-open", clean])
-            elif shutil.which("nautilus"):
-                subprocess.Popen(["nautilus", clean])
-            else:
-                return True, f"No file manager available. Path: {path_str}"
-        return True, f"Opened {path_str}"
-    except Exception as e:
-        return False, f"Failed to open: {e}"
+    """Check whether a desktop/display environment is available."""
+    return CAPABILITIES["has_display"]
 
 
 NO_GUI_MSG = (

@@ -5,21 +5,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import platform
 import re
 import signal
 import socket
 import subprocess
 from pathlib import Path
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
-IS_LINUX = platform.system() == "Linux"
 
 
 async def tool_list_processes(
@@ -29,10 +25,10 @@ async def tool_list_processes(
     limit: int = 50,
 ) -> ToolResult:
     """List running processes with PID, name, CPU%, memory usage."""
-    try:
-        import psutil
-    except ImportError:
+    if not CAPABILITIES["has_psutil"]:
         return _list_processes_fallback(filter, sort_by, limit)
+
+    import psutil
 
     processes = []
     for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info", "status", "username"]):
@@ -73,7 +69,7 @@ async def tool_list_processes(
 def _list_processes_fallback(filter: str | None, sort_by: str, limit: int) -> ToolResult:
     """Fallback using subprocess when psutil is not available."""
     try:
-        if IS_WINDOWS:
+        if PLATFORM["is_windows"]:
             result = subprocess.run(
                 ["tasklist", "/FO", "CSV", "/NH"],
                 capture_output=True, text=True, timeout=10,
@@ -86,7 +82,7 @@ def _list_processes_fallback(filter: str | None, sort_by: str, limit: int) -> To
         output = result.stdout
         if filter:
             lines = output.split("\n")
-            header = lines[0] if not IS_WINDOWS else ""
+            header = lines[0] if not PLATFORM["is_windows"] else ""
             filtered = [l for l in lines if filter.lower() in l.lower()]
             output = (header + "\n" if header else "") + "\n".join(filtered[:limit])  # type: ignore
         return ToolResult(output=output.strip())
@@ -104,13 +100,11 @@ async def tool_list_ports(
     Provides PID, process name, local address (IP:Port), and protocol.
     Filters by process name or port number if requested.
     """
-    try:
-        import psutil
+    if CAPABILITIES["has_psutil"]:
+        import psutil  # noqa: F811
         ports = _list_ports_psutil(filter, limit)
         if ports is not None:
             return _format_ports_result(ports)
-    except ImportError:
-        pass
 
     # psutil unavailable or returned None (AccessDenied on macOS) — use OS commands
     return _list_ports_os_fallback(filter, limit)
@@ -173,9 +167,9 @@ def _list_ports_psutil(filter: str | None, limit: int) -> list[dict] | None:
 def _list_ports_os_fallback(filter: str | None, limit: int) -> ToolResult:
     """Collect ports using OS-native commands when psutil is unavailable or access-denied."""
     try:
-        if IS_WINDOWS:
+        if PLATFORM["is_windows"]:
             return _list_ports_windows(filter, limit)
-        elif IS_MACOS:
+        elif PLATFORM["is_mac"]:
             return _list_ports_lsof(filter, limit)
         else:
             # Linux: try ss first (always available), fall back to lsof
@@ -190,7 +184,7 @@ def _list_ports_os_fallback(filter: str | None, limit: int) -> ToolResult:
 def _list_ports_lsof(filter: str | None, limit: int) -> ToolResult:
     """macOS / Linux: parse lsof -F (field-based, unambiguous output)."""
     # Use absolute path so it works even when /usr/sbin is not in Tauri sidecar's PATH
-    lsof_bin = '/usr/sbin/lsof' if IS_MACOS else 'lsof'
+    lsof_bin = '/usr/sbin/lsof' if PLATFORM["is_mac"] else 'lsof'
     try:
         result = subprocess.run(
             [lsof_bin, '-iTCP', '-iUDP', '-sTCP:LISTEN', '-P', '-n', '-F', 'pcPun'],
@@ -460,7 +454,7 @@ async def tool_launch_app(
     args = args or []
 
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             if not application.startswith("/") and not application.endswith(".app"):
                 # Try to open by app name via `open -a`
                 cmd = ["open", "-a", application] + (["--args"] + args if args else [])
@@ -468,7 +462,7 @@ async def tool_launch_app(
                 cmd = ["open", "-a", application] + (["--args"] + args if args else [])
             else:
                 cmd = [application] + args
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             cmd = ["start", "", application] + args
         else:
             cmd = [application] + args
@@ -493,9 +487,9 @@ async def tool_launch_app(
                 proc.kill()
                 return ToolResult(output=f"App launched but timed out after {timeout}s.")
         else:
-            if IS_MACOS and cmd[0] == "open":
+            if PLATFORM["is_mac"] and cmd[0] == "open":
                 subprocess.Popen(cmd)
-            elif IS_WINDOWS:
+            elif PLATFORM["is_windows"]:
                 subprocess.Popen(cmd, shell=True)
             else:
                 subprocess.Popen(cmd, start_new_session=True)
@@ -529,7 +523,7 @@ async def tool_kill_process(
     if pid is not None:
         try:
             sig = signal.SIGKILL if force else signal.SIGTERM
-            if IS_WINDOWS:
+            if PLATFORM["is_windows"]:
                 subprocess.run(
                     ["taskkill", "/PID", str(pid)] + (["/F"] if force else []),
                     capture_output=True, timeout=10,
@@ -545,8 +539,8 @@ async def tool_kill_process(
             errors.append(f"PID {pid}: {e}")
 
     if name is not None:
-        try:
-            import psutil
+        if CAPABILITIES["has_psutil"]:
+            import psutil  # noqa: F811
             for proc in psutil.process_iter(["pid", "name"]):
                 try:
                     if proc.info["name"] and name.lower() in proc.info["name"].lower():
@@ -557,10 +551,10 @@ async def tool_kill_process(
                         killed.append(f"{proc.info['name']} (PID {proc.info['pid']})")
                 except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
                     errors.append(f"{name}: {e}")
-        except ImportError:
+        else:
             # Fallback without psutil
             try:
-                if IS_WINDOWS:
+                if PLATFORM["is_windows"]:
                     subprocess.run(
                         ["taskkill", "/IM", name] + (["/F"] if force else []),
                         capture_output=True, timeout=10,
@@ -595,7 +589,7 @@ async def tool_focus_app(
     On macOS uses AppleScript, on Windows uses PowerShell.
     """
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             script = f'tell application "{application}" to activate'
             proc = await asyncio.create_subprocess_exec(
                 "osascript", "-e", script,
@@ -610,7 +604,7 @@ async def tool_focus_app(
                 )
             return ToolResult(output=f"Focused: {application}")
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             ps_script = f"""
 $proc = Get-Process -Name '{application}' -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($proc) {{
@@ -622,7 +616,7 @@ if ($proc) {{
 }}
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe", "-Command", ps_script,
+                CAPABILITIES["powershell_path"], "-Command", ps_script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -693,13 +687,13 @@ async def tool_list_terminals(
     Returns PID, name, status, working directory (when accessible), TTY/PTY
     device path, command line, and elapsed running time for each process.
     """
-    try:
-        import psutil
-    except ImportError:
+    if not CAPABILITIES["has_psutil"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output="psutil is required for ListTerminals.",
         )
+
+    import psutil  # noqa: F811
 
     terminals: list[dict] = []
     now = psutil.boot_time()  # fallback; overridden per-process
@@ -785,7 +779,7 @@ async def tool_tail_terminal(
         )
 
     # ── Strategy 1: read from TTY device directly ────────────────────────────
-    if tty and not IS_WINDOWS:
+    if tty and not PLATFORM["is_windows"]:
         try:
             result = subprocess.run(
                 ["script", "-q", "/dev/null", "-c", f"cat {tty}"],
@@ -822,7 +816,7 @@ async def tool_tail_terminal(
             pass
 
     # ── Strategy 2: /proc/<pid>/fd/1 (Linux) ────────────────────────────────
-    if pid and IS_LINUX:
+    if pid and PLATFORM["is_linux"]:
         fd1 = Path(f"/proc/{pid}/fd/1")
         try:
             real = fd1.resolve()

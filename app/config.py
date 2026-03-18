@@ -1,8 +1,8 @@
 import os
-import platform
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from app.common.platform_ctx import PLATFORM as _PLATFORM_CTX
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=BASE_DIR / ".env")
@@ -137,7 +137,7 @@ SUPABASE_PUBLISHABLE_KEY = os.getenv(
 # ---------------------------------------------------------------------------
 
 _is_frozen = getattr(sys, "frozen", False)  # True when running as PyInstaller bundle
-_system = platform.system()
+_system = _PLATFORM_CTX["system"]
 
 
 def _platform_data_dir() -> Path:

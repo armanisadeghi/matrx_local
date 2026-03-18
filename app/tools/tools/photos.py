@@ -12,16 +12,14 @@ import asyncio
 import base64
 import io
 import logging
-import platform
 import threading
 from typing import Any
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
 
 _PERMISSION_HINT = (
     "Photos access is required. "
@@ -153,7 +151,7 @@ async def tool_search_photos(
         limit: Maximum assets to return (default 25, max 200).
         favorites_only: If True, only return favorited assets.
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Photos tool is only available on macOS.", type=ToolResultType.ERROR)
 
     limit = max(1, min(limit, 200))
@@ -241,7 +239,7 @@ async def tool_get_photo(
         identifier: The PHAsset localIdentifier (from search_photos results).
         thumbnail_size: Max thumbnail dimension in pixels (default 512, max 2048).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Photos tool is only available on macOS.", type=ToolResultType.ERROR)
 
     thumbnail_size = max(64, min(thumbnail_size, 2048))

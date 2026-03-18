@@ -32,10 +32,12 @@ import sys
 import threading
 from pathlib import Path
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
+
 # On Windows, the default console encoding (CP1252) can't represent Unicode
 # characters used in log messages (e.g. ✓, ─).  Reconfigure stdout/stderr to
 # UTF-8 immediately so logging never raises UnicodeEncodeError.
-if sys.platform == "win32":
+if PLATFORM["is_windows"]:
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
@@ -163,7 +165,7 @@ def _pids_on_port(port: int) -> list[int]:
             pass
         return result
 
-    if sys.platform == "darwin":
+    if PLATFORM["is_mac"]:
         pids = _try_lsof(port) or _try_ss(port)
     else:
         pids = _try_ss(port) or _try_lsof(port)
@@ -177,7 +179,7 @@ def _is_matrx_pid(pid: int, stale_pid: int | None) -> bool:
         return True
     # Check /proc cmdline (Linux) or ps (macOS/BSD)
     try:
-        if sys.platform != "darwin" and Path(f"/proc/{pid}/cmdline").exists():
+        if not PLATFORM["is_mac"] and Path(f"/proc/{pid}/cmdline").exists():
             cmdline = Path(f"/proc/{pid}/cmdline").read_text().replace("\x00", " ")
             return "run.py" in cmdline or "matrx" in cmdline.lower()
         out = subprocess.check_output(
@@ -439,16 +441,11 @@ def _is_tauri_sidecar() -> bool:
 
 def _has_system_tray() -> bool:
     """Check if a system tray is available (not available in WSL/headless)."""
-    if sys.platform == "win32" or sys.platform == "darwin":
+    if PLATFORM["is_windows"] or PLATFORM["is_mac"]:
         return True
-    display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    if not display:
+    if not CAPABILITIES["has_display"]:
         return False
-    if (
-        "microsoft" in Path("/proc/version").read_text().lower()
-        if Path("/proc/version").exists()
-        else ""
-    ):
+    if PLATFORM["is_wsl"]:
         return False
     return True
 

@@ -12,15 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 from typing import Any
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
 
 _AUTOMATION_HINT = (
     "Automation access to Mail is required. "
@@ -61,7 +59,7 @@ async def tool_list_emails(
         limit: Maximum messages to return (default 25, max 200).
         unread_only: If True, only return unread messages.
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Mail tool is only available on macOS.", type=ToolResultType.ERROR)
 
     limit = max(1, min(limit, 200))
@@ -139,7 +137,7 @@ async def tool_send_email(
         cc: CC recipient email address (optional).
         bcc: BCC recipient email address (optional).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Mail tool is only available on macOS.", type=ToolResultType.ERROR)
 
     if not to.strip() or not subject.strip():
@@ -182,7 +180,7 @@ end tell
 
 async def tool_get_email_accounts(session: ToolSession) -> ToolResult:
     """List configured Mail.app accounts and their mailboxes."""
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Mail tool is only available on macOS.", type=ToolResultType.ERROR)
 
     script = """

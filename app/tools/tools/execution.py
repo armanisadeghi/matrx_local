@@ -8,9 +8,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import platform
 import re
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import BackgroundShell, ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
@@ -21,19 +21,14 @@ DEFAULT_TIMEOUT_MS = 120_000
 MAX_TIMEOUT_MS = 600_000
 CWD_SENTINEL = "___MATRX_CWD_SENTINEL_9f8a7b___"
 
-IS_WINDOWS = platform.system() == "Windows"
-
-
 def _get_shell() -> str:
-    if IS_WINDOWS:
-        return "powershell.exe"
-    if os.path.exists("/bin/zsh"):
-        return "/bin/zsh"
-    return "/bin/bash"
+    if PLATFORM["is_windows"]:
+        return CAPABILITIES["powershell_path"]
+    return CAPABILITIES["shell_path"] or "/bin/sh"
 
 
 def _quote(value: str) -> str:
-    if IS_WINDOWS:
+    if PLATFORM["is_windows"]:
         escaped = value.replace("'", "''")
         return f"'{escaped}'"
     import shlex
@@ -41,7 +36,7 @@ def _quote(value: str) -> str:
 
 
 def _wrap_foreground(command: str, cwd: str) -> str:
-    if IS_WINDOWS:
+    if PLATFORM["is_windows"]:
         return (
             f"Set-Location -LiteralPath {_quote(cwd)}; "
             f"$ErrorActionPreference='Continue'; "
@@ -62,14 +57,14 @@ def _wrap_foreground(command: str, cwd: str) -> str:
 
 
 def _wrap_background(command: str, cwd: str) -> str:
-    if IS_WINDOWS:
+    if PLATFORM["is_windows"]:
         return f"Set-Location -LiteralPath {_quote(cwd)}; {command}"
     return f"cd {_quote(cwd)} && {{ {command} ; }}"
 
 
 def _shell_env() -> dict[str, str]:
     env = dict(os.environ)
-    if IS_WINDOWS:
+    if PLATFORM["is_windows"]:
         env.setdefault("USERPROFILE", os.path.expanduser("~"))
     else:
         env.setdefault("HOME", os.path.expanduser("~"))
@@ -104,7 +99,7 @@ async def _launch_shell(cmd: str) -> asyncio.subprocess.Process:
     directly instead.  On POSIX we keep the simpler create_subprocess_shell +
     executable approach which has always worked.
     """
-    if IS_WINDOWS:
+    if PLATFORM["is_windows"]:
         shell_path = _get_shell()
         return await asyncio.create_subprocess_exec(
             shell_path, "-NoProfile", "-NonInteractive", "-Command", cmd,

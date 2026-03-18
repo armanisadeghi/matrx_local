@@ -5,16 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import platform
 import subprocess
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
 
 
 async def tool_system_resources(
@@ -35,8 +32,11 @@ async def tool_system_resources(
         mem = psutil.virtual_memory()
         swap = psutil.swap_memory()
 
-        # Disk (root / or C:)
-        disk = psutil.disk_usage("/" if not IS_WINDOWS else "C:\\")
+        # Disk (root / or system drive on Windows)
+        disk = psutil.disk_usage(
+            "/" if not PLATFORM["is_windows"]
+            else os.environ.get("SystemDrive", "C:") + "\\"
+        )
 
         # Network I/O
         net = psutil.net_io_counters()
@@ -87,7 +87,7 @@ async def tool_system_resources(
 def _system_resources_fallback() -> ToolResult:
     """Fallback using system commands."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             result = subprocess.run(
                 ["top", "-l", "1", "-s", "0"],
                 capture_output=True,
@@ -102,7 +102,7 @@ def _system_resources_fallback() -> ToolResult:
             return ToolResult(
                 output="\n".join(lines) if lines else result.stdout[:2000]
             )
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             result = subprocess.run(
                 ["systeminfo"],
                 capture_output=True,
@@ -175,7 +175,7 @@ async def tool_battery_status(
     except ImportError:
         # Fallback
         try:
-            if IS_MACOS:
+            if PLATFORM["is_mac"]:
                 result = subprocess.run(
                     ["pmset", "-g", "batt"],
                     capture_output=True,
@@ -183,7 +183,7 @@ async def tool_battery_status(
                     timeout=10,
                 )
                 return ToolResult(output=result.stdout.strip())
-            elif IS_WINDOWS:
+            elif PLATFORM["is_windows"]:
                 result = subprocess.run(
                     [
                         "powershell",
@@ -272,7 +272,7 @@ async def tool_disk_usage(
 
     except ImportError:
         try:
-            if IS_WINDOWS:
+            if PLATFORM["is_windows"]:
                 result = subprocess.run(
                     ["wmic", "logicaldisk", "get", "size,freespace,caption"],
                     capture_output=True,
@@ -342,7 +342,7 @@ async def tool_top_processes(
 
     except ImportError:
         try:
-            if IS_WINDOWS:
+            if PLATFORM["is_windows"]:
                 result = subprocess.run(
                     ["tasklist", "/FO", "TABLE", "/NH"],
                     capture_output=True,

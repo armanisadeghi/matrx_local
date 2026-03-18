@@ -11,10 +11,10 @@ import asyncio
 import base64
 import logging
 import os
-import platform
 import uuid
 from typing import Literal
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.config import TEMP_DIR
 from app.tools.session import ToolSession
 from app.tools.types import ImageData, ToolResult, ToolResultType
@@ -39,21 +39,15 @@ _DEFAULT_BROWSER: BrowserType = "chromium"
 
 def _is_wsl() -> bool:
     """Return True when running inside Windows Subsystem for Linux."""
-    try:
-        release = platform.uname().release.lower()
-        return "microsoft" in release or "wsl" in release
-    except Exception:
-        return False
+    return PLATFORM["is_wsl"]
 
 
 def _supports_headed() -> bool:
     """Return True when a display server is available for headed browsers."""
     if _is_wsl():
         return False
-    if platform.system() == "Linux":
-        # Need DISPLAY (X11) or WAYLAND_DISPLAY to run headed
-        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-    # macOS and Windows always support headed mode
+    if PLATFORM["is_linux"]:
+        return CAPABILITIES["has_display"]
     return True
 
 
@@ -111,8 +105,7 @@ async def _get_browser(browser_type: BrowserType = _DEFAULT_BROWSER):
     elif browser_type == "firefox":
         browser_launcher = pw.firefox
     elif browser_type == "webkit":
-        # WebKit doesn't support headed on Linux
-        if platform.system() == "Linux":
+        if PLATFORM["is_linux"]:
             launch_kwargs["headless"] = True
         browser_launcher = pw.webkit
     else:

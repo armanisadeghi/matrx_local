@@ -10,18 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import platform
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 
-IS_MACOS = platform.system() == "Darwin"
-IS_WINDOWS = platform.system() == "Windows"
-IS_LINUX = platform.system() == "Linux"
+logger = logging.getLogger(__name__)
 
 
 class PermissionStatus(str, Enum):
@@ -98,7 +94,7 @@ async def check_microphone() -> PermissionResult:
     # On macOS we enumerate via system_profiler so the device list is available
     # even before TCC permission is granted (sounddevice may return an empty list
     # or raise when mic access is denied — it is NOT a reliable permission proxy).
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         try:
             out, _, _ = await _run(["system_profiler", "SPAudioDataType", "-json"])
             data = json.loads(out)
@@ -127,7 +123,7 @@ async def check_microphone() -> PermissionResult:
                     )
         except ImportError:
             try:
-                if IS_LINUX:
+                if PLATFORM["is_linux"]:
                     out, _, rc = await _run(["arecord", "-l"])
                     if rc == 0:
                         for line in out.split("\n"):
@@ -140,7 +136,7 @@ async def check_microphone() -> PermissionResult:
 
     _MIC_DEEP_LINK = (
         "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-        if IS_MACOS else ""
+        if PLATFORM["is_mac"] else ""
     )
 
     if not devices:
@@ -157,7 +153,7 @@ async def check_microphone() -> PermissionResult:
         )
 
     # On macOS, try a quick non-blocking permission probe
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         status = await _macos_check_tcc("kTCCServiceMicrophone", "Microphone")
         return PermissionResult(
             permission="microphone",
@@ -187,9 +183,9 @@ async def check_microphone() -> PermissionResult:
 
 
 def _microphone_instructions() -> str:
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         return "System Settings > Privacy & Security > Microphone > Enable for Matrx Local (or Terminal)"
-    elif IS_WINDOWS:
+    elif PLATFORM["is_windows"]:
         return "Settings > Privacy > Microphone > Allow apps to access your microphone"
     return "Ensure your user is in the 'audio' group: sudo usermod -aG audio $USER"
 
@@ -203,7 +199,7 @@ async def check_camera() -> PermissionResult:
     """Check camera availability."""
     devices: list[dict[str, Any]] = []
 
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         try:
             out, _, _ = await _run(["system_profiler", "SPCameraDataType", "-json"])
             data = json.loads(out)
@@ -237,11 +233,11 @@ async def check_camera() -> PermissionResult:
             deep_link="x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
         )
 
-    elif IS_WINDOWS:
+    elif PLATFORM["is_windows"]:
         try:
             out, _, _ = await _run(
                 [
-                    "powershell.exe",
+                    CAPABILITIES["powershell_path"],
                     "-NoProfile",
                     "-Command",
                     "Get-PnpDevice -Class Camera -PresentOnly | Select-Object FriendlyName, Status | ConvertTo-Json",
@@ -310,7 +306,7 @@ async def check_camera() -> PermissionResult:
 
 async def check_accessibility() -> PermissionResult:
     """Check accessibility / screen recording permissions (mostly macOS)."""
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         # Use AXIsProcessTrusted via ctypes — this checks the calling process
         # directly, unlike osascript which spawns a child with a different TCC
         # identity that can give misleading results.
@@ -397,7 +393,7 @@ async def check_accessibility() -> PermissionResult:
             deep_link=_ax_deep_link,
         )
 
-    elif IS_WINDOWS:
+    elif PLATFORM["is_windows"]:
         # Windows generally doesn't restrict accessibility for desktop apps
         return PermissionResult(
             permission="accessibility",
@@ -410,8 +406,8 @@ async def check_accessibility() -> PermissionResult:
 
     else:
         # Linux: check for xdotool or wmctrl availability
-        has_xdotool = shutil.which("xdotool") is not None
-        has_wmctrl = shutil.which("wmctrl") is not None
+        has_xdotool = CAPABILITIES["has_xdotool"]
+        has_wmctrl = CAPABILITIES["has_wmctrl"]
         if has_xdotool or has_wmctrl:
             return PermissionResult(
                 permission="accessibility",
@@ -432,7 +428,7 @@ async def check_accessibility() -> PermissionResult:
 
 
 def _accessibility_instructions() -> str:
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         return (
             "System Settings > Privacy & Security > Accessibility > "
             "Enable for Matrx Local (or Terminal). "
@@ -450,7 +446,7 @@ async def check_bluetooth() -> PermissionResult:
     """Check Bluetooth availability and permission."""
     devices: list[dict[str, Any]] = []
 
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         try:
             out, _, _ = await _run(["system_profiler", "SPBluetoothDataType", "-json"])
             data = json.loads(out)
@@ -492,11 +488,11 @@ async def check_bluetooth() -> PermissionResult:
         except Exception as e:
             logger.debug("Bluetooth check failed: %s", e)
 
-    elif IS_WINDOWS:
+    elif PLATFORM["is_windows"]:
         try:
             out, _, rc = await _run(
                 [
-                    "powershell.exe",
+                    CAPABILITIES["powershell_path"],
                     "-NoProfile",
                     "-Command",
                     "Get-PnpDevice -Class Bluetooth | Where-Object {$_.FriendlyName -ne $null} | "
@@ -527,7 +523,7 @@ async def check_bluetooth() -> PermissionResult:
             pass
 
     else:  # Linux
-        if shutil.which("bluetoothctl"):
+        if CAPABILITIES["has_bluetoothctl"]:
             try:
                 out, _, rc = await _run(["bluetoothctl", "devices"])
                 if rc == 0:
@@ -616,22 +612,22 @@ async def check_network() -> PermissionResult:
 
     # Check WiFi specifically
     wifi_ok = False
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         try:
             out, _, rc = await _run(["networksetup", "-getairportpower", "en0"])
             wifi_ok = "on" in out.lower()
             details_parts.append(f"WiFi {'on' if wifi_ok else 'off'}")
         except Exception:
             pass
-    elif IS_LINUX:
-        if shutil.which("nmcli"):
+    elif PLATFORM["is_linux"]:
+        if CAPABILITIES["has_nmcli"]:
             try:
                 out, _, rc = await _run(["nmcli", "radio", "wifi"])
                 wifi_ok = "enabled" in out.lower()
                 details_parts.append(f"WiFi {'enabled' if wifi_ok else 'disabled'}")
             except Exception:
                 pass
-    elif IS_WINDOWS:
+    elif PLATFORM["is_windows"]:
         try:
             out, _, rc = await _run(["netsh", "wlan", "show", "interfaces"])
             wifi_ok = "connected" in out.lower()
@@ -694,9 +690,9 @@ def _classify_iface(name: str) -> str:
 
 
 def _network_instructions() -> str:
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         return "System Settings > Privacy & Security > Local Network > Enable for Matrx Local"
-    elif IS_WINDOWS:
+    elif PLATFORM["is_windows"]:
         return "Settings > Network & internet. Ensure WiFi or Ethernet is connected."
     return (
         "Ensure NetworkManager is running: sudo systemctl enable --now NetworkManager"
@@ -714,9 +710,9 @@ async def check_wifi() -> PermissionResult:
     details = ""
 
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             networks, details = await _wifi_scan_macos()
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             networks, details = await _wifi_scan_windows()
         else:
             networks, details = await _wifi_scan_linux()
@@ -878,9 +874,9 @@ async def _wifi_scan_linux() -> tuple[list[dict[str, Any]], str]:
 
 
 def _wifi_instructions() -> str:
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         return "Ensure WiFi is enabled in System Settings > Network > WiFi"
-    elif IS_WINDOWS:
+    elif PLATFORM["is_windows"]:
         return "Enable WiFi in Settings > Network & internet > WiFi"
     return "Enable WiFi: nmcli radio wifi on"
 
@@ -907,23 +903,23 @@ def _macos_screen_recording_status() -> PermissionStatus:
     session. This is expected macOS TCC cache behaviour and is acceptable for
     a read-only status display.
     """
-    try:
-        from Quartz import CGPreflightScreenCaptureAccess  # pyobjc-framework-Quartz
-        return PermissionStatus.GRANTED if CGPreflightScreenCaptureAccess() else PermissionStatus.NOT_DETERMINED
-    except ImportError:
-        return PermissionStatus.UNKNOWN
-    except Exception:
-        return PermissionStatus.UNKNOWN
+    if CAPABILITIES["has_quartz"]:
+        try:
+            from Quartz import CGPreflightScreenCaptureAccess  # pyobjc-framework-Quartz
+            return PermissionStatus.GRANTED if CGPreflightScreenCaptureAccess() else PermissionStatus.NOT_DETERMINED
+        except Exception:
+            return PermissionStatus.UNKNOWN
+    return PermissionStatus.UNKNOWN
 
 
 async def check_screen_recording() -> PermissionResult:
     """Check screen recording / screenshot permission."""
     _sr_deep_link = (
         "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-        if IS_MACOS else ""
+        if PLATFORM["is_mac"] else ""
     )
 
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         # Use ScreenCaptureKit — the Apple-mandated replacement for
         # CGPreflightScreenCaptureAccess + CGDisplayCreateImage on macOS 15+.
         # Run the blocking pyobjc call in a thread pool so it doesn't block
@@ -948,7 +944,7 @@ async def check_screen_recording() -> PermissionResult:
             deep_link=_sr_deep_link,
         )
 
-    elif IS_WINDOWS:
+    elif PLATFORM["is_windows"]:
         return PermissionResult(
             permission="screen_recording",
             status=PermissionStatus.GRANTED,
@@ -982,7 +978,7 @@ async def check_location() -> PermissionResult:
     The sidecar can read the status but cannot prompt; if NOT_DETERMINED we
     return UNKNOWN with instructions to open System Settings.
     """
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         status = PermissionStatus.UNKNOWN
         try:
             from CoreLocation import CLLocationManager  # pyobjc-framework-CoreLocation
@@ -1026,7 +1022,7 @@ async def check_location() -> PermissionResult:
 
 async def check_contacts() -> PermissionResult:
     """Check Contacts TCC status via CNContactStore (macOS only)."""
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         status = PermissionStatus.UNKNOWN
         try:
             from Contacts import CNContactStore  # pyobjc-framework-Contacts
@@ -1064,7 +1060,7 @@ async def check_contacts() -> PermissionResult:
 
 async def check_calendar() -> PermissionResult:
     """Check Calendar TCC status via EKEventStore (macOS only)."""
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         status = PermissionStatus.UNKNOWN
         try:
             from EventKit import EKEventStore  # pyobjc-framework-EventKit
@@ -1103,7 +1099,7 @@ async def check_calendar() -> PermissionResult:
 
 async def check_reminders() -> PermissionResult:
     """Check Reminders TCC status via EKEventStore (macOS only)."""
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         status = PermissionStatus.UNKNOWN
         try:
             from EventKit import EKEventStore  # pyobjc-framework-EventKit
@@ -1141,7 +1137,7 @@ async def check_reminders() -> PermissionResult:
 
 async def check_photos() -> PermissionResult:
     """Check Photos library TCC status via PHPhotoLibrary (macOS only)."""
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         status = PermissionStatus.UNKNOWN
         try:
             from Photos import PHPhotoLibrary  # pyobjc-framework-Photos
@@ -1185,7 +1181,7 @@ async def check_messages() -> PermissionResult:
     Access (kTCCServiceSystemPolicyAllFiles). We probe by attempting to open
     ~/Library/Messages/chat.db in read-only mode.
     """
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         import sqlite3 as _sqlite3
         from pathlib import Path as _Path
 
@@ -1235,7 +1231,7 @@ async def check_mail() -> PermissionResult:
     We return UNKNOWN with instructions to grant Automation access since we cannot
     query the Automation TCC table from a background sidecar process reliably.
     """
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         return PermissionResult(
             permission="mail",
             status=PermissionStatus.UNKNOWN,
@@ -1261,22 +1257,21 @@ async def check_mail() -> PermissionResult:
 
 async def check_speech_recognition() -> PermissionResult:
     """Check Speech Recognition TCC status via SFSpeechRecognizer (macOS only)."""
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         status = PermissionStatus.UNKNOWN
-        try:
-            from Speech import SFSpeechRecognizer  # pyobjc-framework-Speech
-            # SFSpeechRecognizerAuthorizationStatus: 0=notDetermined, 1=denied, 2=restricted, 3=authorized
-            code = SFSpeechRecognizer.authorizationStatus()
-            status = {
-                0: PermissionStatus.NOT_DETERMINED,
-                1: PermissionStatus.DENIED,
-                2: PermissionStatus.RESTRICTED,
-                3: PermissionStatus.GRANTED,
-            }.get(code, PermissionStatus.UNKNOWN)
-        except ImportError:
-            pass
-        except Exception as exc:
-            logger.debug("Speech Recognition status check failed: %s", exc)
+        if CAPABILITIES["has_speech_framework"]:
+            try:
+                from Speech import SFSpeechRecognizer  # pyobjc-framework-Speech
+                # SFSpeechRecognizerAuthorizationStatus: 0=notDetermined, 1=denied, 2=restricted, 3=authorized
+                code = SFSpeechRecognizer.authorizationStatus()
+                status = {
+                    0: PermissionStatus.NOT_DETERMINED,
+                    1: PermissionStatus.DENIED,
+                    2: PermissionStatus.RESTRICTED,
+                    3: PermissionStatus.GRANTED,
+                }.get(code, PermissionStatus.UNKNOWN)
+            except Exception as exc:
+                logger.debug("Speech Recognition status check failed: %s", exc)
 
         instructions = "System Settings → Privacy & Security → Speech Recognition → Enable for AI Matrx"
         return PermissionResult(
@@ -1421,7 +1416,7 @@ async def check_all_permissions() -> list[dict[str, Any]]:
 
     logger.info(
         "[permissions] check_all_permissions — platform=%s %s — checking %d permissions",
-        platform.system(), platform.machine(), len(names),
+        PLATFORM["system"], PLATFORM["machine"], len(names),
     )
 
     results = await asyncio.gather(

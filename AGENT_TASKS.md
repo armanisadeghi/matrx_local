@@ -1,6 +1,6 @@
 # Matrx Local — Task Tracker
 
-_Last updated: 2026-03-16_
+_Last updated: 2026-03-18_
 
 > Living document. Log every discovered bug, issue, and improvement immediately.
 > Keep active items concise and actionable. Completed items go in the History section at the bottom.
@@ -86,6 +86,14 @@ _Last updated: 2026-03-16_
 - On Windows: add `windowsHideConsole: true` to sidecar config to suppress console window
 - [x] **Windows: UnicodeEncodeError on startup** — Fixed by reconfiguring stdout/stderr to UTF-8 at the top of `run.py` (`sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")`). CP1252 can't encode ✓ and ─ chars used in log messages (2026-03-17).
 - [x] **Windows: Engine starts but Tauri port scan says "No open ports"** — Root cause: Windows WebView2 loopback network isolation blocks `fetch()` from JS to `127.0.0.1`. Fixed by adding `check_engine_health` and `discover_engine_port` Rust commands (reqwest bypasses the sandbox restriction). `waitForEngine()` and `discoverEnginePort()` in `sidecar.ts` now delegate to these Rust commands when inside Tauri (2026-03-17).
+
+---
+
+## 🟠 P1 — Platform Context Enforcement
+
+- [x] **Phase 1 audit complete** — Full codebase audit documented in `PLATFORM_AUDIT.md`. Found ~120+ violations across ~40 files: 24 files with local `IS_*` constants, 5 files needing new `PLATFORM` fields, 5 files with direct `sys.platform`/`os.name`, 10+ files with `shutil.which()` outside the capability registry, hardcoded paths, and 3 frontend violations. Critical finding: `initPlatformCtx()` is never called — frontend `PLATFORM`/`CAPABILITIES` stuck on browser fallback. (2026-03-18)
+- [x] **Phase 2: Refactor all violations** — All ~120 violations replaced with `PLATFORM`/`CAPABILITIES` lookups across ~40 files. Extended `platform_ctx.py` with 12 new PLATFORM fields and 17 new CAPABILITIES flags. Extended `platformCtx.ts` to match. Wired `initPlatformCtx()` in `use-engine.ts`. Fixed `config.py`, `tunnel/manager.py`. Replaced all local `IS_*` constants, direct `platform.*()`, `sys.platform`, `os.name`, `shutil.which()` calls, and hardcoded paths. Updated `__init__.py` with backward-compat re-exports. Verification grep confirms zero violations outside `platform_ctx.py`. (2026-03-18)
+- [x] **Phase 3: Capability registry gaps** — Added ~25 new CAPABILITIES fields: 8 package checks (screeninfo, tkinter, pyperclip, watchfiles, quartz, speech_framework, wmi, plistlib), 14 binary checks (zsh, bash, shell_path, dns-sd, avahi-browse, airport, cliclick, xclip, xsel, lsusb, tesseract, cloudflared_path, cmd), 2 derived flags (has_system_tray, permission_model), and 1 hardware probe (speakers_available). Fixed Phase 2 residuals: replaced `"powershell.exe"` strings in 11 files (~22 occurrences), DISPLAY env checks in browser_automation.py and run.py, cloudflared shutil.which in tunnel/manager.py, hardcoded shell paths in execution.py. Replaced try/except ImportError with CAPABILITIES guards in 6 files. Updated platformCtx.ts to match. Verification confirms zero violations outside platform_ctx.py. (2026-03-18)
 
 ---
 

@@ -51,6 +51,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
+import { PLATFORM } from "@/lib/platformCtx";
 import type { PermissionKey, PermissionState, PermissionStatus } from "@/hooks/use-permissions";
 import { usePermissionsContext } from "@/contexts/PermissionsContext";
 
@@ -333,7 +334,7 @@ export function PermissionsModal({
             <div>
               <DialogTitle className="text-xl">System Permissions</DialogTitle>
               <DialogDescription className="text-sm">
-                AI Matrx needs these permissions to run automation and AI tools on your Mac.
+                AI Matrx needs these permissions to run automation and AI tools on {PLATFORM.is_mac ? "your Mac" : PLATFORM.is_windows ? "your PC" : "your system"}.
               </DialogDescription>
             </div>
           </div>

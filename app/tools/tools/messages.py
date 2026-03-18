@@ -12,17 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
 
 _CHAT_DB = Path.home() / "Library" / "Messages" / "chat.db"
 
@@ -133,7 +131,7 @@ async def tool_list_messages(
         contact: Filter by contact name or phone number/email (partial match).
         unread_only: If True, only return unread messages.
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Messages tool is only available on macOS.", type=ToolResultType.ERROR)
 
     limit = max(1, min(limit, 500))
@@ -216,7 +214,7 @@ async def tool_list_conversations(
     Args:
         limit: Maximum conversations to return (default 25, max 200).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Messages tool is only available on macOS.", type=ToolResultType.ERROR)
 
     limit = max(1, min(limit, 200))
@@ -264,7 +262,7 @@ async def tool_send_message(
         body: Message text to send.
         service: "iMessage" or "SMS" (default "iMessage").
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(output="Messages tool is only available on macOS.", type=ToolResultType.ERROR)
 
     if not body.strip():

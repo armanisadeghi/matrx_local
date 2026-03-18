@@ -5,19 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import platform
 import re
 import socket
 import struct
 import subprocess
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
 
 
 async def tool_network_info(
@@ -73,14 +70,14 @@ async def tool_network_info(
     except ImportError:
         # Fallback without psutil
         try:
-            if IS_WINDOWS:
+            if PLATFORM["is_windows"]:
                 result = subprocess.run(
                     ["ipconfig", "/all"], capture_output=True, text=True, timeout=10
                 )
                 info["raw"] = result.stdout[:5000]
             else:
                 result = subprocess.run(
-                    ["ifconfig" if IS_MACOS else "ip", "addr"],
+                    ["ifconfig" if PLATFORM["is_mac"] else "ip", "addr"],
                     capture_output=True,
                     text=True,
                     timeout=10,
@@ -91,7 +88,7 @@ async def tool_network_info(
 
     # Get default gateway
     try:
-        if IS_WINDOWS:
+        if PLATFORM["is_windows"]:
             result = subprocess.run(
                 ["ipconfig"], capture_output=True, text=True, timeout=10
             )
@@ -101,7 +98,7 @@ async def tool_network_info(
                     if match:
                         info["gateway"] = match.group(1)
                         break
-        elif IS_MACOS:
+        elif PLATFORM["is_mac"]:
             result = subprocess.run(
                 ["route", "get", "default"], capture_output=True, text=True, timeout=10
             )
@@ -125,7 +122,7 @@ async def tool_network_info(
 
     # Get DNS servers
     try:
-        if not IS_WINDOWS:
+        if not PLATFORM["is_windows"]:
             with open("/etc/resolv.conf") as f:
                 dns_servers = []
                 for line in f:
@@ -186,7 +183,7 @@ async def tool_network_scan(
     # Auto-detect subnet
     if not subnet:
         try:
-            if IS_MACOS:
+            if PLATFORM["is_mac"]:
                 result = subprocess.run(
                     ["ifconfig"],
                     capture_output=True,
@@ -200,7 +197,7 @@ async def tool_network_scan(
                         parts = ip.split(".")
                         subnet = f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
                         break
-            elif IS_WINDOWS:
+            elif PLATFORM["is_windows"]:
                 result = subprocess.run(
                     ["ipconfig"],
                     capture_output=True,
@@ -240,7 +237,7 @@ async def tool_network_scan(
 
     # Method 1: ARP table scan
     try:
-        if IS_WINDOWS:
+        if PLATFORM["is_windows"]:
             # Ping sweep then check ARP
             base = subnet.rsplit(".", 1)[0]
             # Use cmd.exe via create_subprocess_exec to avoid the asyncio
@@ -563,7 +560,7 @@ async def tool_mdns_discover(
 async def _mdns_fallback(service_type: str | None, timeout: int) -> ToolResult:
     """Fallback mDNS discovery using system tools."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             stype = service_type or "_http._tcp"
             if stype.endswith(".local."):
                 stype = stype[:-7]

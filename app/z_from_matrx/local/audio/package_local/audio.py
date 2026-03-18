@@ -2,11 +2,12 @@ import aifc
 import audioop
 import io
 import os
-import platform
 import stat
 import subprocess
 import sys
 import wave
+
+from app.common.platform_ctx import PLATFORM
 
 
 class AudioData(object):
@@ -123,7 +124,7 @@ class AudioData(object):
 
         wav_data = self.get_wav_data(convert_rate, convert_width)
         flac_converter = get_flac_converter()
-        if os.name == "nt":  # on Windows, specify that the process is to be started without showing a console window
+        if PLATFORM["is_windows"]:  # on Windows, specify that the process is to be started without showing a console window
             startup_info = subprocess.STARTUPINFO()
             startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW  # specify that the wShowWindow field of `startup_info` contains a value
             startup_info.wShowWindow = subprocess.SW_HIDE  # specify that the console window should be hidden
@@ -150,7 +151,7 @@ def get_flac_converter():
     flac_converter = shutil_which("flac")  # check for installed version first
     if flac_converter is None:  # flac utility is not installed
         base_path = os.path.dirname(os.path.abspath(__file__))  # directory of the current module file, where all the FLAC bundled binaries are stored
-        system, machine = platform.system(), platform.machine()
+        system, machine = PLATFORM["system"], PLATFORM["machine"]
         if system == "Windows" and machine in {
             "i686",
             "i786",
@@ -184,7 +185,7 @@ def get_flac_converter():
         if not os.access(flac_converter, os.X_OK):
             stat_info = os.stat(flac_converter)
             os.chmod(flac_converter, stat_info.st_mode | stat.S_IEXEC)
-            if "Linux" in platform.system():
+            if PLATFORM["is_linux"]:
                 os.sync() if sys.version_info >= (3, 3) else os.system("sync")
 
     except OSError:

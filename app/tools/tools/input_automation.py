@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import ToolSession
 from app.tools.tools import NO_GUI_MSG, has_display
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
 
 _ACCESSIBILITY_HINT = (
     "macOS Accessibility permission required.\n"
@@ -53,9 +50,9 @@ async def tool_type_text(
         return ToolResult(type=ToolResultType.ERROR, output="Text must not be empty.")
 
     try:
-        if not IS_MACOS and not IS_WINDOWS and not has_display():
+        if not PLATFORM["is_mac"] and not PLATFORM["is_windows"] and not has_display():
             return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             # Escape for AppleScript
             escaped = text.replace("\\", "\\\\").replace('"', '\\"')
             if app_name:
@@ -91,14 +88,14 @@ end tell
                 + (f" into {app_name}" if app_name else "")
             )
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             escaped = text.replace("'", "''")
             ps_script = f"""
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.SendKeys]::SendWait('{escaped}')
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-Command",
                 ps_script,
                 stdout=asyncio.subprocess.PIPE,
@@ -150,9 +147,9 @@ async def tool_hotkey(
         )
 
     try:
-        if not IS_MACOS and not IS_WINDOWS and not has_display():
+        if not PLATFORM["is_mac"] and not PLATFORM["is_windows"] and not has_display():
             return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             modifiers = []
             key = parts[-1]
             for mod in parts[:-1]:
@@ -238,7 +235,7 @@ end tell
                 output=f"Sent hotkey: {keys}" + (f" to {app_name}" if app_name else "")
             )
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             # Map to SendKeys format
             key_map = {
                 "ctrl": "^",
@@ -280,7 +277,7 @@ Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.SendKeys]::SendWait('{escaped}')
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-Command",
                 ps_script,
                 stdout=asyncio.subprocess.PIPE,
@@ -373,9 +370,9 @@ async def tool_mouse_click(
         )
 
     try:
-        if not IS_MACOS and not IS_WINDOWS and not has_display():
+        if not PLATFORM["is_mac"] and not PLATFORM["is_windows"] and not has_display():
             return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             if app_name:
                 activate = f'tell application "{app_name}" to activate\ndelay 0.3\n'
             else:
@@ -424,7 +421,7 @@ Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
 
             return ToolResult(output=f"Clicked {button} at ({x}, {y})")
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             btn_map = {"left": "1", "right": "2", "middle": "4"}
             ps_script = f"""
 Add-Type @"
@@ -439,7 +436,7 @@ public class MouseOps {{
 [MouseOps]::mouse_event(0x0004, 0, 0, 0, [IntPtr]::Zero)  # LEFTUP
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-Command",
                 ps_script,
                 stdout=asyncio.subprocess.PIPE,
@@ -479,9 +476,9 @@ async def tool_mouse_move(
 ) -> ToolResult:
     """Move the mouse cursor to screen coordinates."""
     try:
-        if not IS_MACOS and not IS_WINDOWS and not has_display():
+        if not PLATFORM["is_mac"] and not PLATFORM["is_windows"] and not has_display():
             return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             script = f"""
 do shell script "if command -v cliclick >/dev/null; then cliclick m:{x},{y}; else python3 -c \\"
 import Quartz
@@ -500,7 +497,7 @@ Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
             await asyncio.wait_for(proc.communicate(), timeout=10)
             return ToolResult(output=f"Mouse moved to ({x}, {y})")
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             ps_script = f"""
 Add-Type @"
 using System; using System.Runtime.InteropServices;
@@ -511,7 +508,7 @@ public class MouseMove {{
 [MouseMove]::SetCursorPos({x}, {y})
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-Command",
                 ps_script,
                 stdout=asyncio.subprocess.PIPE,

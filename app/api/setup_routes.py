@@ -13,13 +13,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
+
+from app.common.platform_ctx import PLATFORM
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -70,7 +71,7 @@ _BLOCKING_COMPONENTS = {"core_packages", "browser_engine", "storage_dirs"}
 def _browsers_path() -> str:
     return os.environ.get(
         "PLAYWRIGHT_BROWSERS_PATH",
-        os.path.join(os.path.expanduser("~"), ".matrx", "playwright-browsers"),
+        str(MATRX_HOME_DIR / "playwright-browsers"),
     )
 
 
@@ -196,12 +197,12 @@ def _check_core_packages() -> ComponentStatus:
 
 def _check_gpu() -> tuple[bool, str | None]:
     """Detect GPU availability (for transcription model recommendations)."""
-    system = platform.system()
+    system = PLATFORM["system"]
     gpu_name = None
     gpu_available = False
 
     if system == "Darwin":
-        if platform.machine() == "arm64":
+        if PLATFORM["is_mac_silicon"]:
             gpu_available = True
             gpu_name = "Apple Silicon (Metal)"
     else:
@@ -266,8 +267,8 @@ async def _check_permissions() -> ComponentStatus:
     Logs the exact check method and raw value returned for every permission on
     every platform so failures are always diagnosable.
     """
-    system = platform.system()
-    machine = platform.machine()
+    system = PLATFORM["system"]
+    machine = PLATFORM["machine"]
     PRIVACY_DEEP_LINK = (
         "x-apple.systempreferences:com.apple.preference.security?Privacy"
     )
@@ -521,8 +522,8 @@ async def get_setup_status() -> SetupStatus:
     return SetupStatus(
         setup_complete=setup_complete,
         components=components,
-        platform=platform.system(),
-        architecture=platform.machine(),
+        platform=PLATFORM["system"],
+        architecture=PLATFORM["machine"],
         gpu_available=gpu_available,
         gpu_name=gpu_name,
     )

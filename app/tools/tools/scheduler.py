@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import os
-import platform
 import subprocess
 import time
 import uuid
@@ -14,13 +13,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
 
 # Persistence file — same directory as local.json discovery file
 from app.config import MATRX_HOME_DIR as _MATRX_HOME_DIR
@@ -401,7 +398,7 @@ async def tool_prevent_sleep(
             pass
 
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             cmd = ["caffeinate", "-d", "-i", "-s"]
             if duration_minutes:
                 cmd = ["caffeinate", "-d", "-i", "-s", "-t", str(duration_minutes * 60)]
@@ -422,7 +419,7 @@ async def tool_prevent_sleep(
                 metadata={"pid": _prevent_sleep_process.pid},
             )
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             # Use PowerShell to set execution state
             ps_script = """
 Add-Type @"
@@ -444,7 +441,7 @@ public class SleepPrevention {
 while ($true) { Start-Sleep -Seconds 60 }
 """
             _prevent_sleep_process = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-NoProfile",
                 "-Command",
                 ps_script,
@@ -459,8 +456,6 @@ while ($true) { Start-Sleep -Seconds 60 }
 
         else:
             # Linux: try systemd-inhibit (not available on WSL without systemd)
-            import shutil
-
             from app.tools.tools import is_wsl
 
             if is_wsl():
@@ -471,7 +466,7 @@ while ($true) { Start-Sleep -Seconds 60 }
                     ),
                 )
 
-            if shutil.which("systemd-inhibit"):
+            if CAPABILITIES["has_systemd_inhibit"]:
                 cmd = [
                     "systemd-inhibit",
                     "--what=idle:sleep",

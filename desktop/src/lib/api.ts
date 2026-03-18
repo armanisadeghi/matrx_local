@@ -1502,6 +1502,18 @@ class EngineAPI {
     return resp.json();
   }
 
+  // ── Platform context ───────────────────────────────────────────────────
+
+  async getPlatformContext(): Promise<import("./platformCtx").PlatformContext> {
+    return this.request<import("./platformCtx").PlatformContext>("/platform/context");
+  }
+
+  async refreshPlatformContext(): Promise<import("./platformCtx").PlatformContext> {
+    return this.request<import("./platformCtx").PlatformContext>("/platform/context/refresh", {
+      method: "POST",
+    });
+  }
+
   // ── Setup / First-run ──────────────────────────────────────────────────
 
   async getSetupStatus(): Promise<SetupStatus> {

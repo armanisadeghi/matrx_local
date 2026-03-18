@@ -5,16 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import platform
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import ToolSession
 from app.tools.tools import NO_GUI_MSG, has_display
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
 
 _ACCESSIBILITY_HINT = (
     "macOS Accessibility permission required.\n"
@@ -42,9 +39,9 @@ async def tool_list_windows(
 ) -> ToolResult:
     """List all visible windows with their titles, positions, and sizes."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             return await _list_windows_macos(app_filter)
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             return await _list_windows_windows(app_filter)
         elif not has_display():
             return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
@@ -161,7 +158,7 @@ public class WindowLister {
 [WindowLister]::GetWindows()
 """
     proc = await asyncio.create_subprocess_exec(
-        "powershell.exe",
+        CAPABILITIES["powershell_path"],
         "-Command",
         ps_script,
         stdout=asyncio.subprocess.PIPE,
@@ -256,9 +253,9 @@ async def tool_focus_window(
 ) -> ToolResult:
     """Focus/activate a specific window by app name and optional title."""
     try:
-        if not IS_MACOS and not IS_WINDOWS and not has_display():
+        if not PLATFORM["is_mac"] and not PLATFORM["is_windows"] and not has_display():
             return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             if window_title:
                 script = f"""
 tell application "System Events"
@@ -291,7 +288,7 @@ end tell
                 return ToolResult(type=ToolResultType.ERROR, output=msg)
             return ToolResult(output=stdout.decode().strip() or f"Focused: {app_name}")
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             target = window_title or app_name
             ps_script = f"""
 Add-Type @"
@@ -309,7 +306,7 @@ if ($proc) {{
 }} else {{ "Window not found: {target}" }}
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-Command",
                 ps_script,
                 stdout=asyncio.subprocess.PIPE,
@@ -346,9 +343,9 @@ async def tool_move_window(
 ) -> ToolResult:
     """Move and/or resize a window by app name."""
     try:
-        if not IS_MACOS and not IS_WINDOWS and not has_display():
+        if not PLATFORM["is_mac"] and not PLATFORM["is_windows"] and not has_display():
             return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             parts = []
             if x is not None and y is not None:
                 parts.append(f"set position of window 1 to {{{x}, {y}}}")
@@ -381,7 +378,7 @@ end tell
                 return ToolResult(type=ToolResultType.ERROR, output=msg)
             return ToolResult(output=f"Moved/resized {app_name} window")
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             ps_parts = []
             if x is not None:
                 ps_parts.append(f"$x = {x}")
@@ -414,7 +411,7 @@ if ($proc) {{
 }} else {{ "Process not found: {app_name}" }}
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-Command",
                 ps_script,
                 stdout=asyncio.subprocess.PIPE,
@@ -461,9 +458,9 @@ async def tool_minimize_window(
         )
 
     try:
-        if not IS_MACOS and not IS_WINDOWS and not has_display():
+        if not PLATFORM["is_mac"] and not PLATFORM["is_windows"] and not has_display():
             return ToolResult(type=ToolResultType.ERROR, output=NO_GUI_MSG)
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             if action == "minimize":
                 script = f"""
 tell application "System Events"
@@ -497,7 +494,7 @@ end tell
             await asyncio.wait_for(proc.communicate(), timeout=10)
             return ToolResult(output=f"{action.capitalize()}d: {app_name}")
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             show_cmd = {"minimize": 6, "maximize": 3, "restore": 9}[action]
             ps_script = f"""
 Add-Type @"
@@ -513,7 +510,7 @@ if ($proc) {{
 }} else {{ "Process not found: {app_name}" }}
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-Command",
                 ps_script,
                 stdout=asyncio.subprocess.PIPE,

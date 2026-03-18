@@ -6,19 +6,16 @@ import asyncio
 import base64
 import logging
 import os
-import platform
 import subprocess
 import uuid
 from pathlib import Path
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.config import TEMP_DIR
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
 
 AUDIO_DIR = TEMP_DIR / "audio"
 
@@ -37,7 +34,7 @@ async def tool_list_audio_devices(
     devices are visible — not just the PortAudio default aggregate.  sounddevice
     indices are attached where they match, since sd.rec() needs them.
     """
-    if IS_MACOS:
+    if PLATFORM["is_mac"]:
         return await _list_devices_macos()
     return await _list_devices_sounddevice()
 
@@ -212,7 +209,7 @@ async def _list_devices_sounddevice() -> ToolResult:
 def _list_devices_fallback() -> ToolResult:
     """Fallback using system commands."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             result = subprocess.run(
                 ["system_profiler", "SPAudioDataType", "-json"],
                 capture_output=True,
@@ -223,10 +220,10 @@ def _list_devices_fallback() -> ToolResult:
                 output=f"Audio devices (raw):\n{result.stdout[:3000]}",
                 metadata={"raw": True},
             )
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             result = subprocess.run(
                 [
-                    "powershell",
+                    CAPABILITIES["powershell_path"],
                     "-Command",
                     "Get-WmiObject Win32_SoundDevice | Select-Object Name, Status | Format-List",
                 ],
@@ -365,7 +362,7 @@ async def _record_fallback(
 ) -> ToolResult:
     """Record using system tools when sounddevice is not available."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             # Use sox/rec if available
             proc = await asyncio.create_subprocess_exec(
                 "rec",
@@ -381,7 +378,7 @@ async def _record_fallback(
                 stderr=asyncio.subprocess.PIPE,
             )
             await asyncio.wait_for(proc.communicate(), timeout=duration + 10)
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             # Use PowerShell with built-in audio
             ps_script = f"""
 Add-Type -AssemblyName System.Speech
@@ -393,7 +390,7 @@ Start-Sleep -Seconds {duration}
 $stream.Close()
 """
             proc = await asyncio.create_subprocess_exec(
-                "powershell.exe",
+                CAPABILITIES["powershell_path"],
                 "-Command",
                 ps_script,
                 stdout=asyncio.subprocess.PIPE,
@@ -479,16 +476,16 @@ async def tool_play_audio(
     except ImportError:
         # Fallback
         try:
-            if IS_MACOS:
+            if PLATFORM["is_mac"]:
                 proc = await asyncio.create_subprocess_exec(
                     "afplay",
                     resolved,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-            elif IS_WINDOWS:
+            elif PLATFORM["is_windows"]:
                 proc = await asyncio.create_subprocess_exec(
-                    "powershell.exe",
+                    CAPABILITIES["powershell_path"],
                     "-Command",
                     f"(New-Object Media.SoundPlayer '{resolved}').PlaySync()",
                     stdout=asyncio.subprocess.PIPE,

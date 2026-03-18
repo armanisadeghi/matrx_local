@@ -1,9 +1,9 @@
-import platform
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 
 
 def take_screenshot(output_path: str = "screenshot.png"):
-    if platform.system() == "Darwin":
-        try:
+    if PLATFORM["is_mac"]:
+        if CAPABILITIES["has_quartz"]:
             import Quartz
 
             cg_image = Quartz.CGDisplayCreateImage(Quartz.CGMainDisplayID())
@@ -20,8 +20,7 @@ def take_screenshot(output_path: str = "screenshot.png"):
             if not Quartz.CGImageDestinationFinalize(dest):
                 raise OSError("Failed to finalize screenshot")
             return output_path
-        except ImportError:
-            pass  # pyobjc not available, fall through to PIL
+        # pyobjc not available, fall through to PIL
 
     from PIL import ImageGrab
 

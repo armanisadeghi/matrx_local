@@ -30,6 +30,7 @@ try:
 except (ModuleNotFoundError, ImportError):
     pass
 
+from app.common.platform_ctx import PLATFORM
 from .audio import AudioData, get_flac_converter
 from .exceptions import (
     RequestError,
@@ -225,7 +226,7 @@ class AudioFile(AudioSource):
 
                 # run the FLAC converter with the FLAC data to get the AIFF data
                 flac_converter = get_flac_converter()
-                if os.name == "nt":  # on Windows, specify that the process is to be started without showing a console window
+                if PLATFORM["is_windows"]:  # on Windows, specify that the process is to be started without showing a console window
                     startup_info = subprocess.STARTUPINFO()
                     startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW  # specify that the wShowWindow field of `startup_info` contains a value
                     startup_info.wShowWindow = subprocess.SW_HIDE  # specify that the console window should be hidden

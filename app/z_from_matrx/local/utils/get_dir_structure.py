@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from config import BASE_DIR
 from matrx_utils import (
     clear_terminal,
@@ -10,9 +11,10 @@ from matrx_utils import (
 
 if __name__ == "__main__":
     clear_terminal()
+    _project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
     config = {
-        "root_directory": r"/home/arman/projects/aidream/ai",
-        "project_root": r"/home/arman/projects/aidream",
+        "root_directory": _project_root,
+        "project_root": _project_root,
         "ignore_directories": [
             ".",
             "_dev",
@@ -48,7 +50,7 @@ if __name__ == "__main__":
         "root_save_path": os.path.join(BASE_DIR, "temp", "dir_structure"),
         "include_text_output": True,
         "alias_map": {
-            "@": r"/home/arman/projects/aidream",
+            "@": _project_root,
         },
     }
 

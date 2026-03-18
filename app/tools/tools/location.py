@@ -15,16 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 import threading
 from typing import Any
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
 
 _PERMISSION_HINT = (
     "Location Services access is required. "
@@ -137,7 +135,7 @@ async def tool_get_location(
     Args:
         timeout: Seconds to wait for a location fix (default 15, max 60).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(
             output="CoreLocation-based location tool is only available on macOS.",
             type=ToolResultType.ERROR,

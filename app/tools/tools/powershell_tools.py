@@ -9,30 +9,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import platform
-import shutil
-
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
 
-IS_WINDOWS = platform.system() == "Windows"
-
 
 def _powershell_exe() -> str | None:
     """Return the best available PowerShell executable, or None if not found."""
-    if IS_WINDOWS:
-        # Prefer pwsh (Core) over powershell.exe (Windows PowerShell 5.x)
-        if shutil.which("pwsh"):
-            return "pwsh"
-        if shutil.which("powershell.exe"):
-            return "powershell.exe"
-    else:
-        # macOS / Linux: PowerShell Core only
-        if shutil.which("pwsh"):
-            return "pwsh"
-    return None
+    return CAPABILITIES["powershell_path"]
 
 
 def _ps_unavailable_error() -> ToolResult:
@@ -139,7 +125,7 @@ async def tool_ps_set_env(
         if scope == "Process":
             script = f"$env:{name} = '{value.replace(chr(39), chr(39)*2)}'; \"Set {name} (Process scope)\""
         else:
-            if not IS_WINDOWS:
+            if not PLATFORM["is_windows"]:
                 return ToolResult(
                     type=ToolResultType.ERROR,
                     output=f"Scope '{scope}' is only available on Windows. Use 'Process' on macOS/Linux.",
@@ -177,7 +163,7 @@ async def tool_registry_read(
 
     If value_name is omitted, all values under the key are returned.
     """
-    if not IS_WINDOWS:
+    if not PLATFORM["is_windows"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output="Registry access is only available on Windows.",
@@ -234,7 +220,7 @@ async def tool_registry_write(
 
     WARNING: Modifying system registry keys can break Windows. Prefer HKCU paths.
     """
-    if not IS_WINDOWS:
+    if not PLATFORM["is_windows"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output="Registry access is only available on Windows.",
@@ -287,7 +273,7 @@ async def tool_service_list(
     On Linux:   uses systemctl list-units
     """
     try:
-        if IS_WINDOWS:
+        if PLATFORM["is_windows"]:
             status_filter = ""
             if status:
                 status_map = {"running": "Running", "stopped": "Stopped", "paused": "Paused"}
@@ -330,7 +316,7 @@ ForEach-Object {{ "$($_.Status)|||$($_.Name)|||$($_.DisplayName)|||$($_.StartTyp
                 metadata={"services": services, "count": len(services)},
             )
 
-        elif platform.system() == "Darwin":
+        elif PLATFORM["is_mac"]:
             proc = await asyncio.create_subprocess_exec(
                 "launchctl", "list",
                 stdout=asyncio.subprocess.PIPE,
@@ -387,7 +373,7 @@ async def tool_service_control(
         )
 
     try:
-        if IS_WINDOWS:
+        if PLATFORM["is_windows"]:
             ps_cmd = {
                 "start": "Start-Service",
                 "stop": "Stop-Service",
@@ -404,7 +390,7 @@ async def tool_service_control(
                 metadata={"service": name, "action": action, "status": stdout},
             )
 
-        elif platform.system() == "Darwin":
+        elif PLATFORM["is_mac"]:
             lc_action = "start" if action in ("start", "resume") else "stop"
             proc = await asyncio.create_subprocess_exec(
                 "launchctl", lc_action, name,
@@ -453,7 +439,7 @@ async def tool_event_log(
 
     Returns timestamp, level, event ID, source, and message for each entry.
     """
-    if not IS_WINDOWS:
+    if not PLATFORM["is_windows"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output=(
@@ -547,7 +533,7 @@ async def tool_windows_features(
 
     Returns feature name and state (Enabled/Disabled/NotPresent).
     """
-    if not IS_WINDOWS:
+    if not PLATFORM["is_windows"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output=(

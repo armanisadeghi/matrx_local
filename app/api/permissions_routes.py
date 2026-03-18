@@ -10,7 +10,6 @@ import asyncio
 import base64
 import json
 import logging
-import platform
 import uuid
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.config import TEMP_DIR
 from app.services.permissions.checker import (
     check_accessibility,
@@ -64,10 +64,6 @@ from app.tools.tools.system import tool_list_screens, tool_screenshot
 from app.tools.tools.system_monitor import tool_system_resources
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
-IS_WINDOWS = platform.system() == "Windows"
-IS_LINUX = platform.system() == "Linux"
 
 MEDIA_DIR = TEMP_DIR / "devices"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
@@ -149,7 +145,7 @@ async def _run(cmd: list[str], timeout: int = 15) -> tuple[str, str, int]:
 async def get_permissions():
     """Get all device/OS permission statuses."""
     results = await check_all_permissions()
-    return {"permissions": results, "platform": platform.system()}
+    return {"permissions": results, "platform": PLATFORM["system"]}
 
 
 @router.get("/permissions/{name}")
@@ -251,7 +247,7 @@ async def get_camera_devices():
     """List available cameras."""
     devices: list[dict[str, Any]] = []
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             out, _, _ = await _run(["system_profiler", "SPCameraDataType", "-json"])
             data = json.loads(out)
             for item in data.get("SPCameraDataType", []):
@@ -261,9 +257,9 @@ async def get_camera_devices():
                     "unique_id": item.get("spcamera_unique-id", ""),
                     "index": len(devices),
                 })
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             out, _, _ = await _run([
-                "powershell.exe", "-NoProfile", "-Command",
+                CAPABILITIES["powershell_path"], "-NoProfile", "-Command",
                 "Get-PnpDevice -Class Camera -PresentOnly | Select-Object FriendlyName, Status | ConvertTo-Json",
             ])
             cams = json.loads(out) if out.strip() else []
@@ -349,10 +345,9 @@ async def get_location():
     source = "unavailable"
 
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             # Use CoreLocation via a quick Swift/osascript approach or whereami
-            import shutil
-            if shutil.which("whereami"):
+            if CAPABILITIES["has_whereami"]:
                 out, _, rc = await _run(["whereami"], timeout=10)
                 if rc == 0:
                     for line in out.split("\n"):
@@ -386,9 +381,9 @@ async def get_location():
                 except Exception:
                     source = "permission_check_failed"
 
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             out, _, rc = await _run([
-                "powershell.exe", "-NoProfile", "-Command",
+                CAPABILITIES["powershell_path"], "-NoProfile", "-Command",
                 "Add-Type -AssemblyName System.Device; "
                 "$w = New-Object System.Device.Location.GeoCoordinateWatcher; "
                 "$w.Start(); Start-Sleep 3; "
@@ -403,8 +398,7 @@ async def get_location():
 
         else:
             # Try geoclue on Linux
-            import shutil
-            if shutil.which("geoclue-where-am-i"):
+            if CAPABILITIES["has_geoclue"]:
                 out, _, rc = await _run(["geoclue-where-am-i", "-t", "5"], timeout=10)
                 if rc == 0:
                     for line in out.split("\n"):
@@ -471,10 +465,9 @@ async def capture_photo(req: CapturePhotoRequest):
     """Capture a photo from webcam and return base64-encoded JPEG."""
     out_path = MEDIA_DIR / f"photo_{uuid.uuid4().hex[:8]}.jpg"
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             # Try imagesnap (brew install imagesnap) first
-            import shutil
-            if shutil.which("imagesnap"):
+            if CAPABILITIES["has_imagesnap"]:
                 args = ["imagesnap"]
                 if req.device_index is not None:
                     # imagesnap can list with -l; use index for device selection indirectly
@@ -588,12 +581,11 @@ async def record_video(req: RecordVideoRequest):
 @router.post("/record-screen")
 async def record_screen(req: RecordScreenRequest):
     """Record a screen capture video and return base64-encoded MP4."""
-    import shutil
     out_path = MEDIA_DIR / f"screen_{uuid.uuid4().hex[:8]}.mp4"
 
     try:
-        if shutil.which("ffmpeg"):
-            if IS_MACOS:
+        if CAPABILITIES["has_ffmpeg"]:
+            if PLATFORM["is_mac"]:
                 # List available avfoundation devices and capture
                 screen_id = str(req.screen_index - 1) if req.screen_index else "0"
                 cmd = [
@@ -607,7 +599,7 @@ async def record_screen(req: RecordScreenRequest):
                     "-pix_fmt", "yuv420p",
                     str(out_path),
                 ]
-            elif IS_WINDOWS:
+            elif PLATFORM["is_windows"]:
                 cmd = [
                     "ffmpeg", "-y",
                     "-f", "gdigrab",

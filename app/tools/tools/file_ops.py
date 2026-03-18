@@ -8,9 +8,9 @@ import logging
 import mimetypes
 import os
 import re
-import shutil
 from pathlib import Path
 
+from app.common.platform_ctx import CAPABILITIES
 from app.tools.session import ToolSession
 from app.tools.types import ImageData, ToolResult, ToolResultType
 
@@ -141,7 +141,7 @@ async def tool_glob(
         return ToolResult(type=ToolResultType.ERROR, output=f"Directory not found: {root}")
 
     try:
-        if shutil.which("fd"):
+        if CAPABILITIES["has_fd"]:
             return await asyncio.wait_for(_glob_fd(root, pattern), timeout=TOOL_TIMEOUT_S)
         return await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(None, _glob_python, root, pattern),
@@ -186,7 +186,7 @@ async def tool_grep(
     root = session.resolve_path(path or ".")
 
     try:
-        if shutil.which("rg"):
+        if CAPABILITIES["has_rg"]:
             return await asyncio.wait_for(_grep_rg(root, pattern, include, max_results), timeout=TOOL_TIMEOUT_S)
         return await asyncio.wait_for(
             asyncio.get_event_loop().run_in_executor(None, _grep_python, root, pattern, include, max_results),

@@ -3,21 +3,13 @@ import io
 import requests
 from pathlib import Path
 from typing import Tuple, BinaryIO
-import platform
-import sys
+
+from app.common.platform_ctx import PLATFORM
+
 
 def is_wsl() -> bool:
     """Detect if running inside Windows Subsystem for Linux (WSL)."""
-    if sys.platform.startswith("linux"):
-        if "microsoft" in platform.uname().release.lower():
-            return True
-        try:
-            with open("/proc/version", "r") as f:
-                if "microsoft" in f.read().lower():
-                    return True
-        except IOError:
-            pass
-    return False
+    return PLATFORM["is_wsl"]
 
 
 def convert_windows_to_wsl_path(windows_path: str) -> str:

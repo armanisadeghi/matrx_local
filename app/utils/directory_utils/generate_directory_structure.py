@@ -3,6 +3,7 @@ import json
 import re
 import time
 from io import StringIO
+from pathlib import Path
 from app.config import BASE_DIR, TEMP_DIR
 from app.common import print_link
 
@@ -188,9 +189,10 @@ def get_structure_with_common_configs(root_directory, project_root, common_confi
 
 
 if __name__ == "__main__":
+    _project_root = str(Path(__file__).resolve().parent.parent.parent)
     config = {
-        "root_directory": r"/Users/armanisadeghi/code/matrx-local",
-        "project_root": r"/Users/armanisadeghi/code/matrx-local",
+        "root_directory": _project_root,
+        "project_root": _project_root,
         "ignore_directories": [
             ".", "_dev", ".history", "notes", "templates", "venv", "external libraries",
             "scratches", "consoles", ".git", "node_modules", "__pycache__", ".github",
@@ -207,7 +209,7 @@ if __name__ == "__main__":
         "root_save_path": os.path.join(TEMP_DIR, 'dir_structure'),
         "include_text_output": True,
         "alias_map": {
-            "@": r"/Users/armanisadeghi/code/matrx-local",
+            "@": _project_root,
         },
     }
 

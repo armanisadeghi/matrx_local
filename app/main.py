@@ -22,9 +22,11 @@ from app.api.token_routes import router as token_router
 from app.api.fetch_proxy_routes import router as fetch_proxy_router
 from app.api.tunnel_routes import router as tunnel_router
 from app.api.setup_routes import router as setup_router
-from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, TUNNEL_ENABLED
+from app.api.platform_routes import router as platform_router
+from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, MATRX_HOME_DIR, TUNNEL_ENABLED
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
+from app.common.platform_ctx import refresh_capabilities
 from app.services.scraper.engine import get_scraper_engine
 from app.services.proxy.server import get_proxy_server
 from app.services.tunnel.manager import get_tunnel_manager
@@ -58,7 +60,7 @@ async def _ensure_playwright_browsers() -> None:
     # import time, so the env var must be set before any playwright import.
     browsers_path = os.environ.get(
         "PLAYWRIGHT_BROWSERS_PATH",
-        os.path.join(os.path.expanduser("~"), ".matrx", "playwright-browsers"),
+        str(MATRX_HOME_DIR / "playwright-browsers"),
     )
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
 
@@ -239,6 +241,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             exc_info=True,
         )
         print("[phase:browsers] Browser engine check failed (scraping limited)", flush=True)
+
+    # Phase 0c: Probe hardware/permission capabilities once at startup.
+    # Populates CAPABILITIES in platform_ctx (mic, GPU, screen capture, etc.)
+    # so /platform/context returns fully-populated data from the first request.
+    logger.info("[app/main.py] Phase 0c: Probing platform capabilities...")
+    try:
+        await refresh_capabilities()
+        logger.info("[app/main.py] Phase 0c: Platform capabilities probed ✓")
+    except Exception:
+        logger.warning(
+            "[app/main.py] Phase 0c: Capability probe failed — some flags will be null",
+            exc_info=True,
+        )
 
     # Phase 1: Initialize matrx-ai (loads env, registers DB if credentials present)
     # This MUST run before build_ai_sub_app() is called — the matrx_ai imports
@@ -485,6 +500,7 @@ app.include_router(capabilities_router)
 app.include_router(fetch_proxy_router)
 app.include_router(tunnel_router)
 app.include_router(setup_router)
+app.include_router(platform_router)
 
 # NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler
 # (Phase 1b) AFTER initialize_matrx_ai() registers the DB config. Calling it here

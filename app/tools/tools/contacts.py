@@ -10,15 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import platform
 from typing import Any
 
+from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_MACOS = platform.system() == "Darwin"
 
 _PERMISSION_HINT = (
     "Contacts access is required. "
@@ -141,7 +139,7 @@ async def tool_search_contacts(
                from the default container.
         limit: Maximum number of contacts to return (default 25, max 200).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(
             output="Contacts tool is only available on macOS.",
             type=ToolResultType.ERROR,
@@ -208,7 +206,7 @@ async def tool_get_contact(
     Args:
         identifier: The CNContact identifier string (from search_contacts results).
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(
             output="Contacts tool is only available on macOS.",
             type=ToolResultType.ERROR,

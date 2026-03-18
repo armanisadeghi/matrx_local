@@ -6,18 +6,14 @@ import asyncio
 import json
 import logging
 import os
-import platform
 import re
 import subprocess
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.tools.session import ToolSession
 from app.tools.types import ToolResult, ToolResultType
 
 logger = logging.getLogger(__name__)
-
-IS_WINDOWS = platform.system() == "Windows"
-IS_MACOS = platform.system() == "Darwin"
-
 
 async def tool_applescript(
     session: ToolSession,
@@ -33,7 +29,7 @@ async def tool_applescript(
     - 'tell application "System Events" to get name of every process whose visible is true'
     - 'display dialog "Hello" buttons {"OK"}'
     """
-    if not IS_MACOS:
+    if not PLATFORM["is_mac"]:
         return ToolResult(
             type=ToolResultType.ERROR,
             output="AppleScript is only available on macOS. Use PowerShellScript on Windows.",
@@ -86,13 +82,11 @@ async def tool_powershell_script(
 
     macOS/Linux install: brew install --cask powershell
     """
-    import shutil
-
     # Determine the best PowerShell executable
-    if IS_WINDOWS:
-        exe = "pwsh" if shutil.which("pwsh") else "powershell.exe"
+    if PLATFORM["is_windows"]:
+        exe = CAPABILITIES["powershell_path"] or "powershell.exe"
     else:
-        exe = shutil.which("pwsh")
+        exe = CAPABILITIES["powershell_path"]
         if not exe:
             return ToolResult(
                 type=ToolResultType.ERROR,
@@ -144,9 +138,9 @@ async def tool_get_installed_apps(
 ) -> ToolResult:
     """List installed applications on the system. Optionally filter by name."""
     try:
-        if IS_MACOS:
+        if PLATFORM["is_mac"]:
             return await _get_apps_macos(filter)
-        elif IS_WINDOWS:
+        elif PLATFORM["is_windows"]:
             return await _get_apps_windows(filter)
         else:
             return await _get_apps_linux(filter)
@@ -253,7 +247,7 @@ foreach ($path in $regPaths) {
 $apps | Sort-Object Name -Unique | ConvertTo-Json -Depth 2
 """
     proc = await asyncio.create_subprocess_exec(
-        "powershell.exe", "-NoProfile", "-Command", ps_script,
+        CAPABILITIES["powershell_path"], "-NoProfile", "-Command", ps_script,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

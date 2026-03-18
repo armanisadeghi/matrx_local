@@ -22,7 +22,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import platform
 import re
 import stat
 import sys
@@ -31,6 +30,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.request import urlretrieve
 
+from app.common.platform_ctx import CAPABILITIES, PLATFORM
 from app.config import MATRX_HOME_DIR
 
 logger = logging.getLogger(__name__)
@@ -80,13 +80,13 @@ def _bin_dir() -> Path:
 
 
 def _bin_path() -> Path:
-    name = "cloudflared.exe" if platform.system() == "Windows" else "cloudflared"
+    name = "cloudflared.exe" if PLATFORM["is_windows"] else "cloudflared"
     return _bin_dir() / name
 
 
 def _get_download_url() -> str:
-    system = platform.system()
-    machine = platform.machine()
+    system = PLATFORM["system"]
+    machine = PLATFORM["machine"]
     # Normalise arm64 aliases
     if machine in ("arm64", "aarch64", "ARM64"):
         machine = "aarch64" if system == "Linux" else "arm64"
@@ -112,8 +112,6 @@ def _find_preinstalled_cloudflared() -> Path | None:
     Returns the first found binary, or None if not available anywhere.
     This function intentionally does NOT download — that's _ensure_binary().
     """
-    import shutil
-
     # 1. Tauri resource dir: the frozen Python sidecar runs from a Resources/ folder.
     #    When we bundle cloudflared as a Tauri resource it lands next to the engine binary.
     resource_candidates = [
@@ -145,10 +143,10 @@ def _find_preinstalled_cloudflared() -> Path | None:
             logger.debug("Found system cloudflared at %s", p)
             return p
 
-    # Also check PATH
-    found = shutil.which("cloudflared")
-    if found:
-        return Path(found)
+    # Also check PATH (already probed at startup)
+    path_on_path = CAPABILITIES["cloudflared_path"]
+    if path_on_path:
+        return Path(path_on_path)
 
     return None
 
@@ -177,7 +175,7 @@ def _ensure_binary() -> Path:
         dest.unlink(missing_ok=True)
         raise RuntimeError(f"Failed to download cloudflared: {exc}") from exc
 
-    if platform.system() != "Windows":
+    if not PLATFORM["is_windows"]:
         dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     logger.info("cloudflared downloaded ✓ (%s)", dest)

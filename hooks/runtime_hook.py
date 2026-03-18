@@ -8,6 +8,7 @@ inside sys._MEIPASS (the PyInstaller extraction directory) or the user's home.
 
 import os
 import sys
+from pathlib import Path
 
 # Inject API URLs and publishable keys baked in at build time by CI.
 # Must run before any other module import so dotenv / config.py see the values.
@@ -26,7 +27,7 @@ if hasattr(sys, "_MEIPASS"):
     # auto-install browsers there on first startup if they are missing.
     os.environ.setdefault(
         "PLAYWRIGHT_BROWSERS_PATH",
-        os.path.join(os.path.expanduser("~"), ".matrx", "playwright-browsers"),
+        str(Path.home() / ".matrx" / "playwright-browsers"),
     )
 
     # Tesseract: point to the bundled tessdata language files.
