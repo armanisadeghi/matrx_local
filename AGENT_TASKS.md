@@ -1,6 +1,6 @@
 # Matrx Local — Task Tracker
 
-_Last updated: 2026-03-18_
+_Last updated: 2026-03-18 (audited)_
 
 > Living document. Log every discovered bug, issue, and improvement immediately.
 > Keep active items concise and actionable. Completed items go in the History section at the bottom.
@@ -51,7 +51,7 @@ _Last updated: 2026-03-18_
 - [x] **Devices page shows all microphones** — Python `tool_list_audio_devices` on macOS now uses `system_profiler SPAudioDataType` as the primary source (CoreAudio sees all devices) and overlays sounddevice indices for recording compatibility. Previously PortAudio/sounddevice only reported one device.
 - [x] **Recording sample rate mismatch** — `tool_record_audio` now queries the device's native `default_samplerate` instead of hardcoding 44100. This fixed "Invalid sample rate" failures on devices with 48kHz or other native rates.
 - [ ] **VAD integration** — The silero VAD model (`ggml-silero-v6.2.0.bin`) is downloaded but the transcription loop never calls it. The RMS energy gate works but produces false positives. Wire in VAD for accurate speech/silence detection.
-- [ ] **selectedDevice persistence** — `selectedDevice` in `use-transcription.ts` resets on page reload. Persist to `localStorage` or the Tauri app config so the user's choice survives navigation.
+- [x] **selectedDevice persistence** — Fixed via `AudioDevicesContext` which persists to `localStorage` with key `"matrx-selected-audio-device"`. Survives page reload and navigation (2026-03-16).
 - [ ] **Multilingual support** — Currently hardcoded to `.en` models. Add model picker that includes multilingual variants (`ggml-base.bin` etc.) for non-English users.
 - [ ] **CDN mirror for whisper models** — Models download directly from HuggingFace. Mirror to `assets.aimatrx.com/whisper-models/` before shipping.
   - Files: `ggml-tiny.en.bin` (75MB), `ggml-base.en.bin` (142MB), `ggml-small.en.bin` (466MB), `ggml-silero-v6.2.0.bin` (0.8MB)
@@ -115,7 +115,7 @@ _Last updated: 2026-03-18_
 - [ ] **Proxy Test Connection** — Waiting on `MAIN_SERVER` URL to implement real round-trip test.
 
 ### Notes / Documents
-- [ ] **`/documents/*` vs `/notes/*`** — Verify React calls use the `/notes/*` canonical path (via `engine.docRequest`) not the old `/documents/*` alias.
+- [x] **`/documents/*` vs `/notes/*`** — Verified: `api.ts` uses `/notes` for all document operations, `main.py` mounts at `/notes`, `document_routes.py` defines routes under `/notes`. No stale `/documents/*` usage found (2026-03-18).
 - [ ] **Conflict resolution UI** — Needs testing with real simultaneous edits.
 - [ ] **`forbidden_urls` table is dead code** — Migration 003 created it in Supabase but nothing reads/writes it. Blocked URLs live in local settings JSON (not synced across devices). Decide: wire to Supabase for cross-device sync, or remove the table.
 

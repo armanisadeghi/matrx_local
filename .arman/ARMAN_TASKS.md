@@ -1,6 +1,6 @@
 # Arman Tasks — Matrx Local
 
-_Last updated: 2026-03-15_
+_Last updated: 2026-03-18_
 
 > Manual actions only — things only you can do (secrets, accounts, hardware, OS-level steps).
 > Code changes go in AGENT_TASKS.md instead.
@@ -34,8 +34,8 @@ All three are needed for CI builds to produce working binaries. Go to repo **Set
 
 ## 🟡 FUTURE — Not Urgent
 
-- [ ] **Windows MSI → NSIS** — Switch installer format for a more modern Windows install experience.
-- [ ] **First-run wizard** for new users.
+- [x] **Windows MSI → NSIS** — Done. Installer switched to NSIS with custom `installer-hooks.nsh` (2026-03-16).
+- [x] **First-run wizard** — Done. Setup wizard with auto-install implemented (2026-03-11).
 - [ ] **Rate limiting** on remote scraper server per user.
 - [ ] **Wake-on-LAN / smart device protocols** — HomeKit, Google Home, Alexa.
 - [ ] **Reverse tunnel** — cloud→local proxy routing.
