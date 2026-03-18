@@ -284,21 +284,22 @@ async def _check_permissions() -> ComponentStatus:
 
 
 async def _check_permissions_macos(deep_link: str) -> ComponentStatus:
-    """macOS: probe TCC.db directly — read-only, never triggers a dialog."""
+    """macOS: probe TCC.db and CGPreflightScreenCaptureAccess — read-only, never triggers a dialog."""
     import asyncio as _asyncio
-    from app.services.permissions.checker import _tcc_db_status, PermissionStatus
-
-    # Map: display name → TCC service key
-    checks_def = {
-        "Microphone":       "kTCCServiceMicrophone",
-        "Camera":           "kTCCServiceCamera",
-        "Screen Recording": "kTCCServiceScreenCapture",
-    }
+    from app.services.permissions.checker import (
+        _tcc_db_status,
+        _macos_screen_recording_status,
+        PermissionStatus,
+    )
 
     loop = _asyncio.get_event_loop()
     results: dict[str, PermissionStatus] = {}
 
-    for label, service in checks_def.items():
+    # Microphone and Camera: read from TCC database
+    for label, service in (
+        ("Microphone", "kTCCServiceMicrophone"),
+        ("Camera", "kTCCServiceCamera"),
+    ):
         try:
             status = await loop.run_in_executor(None, _tcc_db_status, service)
             results[label] = status
@@ -313,7 +314,20 @@ async def _check_permissions_macos(deep_link: str) -> ComponentStatus:
                 service, label, exc,
             )
 
-    not_granted = [name for name, s in results.items() if s != PermissionStatus.GRANTED]
+    # Screen Recording: use CGPreflightScreenCaptureAccess (more reliable than TCC.db for this service)
+    try:
+        sr_status = await loop.run_in_executor(None, _macos_screen_recording_status)
+        results["Screen Recording"] = sr_status
+        logger.info(
+            "[permissions] macOS screen recording check → %s",
+            sr_status.value,
+        )
+    except Exception as exc:
+        results["Screen Recording"] = PermissionStatus.UNKNOWN
+        logger.warning("[permissions] macOS screen recording check FAILED — error: %s", exc)
+
+    # DENIED and UNKNOWN are both "not ready" — NOT_DETERMINED no longer exists for screen recording
+    not_granted = [name for name, s in results.items() if s not in (PermissionStatus.GRANTED,)]
     detail_parts = [f"{name}={s.value}" for name, s in results.items()]
     logger.info("[permissions] macOS summary — %s", ", ".join(detail_parts))
 

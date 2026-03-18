@@ -144,14 +144,14 @@ async fn stop_sidecar(state: tauri::State<'_, SidecarState>) -> Result<(), Strin
     Ok(())
 }
 
-/// Send SIGTERM to the sidecar's PID and wait briefly for it to exit,
+/// Send SIGTERM to the sidecar's PID and wait for it to exit cleanly,
 /// then SIGKILL if it is still alive. This gives Python's signal handler
 /// (_handle_exit) time to set uvicorn.should_exit, which triggers the
-/// FastAPI lifespan teardown (stops proxy on 22180, tunnel, scraper, etc.)
-/// before the OS reclaims the ports.
+/// FastAPI lifespan teardown (closes proxy, scraper, Playwright browsers,
+/// SQLite, etc.) before the OS reclaims the ports and file handles.
 ///
-/// On Windows `child.kill()` is the only option (no SIGTERM concept), so we
-/// fall through to the kill() call directly.
+/// Timeout is 8 s: lifespan teardown stops the proxy (4 s timeout),
+/// scraper Playwright pool (~1-2 s), and SQLite — all sequential.
 #[cfg(unix)]
 fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
     use std::time::{Duration, Instant};
@@ -163,11 +163,14 @@ fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
     let term_sent = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } == 0;
 
     if term_sent {
-        // Wait up to 3 seconds for the process to exit cleanly.
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // Wait up to 8 seconds for clean exit. This covers:
+        //   - proxy stop with 4 s wait_for timeout
+        //   - Playwright browser pool close (~1-2 s)
+        //   - SQLite close, sync engine stop, heartbeat cancel
+        let deadline = Instant::now() + Duration::from_secs(8);
         loop {
             std::thread::sleep(Duration::from_millis(100));
-            // Check if the process is still alive (signal 0 = existence check).
+            // kill(pid, 0) = existence check; ESRCH means the process exited.
             let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
             if !alive || Instant::now() >= deadline {
                 break;
@@ -179,8 +182,25 @@ fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
     let _ = child.kill();
 }
 
+/// Windows: no SIGTERM concept. Use `taskkill /F /T /PID` to forcibly
+/// terminate the entire process tree rooted at the sidecar PID.
+///
+/// `child.kill()` only kills the immediate process (TerminateProcess API),
+/// leaving child processes (Playwright chromium, uvicorn workers, etc.) alive.
+/// Those orphaned processes hold port bindings and file system locks, which
+/// causes "address already in use" and "file in use" errors on reinstall or
+/// update — requiring a Windows restart to clear. /T kills the entire tree.
 #[cfg(not(unix))]
 fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
+    let pid = child.pid();
+
+    // Kill the entire process tree with /F (force) /T (tree) — this terminates
+    // Playwright chromium children, uvicorn workers, and any other subprocesses.
+    let _ = std::process::Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .output();
+
+    // Fall back to the Tauri kill() in case taskkill was unavailable or failed.
     let _ = child.kill();
 }
 

@@ -94,13 +94,24 @@ class ProxyServer:
         return chosen_port
 
     async def stop(self) -> None:
-        """Stop the proxy server."""
+        """Stop the proxy server.
+
+        wait_closed() blocks until all active connection handlers exit. On
+        Windows this can hang indefinitely if a handler is stuck on a slow
+        upstream or a keep-alive connection (the OS does not forcibly close
+        sockets on asyncio server.close() the way Unix does). We cap the
+        wait at 4 seconds so shutdown never blocks the rest of teardown.
+        """
         if not self._running:
             return
         self._running = False
         if self._server:
             self._server.close()
-            await self._server.wait_closed()
+            try:
+                import asyncio as _asyncio
+                await _asyncio.wait_for(self._server.wait_closed(), timeout=4.0)
+            except Exception:
+                pass
             self._server = None
         logger.info("HTTP proxy server stopped")
 

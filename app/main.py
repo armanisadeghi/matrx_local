@@ -470,6 +470,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "[app/main.py] Scraper engine failed to stop cleanly", exc_info=True
         )
 
+    # Close any open Playwright browser instances from browser_automation tools.
+    # Without this, the chromium child processes stay alive after SIGTERM and
+    # hold open port bindings / file handles — especially problematic on Windows.
+    try:
+        from app.tools.tools.browser_automation import (
+            _browser_instances,
+            _browser_contexts,
+            _playwright_instance,
+        )
+        import asyncio as _asyncio
+
+        for bt, browser in list(_browser_instances.items()):
+            try:
+                await _asyncio.wait_for(browser.close(), timeout=3.0)
+            except Exception:
+                pass
+        _browser_instances.clear()
+        _browser_contexts.clear()
+
+        if _playwright_instance is not None:
+            try:
+                await _asyncio.wait_for(_playwright_instance.stop(), timeout=3.0)
+            except Exception:
+                pass
+
+        logger.info("[app/main.py] Browser automation contexts closed ✓")
+    except Exception:
+        logger.debug("[app/main.py] Browser automation cleanup skipped (no active contexts)")
+
     # Close local SQLite database
     try:
         await get_db().close()
@@ -651,8 +680,18 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             await websocket_manager.handle_tool_message(conn, data)
     except Exception as e:
-        logger.error(
-            f"WebSocket error: {e} | {url} | Headers: {dict(websocket.headers)}"
-        )
+        # WebSocketDisconnect with code 1012 = "Service Restart" — this is the
+        # normal close code sent when the old engine is killed during a restart.
+        # Logging it as ERROR creates noise in every update/restart cycle.
+        # Any other unexpected exception is a genuine error worth surfacing.
+        from starlette.websockets import WebSocketDisconnect
+        if isinstance(e, WebSocketDisconnect) and e.code == 1012:
+            logger.info(
+                f"WebSocket closed for service restart (1012): {url}"
+            )
+        else:
+            logger.error(
+                f"WebSocket error: {e} | {url} | Headers: {dict(websocket.headers)}"
+            )
     finally:
         await websocket_manager.disconnect(websocket)

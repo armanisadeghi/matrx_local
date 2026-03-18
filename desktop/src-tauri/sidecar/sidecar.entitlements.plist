@@ -22,11 +22,17 @@
     <!-- Required for sounddevice / PortAudio microphone recording in Python -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
-    <!-- Required for any future camera access from Python tools -->
+    <!-- Required for camera access from Python tools -->
     <key>com.apple.security.device.camera</key>
     <true/>
     <!-- Required for CoreBluetooth device discovery on macOS 12+ -->
     <key>com.apple.security.device.bluetooth</key>
+    <true/>
+    <!-- Screen capture: required by mss / Quartz CGWindowListCreateImage (local_screenshot).
+         The sidecar is a separately signed binary — macOS does NOT inherit this from the
+         parent Tauri process. Both binaries must declare it and be granted TCC access
+         independently in System Settings → Privacy & Security → Screen Recording. -->
+    <key>com.apple.security.screen-capture</key>
     <true/>
 
     <!-- ── File system ────────────────────────────────────────────────────── -->

@@ -12,8 +12,14 @@
     <!-- Microphone: audio recording, TranscribeAudio, RecordAudio, live transcription -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
-    <!-- Camera: future camera capture tools -->
+    <!-- Camera: image capture tools -->
     <key>com.apple.security.device.camera</key>
+    <true/>
+    <!-- Screen capture: local_screenshot tool and AI automation workflows.
+         NSScreenCaptureUsageDescription in Info.plist provides the user-facing
+         reason string. This entitlement is required in the signed binary for
+         macOS to show the TCC prompt — without it the prompt never fires. -->
+    <key>com.apple.security.screen-capture</key>
     <true/>
 
     <!-- ── Automation / Apple Events ─────────────────────────────────────── -->

@@ -892,24 +892,49 @@ def _macos_screen_recording_status() -> PermissionStatus:
     Uses CGPreflightScreenCaptureAccess() from CoreGraphics, which is a
     passive status-only query. It does NOT trigger a permission dialog.
 
+    Returns GRANTED, DENIED, or UNKNOWN. Never NOT_DETERMINED — that state
+    cannot be distinguished from denied via CGPreflightScreenCaptureAccess,
+    and the caller handles the prompt via CGRequestScreenCaptureAccess.
+
     IMPORTANT: SCShareableContent.getShareableContentWithCompletionHandler_()
     was previously used here but it ACTIVELY TRIGGERS the macOS Sequoia
     recurring 30-day screen recording consent prompt every time it is called.
-    Do not use SCShareableContent for status checks — only use it for actual
-    capture operations when the user has explicitly requested a screenshot.
+    Do not use SCShareableContent for status checks.
 
-    CGPreflightScreenCaptureAccess() has a known limitation: it returns false
+    CGPreflightScreenCaptureAccess() has a known limitation: it returns False
     until the app is restarted even when the user grants permission in the same
-    session. This is expected macOS TCC cache behaviour and is acceptable for
-    a read-only status display.
+    session. This is expected macOS TCC cache behaviour.
     """
     if CAPABILITIES["has_quartz"]:
         try:
             from Quartz import CGPreflightScreenCaptureAccess  # pyobjc-framework-Quartz
-            return PermissionStatus.GRANTED if CGPreflightScreenCaptureAccess() else PermissionStatus.NOT_DETERMINED
+            return PermissionStatus.GRANTED if CGPreflightScreenCaptureAccess() else PermissionStatus.DENIED
         except Exception:
             return PermissionStatus.UNKNOWN
     return PermissionStatus.UNKNOWN
+
+
+def _macos_request_screen_recording() -> bool:
+    """Trigger the macOS Screen Recording permission prompt.
+
+    Calls CGRequestScreenCaptureAccess() which shows the native TCC dialog
+    (System Settings → Privacy & Security → Screen Recording) the first time
+    it is called. On subsequent calls it is a no-op if the user already made
+    a decision.
+
+    Returns True if permission was granted, False otherwise.
+
+    IMPORTANT: This must only be called when the user explicitly requests a
+    screenshot or screen-capture operation — never on startup. Calling it
+    speculatively triggers the prompt unexpectedly and annoys users.
+    """
+    if CAPABILITIES["has_quartz"]:
+        try:
+            from Quartz import CGRequestScreenCaptureAccess  # pyobjc-framework-Quartz
+            return bool(CGRequestScreenCaptureAccess())
+        except Exception:
+            pass
+    return False
 
 
 async def check_screen_recording() -> PermissionResult:
@@ -920,27 +945,32 @@ async def check_screen_recording() -> PermissionResult:
     )
 
     if PLATFORM["is_mac"]:
-        # Use ScreenCaptureKit — the Apple-mandated replacement for
-        # CGPreflightScreenCaptureAccess + CGDisplayCreateImage on macOS 15+.
-        # Run the blocking pyobjc call in a thread pool so it doesn't block
-        # the asyncio event loop.
-        import asyncio
-
         loop = asyncio.get_event_loop()
         status = await loop.run_in_executor(None, _macos_screen_recording_status)
 
         granted = status == PermissionStatus.GRANTED
+        not_determined = status == PermissionStatus.UNKNOWN and not CAPABILITIES["has_quartz"]
+
+        if not_determined:
+            detail = "Screen recording status unknown — Quartz framework not available"
+            user_detail = "Screen capture status could not be determined"
+            user_instruction = "Open System Settings > Privacy & Security > Screen Recording"
+        elif granted:
+            detail = "Screen recording permission granted"
+            user_detail = "Screen capture is active"
+            user_instruction = ""
+        else:
+            detail = "Screen recording permission not granted — rebuild and reinstall the app to apply the new entitlement, then grant access in System Settings"
+            user_detail = "Screen capture needs permission"
+            user_instruction = "Open System Settings > Privacy & Security > Screen Recording and enable AI Matrx"
+
         return PermissionResult(
             permission="screen_recording",
             status=status,
-            details="Screen recording permission granted (ScreenCaptureKit)"
-            if granted
-            else "Screen recording permission not granted",
-            grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for Matrx Local",
-            user_details="Screen capture is active" if granted else "Screen capture needs permission",
-            user_instructions=""
-            if granted
-            else "Open System Settings > Privacy & Security > Screen Recording",
+            details=detail,
+            grant_instructions="System Settings > Privacy & Security > Screen Recording > Enable for AI Matrx",
+            user_details=user_detail,
+            user_instructions=user_instruction,
             deep_link=_sr_deep_link,
         )
 
