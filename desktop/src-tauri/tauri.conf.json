@@ -45,8 +45,11 @@
       "binaries/llama-server"
     ],
     "windows": {
-      "wix": {
-        "language": "en-US"
+      "nsis": {
+        "languages": ["English"],
+        "displayLanguageSelector": false,
+        "installMode": "perMachine",
+        "installerHooks": "nsis/installer-hooks.nsh"
       }
     },
     "macOS": {
