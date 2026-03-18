@@ -178,6 +178,18 @@ impl LlmServer {
         self.status.last_error_output = String::new();
     }
 
+    /// Synchronous stop for use from non-async contexts (e.g. delete_llm_model
+    /// which cannot hold a std::sync::MutexGuard across an .await point).
+    /// Kills the child immediately without the 500 ms async sleep.
+    pub fn stop_blocking(&mut self) {
+        if let Some(child) = self.process.take() {
+            let _ = child.kill();
+        }
+        self.status.running = false;
+        self.status.port = 0;
+        self.status.last_error_output = String::new();
+    }
+
     pub fn take_process(&mut self) -> Option<tauri_plugin_shell::process::CommandChild> {
         self.status.running = false;
         self.process.take()

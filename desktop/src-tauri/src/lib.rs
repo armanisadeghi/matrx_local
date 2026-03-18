@@ -2,6 +2,10 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
+
+/// Global flag: set to true once graceful_shutdown_sync has run.
+/// Prevents the cleanup from running twice (tray quit → ExitRequested both fire).
+static SHUTDOWN_DONE: AtomicBool = AtomicBool::new(false);
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -216,16 +220,47 @@ fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
 /// Fix: always explicitly drop all GGML-bearing state before calling any
 /// Tauri exit/restart function so the Rust destructors run in order and
 /// GGML's own cleanup completes before the process terminates.
+///
+/// IMPORTANT: LlmServerState uses std::sync::Mutex (not tokio::sync::Mutex)
+/// so this synchronous function can lock it reliably. tokio::sync::Mutex
+/// try_lock() returns TryLockError whenever any async command holds it,
+/// which caused GGML cleanup to be silently skipped → SIGABRT on every quit.
 fn graceful_shutdown_sync(
     sidecar_state: &SidecarState,
     transcription_state: &TranscriptionState,
-    llm_state: &llm::commands::LlmServerState,
+    llm_process: &llm::commands::LlmProcessHandle,
 ) {
-    // 1. Send SIGTERM to the Python sidecar so its signal handler can run
-    //    the FastAPI lifespan teardown (proxy, tunnel, scraper, SQLite).
-    //    Falls back to SIGKILL after 3 s if Python doesn't exit on its own.
-    if let Some(child) = sidecar_state.child.lock().unwrap().take() {
-        sigterm_then_kill(child);
+    // Idempotent guard: if already called (e.g. tray quit fires ExitRequested too),
+    // skip the second run to avoid double-kill and spurious lock contention.
+    if SHUTDOWN_DONE.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    // 1. Kill llama-server child process FIRST — it holds GGML Metal GPU state.
+    //    Killing it before exit() ensures the Metal device is freed by the child
+    //    process (its own GGML cleanup) rather than our atexit handlers.
+    //
+    //    Two-pronged approach:
+    //    a) Via LlmProcessHandle (std::sync::Mutex — always lockable from sync context).
+    //    b) Via OS kill-by-name as a fallback in case the handle was never stored
+    //       (e.g. llama-server was started before this version shipped the handle tracking).
+    if let Ok(mut guard) = llm_process.lock() {
+        if let Some(child) = guard.take() {
+            let _ = child.kill();
+        }
+    }
+    // Fallback: kill any remaining llama-server processes by name.
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("pkill")
+            .args(["-9", "-f", "llama-server"])
+            .output();
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/IM", "llama-server.exe"])
+            .output();
     }
 
     // 2. Drop the WhisperContext — this runs GGML cleanup in Rust before
@@ -234,11 +269,11 @@ fn graceful_shutdown_sync(
         *guard = None; // Drops TranscriptionManager → WhisperContext → GGML
     }
 
-    // 3. Kill llama-server child process — also GGML-based.
-    if let Ok(mut server) = llm_state.try_lock() {
-        if let Some(child) = server.take_process() {
-            let _ = child.kill();
-        }
+    // 3. Send SIGTERM to the Python sidecar so its signal handler can run
+    //    the FastAPI lifespan teardown (proxy, tunnel, scraper, SQLite).
+    //    Falls back to SIGKILL after 8 s if Python doesn't exit on its own.
+    if let Some(child) = sidecar_state.child.lock().unwrap().take() {
+        sigterm_then_kill(child);
     }
 }
 
@@ -257,9 +292,9 @@ async fn restart_for_update(
     app: tauri::AppHandle,
     sidecar_state: tauri::State<'_, SidecarState>,
     transcription_state: tauri::State<'_, TranscriptionState>,
-    llm_state: tauri::State<'_, llm::commands::LlmServerState>,
+    llm_process: tauri::State<'_, llm::commands::LlmProcessHandle>,
 ) -> Result<(), String> {
-    graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_state);
+    graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_process);
 
     // Give child processes a moment to exit cleanly before we restart.
     // This avoids orphaned port bindings on the new instance's startup.
@@ -527,12 +562,12 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 show_main_window(app);
             }
             "quit" => {
-                // Drop all GGML state before exit to prevent ggml_abort → SIGABRT.
+                // Kill llama-server + whisper GGML state + Python sidecar before exit.
                 // See graceful_shutdown_sync() for full explanation.
                 let sidecar_state = app.state::<SidecarState>();
                 let transcription_state = app.state::<TranscriptionState>();
-                let llm_state = app.state::<llm::commands::LlmServerState>();
-                graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_state);
+                let llm_process = app.state::<llm::commands::LlmProcessHandle>();
+                graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_process);
                 app.exit(0);
             }
             _ => {}
@@ -603,6 +638,7 @@ pub fn run() {
         .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
             llm::server::LlmServer::new(),
         )) as llm::commands::LlmServerState)
+        .manage(std::sync::Arc::new(std::sync::Mutex::new(None::<tauri_plugin_shell::process::CommandChild>)) as llm::commands::LlmProcessHandle)
         .manage(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)) as llm::commands::LlmDownloadCancelState)
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
@@ -740,14 +776,14 @@ pub fn run() {
                     api.prevent_close();
                 } else {
                     // User explicitly chose "Quit" — run graceful shutdown before exit.
-                    // Must drop GGML state (whisper/llama) before process terminates
-                    // to prevent ggml_abort → SIGABRT crash reports.
-                    if let (Some(sidecar), Some(transcription), Some(llm)) = (
+                    // Must kill llama-server + drop whisper GGML state before process
+                    // terminates to prevent ggml_abort → SIGABRT crash reports.
+                    if let (Some(sidecar), Some(transcription), Some(llm_proc)) = (
                         window.app_handle().try_state::<SidecarState>(),
                         window.app_handle().try_state::<TranscriptionState>(),
-                        window.app_handle().try_state::<llm::commands::LlmServerState>(),
+                        window.app_handle().try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
-                        graceful_shutdown_sync(&sidecar, &transcription, &llm);
+                        graceful_shutdown_sync(&sidecar, &transcription, &llm_proc);
                     }
                     // Fall through: window closes normally, app exits when last window closes.
                 }
@@ -780,16 +816,21 @@ pub fn run() {
                 // We intentionally do NOT call api.prevent_exit() here — we just
                 // run cleanup synchronously before the exit proceeds.
                 tauri::RunEvent::ExitRequested { api: _, code, .. } => {
-                    // Only run cleanup on a real exit (code None = normal quit,
-                    // Some(0) = app.exit(0)). Skip if Tauri is restarting itself
-                    // via request_restart() which already called graceful_shutdown_sync.
+                    // Run cleanup before the process exits. The SHUTDOWN_DONE atomic
+                    // inside graceful_shutdown_sync makes this idempotent — if the
+                    // tray / window close handler already ran cleanup, this is a no-op.
+                    //
+                    // We do NOT skip based on `code` here because:
+                    //   - code=None  → native Cmd+Q / NSApplication terminate: → needs cleanup
+                    //   - code=Some(0) → app.exit(0) from our own tray handler → SHUTDOWN_DONE=true, no-op
+                    //   - code=Some(_) → update restart (request_restart) → SHUTDOWN_DONE=true, no-op
                     let _ = code;
-                    if let (Some(sidecar), Some(transcription), Some(llm)) = (
+                    if let (Some(sidecar), Some(transcription), Some(llm_proc)) = (
                         app.try_state::<SidecarState>(),
                         app.try_state::<TranscriptionState>(),
-                        app.try_state::<llm::commands::LlmServerState>(),
+                        app.try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
-                        graceful_shutdown_sync(&sidecar, &transcription, &llm);
+                        graceful_shutdown_sync(&sidecar, &transcription, &llm_proc);
                     }
                 }
 

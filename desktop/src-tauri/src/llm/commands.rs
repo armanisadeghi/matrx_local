@@ -8,8 +8,21 @@ use super::model_selector;
 use super::server::{find_free_port, LlmServer, LlmServerStatus};
 use crate::transcription::hardware::HardwareProfile;
 
-/// Tauri-managed state for the LLM server process.
+/// Async-safe state for the LLM server. Uses tokio::sync::Mutex so async
+/// tauri commands can hold the lock across .await points (start, stop, health).
 pub type LlmServerState = Arc<Mutex<LlmServer>>;
+
+/// Sync-accessible handle to the llama-server child process.
+///
+/// This is a SEPARATE lock from LlmServerState. It holds only the
+/// CommandChild handle and uses std::sync::Mutex so graceful_shutdown_sync()
+/// — a synchronous function called from the Quit menu event — can kill the
+/// child process without needing an async runtime or tokio::sync::Mutex.
+///
+/// LlmServer also keeps its own process field for lifecycle management.
+/// When the server stops normally, both are cleared. At shutdown, we grab
+/// this handle directly and kill it even if the tokio mutex is locked.
+pub type LlmProcessHandle = Arc<std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>>;
 
 /// Shared atomic flag used to request cancellation of an in-flight download.
 /// Set to true by `cancel_llm_download`; reset to false at the start of each
@@ -600,7 +613,7 @@ pub async fn delete_llm_model(
     state: State<'_, LlmServerState>,
     filename: String,
 ) -> Result<(), String> {
-    // If this model is currently loaded, stop the server first
+    // If this model is currently loaded, stop the server first.
     {
         let mut server = state.lock().await;
         if server.status.running && server.status.model_name == extract_stem(&filename) {
