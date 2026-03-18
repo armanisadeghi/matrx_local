@@ -51,7 +51,8 @@ _DEFAULT_ORIGINS = ",".join([
     "http://127.0.0.1:3002",
     "http://127.0.0.1:5173",
     # Tauri desktop app
-    "tauri://localhost",
+    "tauri://localhost",       # macOS WebKit
+    "http://tauri.localhost",  # Windows WebView2 / Linux WebKitGTK
 ])
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
 
