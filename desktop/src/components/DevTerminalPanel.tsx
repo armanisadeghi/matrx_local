@@ -154,6 +154,45 @@ function inferServerLevel(text: string): LogLevel {
 }
 
 // ---------------------------------------------------------------------------
+// Group-similar logic
+// ---------------------------------------------------------------------------
+
+// Only these levels are eligible for grouping; warn/error always show individually
+const GROUPABLE_LEVELS = new Set<LogLevel>(["info", "success", "data", "cmd"]);
+
+interface GroupedLogRow {
+  representative: ClientLogLine; // last occurrence shown
+  count: number;                 // total occurrences in the group
+  key: string;                   // grouping key
+}
+
+/** Collapse consecutive (or all) identical-key rows for groupable levels. */
+function groupSimilarLogs(logs: ClientLogLine[]): GroupedLogRow[] {
+  const rows: GroupedLogRow[] = [];
+  const groupMap = new Map<string, GroupedLogRow>();
+
+  for (const line of logs) {
+    if (!GROUPABLE_LEVELS.has(line.level)) {
+      // Warn/error: always emit individually, flush the group map so ordering is preserved
+      rows.push({ representative: line, count: 1, key: String(line.id) });
+    } else {
+      const key = `${line.level}|${line.source ?? ""}|${line.message}`;
+      const existing = groupMap.get(key);
+      if (existing) {
+        existing.count++;
+        existing.representative = line; // show the latest occurrence
+      } else {
+        const row: GroupedLogRow = { representative: line, count: 1, key };
+        groupMap.set(key, row);
+        rows.push(row);
+      }
+    }
+  }
+
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
 // Filter pill row sub-component
 // ---------------------------------------------------------------------------
 
@@ -161,10 +200,14 @@ function LevelFilters({
   logs,
   activeFilters,
   onToggle,
+  groupSimilar,
+  onToggleGroup,
 }: {
   logs: ClientLogLine[];
   activeFilters: Set<LogLevel>;
   onToggle: (level: LogLevel) => void;
+  groupSimilar: boolean;
+  onToggleGroup: () => void;
 }) {
   return (
     <div className="flex items-center gap-1 px-3 py-1.5 border-b border-zinc-800/60 flex-wrap">
@@ -187,6 +230,19 @@ function LevelFilters({
           </button>
         );
       })}
+      <div className="w-px h-3 bg-zinc-800 mx-0.5 shrink-0" />
+      <button
+        onClick={onToggleGroup}
+        title="Group identical INFO/OK/DATA/CMD messages — WARN and ERR always shown individually"
+        className={cn(
+          "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
+          groupSimilar
+            ? "bg-violet-900/50 text-violet-300 border-violet-700"
+            : "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700",
+        )}
+      >
+        Group similar
+      </button>
     </div>
   );
 }
@@ -195,9 +251,9 @@ function LevelFilters({
 // Log row
 // ---------------------------------------------------------------------------
 
-function LogRow({ line }: { line: ClientLogLine }) {
+function LogRow({ line, repeatCount }: { line: ClientLogLine; repeatCount?: number }) {
   return (
-    <div className="flex gap-2 min-w-0 hover:bg-zinc-900 px-1 rounded">
+    <div className="flex gap-2 min-w-0 hover:bg-zinc-900 px-1 rounded items-start">
       <span className="text-zinc-700 shrink-0 tabular-nums select-none text-[10px] pt-px">{line.time}</span>
       <span className={cn("shrink-0 select-none tabular-nums font-semibold text-[10px] pt-px w-8", LEVEL_COLOR[line.level])}>
         {LEVEL_LABEL[line.level]}
@@ -205,16 +261,22 @@ function LogRow({ line }: { line: ClientLogLine }) {
       {line.source && (
         <span className="text-zinc-600 shrink-0 select-none text-[10px] pt-px">[{line.source}]</span>
       )}
-      <span className={cn("break-all whitespace-pre-wrap text-[11px]", LEVEL_COLOR[line.level])}>
+      <span className={cn("break-all whitespace-pre-wrap text-[11px] flex-1", LEVEL_COLOR[line.level])}>
         {line.message}
       </span>
+      {repeatCount !== undefined && repeatCount > 1 && (
+        <span className="shrink-0 self-center text-[9px] font-mono font-bold bg-zinc-700 text-zinc-300 rounded-full px-1.5 py-px tabular-nums select-none">
+          {repeatCount}
+        </span>
+      )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Log pane (filterable, no auto-scroll)
+// Log pane (filterable, groupable, no auto-scroll)
 // Accepts onVisibleChange so the parent can copy exactly what's visible.
+// The callback receives the condensed copy text (respects grouping).
 // ---------------------------------------------------------------------------
 
 function LogPane({
@@ -226,13 +288,15 @@ function LogPane({
   logs: ClientLogLine[];
   emptyMessage: string;
   filterKey: string;
-  onVisibleChange: (visible: ClientLogLine[]) => void;
+  /** Called with the copy-ready text string whenever the visible set changes. */
+  onVisibleChange: (copyText: string) => void;
 }) {
   const [activeFilters, setActiveFilters] = useState<Set<LogLevel>>(
     () => new Set(ALL_LEVELS),
   );
+  const [grouped, setGrouped] = useState(false);
 
-  // Reset filters when the tab source set changes
+  // Reset filters/grouping when the tab source set changes
   useEffect(() => {
     setActiveFilters(new Set(ALL_LEVELS));
   }, [filterKey]);
@@ -250,7 +314,7 @@ function LogPane({
     });
   }, []);
 
-  const visible = useMemo(
+  const filtered = useMemo(
     () =>
       activeFilters.size === ALL_LEVELS.length
         ? logs
@@ -258,23 +322,53 @@ function LogPane({
     [logs, activeFilters],
   );
 
-  // Notify parent whenever the visible set changes so copy always reflects filters
+  // Apply grouping on top of the level-filtered list
+  const groupedRows = useMemo(
+    () => (grouped ? groupSimilarLogs(filtered) : null),
+    [filtered, grouped],
+  );
+
+  // Build copy text and notify parent whenever display changes
   const onVisibleChangeRef = useRef(onVisibleChange);
   onVisibleChangeRef.current = onVisibleChange;
+
   useEffect(() => {
-    onVisibleChangeRef.current(visible);
-  }, [visible]);
+    let text: string;
+    if (groupedRows) {
+      text = groupedRows
+        .map(({ representative: l, count }) => {
+          const countSuffix = count > 1 ? ` ×${count}` : "";
+          return `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? "app"}] ${l.message}${countSuffix}`;
+        })
+        .join("\n");
+    } else {
+      text = filtered
+        .map((l) => `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? "app"}] ${l.message}`)
+        .join("\n");
+    }
+    onVisibleChangeRef.current(text);
+  }, [filtered, groupedRows]);
 
   return (
     <>
-      <LevelFilters logs={logs} activeFilters={activeFilters} onToggle={toggleFilter} />
+      <LevelFilters
+        logs={logs}
+        activeFilters={activeFilters}
+        onToggle={toggleFilter}
+        groupSimilar={grouped}
+        onToggleGroup={() => setGrouped((v) => !v)}
+      />
       <div className="flex-1 overflow-y-auto p-2 space-y-px font-mono">
-        {visible.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className="flex h-full min-h-[80px] items-center justify-center text-zinc-700 text-[11px]">
             {logs.length === 0 ? emptyMessage : "No logs match the active filters"}
           </div>
+        ) : groupedRows ? (
+          groupedRows.map(({ representative, count, key }) => (
+            <LogRow key={key} line={representative} repeatCount={count} />
+          ))
         ) : (
-          visible.map((line) => <LogRow key={line.id} line={line} />)
+          filtered.map((line) => <LogRow key={line.id} line={line} />)
         )}
       </div>
     </>
@@ -665,29 +759,25 @@ export function DevTerminalPanel() {
     [allLogs, activeTabDef],
   );
 
-  // Tracks the currently visible (post-filter) lines reported by LogPane
-  const visibleLinesRef = useRef<ClientLogLine[]>([]);
-  const handleVisibleChange = useCallback((lines: ClientLogLine[]) => {
-    visibleLinesRef.current = lines;
+  // Tracks the copy-ready text reported by LogPane (already accounts for grouping)
+  const visibleCopyTextRef = useRef<string>("");
+  const handleVisibleChange = useCallback((copyText: string) => {
+    visibleCopyTextRef.current = copyText;
   }, []);
 
   const handleCopy = useCallback(async () => {
-    const lines = visibleLinesRef.current;
-    if (lines.length === 0) return;
+    const body = visibleCopyTextRef.current;
+    if (!body) return;
     const now = new Date().toLocaleString("en-US", {
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", second: "2-digit",
       hour12: false,
     });
-    const isFiltered = lines.length !== tabLogs.length;
-    const header = `=== Matrx Log [${activeTabDef.label}${isFiltered ? " — filtered" : ""}] — ${now} ===`;
-    const body = lines
-      .map((l) => `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? "app"}] ${l.message}`)
-      .join("\n");
+    const header = `=== Matrx Log [${activeTabDef.label}] — ${now} ===`;
     await navigator.clipboard.writeText(`${header}\n${body}\n=== END ===`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [tabLogs.length, activeTabDef]);
+  }, [activeTabDef]);
 
   const handleClear = useCallback(() => {
     if (activeTabDef.clearSources === null) {
@@ -697,11 +787,16 @@ export function DevTerminalPanel() {
     }
   }, [activeTabDef]);
 
-  // Tab badge counts
-  const serverCount = allLogs.filter((l) => SERVER_SOURCES.has(l.source ?? "")).length;
-  const clientCount = allLogs.filter((l) => {
+  // Tab badge counts — errors/warns scoped to each tab's sources
+  const serverErrors = allLogs.filter((l) => SERVER_SOURCES.has(l.source ?? "") && l.level === "error").length;
+  const serverWarns  = allLogs.filter((l) => SERVER_SOURCES.has(l.source ?? "") && l.level === "warn").length;
+  const clientErrors = allLogs.filter((l) => {
     const s = l.source ?? "";
-    return CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && !CLIENT_SOURCES.has(s));
+    return (CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && !CLIENT_SOURCES.has(s))) && l.level === "error";
+  }).length;
+  const clientWarns = allLogs.filter((l) => {
+    const s = l.source ?? "";
+    return (CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && !CLIENT_SOURCES.has(s))) && l.level === "warn";
   }).length;
   const totalErrors = allLogs.filter((l) => l.level === "error").length;
   const totalWarns = allLogs.filter((l) => l.level === "warn").length;
@@ -735,10 +830,25 @@ export function DevTerminalPanel() {
         {/* Tabs */}
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
-          let badge: number | null = null;
-          if (tab.id === "server") badge = serverCount;
-          if (tab.id === "client") badge = clientCount;
-          if (tab.id === "all") badge = allLogs.length;
+
+          // Badge: show error count (red), or warn count (amber), or nothing
+          let badgeCount: number | null = null;
+          let badgeStyle = "bg-zinc-800 text-zinc-500";
+          let badgeSuffix = "";
+
+          if (tab.id === "server") {
+            if (serverErrors > 0) { badgeCount = serverErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
+            else if (serverWarns > 0) { badgeCount = serverWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+          } else if (tab.id === "client") {
+            if (clientErrors > 0) { badgeCount = clientErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
+            else if (clientWarns > 0) { badgeCount = clientWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+          } else if (tab.id === "all") {
+            if (totalErrors > 0) { badgeCount = totalErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
+            else if (totalWarns > 0) { badgeCount = totalWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+          } else if (tab.id === "overview") {
+            if (totalErrors > 0) { badgeCount = totalErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
+            else if (totalWarns > 0) { badgeCount = totalWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+          }
 
           return (
             <button
@@ -753,24 +863,9 @@ export function DevTerminalPanel() {
             >
               {tab.icon}
               {tab.label}
-              {badge !== null && badge > 0 && (
-                <span className={cn(
-                  "text-[9px] font-mono rounded px-1 py-px",
-                  tab.id === "server" && totalErrors > 0 ? "bg-red-900/50 text-red-400" :
-                  tab.id === "client" && totalWarns > 0 ? "bg-amber-900/50 text-amber-400" :
-                  "bg-zinc-800 text-zinc-500"
-                )}>
-                  {badge}
-                </span>
-              )}
-              {tab.id === "overview" && totalErrors > 0 && (
-                <span className="text-[9px] bg-red-900/50 text-red-400 rounded px-1 py-px font-mono">
-                  {totalErrors}e
-                </span>
-              )}
-              {tab.id === "overview" && totalErrors === 0 && totalWarns > 0 && (
-                <span className="text-[9px] bg-amber-900/50 text-amber-400 rounded px-1 py-px font-mono">
-                  {totalWarns}w
+              {badgeCount !== null && badgeCount > 0 && (
+                <span className={cn("text-[9px] font-mono rounded px-1 py-px", badgeStyle)}>
+                  {badgeCount}{badgeSuffix}
                 </span>
               )}
             </button>
