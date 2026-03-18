@@ -661,12 +661,20 @@ class PromptsRepo:
         )
         return [self._deserialize(r) for r in rows]
 
-    async def list_all(self) -> list[dict[str, Any]]:
+    async def list_all(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        if user_id:
+            return await self.list_for_user(user_id)
         rows = await self._db.fetchall("SELECT * FROM prompts ORDER BY name")
         return [self._deserialize(r) for r in rows]
 
-    async def get(self, prompt_id: str) -> dict[str, Any] | None:
-        row = await self._db.fetchone("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+    async def get(self, prompt_id: str, user_id: str | None = None) -> dict[str, Any] | None:
+        if user_id:
+            row = await self._db.fetchone(
+                "SELECT * FROM prompts WHERE id = ? AND user_id = ?",
+                (prompt_id, user_id),
+            )
+        else:
+            row = await self._db.fetchone("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
         return self._deserialize(row) if row else None
 
     async def upsert(self, prompt: dict[str, Any]) -> None:
@@ -715,8 +723,14 @@ class PromptsRepo:
         await self._db.commit()
         return cursor.rowcount
 
-    async def count(self) -> int:
-        row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM prompts")
+    async def count(self, user_id: str | None = None) -> int:
+        if user_id:
+            row = await self._db.fetchone(
+                "SELECT COUNT(*) as cnt FROM prompts WHERE user_id = ?",
+                (user_id,),
+            )
+        else:
+            row = await self._db.fetchone("SELECT COUNT(*) as cnt FROM prompts")
         return row["cnt"] if row else 0
 
     def _deserialize(self, row) -> dict[str, Any]:

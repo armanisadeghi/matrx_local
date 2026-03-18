@@ -113,10 +113,25 @@ async def list_models() -> dict[str, Any]:
 
 @router.get("/agents")
 async def list_agents() -> dict[str, Any]:
-    """Return all agents from the local cache."""
+    """Return all agents from the local cache.
+
+    Resolves the authenticated user_id from the stored JWT so only this
+    user's own prompts are returned alongside builtins.
+    """
+    from app.services.local_db.repositories import TokenRepo
+
+    user_id: str | None = None
+    try:
+        token_row = await TokenRepo().get()
+        if token_row:
+            user_id = token_row.get("user_id") or None
+    except Exception:
+        pass
+
     repo = AgentsRepo()
-    builtins = await repo.list_all(source="builtin")
-    user = await repo.list_all(source="user")
+    all_agents = await repo.list_all(user_id=user_id)
+    builtins = [a for a in all_agents if a.get("source") == "builtin"]
+    user = [a for a in all_agents if a.get("source") == "user"]
     return {
         "builtins": builtins,
         "user": user,
