@@ -21,6 +21,36 @@ can discover it without configuration.
 
 from __future__ import annotations
 
+# ── Windows UTF-8 fix — before every other import ────────────────────────────
+# Windows defaults to CP1252 for stdout/stderr. Our log messages contain
+# Unicode symbols (✓ → ← ─ ⚠) that CP1252 cannot encode, causing
+# UnicodeEncodeError inside Starlette's logging machinery which floods stderr
+# with hundreds of "--- Logging error ---" tracebacks per second.
+# This must happen BEFORE importing app.common.platform_ctx (which triggers
+# logging setup) so the streams are correct from the very first log line.
+import sys as _sys
+import os as _os
+if _sys.platform == "win32":
+    _os.environ.setdefault("PYTHONUTF8", "1")
+    _os.environ.setdefault("PYTHONIOENCODING", "utf-8:replace")
+    try:
+        if hasattr(_sys.stdout, "reconfigure"):
+            _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        else:
+            import io as _io
+            _sys.stdout = _io.TextIOWrapper(
+                _sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True
+            )
+        if hasattr(_sys.stderr, "reconfigure"):
+            _sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        else:
+            import io as _io
+            _sys.stderr = _io.TextIOWrapper(
+                _sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True
+            )
+    except Exception:
+        pass
+
 import json
 import logging
 import os
@@ -33,14 +63,6 @@ import threading
 from pathlib import Path
 
 from app.common.platform_ctx import CAPABILITIES, PLATFORM
-
-# On Windows, the default console encoding (CP1252) can't represent Unicode
-# characters used in log messages (e.g. ✓, ─).  Reconfigure stdout/stderr to
-# UTF-8 immediately so logging never raises UnicodeEncodeError.
-if PLATFORM["is_windows"]:
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 
 def _read_version() -> str:
     """Read version — tries importlib.metadata first (works in packaged binary),

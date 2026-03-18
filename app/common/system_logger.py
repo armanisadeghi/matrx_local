@@ -6,6 +6,20 @@ import re
 from concurrent_log_handler import ConcurrentRotatingFileHandler
 from app.config import LOG_LEVEL, LOG_DIR, MAX_LOG_FILE_SIZE, BACKUP_COUNT, LOCAL_DEV
 
+# ── Windows: ensure stdout/stderr are UTF-8 before the first handler is created.
+# run.py reconfigures the streams before importing this module, but if something
+# imports system_logger directly (tests, scripts) without going through run.py,
+# we reconfigure here as a safety net.  errors='replace' means unencodable
+# characters become '?' instead of raising UnicodeEncodeError.
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Ensure the log directory exists
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -156,7 +170,12 @@ class SystemLogger:
                 level, message, *args, extra=extra, exc_info=exc_info, **kwargs
             )
         except Exception as e:
-            print(f"Logging error: {str(e)}")
+            # Use ascii-safe fallback so this itself never raises UnicodeEncodeError
+            try:
+                safe = str(e).encode("ascii", errors="replace").decode("ascii")
+                print(f"Logging error: {safe}", file=sys.stderr)
+            except Exception:
+                pass  # Absolute last resort — swallow to avoid infinite recursion
 
     def debug(self, message, *args, **kwargs):
         self._log(logging.DEBUG, message, *args, **kwargs)
