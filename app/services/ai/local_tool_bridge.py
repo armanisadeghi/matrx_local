@@ -120,32 +120,53 @@ class LocalToolBridge(ExternalToolAdapter):
 
         reg = registry or ExternalHandlerRegistry.get_instance()
 
-        registered = 0
+        registered_names: list[str] = []
         failed: list[str] = []
 
-        for entry in LOCAL_TOOL_MANIFEST:
-            try:
-                handler = _resolve_handler(entry.function_path)
-                tool_handler = self._make_tool_handler(handler, entry.name, entry.arg_model)
-                reg.register(entry.name, tool_handler)
-                registered += 1
-            except ImportError as exc:
-                # Module not available on this platform (e.g. applescript on Linux)
-                logger.debug("Skipping local tool %s — import error: %s", entry.name, exc)
-            except AttributeError as exc:
-                logger.warning("Skipping local tool %s — handler not found: %s", entry.name, exc)
-            except Exception as exc:
-                failed.append(entry.name)
-                logger.error("Failed to register local tool %s: %s", entry.name, exc)
+        # Silence the per-tool vcprint spam from ExternalHandlerRegistry.register()
+        # and emit a single consolidated summary instead.
+        _orig_register = reg.__class__.register
+
+        def _silent_register(self_reg: Any, tool_name: str, handler: Any) -> None:
+            self_reg._tool_handlers[tool_name] = handler
+
+        reg.__class__.register = _silent_register  # type: ignore[method-assign]
+        try:
+            for entry in LOCAL_TOOL_MANIFEST:
+                try:
+                    handler = _resolve_handler(entry.function_path)
+                    tool_handler = self._make_tool_handler(handler, entry.name, entry.arg_model)
+                    reg.register(entry.name, tool_handler)
+                    registered_names.append(entry.name)
+                except ImportError as exc:
+                    # Module not available on this platform (e.g. applescript on Linux)
+                    logger.debug("Skipping local tool %s — import error: %s", entry.name, exc)
+                except AttributeError as exc:
+                    logger.warning("Skipping local tool %s — handler not found: %s", entry.name, exc)
+                except Exception as exc:
+                    failed.append(entry.name)
+                    logger.error("Failed to register local tool %s: %s", entry.name, exc)
+        finally:
+            reg.__class__.register = _orig_register  # type: ignore[method-assign]
 
         # Register the app-level fallback dispatcher for any tool not in the manifest.
-        reg.register_app_handler(self.source_app, self._app_dispatcher)
+        # Silence the vcprint from register_app_handler too.
+        _orig_register_app = reg.__class__.register_app_handler
+
+        def _silent_register_app(self_reg: Any, source_app: str, handler: Any) -> None:
+            self_reg._app_handlers[source_app] = handler
+
+        reg.__class__.register_app_handler = _silent_register_app  # type: ignore[method-assign]
+        try:
+            reg.register_app_handler(self.source_app, self._app_dispatcher)
+        finally:
+            reg.__class__.register_app_handler = _orig_register_app  # type: ignore[method-assign]
 
         # Wire on_conversation_end into matrx-ai's ToolLifecycleManager.
         try:
             from matrx_ai.tools.lifecycle import ToolLifecycleManager
             ToolLifecycleManager.get_instance().register_external_adapter_cleanup(
-                self._on_conversation_end
+                self.on_conversation_end
             )
         except Exception:
             pass
@@ -153,10 +174,14 @@ class LocalToolBridge(ExternalToolAdapter):
         if failed:
             logger.warning("[LocalToolBridge] Failed to register: %s", failed)
 
+        names_list = ", ".join(registered_names)
         logger.info(
-            "[LocalToolBridge] Registered %d/%d local tools",
-            registered,
+            "[ExternalHandlerRegistry] Registered %d/%d local tool handlers "
+            "(app: %s): %s",
+            len(registered_names),
             len(LOCAL_TOOL_MANIFEST),
+            self.source_app,
+            names_list,
         )
 
     # ------------------------------------------------------------------

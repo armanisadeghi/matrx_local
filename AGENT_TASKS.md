@@ -41,6 +41,7 @@
 ### P3 — Polish (nice to have)
 
 21. **First-run wizard** — On first launch (no settings file), show a wizard: Sign in → Engine health → optional capabilities install → done.
+23. [x] **Noisy Ctrl-C shutdown** — Fixed 2026-03-18: `ScraperEngine.stop()` now suppresses the `scraper_app.core.fetcher.browser_pool` logger during teardown (level→CRITICAL) and wraps the call in `asyncio.wait_for(timeout=5.0)`. The "Connection closed while reading from the driver" tracebacks were expected — Playwright's driver subprocess is killed by SIGINT before `browser.close()` is called. Also fixed a typo in `local_tool_bridge.py` where `self._on_conversation_end` (private, doesn't exist) was registered instead of `self.on_conversation_end`.
 22. [x] **Monitoring tools iOS-style UI** — Fully done: `MonitoringPanel.tsx` has `GaugeRing` + `Sparkline` components with 3s auto-refresh, CPU/Memory/Disk/Battery gauges, sparkline history, stats row, and a full process table with kill buttons. Dashboard also has live gauges (10s refresh).
 
 ---

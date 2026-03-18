@@ -286,10 +286,23 @@ class ScraperEngine:
         logger.info("[scraper/engine.py] ScraperEngine: stopping")
 
         if self._browser_pool:
+            # When SIGINT fires, Playwright's driver subprocess is killed before we
+            # reach shutdown. Subsequent browser.close() calls all raise
+            # "Connection closed while reading from the driver" — this is expected
+            # and harmless. Suppress the browser_pool logger temporarily so these
+            # known-benign errors don't flood the console as full tracebacks.
+            _bp_logger = logging.getLogger("scraper_app.core.fetcher.browser_pool")
+            _orig_level = _bp_logger.level
+            _bp_logger.setLevel(logging.CRITICAL)
             try:
-                await self._browser_pool.stop()
+                import asyncio as _asyncio
+                await _asyncio.wait_for(self._browser_pool.stop(), timeout=5.0)
+            except _asyncio.TimeoutError:
+                logger.debug("[scraper/engine.py] ScraperEngine: browser pool stop timed out (expected on SIGINT)")
             except Exception:
-                logger.exception("[scraper/engine.py] ScraperEngine: error stopping browser pool")
+                logger.debug("[scraper/engine.py] ScraperEngine: browser pool stop failed (expected on SIGINT)")
+            finally:
+                _bp_logger.setLevel(_orig_level)
 
         self._started = False
         logger.info("[scraper/engine.py] ScraperEngine: stopped")
