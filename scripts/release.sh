@@ -396,6 +396,28 @@ else
     warn "scripts/download-llama-server.sh not found — skipping llama-server download."
 fi
 
+# ── pnpm lockfile freshness check ────────────────────────────────────────────
+# CI runs `pnpm install --frozen-lockfile` and will fail if pnpm-lock.yaml is
+# out of sync with package.json. Catch this locally before pushing.
+info "Checking pnpm-lock.yaml is up to date with package.json..."
+if ! command -v pnpm &>/dev/null; then
+    warn "pnpm not found — skipping lockfile check. Install pnpm to enable this guard."
+else
+    LOCKFILE_CHECK=$(cd desktop && pnpm install --frozen-lockfile 2>&1) || {
+        echo ""
+        warn "pnpm-lock.yaml is out of sync with package.json. Auto-fixing..."
+        if ! (cd desktop && pnpm install --no-frozen-lockfile 2>&1); then
+            fail "pnpm install failed — fix package.json/pnpm-lock.yaml manually."
+        fi
+        # Stage the updated lockfile so it's included in the release commit
+        git add desktop/pnpm-lock.yaml
+        ok "pnpm-lock.yaml updated and staged."
+    }
+    # Suppress the output but surface it on error — variable consumed above
+    : "${LOCKFILE_CHECK}"
+    ok "pnpm-lock.yaml is up to date."
+fi
+
 # ── TypeScript type-check ────────────────────────────────────────────────────
 info "Running TypeScript type-check (pnpm tsc --noEmit)..."
 if ! command -v pnpm &>/dev/null; then
@@ -451,6 +473,7 @@ echo -e "  ───────────────────────
 echo ""
 
 if $DRY_RUN; then
+    preview "Would check: pnpm-lock.yaml freshness (auto-fix and stage if stale)"
     preview "Would run: pnpm tsc --noEmit (TypeScript check)"
     preview "Would update $VERSION_FILE: $CURRENT_VERSION → $NEW_VERSION"
     preview "Would update desktop/src-tauri/tauri.conf.json"
