@@ -202,7 +202,7 @@ const SETUP_LOG_LEVEL_MAP: Record<string, LogLevel> = {
   critical: "error",
 };
 
-function startSetupLogsStream(engineUrl: string, getToken: () => Promise<string | null>): () => void {
+function startSetupLogsStream(engineUrl: string): () => void {
   let active = true;
   let abortCtrl = new AbortController();
   const backoff = makeBackoff();
@@ -434,7 +434,7 @@ export async function initUnifiedLog(
   _state.getToken = getToken;
 
   if (!_state.stopSetupLogs) {
-    _state.stopSetupLogs = startSetupLogsStream(engineUrl, getToken);
+    _state.stopSetupLogs = startSetupLogsStream(engineUrl);
   }
   if (!_state.stopSyslog) {
     _state.stopSyslog = await startSyslogStream(engineUrl, getToken);
