@@ -20,6 +20,38 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SIDECAR_DIR="$PROJECT_ROOT/desktop/src-tauri/sidecar"
 
+# ── Preflight checks ─────────────────────────────────────────────────────────
+PREFLIGHT_OK=true
+
+if ! command -v uv &>/dev/null; then
+    echo "ERROR: uv is not installed." >&2
+    echo "       Install it with:  curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+    PREFLIGHT_OK=false
+fi
+
+if [[ ! -f "$PROJECT_ROOT/pyproject.toml" ]]; then
+    echo "ERROR: pyproject.toml not found at $PROJECT_ROOT" >&2
+    echo "       Run this script from the project root." >&2
+    PREFLIGHT_OK=false
+fi
+
+if [[ ! -f "$PROJECT_ROOT/run.py" ]]; then
+    echo "ERROR: run.py not found at $PROJECT_ROOT" >&2
+    echo "       Run this script from the project root." >&2
+    PREFLIGHT_OK=false
+fi
+
+if ! command -v curl &>/dev/null; then
+    echo "ERROR: curl is not installed — needed for downloading dependencies." >&2
+    PREFLIGHT_OK=false
+fi
+
+if ! $PREFLIGHT_OK; then
+    echo ""
+    echo "Fix the issues above and re-run: bash scripts/build-sidecar.sh"
+    exit 1
+fi
+
 # Detect platform triple
 detect_target() {
     local os arch

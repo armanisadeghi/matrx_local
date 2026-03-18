@@ -19,6 +19,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# ── Preflight checks ─────────────────────────────────────────────────────────
+if ! command -v git &>/dev/null; then
+    echo "ERROR: git is not installed." >&2
+    exit 1
+fi
+
+if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "ERROR: Not inside a git repository." >&2
+    exit 1
+fi
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "ERROR: You have uncommitted changes." >&2
+    echo "       Commit or stash them before updating the scraper subtree." >&2
+    exit 1
+fi
+
 # Path to your local clone of the aidream repo (only needed for --local mode).
 # Override by setting the LOCAL_AI_DREAM environment variable before running.
 LOCAL_AI_DREAM="${LOCAL_AI_DREAM:-$HOME/projects/aidream}"

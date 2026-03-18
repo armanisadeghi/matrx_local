@@ -73,6 +73,44 @@ sedi() {
     fi
 }
 
+# ── Preflight: check gh CLI is available (required for --monitor) ─────────────
+require_gh() {
+    if ! command -v gh &>/dev/null; then
+        echo ""
+        echo -e "${RED}╔══════════════════════════════════════════════════════════════╗${NC}" >&2
+        echo -e "${RED}║              GitHub CLI (gh) is not installed                ║${NC}" >&2
+        echo -e "${RED}╠══════════════════════════════════════════════════════════════╣${NC}" >&2
+        echo -e "${RED}║  --monitor and --monitor-only require the gh CLI to poll     ║${NC}" >&2
+        echo -e "${RED}║  GitHub Actions run status.                                  ║${NC}" >&2
+        echo -e "${RED}║                                                              ║${NC}" >&2
+        echo -e "${RED}║  Install on macOS:                                           ║${NC}" >&2
+        echo -e "${RED}║    brew install gh                                           ║${NC}" >&2
+        echo -e "${RED}║                                                              ║${NC}" >&2
+        echo -e "${RED}║  Install on Ubuntu/Debian/WSL:                               ║${NC}" >&2
+        echo -e "${RED}║    sudo apt install gh                                       ║${NC}" >&2
+        echo -e "${RED}║   (or: sudo apt-get install gh)                              ║${NC}" >&2
+        echo -e "${RED}║                                                              ║${NC}" >&2
+        echo -e "${RED}║  After installing, authenticate with:                        ║${NC}" >&2
+        echo -e "${RED}║    gh auth login                                             ║${NC}" >&2
+        echo -e "${RED}║                                                              ║${NC}" >&2
+        echo -e "${RED}║  The release itself was NOT affected — tag v${NEW_TAG:-?} was  ║${NC}" >&2
+        echo -e "${RED}║  pushed successfully. Monitor builds at:                     ║${NC}" >&2
+        echo -e "${RED}║    https://github.com/${GITHUB_REPO}/actions    ║${NC}" >&2
+        echo -e "${RED}╚══════════════════════════════════════════════════════════════╝${NC}" >&2
+        echo ""
+        return 1
+    fi
+    if ! gh auth status &>/dev/null; then
+        echo ""
+        echo -e "${YELLOW}[WARN]${NC}  gh is installed but not authenticated." >&2
+        echo -e "        Run ${CYAN}gh auth login${NC} to authenticate, then retry." >&2
+        echo -e "        Monitor builds manually at: ${CYAN}https://github.com/${GITHUB_REPO}/actions${NC}" >&2
+        echo ""
+        return 1
+    fi
+    return 0
+}
+
 # ── Monitor function ────────────────────────────────────────────────────────
 monitor_build() {
     local tag="$1"
@@ -307,6 +345,7 @@ done
 
 # ── Monitor-only shortcut ────────────────────────────────────────────────────
 if $MONITOR_ONLY; then
+    require_gh || exit 1
     [[ -f "$VERSION_FILE" ]] || fail "$VERSION_FILE not found."
     CURRENT_VERSION=$(grep -m1 '^version' "$VERSION_FILE" | sed 's/.*"\(.*\)".*/\1/')
     [[ -n "$CURRENT_VERSION" ]] || fail "Could not read version from $VERSION_FILE."
@@ -317,6 +356,12 @@ if $MONITOR_ONLY; then
 fi
 
 # ── Pre-flight checks ────────────────────────────────────────────────────────
+# Fail fast if --monitor was requested but gh isn't available.
+# Better to know now than after a successful release push.
+if $MONITOR; then
+    require_gh || exit 1
+fi
+
 [[ -f "$VERSION_FILE" ]] || fail "$VERSION_FILE not found."
 
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
@@ -483,5 +528,6 @@ echo ""
 
 # ── Start monitor if requested ───────────────────────────────────────────────
 if $MONITOR; then
-    monitor_build "$NEW_TAG" "$NEW_VERSION" "$GITHUB_REPO"
+    # require_gh already passed at pre-flight — this is just a safety net
+    require_gh && monitor_build "$NEW_TAG" "$NEW_VERSION" "$GITHUB_REPO"
 fi

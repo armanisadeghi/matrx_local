@@ -22,19 +22,29 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 DEFAULT_SOURCE="$PROJECT_ROOT/desktop/src-tauri/icons/android-chrome-512x512.png"
 SOURCE="${1:-$DEFAULT_SOURCE}"
 
-if [[ ! -f "$SOURCE" ]]; then
-    echo "ERROR: Source image not found: $SOURCE"
-    echo ""
-    echo "Usage: $0 [source_image.png]"
-    exit 1
+# ── Preflight checks ─────────────────────────────────────────────────────────
+PREFLIGHT_OK=true
+
+if ! command -v pnpm &>/dev/null; then
+    echo "ERROR: pnpm is not installed." >&2
+    echo "       Install it with:  npm install -g pnpm" >&2
+    echo "       Or via corepack:  corepack enable && corepack prepare pnpm@latest --activate" >&2
+    PREFLIGHT_OK=false
 fi
 
-echo "=== Generating Tauri Icons ==="
-echo "Source: $SOURCE"
-echo ""
+if [[ ! -f "$SOURCE" ]]; then
+    echo "ERROR: Source image not found: $SOURCE" >&2
+    echo "" >&2
+    echo "Usage: $0 [source_image.png]" >&2
+    echo "" >&2
+    echo "  The source image must be a square PNG, ideally 512×512 or larger." >&2
+    echo "  Default location: $DEFAULT_SOURCE" >&2
+    PREFLIGHT_OK=false
+fi
 
-cd "$PROJECT_ROOT/desktop"
-pnpm tauri icon "$SOURCE"
+if ! $PREFLIGHT_OK; then
+    exit 1
+fi
 
 echo ""
 echo "=== Done ==="

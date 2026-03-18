@@ -1,11 +1,22 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v git &>/dev/null; then
+    echo "ERROR: git is not installed." >&2
+    exit 1
+fi
+
+if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    echo "ERROR: Not inside a git repository." >&2
+    exit 1
+fi
 
 echo ""
 
 # Colors
 BLUE='\033[1;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' 
+NC='\033[0m'
 
 # 1. Print Headers
 printf "${BLUE}%-18s | %-45s | %s${NC}\n" "LAST UPDATED" "BRANCH NAME" "LATEST COMMIT"
