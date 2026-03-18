@@ -50,8 +50,10 @@
     "sonner": "^1.7.2",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
-    "tauri-plugin-macos-permissions-api": "^2.3.0",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "tauri-plugin-macos-permissions-api": "^2.3.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.2.4",
