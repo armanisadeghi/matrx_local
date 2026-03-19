@@ -113,7 +113,16 @@ export default function App() {
     setCompactTranscript("");
     setIsCompact(true);
     await invokeSetCompactMode(true);
-  }, [invokeSetCompactMode]);
+    // Auto-start recording immediately — the whole point of compact mode.
+    // Small delay lets the window finish resizing before we invoke Tauri audio.
+    if (!transcriptionState.isRecording && !transcriptionState.isProcessingTail) {
+      setTimeout(() => {
+        transcriptionActions.startRecording().catch(() => {
+          // Silently ignore — CompactRecorderWindow also tries on mount.
+        });
+      }, 150);
+    }
+  }, [invokeSetCompactMode, transcriptionState.isRecording, transcriptionState.isProcessingTail, transcriptionActions]);
 
   const exitCompactMode = useCallback(async () => {
     if (transcriptionState.isRecording) {

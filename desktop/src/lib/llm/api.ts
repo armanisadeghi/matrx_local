@@ -5,6 +5,40 @@ import type {
   ToolCall,
 } from "./types";
 
+// ── Typed Errors ──────────────────────────────────────────────────────────
+
+export class ContextSizeError extends Error {
+  readonly promptTokens: number;
+  readonly contextSize: number;
+
+  constructor(promptTokens: number, contextSize: number) {
+    super(
+      `Request requires ${promptTokens.toLocaleString()} tokens but the model's context window is only ${contextSize.toLocaleString()} tokens.`
+    );
+    this.name = "ContextSizeError";
+    this.promptTokens = promptTokens;
+    this.contextSize = contextSize;
+  }
+}
+
+function throwIfContextError(status: number, body: string): void {
+  if (status !== 400) return;
+  try {
+    const json = JSON.parse(body) as {
+      error?: { type?: string; n_prompt_tokens?: number; n_ctx?: number };
+    };
+    if (json.error?.type === "exceed_context_size_error") {
+      throw new ContextSizeError(
+        json.error.n_prompt_tokens ?? 0,
+        json.error.n_ctx ?? 0
+      );
+    }
+  } catch (e) {
+    if (e instanceof ContextSizeError) throw e;
+    // Not JSON or unrecognised shape — fall through to generic error
+  }
+}
+
 // ── Qwen3 Sampling Presets ────────────────────────────────────────────────
 
 const TOOL_CALL_PARAMS = {
@@ -62,6 +96,7 @@ export async function chatCompletion(
 
   if (!response.ok) {
     const text = await response.text();
+    throwIfContextError(response.status, text);
     throw new Error(`LLM request failed (${response.status}): ${text}`);
   }
 
@@ -101,6 +136,7 @@ export async function* streamCompletion(
 
   if (!response.ok) {
     const text = await response.text();
+    throwIfContextError(response.status, text);
     throw new Error(`LLM stream failed (${response.status}): ${text}`);
   }
 
@@ -165,6 +201,7 @@ export async function callWithTools(
 
   if (!response.ok) {
     const text = await response.text();
+    throwIfContextError(response.status, text);
     throw new Error(`Tool call failed (${response.status}): ${text}`);
   }
 
@@ -211,6 +248,7 @@ export async function structuredOutput<T>(
 
   if (!response.ok) {
     const text = await response.text();
+    throwIfContextError(response.status, text);
     throw new Error(`Structured output failed (${response.status}): ${text}`);
   }
 

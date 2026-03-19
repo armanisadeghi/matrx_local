@@ -46,7 +46,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { streamCompletion, callWithTools } from "@/lib/llm/api";
+import { streamCompletion, callWithTools, ContextSizeError } from "@/lib/llm/api";
 import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
@@ -724,11 +724,11 @@ function ModelsTab() {
       {allModels.length > 0 && (
         <div className="rounded-lg border overflow-hidden">
           {/* Table header */}
-          <div className="grid grid-cols-[1fr_72px_64px_72px_80px_100px] gap-px items-center px-4 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b">
+          <div className="grid grid-cols-[1fr_160px_72px_64px_80px_100px] gap-px items-center px-4 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b">
             <span>Model</span>
+            <span className="text-center">Speed</span>
             <span className="text-right">Size</span>
             <span className="text-right">RAM</span>
-            <span className="text-center">Speed</span>
             <span className="text-center">Tools</span>
             <span className="text-right">Action</span>
           </div>
@@ -743,7 +743,7 @@ function ModelsTab() {
             return (
               <div key={model.filename} className="border-b last:border-b-0">
                 <div
-                  className={`grid grid-cols-[1fr_72px_64px_72px_80px_100px] gap-px items-center px-4 py-2.5 text-sm transition-colors hover:bg-muted/20 ${
+                  className={`grid grid-cols-[1fr_160px_72px_64px_80px_100px] gap-px items-center px-4 py-2.5 text-sm transition-colors hover:bg-muted/20 ${
                     isThisRunning ? "bg-green-500/5" : ""
                   }`}
                 >
@@ -766,6 +766,11 @@ function ModelsTab() {
                     )}
                   </div>
 
+                  {/* Speed */}
+                  <span className="text-xs text-muted-foreground text-center min-w-0 truncate" title={model.speed}>
+                    {model.speed}
+                  </span>
+
                   {/* Size */}
                   <span className="text-xs text-muted-foreground text-right tabular-nums">
                     {model.disk_size_gb.toFixed(1)} GB
@@ -775,9 +780,6 @@ function ModelsTab() {
                   <span className="text-xs text-muted-foreground text-right tabular-nums">
                     {model.ram_required_gb.toFixed(0)} GB
                   </span>
-
-                  {/* Speed */}
-                  <span className="text-xs text-muted-foreground text-center">{model.speed}</span>
 
                   {/* Tool calling rating */}
                   <div className="flex justify-center">
@@ -869,15 +871,15 @@ function ModelsTab() {
           {customModels.map((dm) => {
             const isThisRunning = isRunning && runningModelPath.includes(dm.filename);
             return (
-              <div key={dm.filename} className={`grid grid-cols-[1fr_72px_64px_72px_80px_100px] gap-px items-center px-4 py-2.5 text-sm border-b last:border-b-0 ${isThisRunning ? "bg-green-500/5" : ""}`}>
+              <div key={dm.filename} className={`grid grid-cols-[1fr_160px_72px_64px_80px_100px] gap-px items-center px-4 py-2.5 text-sm border-b last:border-b-0 ${isThisRunning ? "bg-green-500/5" : ""}`}>
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-medium truncate pl-5">{dm.name}</span>
                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">custom</Badge>
                   {isThisRunning && <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />}
                 </div>
+                <span className="text-xs text-muted-foreground text-center">—</span>
                 <span className="text-xs text-muted-foreground text-right tabular-nums">{dm.size_gb} GB</span>
                 <span className="text-xs text-muted-foreground text-right">—</span>
-                <span className="text-xs text-muted-foreground text-center">—</span>
                 <span className="text-xs text-muted-foreground text-center">—</span>
                 <div className="flex justify-end gap-1">
                   {!isThisRunning && (
@@ -1188,7 +1190,29 @@ function InferenceTab() {
         scrollToBottom();
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (e instanceof ContextSizeError) {
+        // Remove the empty assistant placeholder so the conversation stays clean
+        setConversations((prev) => {
+          const updated = prev.map((c) =>
+            c.id === convId
+              ? { ...c, messages: c.messages.filter((m) => m.id !== assistantId) }
+              : c
+          );
+          saveConversations(updated);
+          return updated;
+        });
+        const overBy = e.promptTokens - e.contextSize;
+        setError(
+          `Your conversation is too long for this model's context window.\n\n` +
+          `• Used: ${e.promptTokens.toLocaleString()} tokens  •  Limit: ${e.contextSize.toLocaleString()} tokens  •  Over by: ${overBy.toLocaleString()} tokens\n\n` +
+          `To fix this, you can:\n` +
+          `  1. Start a new conversation (the + button above).\n` +
+          `  2. Shorten your message or clear some history.\n` +
+          `  3. Increase the Context Length in Server Settings (currently ${contextLengthOverride.toLocaleString()}) and restart the server.`
+        );
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setConversations((prev) => {
         const updated = prev.map((c) =>
@@ -1442,10 +1466,10 @@ function InferenceTab() {
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 px-4 py-2 text-sm text-destructive bg-destructive/10 border-b shrink-0">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            {error}
-            <button className="ml-auto text-xs underline" onClick={() => setError(null)}>Dismiss</button>
+          <div className="flex gap-2 px-4 py-3 text-sm text-destructive bg-destructive/10 border-b shrink-0">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+            <span className="flex-1 whitespace-pre-wrap leading-relaxed">{error}</span>
+            <button className="ml-2 shrink-0 text-xs underline self-start" onClick={() => setError(null)}>Dismiss</button>
           </div>
         )}
 

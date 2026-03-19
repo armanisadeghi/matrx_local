@@ -1,25 +1,26 @@
 /**
- * CompactRecorderWindow — fills the entire shrunken (420 × 240) OS window.
+ * CompactRecorderWindow — fills the entire shrunken (420 × 260) OS window.
  *
- * When the user enters compact mode the whole app window shrinks to a tiny
- * floating recorder. This component replaces the normal app shell for that
- * state. It renders a drag handle (so the user can move the window around),
- * a live RMS meter, a rolling transcript preview, and mic controls.
+ * Decorations are OFF in this mode, so we draw our own title bar and use
+ * Tauri's `data-tauri-drag-region` attribute to make the whole header area
+ * draggable. This is the only reliable way to drag a decoration-less window
+ * on macOS — `startDragging()` requires a real mousedown target with no
+ * preventDefault, whereas data-tauri-drag-region is handled natively by Tauri.
+ *
+ * Recording starts automatically when this component mounts.
  */
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import {
   Mic,
   MicOff,
   Loader2,
   Maximize2,
-  GripHorizontal,
   Copy,
   Check,
+  Square,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
-import { isTauri } from "@/lib/sidecar";
 
 interface CompactRecorderWindowProps {
   isRecording: boolean;
@@ -46,6 +47,20 @@ export function CompactRecorderWindow({
 }: CompactRecorderWindowProps) {
   const [copied, setCopied] = useState(false);
   const textRef = useRef<HTMLDivElement>(null);
+  const didAutoStartRef = useRef(false);
+
+  // Auto-start recording the moment this window appears.
+  // Guard with a ref so StrictMode double-mount doesn't start twice.
+  useEffect(() => {
+    if (didAutoStartRef.current) return;
+    didAutoStartRef.current = true;
+    if (!isRecording && !isProcessingTail) {
+      onStartRecording().catch(() => {
+        // If auto-start fails (e.g. mic not set up), the user can tap manually.
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-scroll transcript to bottom as new words arrive.
   useEffect(() => {
@@ -62,28 +77,8 @@ export function CompactRecorderWindow({
     });
   }, [transcript]);
 
-  // Drag the OS window via Tauri's startDragging.
-  const handleDragStart = useCallback(async (e: React.MouseEvent) => {
-    e.preventDefault();
-    if (!isTauri()) return;
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().startDragging();
-    } catch {
-      // Non-fatal — window just won't drag in browser dev mode.
-    }
-  }, []);
-
-  const mic = isRecording ? (
-    <MicOff className="h-5 w-5" />
-  ) : isProcessingTail ? (
-    <Loader2 className="h-5 w-5 animate-spin" />
-  ) : (
-    <Mic className="h-5 w-5" />
-  );
-
   const displayText =
-    transcript.length > 300 ? "…" + transcript.slice(-300) : transcript;
+    transcript.length > 400 ? "…" + transcript.slice(-400) : transcript;
 
   const rmsWidth = `${Math.min(liveRms * 10000, 100)}%`;
   const rmsColor =
@@ -93,28 +88,56 @@ export function CompactRecorderWindow({
       ? "bg-yellow-400"
       : "bg-red-400";
 
+  const statusLabel = isRecording
+    ? isCalibrating
+      ? "Calibrating…"
+      : "Recording"
+    : isProcessingTail
+    ? "Processing…"
+    : "AI Matrx · Recorder";
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-card text-foreground select-none overflow-hidden">
-      {/* ── Drag handle / title bar ───────────────────────────────────────── */}
+    <div className="flex flex-col h-screen w-screen bg-card text-foreground select-none overflow-hidden rounded-xl border border-border/60 shadow-2xl">
+
+      {/* ── Title bar — drag region ───────────────────────────────────────── */}
+      {/*
+        data-tauri-drag-region tells Tauri to initiate an OS-level window drag
+        on mousedown anywhere inside this element. This is the only approach
+        that works reliably on macOS when window decorations are disabled.
+        Do NOT attach onMouseDown/preventDefault here — it breaks the drag.
+      */}
       <div
-        className="flex items-center justify-between px-3 py-1.5 border-b border-border/50 cursor-grab active:cursor-grabbing shrink-0"
-        onMouseDown={handleDragStart}
+        data-tauri-drag-region
+        className="flex items-center justify-between px-3 py-2 border-b border-border/50 shrink-0 cursor-grab"
       >
-        <div className="flex items-center gap-1.5">
-          <GripHorizontal className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
-          <span className="text-[11px] font-medium text-muted-foreground leading-none">
-            {isRecording
-              ? "Recording…"
-              : isProcessingTail
-              ? "Processing…"
-              : isCalibrating
-              ? "Calibrating…"
-              : "AI Matrx · Recorder"}
+        <div
+          data-tauri-drag-region
+          className="flex items-center gap-2 min-w-0 flex-1"
+        >
+          {/* Recording dot indicator */}
+          {isRecording && (
+            <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse shrink-0" />
+          )}
+          {isProcessingTail && (
+            <Loader2 className="h-3 w-3 text-amber-500 animate-spin shrink-0" />
+          )}
+          <span
+            data-tauri-drag-region
+            className={cn(
+              "text-[11px] font-medium leading-none truncate",
+              isRecording
+                ? "text-red-400"
+                : isProcessingTail
+                ? "text-amber-400"
+                : "text-muted-foreground"
+            )}
+          >
+            {statusLabel}
           </span>
         </div>
 
-        <div className="flex items-center gap-1">
-          {/* Copy button */}
+        {/* Buttons — NOT part of drag region (clicks must work normally) */}
+        <div className="flex items-center gap-1 shrink-0 ml-2">
           {transcript.length > 0 && (
             <button
               onClick={handleCopy}
@@ -128,7 +151,6 @@ export function CompactRecorderWindow({
               )}
             </button>
           )}
-          {/* Expand button */}
           <button
             onClick={onExpand}
             className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -149,27 +171,23 @@ export function CompactRecorderWindow({
             {displayText}
           </p>
         ) : (
-          <p className="text-[12px] text-muted-foreground/60 italic">
+          <p className="text-[12px] text-muted-foreground/50 italic">
             {isRecording
               ? isCalibrating
-                ? "Calibrating microphone…"
+                ? "Calibrating microphone level…"
                 : "Listening — speak now"
-              : "Click the mic to begin recording"}
+              : isProcessingTail
+              ? "Processing final audio…"
+              : "Tap the mic to start"}
           </p>
         )}
       </div>
 
       {/* ── Controls bar ─────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2.5 px-3 py-2 border-t border-border/50 shrink-0">
-        {/* Mic button */}
+      <div className="flex items-center gap-2.5 px-3 py-2.5 border-t border-border/50 shrink-0">
+        {/* Mic / Stop button */}
         <button
-          onClick={
-            isRecording
-              ? onStopRecording
-              : isProcessingTail
-              ? undefined
-              : onStartRecording
-          }
+          onClick={isRecording ? onStopRecording : isProcessingTail ? undefined : onStartRecording}
           disabled={isProcessingTail}
           className={cn(
             "flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200 shrink-0",
@@ -186,17 +204,26 @@ export function CompactRecorderWindow({
                 }
               : undefined
           }
+          title={isRecording ? "Stop recording" : "Start recording"}
         >
-          {mic}
+          {isProcessingTail ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : isRecording ? (
+            <Square className="h-4 w-4 fill-white" />
+          ) : (
+            <Mic className="h-4 w-4" />
+          )}
         </button>
 
-        {/* RMS meter or status */}
-        <div className="flex-1 flex flex-col gap-1">
+        {/* RMS meter / status text */}
+        <div className="flex-1 flex flex-col gap-1 min-w-0">
           {isRecording ? (
             <>
-              <div className="flex items-center gap-1.5">
-                <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
-                <span className="text-[10px] text-red-500 font-medium">REC</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-red-400 font-medium">REC</span>
+                <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
+                  {liveRms > 0 ? (liveRms * 1000).toFixed(1) : "—"}
+                </span>
               </div>
               <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                 <div
@@ -206,15 +233,20 @@ export function CompactRecorderWindow({
               </div>
             </>
           ) : isProcessingTail ? (
-            <span className="text-[11px] text-amber-500">Finishing transcript…</span>
+            <span className="text-[11px] text-amber-400">Finishing…</span>
           ) : (
             <span className="text-[11px] text-muted-foreground">
               {transcript.length > 0
-                ? `${transcript.length} chars captured`
-                : "Ready"}
+                ? `${transcript.length} chars · tap mic to record more`
+                : "Ready to record"}
             </span>
           )}
         </div>
+
+        {/* Stop / mic icon — visual affordance for what the big button does */}
+        {isRecording && (
+          <MicOff className="h-3.5 w-3.5 text-red-400/60 shrink-0" title="Tap button to stop" />
+        )}
       </div>
     </div>
   );

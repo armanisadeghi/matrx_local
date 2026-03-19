@@ -54,7 +54,6 @@ export function ChatInput({
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const agentButtonRef = useRef<HTMLButtonElement>(null);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -160,22 +159,22 @@ export function ChatInput({
             {onAgentChange && (
               <div className="relative">
                 <button
-                  ref={agentButtonRef}
-                  onClick={() => setShowAgentPicker((v) => !v)}
+                  type="button"
+                  onClick={() => setShowAgentPicker(true)}
                   className={cn(
-                    "flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors",
+                    "flex max-w-[min(280px,40vw)] items-center gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-1.5 text-xs transition-colors",
                     selectedAgentId
-                      ? "text-primary hover:text-primary/80"
-                      : "text-muted-foreground hover:text-foreground",
+                      ? "border-primary/30 text-primary hover:bg-primary/5"
+                      : "text-muted-foreground hover:border-border hover:bg-muted/40 hover:text-foreground",
                   )}
                 >
-                  <span className="max-w-[120px] truncate">
+                  <span className="truncate font-medium">
                     {selectedAgentId
                       ? (agents.find((a) => a.id === selectedAgentId)?.name ??
                         "Agent")
-                      : "No Agent"}
+                      : "Choose agent"}
                   </span>
-                  <ChevronDown className="h-3 w-3" />
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
                 </button>
 
                 <AgentPicker
@@ -187,7 +186,6 @@ export function ChatInput({
                   isLoading={agentsLoading}
                   open={showAgentPicker}
                   onClose={() => setShowAgentPicker(false)}
-                  anchorRef={agentButtonRef}
                 />
               </div>
             )}

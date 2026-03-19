@@ -420,20 +420,24 @@ async fn set_compact_mode(app: tauri::AppHandle, enabled: bool) -> Result<(), St
             .set_min_size(Some(LogicalSize::new(200u32, 160u32)))
             .map_err(|e| e.to_string())?;
         window
-            .set_size(LogicalSize::new(420u32, 240u32))
+            .set_size(LogicalSize::new(420u32, 260u32))
             .map_err(|e| e.to_string())?;
-        // Position near the bottom-right of the screen (best-effort — no monitor API needed).
+        // Position in the upper-right corner so the macOS Dock and menu bar
+        // don't obscure it. Leave a 20px gap from the top (menu bar) and
+        // 20px from the right edge.
         if let Ok(monitor) = window.current_monitor() {
             if let Some(m) = monitor {
                 let size = m.size();
                 let scale = m.scale_factor();
                 let sw = (size.width as f64 / scale) as u32;
-                let sh = (size.height as f64 / scale) as u32;
+                // 20 px below the macOS menu bar, 20 px from the right edge.
                 let x = sw.saturating_sub(440) as i32;
-                let y = sh.saturating_sub(280) as i32;
+                let y = 40_i32; // below menu bar
                 let _ = window.set_position(LogicalPosition::new(x, y));
             }
         }
+        // Keep decorations OFF (we draw our own title bar with data-tauri-drag-region).
+        // always_on_top ensures it floats above other apps.
         window
             .set_decorations(false)
             .map_err(|e| e.to_string())?;
