@@ -245,7 +245,9 @@ export function CompactRecorderWindow({
 
         {/* Stop / mic icon — visual affordance for what the big button does */}
         {isRecording && (
-          <MicOff className="h-3.5 w-3.5 text-red-400/60 shrink-0" title="Tap button to stop" />
+          <span title="Tap button to stop">
+            <MicOff className="h-3.5 w-3.5 text-red-400/60 shrink-0" />
+          </span>
         )}
       </div>
     </div>
