@@ -13,3 +13,4 @@ src-tauri/binaries/llama-server-*
 src-tauri/binaries/*.dylib
 src-tauri/binaries/*.so
 src-tauri/binaries/*.dll
+src-tauri/binaries/windows-dlls/*.dll

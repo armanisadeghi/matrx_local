@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "binaries/windows-dlls/*.dll": "binaries/windows-dlls/"
+    }
+  }
+}

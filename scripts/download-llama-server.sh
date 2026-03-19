@@ -180,6 +180,23 @@ download_target() {
         fi
         cp "$server_bin" "$dest"
         echo "  ✓ Saved: $(basename "$dest")"
+
+        # Copy all DLLs from the Windows zip alongside llama-server.exe.
+        # llama.cpp on Windows requires ggml-base.dll, ggml.dll, llama.dll,
+        # mtmd.dll, libomp140.x86_64.dll, and several ggml-cpu-*.dll files.
+        # At runtime, Windows searches for DLLs in the directory containing
+        # the executable first. We store them in binaries/windows-dlls/ here
+        # and inject that path into PATH when spawning llama-server (server.rs).
+        local dll_dir="$BINARIES_DIR/windows-dlls"
+        mkdir -p "$dll_dir"
+        local dll_count=0
+        while IFS= read -r dll; do
+            cp "$dll" "$dll_dir/"
+            (( dll_count++ )) || true
+        done < <(find "$tmp_dir/extracted" -name "*.dll" -type f)
+        if (( dll_count > 0 )); then
+            echo "  ✓ Copied ${dll_count} DLL(s) to binaries/windows-dlls/"
+        fi
     fi
 
     rm -rf "$tmp_dir"

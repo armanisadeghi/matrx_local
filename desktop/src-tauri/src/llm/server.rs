@@ -48,26 +48,47 @@ impl LlmServer {
 
         let args = build_server_args(model_path, gpu_layers, context_length, port);
 
-        // Resolve the binaries directory so dylibs can be found regardless of
-        // where Tauri places the binary at runtime (dev vs. bundled app).
-        // On macOS, DYLD_LIBRARY_PATH must point to the dir containing the
-        // libggml*.dylib / libllama.dylib files that ship alongside llama-server.
-        let binaries_dir: String = app
+        // Resolve the binaries directory so shared libraries can be found
+        // regardless of where Tauri places the binary at runtime (dev vs. bundled).
+        //
+        // macOS: DYLD_LIBRARY_PATH → libggml*.dylib / libllama.dylib
+        // Linux: LD_LIBRARY_PATH   → libggml*.so / libllama.so
+        // Windows: prepend windows-dlls/ to PATH → ggml-base.dll, ggml.dll, etc.
+        //          The DLLs are bundled in the resources/binaries/windows-dlls/
+        //          directory. Windows searches PATH entries when loading DLLs so
+        //          we inject that directory before spawning llama-server.exe.
+        let resource_dir: std::path::PathBuf = app
             .path()
             .resource_dir()
-            .ok()
-            .map(|r: std::path::PathBuf| r.join("binaries").to_string_lossy().to_string())
             .unwrap_or_default();
+        let binaries_dir = resource_dir.join("binaries");
+        let binaries_dir_str = binaries_dir.to_string_lossy().to_string();
 
         let mut sidecar_cmd = app
             .shell()
             .sidecar("llama-server")
             .map_err(|e| format!("llama-server sidecar not found: {e}"))?;
 
-        if !binaries_dir.is_empty() {
+        if !binaries_dir_str.is_empty() {
             sidecar_cmd = sidecar_cmd
-                .env("DYLD_LIBRARY_PATH", &binaries_dir)
-                .env("LD_LIBRARY_PATH", &binaries_dir);
+                .env("DYLD_LIBRARY_PATH", &binaries_dir_str)
+                .env("LD_LIBRARY_PATH", &binaries_dir_str);
+
+            // Windows: DLLs live in a windows-dlls/ subdirectory (they cannot go
+            // in binaries/ directly because Tauri's resource copy flattens the dir).
+            // Prepend both the binaries dir and windows-dlls/ to PATH.
+            #[cfg(target_os = "windows")]
+            {
+                let dll_dir = binaries_dir.join("windows-dlls");
+                let current_path = std::env::var("PATH").unwrap_or_default();
+                let new_path = format!(
+                    "{};{};{}",
+                    dll_dir.to_string_lossy(),
+                    binaries_dir_str,
+                    current_path
+                );
+                sidecar_cmd = sidecar_cmd.env("PATH", new_path);
+            }
         }
 
         let (rx, child) = sidecar_cmd
