@@ -333,6 +333,26 @@ CREATE INDEX IF NOT EXISTS idx_agents_category ON agents(category);
 """
 
 # ------------------------------------------------------------------
+# Migration 6: Notes sync metadata — offline-first sync support
+# ------------------------------------------------------------------
+
+_V6_NOTES_SYNC_METADATA = """
+-- Per-note sync status for offline-first architecture.
+-- sync_status: never_synced | synced | pending_push | excluded
+-- last_synced_at: timestamp of last successful sync for this note
+ALTER TABLE notes ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'never_synced';
+ALTER TABLE notes ADD COLUMN last_synced_at TEXT;
+ALTER TABLE notes ADD COLUMN sync_enabled INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE notes ADD COLUMN remote_content_hash TEXT;
+ALTER TABLE notes ADD COLUMN folder_name TEXT NOT NULL DEFAULT 'General';
+ALTER TABLE notes ADD COLUMN label TEXT NOT NULL DEFAULT '';
+ALTER TABLE notes ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
+
+CREATE INDEX IF NOT EXISTS idx_notes_sync_status ON notes(sync_status);
+CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path);
+"""
+
+# ------------------------------------------------------------------
 # All migrations in order
 # ------------------------------------------------------------------
 
@@ -342,4 +362,5 @@ MIGRATIONS: list[tuple[int, str]] = [
     (3, _V3_CONVERSATION_PERSISTENCE),
     (4, _V4_AGENTS_USER_ID),
     (5, _V5_AGENTS_METADATA),
+    (6, _V6_NOTES_SYNC_METADATA),
 ]

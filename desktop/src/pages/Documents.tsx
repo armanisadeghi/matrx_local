@@ -3,7 +3,7 @@
  * sync status, version history, sharing, and directory mappings.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Plus,
   Search,
@@ -15,6 +15,7 @@ import {
   PanelLeftOpen,
   FileText,
   AlertTriangle,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDocuments } from "@/hooks/use-documents";
@@ -26,6 +27,7 @@ import { SyncStatusBar } from "@/components/documents/SyncStatus";
 import { VersionHistory } from "@/components/documents/VersionHistory";
 import { ShareDialog } from "@/components/documents/ShareDialog";
 import { DirectoryMappings } from "@/components/documents/DirectoryMappings";
+import { ConflictResolver } from "@/components/documents/ConflictResolver";
 import type { EngineStatus } from "@/hooks/use-engine";
 
 interface DocumentsProps {
@@ -42,9 +44,14 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
   >("versions");
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showMappingsDialog, setShowMappingsDialog] = useState(false);
+  const [showConflictResolver, setShowConflictResolver] = useState(false);
   const [searchInput, setSearchInput] = useState("");
+  const [errorDismissed, setErrorDismissed] = useState(false);
 
-  // Realtime sync
+  useEffect(() => {
+    if (docs.error) setErrorDismissed(false);
+  }, [docs.error]);
+
   useRealtimeSync({
     userId,
     enabled: engineStatus === "connected" && !!userId,
@@ -134,7 +141,6 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Search */}
           <form onSubmit={handleSearch} className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <input
@@ -145,7 +151,6 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
             />
           </form>
 
-          {/* Action buttons */}
           <button
             onClick={handleCreateNote}
             className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1.5 text-sm text-primary-foreground hover:bg-primary/90"
@@ -164,7 +169,6 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
 
           {docs.activeNote && (
             <>
-              {/* Share + Version history are cloud-only features */}
               {userId && (
                 <>
                   <button
@@ -215,13 +219,14 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
         </div>
       </div>
 
-      {/* Sync status bar — only shown when signed in */}
+      {/* Sync status bar */}
       {userId ? (
         <div className="border-b px-4 py-1.5">
           <SyncStatusBar
             status={docs.syncStatus}
             syncing={docs.syncing}
-            onSync={() => docs.triggerSync()}
+            lastResult={docs.lastSyncResult}
+            onSync={(mode) => docs.triggerSync(mode)}
           />
         </div>
       ) : (
@@ -232,23 +237,26 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
       )}
 
       {/* Conflict banner */}
-      {docs.syncStatus && docs.syncStatus.conflict_count > 0 && (
-        <div className="flex items-center gap-2 border-b bg-amber-500/10 px-4 py-2 text-sm text-amber-600 dark:text-amber-400">
+      {docs.conflicts.length > 0 && (
+        <button
+          onClick={() => {
+            docs.loadConflicts();
+            setShowConflictResolver(true);
+          }}
+          className="flex w-full items-center gap-2 border-b bg-amber-500/10 px-4 py-2 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-500/15 transition-colors"
+        >
           <AlertTriangle className="h-4 w-4" />
           <span>
-            {docs.syncStatus.conflict_count} sync conflict
-            {docs.syncStatus.conflict_count > 1 ? "s" : ""} detected.
-            Review in the sync status panel.
+            {docs.conflicts.length} sync conflict
+            {docs.conflicts.length > 1 ? "s" : ""} detected — click to review and resolve.
           </span>
-        </div>
+        </button>
       )}
 
       {/* Main content area */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar: folders + note list */}
         {showSidebar && (
           <div className="flex w-72 shrink-0 flex-col border-r overflow-hidden">
-            {/* Folder tree */}
             <div className="border-b p-3 overflow-auto max-h-[40%]">
               <FolderTree
                 folders={allFolders}
@@ -260,7 +268,6 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
               />
             </div>
 
-            {/* Note list */}
             <div className="flex-1 overflow-auto p-2">
               <NoteList
                 notes={docs.notes}
@@ -271,7 +278,6 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
           </div>
         )}
 
-        {/* Center: editor */}
         <div className="flex-1 overflow-hidden">
           {docs.activeNote ? (
             <NoteEditor
@@ -297,10 +303,8 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
           )}
         </div>
 
-        {/* Right panel: versions, tags, info */}
         {showRightPanel && docs.activeNote && (
           <div className="w-60 shrink-0 border-l overflow-auto p-3">
-            {/* Tab buttons */}
             <div className="flex items-center gap-1 mb-3">
               <button
                 onClick={() => setRightPanelTab("versions")}
@@ -378,17 +382,29 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
                     </span>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">Sync version: </span>
-                    {docs.activeNote.sync_version}
+                    <span className="text-muted-foreground">Sync: </span>
+                    <span className={cn(
+                      "font-medium",
+                      docs.activeNote.sync_status === "synced" && "text-emerald-500",
+                      docs.activeNote.sync_status === "pending_push" && "text-blue-400",
+                      docs.activeNote.sync_status === "excluded" && "text-red-400",
+                      docs.activeNote.sync_status === "never_synced" && "text-muted-foreground",
+                    )}>
+                      {docs.activeNote.sync_status ?? "never_synced"}
+                    </span>
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Created: </span>
-                    {new Date(docs.activeNote.created_at).toLocaleString()}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Updated: </span>
-                    {new Date(docs.activeNote.updated_at).toLocaleString()}
-                  </div>
+                  {docs.activeNote.created_at && (
+                    <div>
+                      <span className="text-muted-foreground">Created: </span>
+                      {new Date(docs.activeNote.created_at).toLocaleString()}
+                    </div>
+                  )}
+                  {docs.activeNote.updated_at && (
+                    <div>
+                      <span className="text-muted-foreground">Updated: </span>
+                      {new Date(docs.activeNote.updated_at).toLocaleString()}
+                    </div>
+                  )}
                   {docs.activeNote.content_hash && (
                     <div>
                       <span className="text-muted-foreground">Hash: </span>
@@ -416,7 +432,7 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
         />
       )}
 
-      {/* Directory mappings dialog — works locally, userId optional */}
+      {/* Directory mappings dialog */}
       {showMappingsDialog && (
         <DirectoryMappings
           userId={userId ?? "local"}
@@ -425,10 +441,25 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
         />
       )}
 
-      {/* Error toast */}
-      {docs.error && (
-        <div className="fixed bottom-4 right-4 z-50 rounded-lg border border-red-500/30 bg-red-500/10 dark:bg-red-400/10 px-4 py-3 text-sm text-red-600 dark:text-red-400 shadow-lg">
-          {docs.error}
+      {/* Conflict resolution dialog */}
+      {showConflictResolver && docs.conflicts.length > 0 && (
+        <ConflictResolver
+          conflicts={docs.conflicts}
+          onResolve={docs.resolveConflict}
+          onClose={() => setShowConflictResolver(false)}
+        />
+      )}
+
+      {/* Error toast with auto-dismiss */}
+      {docs.error && !errorDismissed && (
+        <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 dark:bg-red-400/10 px-4 py-3 text-sm text-red-600 dark:text-red-400 shadow-lg">
+          <span>{docs.error}</span>
+          <button
+            onClick={() => setErrorDismissed(true)}
+            className="rounded p-0.5 hover:bg-red-500/20"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
     </div>

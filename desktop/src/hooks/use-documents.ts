@@ -17,8 +17,12 @@ import type {
   DocVersion,
   CreateNoteData,
   SyncStatus,
+  SyncResult,
   DocShare,
+  ConflictDetail,
 } from "@/lib/api";
+
+export type SyncMode = "push" | "pull" | "bidirectional";
 
 export interface DocumentsState {
   tree: DocTree | null;
@@ -27,12 +31,14 @@ export interface DocumentsState {
   versions: DocVersion[];
   shares: DocShare[];
   syncStatus: SyncStatus | null;
+  conflicts: ConflictDetail[];
   activeFolderId: string | null;
   searchQuery: string;
   loading: boolean;
   saving: boolean;
   syncing: boolean;
   error: string | null;
+  lastSyncResult: SyncResult | null;
 }
 
 const INITIAL_STATE: DocumentsState = {
@@ -42,12 +48,14 @@ const INITIAL_STATE: DocumentsState = {
   versions: [],
   shares: [],
   syncStatus: null,
+  conflicts: [],
   activeFolderId: null,
   searchQuery: "",
   loading: true,
   saving: false,
   syncing: false,
   error: null,
+  lastSyncResult: null,
 };
 
 export function useDocuments(userId: string | null) {
@@ -61,8 +69,6 @@ export function useDocuments(userId: string | null) {
     }
   }, []);
 
-  // ── Only the engine URL is required — userId is optional for local ops ───
-
   const engineReady = !!engine.engineUrl;
 
   // ── Load folder tree — local filesystem, no auth required ───────────────
@@ -70,7 +76,6 @@ export function useDocuments(userId: string | null) {
   const loadTree = useCallback(async () => {
     if (!engineReady) return;
     try {
-      // Pass userId only if available (used for sync config on the server, non-critical)
       const tree = await engine.getDocTree(userId ?? "local");
       update({ tree });
     } catch (err) {
@@ -130,11 +135,10 @@ export function useDocuments(userId: string | null) {
         const note = await engine.getNote(noteId, userId ?? "local");
         update({ activeNote: note });
 
-        // Version history only available if signed in
         if (userId) {
           engine.listVersions(noteId, userId).then((versions) => {
             if (mountedRef.current) update({ versions });
-          }).catch(() => { /* non-critical */ });
+          }).catch(() => {});
         }
       } catch (err) {
         update({
@@ -300,15 +304,15 @@ export function useDocuments(userId: string | null) {
 
   // ── Sync operations — require userId ────────────────────────────────────
 
-  const triggerSync = useCallback(async () => {
+  const triggerSync = useCallback(async (mode: SyncMode = "bidirectional") => {
     if (!engineReady || !userId) return null;
     try {
       update({ syncing: true, error: null });
-      const result = await engine.triggerSync(userId);
+      const result = await engine.triggerSync(userId, mode);
       await loadTree();
       await loadNotes(state.activeFolderId);
       const syncStatus = await engine.getSyncStatus(userId);
-      update({ syncing: false, syncStatus });
+      update({ syncing: false, syncStatus, lastSyncResult: result });
       return result;
     } catch (err) {
       update({
@@ -329,6 +333,53 @@ export function useDocuments(userId: string | null) {
     }
   }, [engineReady, userId, update]);
 
+  const loadConflicts = useCallback(async () => {
+    if (!engineReady) return;
+    try {
+      const result = await engine.getConflicts(userId ?? "local");
+      update({ conflicts: result.conflicts });
+    } catch {
+      // Non-critical
+    }
+  }, [engineReady, userId, update]);
+
+  const resolveConflict = useCallback(
+    async (
+      noteId: string,
+      resolution: "keep_local" | "keep_remote" | "merge" | "split" | "exclude",
+      mergedContent?: string,
+    ) => {
+      if (!engineReady) return;
+      try {
+        await engine.resolveConflict(noteId, userId ?? "local", resolution, mergedContent);
+        await loadConflicts();
+        await loadSyncStatus();
+        await loadTree();
+        await loadNotes(state.activeFolderId);
+      } catch (err) {
+        update({
+          error: err instanceof Error ? err.message : "Failed to resolve conflict",
+        });
+      }
+    },
+    [engineReady, userId, state.activeFolderId, update, loadConflicts, loadSyncStatus, loadTree, loadNotes],
+  );
+
+  const setNoteExcluded = useCallback(
+    async (noteId: string, excluded: boolean) => {
+      if (!engineReady) return;
+      try {
+        await engine.setNoteExcluded(noteId, userId ?? "local", excluded);
+        await loadNotes(state.activeFolderId);
+      } catch (err) {
+        update({
+          error: err instanceof Error ? err.message : "Failed to update sync setting",
+        });
+      }
+    },
+    [engineReady, userId, state.activeFolderId, update, loadNotes],
+  );
+
   const loadShares = useCallback(async () => {
     if (!engineReady || !userId) return;
     try {
@@ -347,9 +398,11 @@ export function useDocuments(userId: string | null) {
     if (engineReady) {
       loadTree();
       loadNotes();
-      if (userId) loadSyncStatus();
+      if (userId) {
+        loadSyncStatus();
+        loadConflicts();
+      }
     } else {
-      // Engine not yet available — clear loading state so we show the right UI
       update({ loading: false });
     }
 
@@ -357,7 +410,7 @@ export function useDocuments(userId: string | null) {
       mountedRef.current = false;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [engineReady, userId, loadTree, loadNotes, loadSyncStatus, update]);
+  }, [engineReady, userId, loadTree, loadNotes, loadSyncStatus, loadConflicts, update]);
 
   return {
     ...state,
@@ -375,6 +428,9 @@ export function useDocuments(userId: string | null) {
     revertNote,
     triggerSync,
     loadSyncStatus,
+    loadConflicts,
+    resolveConflict,
+    setNoteExcluded,
     loadShares,
   };
 }

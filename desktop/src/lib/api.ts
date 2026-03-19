@@ -1155,9 +1155,9 @@ class EngineAPI {
     return this.docRequest("GET", "/sync/status", undefined, userId);
   }
 
-  /** Trigger a full sync. */
-  async triggerSync(userId: string): Promise<SyncResult> {
-    return this.docRequest("POST", "/sync/trigger", undefined, userId);
+  /** Trigger a sync. Mode: "push" | "pull" | "bidirectional" */
+  async triggerSync(userId: string, mode: "push" | "pull" | "bidirectional" = "bidirectional"): Promise<SyncResult> {
+    return this.docRequest("POST", "/sync/trigger", { mode }, userId);
   }
 
   /** Pull incremental changes. */
@@ -1194,14 +1194,25 @@ class EngineAPI {
   async resolveConflict(
     noteId: string,
     userId: string,
-    resolution: "keep_local" | "keep_remote" | "keep_both",
+    resolution: "keep_local" | "keep_remote" | "merge" | "split" | "exclude",
+    mergedContent?: string,
   ): Promise<void> {
     await this.docRequest(
       "POST",
       `/conflicts/${noteId}/resolve`,
-      { resolution },
+      { resolution, merged_content: mergedContent },
       userId,
     );
+  }
+
+  /** Get conflict details with both versions' content. */
+  async getConflicts(userId: string): Promise<ConflictList> {
+    return this.docRequest("GET", "/conflicts", undefined, userId);
+  }
+
+  /** Exclude a note from sync. */
+  async setNoteExcluded(noteId: string, userId: string, excluded: boolean): Promise<void> {
+    await this.docRequest("POST", `/notes/${noteId}/exclude`, { excluded }, userId);
   }
 
   /** List shares. */
@@ -1754,6 +1765,8 @@ export interface DocNote {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  sync_status?: "never_synced" | "synced" | "pending_push" | "excluded";
+  sync_enabled?: boolean;
 }
 
 export interface CreateNoteData {
@@ -1810,6 +1823,8 @@ export interface SyncStatus {
   conflict_count: number;
   watcher_active: boolean;
   base_dir: string;
+  pending_push_count?: number;
+  excluded_count?: number;
 }
 
 export interface SyncResult {
@@ -1817,7 +1832,22 @@ export interface SyncResult {
   pulled?: number;
   conflicts?: number;
   unchanged?: number;
+  skipped?: number;
+  failed?: number;
   error?: string;
+}
+
+export interface ConflictDetail {
+  note_id: string;
+  local_content?: string;
+  remote_content?: string;
+  label?: string;
+  folder_name?: string;
+}
+
+export interface ConflictList {
+  conflicts: ConflictDetail[];
+  count: number;
 }
 
 export interface DocMappings {

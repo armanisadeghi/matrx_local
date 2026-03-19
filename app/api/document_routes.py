@@ -2,11 +2,13 @@
 
 Architecture: LOCAL FIRST. Always.
 
-Every CRUD operation reads/writes the local filesystem immediately and returns
-success to the caller. Supabase sync is kicked off as a background fire-and-
-forget task — a failed or missing Supabase connection never causes a failure.
+Every CRUD operation reads/writes the local filesystem immediately, then
+persists structured metadata to the local SQLite database. Both operations
+are synchronous from the caller's perspective and never require network.
 
-The user is always working with their local files. Sync happens when convenient.
+Cloud sync (Supabase) is a completely separate, user-triggered concern.
+No cloud operation ever blocks, fails, or degrades a local operation.
+Cloud connection errors in non-sync code paths are silent.
 
 Route prefix: /notes  (was /documents — kept as alias in main.py for compatibility)
 """
@@ -18,20 +20,34 @@ import base64
 import json as _json
 import logging
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from app.services.documents.file_manager import file_manager
+from app.services.documents.file_manager import file_manager, content_hash
 from app.services.documents.supabase_client import supabase_docs
 from app.services.documents.sync_engine import sync_engine
+from app.services.local_db.repositories import NotesRepo
 
 logger = logging.getLogger(__name__)
 
-# Router registered under both /notes (new) and /documents (compat) in main.py
 router = APIRouter(tags=["notes"])
+
+_notes_repo: NotesRepo | None = None
+
+
+def _get_notes_repo() -> NotesRepo:
+    global _notes_repo
+    if _notes_repo is None:
+        _notes_repo = NotesRepo()
+    return _notes_repo
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 # ---------------------------------------------------------------------------
@@ -39,12 +55,6 @@ router = APIRouter(tags=["notes"])
 # ---------------------------------------------------------------------------
 
 def _get_user_id(request: Request) -> str:
-    """Extract user_id from the request. Raises 401 if not found.
-
-    Only call this for operations that genuinely require a user identity
-    (e.g. cloud sync, sharing). For local-only operations use
-    _get_user_id_optional instead.
-    """
     uid = _get_user_id_optional(request)
     if uid:
         return uid
@@ -55,12 +65,6 @@ def _get_user_id(request: Request) -> str:
 
 
 def _get_user_id_optional(request: Request) -> str | None:
-    """Extract user_id from the request without raising — returns None if missing.
-
-    Safe to call on any request; used for local-first endpoints where auth is
-    optional (enables background cloud sync when credentials are present but
-    never blocks local file operations when they are not).
-    """
     explicit = request.headers.get("X-User-Id")
     if explicit and explicit != "local":
         return explicit
@@ -81,7 +85,6 @@ def _get_user_id_optional(request: Request) -> str | None:
 
 
 def _configure_sync(request: Request) -> None:
-    """Configure the sync engine with the current user context (best-effort)."""
     try:
         user_id = _get_user_id(request)
         token = getattr(request.state, "user_token", None)
@@ -89,11 +92,10 @@ def _configure_sync(request: Request) -> None:
             sync_engine.configure(user_id, token)
             supabase_docs.set_jwt(token)
     except HTTPException:
-        pass  # Sync config is optional — don't fail the request
+        pass
 
 
 def _fire_and_forget(coro) -> None:
-    """Schedule a coroutine as a background task, ignore all errors."""
     async def _safe():
         try:
             await coro
@@ -168,38 +170,46 @@ class MappingRequest(BaseModel):
 
 class ConflictResolveRequest(BaseModel):
     resolution: str = "keep_remote"
+    merged_content: str | None = None
 
 
 class PullRemoteChangeRequest(BaseModel):
     note_id: str
 
 
+class SyncTriggerRequest(BaseModel):
+    mode: str = "bidirectional"
+
+
+class NoteExcludeRequest(BaseModel):
+    excluded: bool = True
+
+
 # ---------------------------------------------------------------------------
 # Folder helpers — local filesystem is the source of truth
 # ---------------------------------------------------------------------------
 
-def _local_folder_tree() -> dict[str, Any]:
-    """Build folder tree by scanning the local Notes directory.
+def _folder_id_for_name(name: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{name}"))
 
-    Returns a structure compatible with the old Supabase-sourced tree so
-    the frontend doesn't need any changes.
-    """
+
+def _note_id_for_path(file_path: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-note:{file_path}"))
+
+
+def _local_folder_tree() -> dict[str, Any]:
     folders_raw = file_manager.list_folders()
     all_files = file_manager.scan_all()
 
-    # Count notes per top-level folder
     folder_counts: dict[str, int] = {}
     for f in all_files:
-        # file_path is like "Work/project-plan.md" — folder is the first segment
         parts = Path(f["file_path"]).parts
         folder_name = parts[0] if len(parts) > 1 else "__root__"
         folder_counts[folder_name] = folder_counts.get(folder_name, 0) + 1
 
-    # Build flat list of folder objects with stable pseudo-UUIDs derived from name
-    # (deterministic so the frontend can track them across refreshes)
     folders: list[dict[str, Any]] = []
     for name in folders_raw:
-        folder_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{name}"))
+        folder_id = _folder_id_for_name(name)
         folders.append({
             "id": folder_id,
             "name": name,
@@ -219,32 +229,99 @@ def _local_folder_tree() -> dict[str, Any]:
     }
 
 
-def _note_id_for_path(file_path: str) -> str:
-    """Generate a deterministic note ID from its relative file path."""
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-note:{file_path}"))
+def _file_timestamps(file_path: str) -> tuple[str, str]:
+    """Get created_at and updated_at from file system metadata."""
+    abs_path = file_manager.note_path_from_file_path(file_path)
+    if abs_path.exists():
+        stat = abs_path.stat()
+        created = datetime.fromtimestamp(stat.st_birthtime if hasattr(stat, 'st_birthtime') else stat.st_ctime, tz=timezone.utc)
+        modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+        return (
+            created.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            modified.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        )
+    now = _now()
+    return now, now
 
 
 def _build_note_record(file_path: str, folder_name: str | None = None) -> dict[str, Any] | None:
-    """Read a local note file and return a record compatible with the old API shape."""
     content = file_manager.read_note(file_path)
     if content is None:
         return None
     p = Path(file_path)
     folder = folder_name or (p.parts[0] if len(p.parts) > 1 else "General")
+    created_at, updated_at = _file_timestamps(file_path)
     return {
         "id": _note_id_for_path(file_path),
         "label": p.stem,
         "content": content,
         "folder_name": folder,
-        "folder_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{folder}")),
+        "folder_id": _folder_id_for_name(folder),
         "file_path": file_path,
         "tags": [],
         "metadata": {},
-        "content_hash": file_manager.note_hash(file_path),
-        "sync_version": 1,
+        "content_hash": content_hash(content),
+        "sync_version": 0,
         "is_deleted": False,
+        "created_at": created_at,
+        "updated_at": updated_at,
         "_source": "local",
     }
+
+
+async def _sync_note_to_sqlite(
+    note_id: str,
+    label: str,
+    content: str,
+    folder_name: str,
+    folder_id: str | None,
+    file_path: str,
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    is_new: bool = False,
+) -> None:
+    """Persist note metadata to SQLite for sync tracking."""
+    repo = _get_notes_repo()
+    c_hash = content_hash(content)
+
+    existing = await repo.get(note_id)
+    now = _now()
+
+    note_data: dict[str, Any] = {
+        "id": note_id,
+        "user_id": "",
+        "folder_id": folder_id,
+        "title": label,
+        "label": label,
+        "content": content,
+        "content_hash": c_hash,
+        "file_path": file_path,
+        "is_deleted": False,
+        "is_pinned": existing.get("is_pinned", False) if existing else False,
+        "tags": tags or (existing.get("tags", []) if existing else []),
+        "sync_version": existing.get("sync_version", 0) if existing else 0,
+        "folder_name": folder_name,
+        "metadata": metadata or (existing.get("metadata", {}) if existing else {}),
+        "updated_at": now,
+    }
+
+    if existing:
+        if existing.get("sync_status") == "synced":
+            note_data["sync_status"] = "pending_push"
+        elif existing.get("sync_status") == "excluded":
+            note_data["sync_status"] = "excluded"
+        else:
+            note_data["sync_status"] = existing.get("sync_status", "never_synced")
+        note_data["sync_enabled"] = existing.get("sync_enabled", True)
+        note_data["last_synced_at"] = existing.get("last_synced_at")
+        note_data["remote_content_hash"] = existing.get("remote_content_hash")
+        note_data["created_at"] = existing.get("created_at", now)
+    else:
+        note_data["sync_status"] = "never_synced"
+        note_data["sync_enabled"] = True
+        note_data["created_at"] = now
+
+    await repo.upsert(note_data)
 
 
 # ---------------------------------------------------------------------------
@@ -253,31 +330,26 @@ def _build_note_record(file_path: str, folder_name: str | None = None) -> dict[s
 
 @router.get("/tree")
 async def get_folder_tree(request: Request) -> dict[str, Any]:
-    """Get folder tree — always from local filesystem."""
     _configure_sync(request)
     return _local_folder_tree()
 
 
 @router.post("/folders")
 async def create_folder(req: CreateFolderRequest, request: Request) -> dict[str, Any]:
-    """Create a folder locally. Background-syncs to Supabase if available."""
     _configure_sync(request)
     user_id = _get_user_id_optional(request)
 
-    # Build path: if parent specified, prefix with parent name
     path = req.name
     if req.parent_id:
-        # Find parent by its deterministic ID
         folders = file_manager.list_folders()
         for f in folders:
-            fid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{f}"))
+            fid = _folder_id_for_name(f)
             if fid == req.parent_id:
                 path = f"{f}/{req.name}"
                 break
 
-    # ── Local first ──────────────────────────────────────────────────────────
-    local_path = file_manager.create_folder(path)
-    folder_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{path}"))
+    file_manager.create_folder(path)
+    folder_id = _folder_id_for_name(path)
 
     result: dict[str, Any] = {
         "id": folder_id,
@@ -289,7 +361,6 @@ async def create_folder(req: CreateFolderRequest, request: Request) -> dict[str,
         "_source": "local",
     }
 
-    # ── Fire-and-forget Supabase sync ─────────────────────────────────────────
     if sync_engine.is_configured and user_id:
         async def _sync_folder():
             await supabase_docs.create_folder(
@@ -307,16 +378,13 @@ async def create_folder(req: CreateFolderRequest, request: Request) -> dict[str,
 async def update_folder(
     folder_id: str, req: UpdateFolderRequest, request: Request
 ) -> dict[str, Any]:
-    """Rename a folder locally. Background-syncs to Supabase if available."""
     _configure_sync(request)
 
-    # Rename on disk if name changed
     if req.name:
-        # Find current folder name by its deterministic ID
         for f in file_manager.list_folders():
-            fid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{f}"))
+            fid = _folder_id_for_name(f)
             if fid == folder_id:
-                new_path = file_manager.rename_folder(f, req.name)
+                file_manager.rename_folder(f, req.name)
                 break
 
     updates: dict[str, Any] = {}
@@ -337,11 +405,10 @@ async def update_folder(
 
 @router.delete("/folders/{folder_id}")
 async def delete_folder(folder_id: str, request: Request) -> dict[str, str]:
-    """Delete a folder locally. Background-syncs soft-delete to Supabase."""
     _configure_sync(request)
 
     for f in file_manager.list_folders():
-        fid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{f}"))
+        fid = _folder_id_for_name(f)
         if fid == folder_id:
             file_manager.delete_folder(f)
             break
@@ -362,40 +429,47 @@ async def list_notes(
     folder_id: str | None = None,
     search: str | None = None,
 ) -> list[dict[str, Any]]:
-    """List notes — always from local filesystem."""
     _configure_sync(request)
 
     all_files = file_manager.scan_all()
     results: list[dict[str, Any]] = []
+    repo = _get_notes_repo()
 
     for f in all_files:
-        # Filter by folder if requested
         if folder_id:
             p = Path(f["file_path"])
             folder_name = p.parts[0] if len(p.parts) > 1 else "General"
-            fid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{folder_name}"))
+            fid = _folder_id_for_name(folder_name)
             if fid != folder_id:
                 continue
 
-        # Filter by search
         if search:
-            content = file_manager.read_note(f["file_path"]) or ""
+            file_content = file_manager.read_note(f["file_path"]) or ""
             label = f.get("label", "")
-            if search.lower() not in content.lower() and search.lower() not in label.lower():
+            if search.lower() not in file_content.lower() and search.lower() not in label.lower():
                 continue
 
         p = Path(f["file_path"])
         folder_name = p.parts[0] if len(p.parts) > 1 else "General"
+        note_id = _note_id_for_path(f["file_path"])
+
+        sqlite_note = await repo.get(note_id)
+        created_at, updated_at = _file_timestamps(f["file_path"])
+
         results.append({
-            "id": _note_id_for_path(f["file_path"]),
+            "id": note_id,
             "label": f["label"],
             "folder_name": folder_name,
-            "folder_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-notes-folder:{folder_name}")),
+            "folder_id": _folder_id_for_name(folder_name),
             "file_path": f["file_path"],
             "content_hash": f["content_hash"],
-            "tags": [],
-            "metadata": {},
+            "tags": sqlite_note.get("tags", []) if sqlite_note else [],
+            "metadata": sqlite_note.get("metadata", {}) if sqlite_note else {},
             "is_deleted": False,
+            "sync_status": sqlite_note.get("sync_status", "never_synced") if sqlite_note else "never_synced",
+            "sync_enabled": sqlite_note.get("sync_enabled", True) if sqlite_note else True,
+            "created_at": sqlite_note.get("created_at", created_at) if sqlite_note else created_at,
+            "updated_at": updated_at,
             "_source": "local",
         })
 
@@ -404,44 +478,43 @@ async def list_notes(
 
 @router.get("/notes/{note_id}")
 async def get_note(note_id: str, request: Request) -> dict[str, Any]:
-    """Get a note — reads local file. Falls back to Supabase if not found locally."""
     _configure_sync(request)
 
-    logger.debug("[get_note] GET /notes/%s", note_id)
-
-    # Find by deterministic ID
     for f in file_manager.scan_all():
         if _note_id_for_path(f["file_path"]) == note_id:
             record = _build_note_record(f["file_path"])
             if record:
-                logger.debug("[get_note] Found local file: %s", f["file_path"])
+                repo = _get_notes_repo()
+                sqlite_note = await repo.get(note_id)
+                if sqlite_note:
+                    record["tags"] = sqlite_note.get("tags", [])
+                    record["metadata"] = sqlite_note.get("metadata", {})
+                    record["sync_status"] = sqlite_note.get("sync_status", "never_synced")
+                    record["sync_enabled"] = sqlite_note.get("sync_enabled", True)
+                    record["created_at"] = sqlite_note.get("created_at", record.get("created_at", ""))
                 return record
 
-    logger.warning("[get_note] Note id=%s not found locally, trying Supabase", note_id)
-
-    # Not found locally — try Supabase as fallback (e.g. note created on another device)
     if sync_engine.is_configured:
-        remote = await supabase_docs.get_note(note_id)
-        if remote:
-            # Pull it locally for next time
-            _fire_and_forget(sync_engine.pull_note(note_id))
-            return remote
+        try:
+            remote = await supabase_docs.get_note(note_id)
+            if remote:
+                _fire_and_forget(sync_engine.pull_note(note_id))
+                return remote
+        except Exception:
+            pass
 
     raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
 
 
 @router.post("/notes")
 async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any]:
-    """Create a note locally. Background-syncs to Supabase."""
     _configure_sync(request)
     user_id = _get_user_id_optional(request)
 
-    # ── Local first ──────────────────────────────────────────────────────────
     file_path = file_manager.write_note(req.folder_name, req.label, req.content)
-
-    # Use the deterministic UUID derived from file_path so that subsequent
-    # update/get calls (which also derive the ID from file_path) will match.
     note_id = _note_id_for_path(file_path)
+    c_hash = content_hash(req.content)
+    now = _now()
 
     result: dict[str, Any] = {
         "id": note_id,
@@ -452,17 +525,32 @@ async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any
         "file_path": file_path,
         "tags": req.tags,
         "metadata": req.metadata,
-        "content_hash": file_manager.note_hash(file_path),
+        "content_hash": c_hash,
+        "sync_status": "never_synced",
+        "sync_enabled": True,
+        "created_at": now,
+        "updated_at": now,
         "_synced_to_cloud": False,
         "_source": "local",
     }
+
+    await _sync_note_to_sqlite(
+        note_id=note_id,
+        label=req.label,
+        content=req.content,
+        folder_name=req.folder_name,
+        folder_id=req.folder_id,
+        file_path=file_path,
+        tags=req.tags,
+        metadata=req.metadata,
+        is_new=True,
+    )
 
     logger.info(
         "[create_note] Created note id=%s file_path=%s folder=%s label=%r",
         note_id, file_path, req.folder_name, req.label,
     )
 
-    # ── Fire-and-forget Supabase sync ─────────────────────────────────────────
     if sync_engine.is_configured and user_id:
         _fire_and_forget(sync_engine.push_note(
             note_id=note_id,
@@ -482,37 +570,28 @@ async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any
 async def update_note(
     note_id: str, req: UpdateNoteRequest, request: Request
 ) -> dict[str, Any]:
-    """Update a note locally. Background-syncs to Supabase."""
     _configure_sync(request)
 
-    logger.info(
-        "[update_note] PUT /notes/%s label=%r content_len=%s",
-        note_id,
-        req.label,
-        len(req.content) if req.content is not None else "None",
-    )
-
-    # Find the existing local file by matching the deterministic note ID.
     existing_record: dict[str, Any] | None = None
     all_files = file_manager.scan_all()
-    logger.debug("[update_note] scanning %d local files for id=%s", len(all_files), note_id)
     for f in all_files:
         candidate_id = _note_id_for_path(f["file_path"])
         if candidate_id == note_id:
             existing_record = _build_note_record(f["file_path"])
-            logger.info("[update_note] Found local file: %s", f["file_path"])
             break
 
     if existing_record is None:
-        logger.warning(
-            "[update_note] Note id=%s not found locally. Trying Supabase fallback. "
-            "Known local IDs sample: %s",
-            note_id,
-            [_note_id_for_path(f["file_path"]) for f in all_files[:5]],
-        )
-        # Try Supabase as fallback (note may have been created on another device)
+        repo = _get_notes_repo()
+        sqlite_note = await repo.get(note_id)
+        if sqlite_note and sqlite_note.get("file_path"):
+            existing_record = _build_note_record(sqlite_note["file_path"])
+
+    if existing_record is None:
         if sync_engine.is_configured:
-            existing_record = await supabase_docs.get_note(note_id)
+            try:
+                existing_record = await supabase_docs.get_note(note_id)
+            except Exception:
+                pass
         if existing_record is None:
             raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
 
@@ -523,9 +602,21 @@ async def update_note(
     tags = req.tags if req.tags is not None else existing_record.get("tags", [])
     metadata = req.metadata if req.metadata is not None else existing_record.get("metadata", {})
 
-    # ── Local first ──────────────────────────────────────────────────────────
     old_file_path = existing_record.get("file_path", "")
     file_path = file_manager.write_note(folder_name, label, content, old_file_path if old_file_path else None)
+    c_hash = content_hash(content)
+    now = _now()
+
+    await _sync_note_to_sqlite(
+        note_id=note_id,
+        label=label,
+        content=content,
+        folder_name=folder_name,
+        folder_id=folder_id,
+        file_path=file_path,
+        tags=tags,
+        metadata=metadata,
+    )
 
     result: dict[str, Any] = {
         "id": note_id,
@@ -536,12 +627,13 @@ async def update_note(
         "file_path": file_path,
         "tags": tags,
         "metadata": metadata,
-        "content_hash": file_manager.note_hash(file_path),
+        "content_hash": c_hash,
+        "created_at": existing_record.get("created_at", now),
+        "updated_at": now,
         "_synced_to_cloud": False,
         "_source": "local",
     }
 
-    # ── Fire-and-forget Supabase sync ─────────────────────────────────────────
     if sync_engine.is_configured:
         _fire_and_forget(sync_engine.push_note(
             note_id=note_id,
@@ -558,7 +650,6 @@ async def update_note(
 
 @router.delete("/notes/{note_id}")
 async def delete_note(note_id: str, request: Request) -> dict[str, str]:
-    """Delete a note locally. Background soft-deletes in Supabase."""
     _configure_sync(request)
 
     for f in file_manager.scan_all():
@@ -566,10 +657,47 @@ async def delete_note(note_id: str, request: Request) -> dict[str, str]:
             file_manager.delete_note(f["file_path"])
             break
 
+    repo = _get_notes_repo()
+    await repo.soft_delete(note_id)
+
     if sync_engine.is_configured:
         _fire_and_forget(supabase_docs.soft_delete_note(note_id))
 
     return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# Note sync metadata endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/notes/{note_id}/exclude")
+async def set_note_excluded(
+    note_id: str, req: NoteExcludeRequest, request: Request
+) -> dict[str, Any]:
+    """Mark a note as excluded from sync (or re-include it)."""
+    repo = _get_notes_repo()
+    await repo.set_excluded(note_id, req.excluded)
+    return {"id": note_id, "sync_status": "excluded" if req.excluded else "never_synced"}
+
+
+@router.get("/notes/{note_id}/sync-status")
+async def get_note_sync_status(note_id: str, request: Request) -> dict[str, Any]:
+    repo = _get_notes_repo()
+    note = await repo.get(note_id)
+    if not note:
+        return {
+            "id": note_id,
+            "sync_status": "never_synced",
+            "sync_enabled": True,
+            "last_synced_at": None,
+        }
+    return {
+        "id": note_id,
+        "sync_status": note.get("sync_status", "never_synced"),
+        "sync_enabled": note.get("sync_enabled", True),
+        "last_synced_at": note.get("last_synced_at"),
+        "remote_content_hash": note.get("remote_content_hash"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +709,10 @@ async def list_versions(note_id: str, request: Request) -> list[dict[str, Any]]:
     _configure_sync(request)
     if not sync_engine.is_configured:
         return []
-    return await supabase_docs.list_versions(note_id)
+    try:
+        return await supabase_docs.list_versions(note_id)
+    except Exception:
+        return []
 
 
 @router.post("/notes/{note_id}/revert")
@@ -600,7 +731,6 @@ async def revert_note(note_id: str, req: RevertRequest, request: Request) -> dic
     folder_name = existing.get("folder_name", "General") if existing else "General"
     folder_id = existing.get("folder_id") if existing else None
 
-    # Write old content locally, then push to Supabase
     file_path = file_manager.write_note(folder_name, version["label"], version["content"])
     result: dict[str, Any] = {
         "id": note_id,
@@ -630,21 +760,35 @@ async def revert_note(note_id: str, req: RevertRequest, request: Request) -> dic
 @router.get("/sync/status")
 async def sync_status(request: Request) -> dict[str, Any]:
     _configure_sync(request)
-    return sync_engine.get_status()
+    base = sync_engine.get_status()
+    repo = _get_notes_repo()
+    pending = await repo.list_pending_push()
+    excluded = await repo.list_excluded()
+    base["pending_push_count"] = len(pending)
+    base["excluded_count"] = len(excluded)
+    return base
 
 
 @router.post("/sync/trigger")
-async def trigger_sync(request: Request) -> dict[str, Any]:
-    """Full bidirectional sync — user-triggered only."""
+async def trigger_sync(req: SyncTriggerRequest, request: Request) -> dict[str, Any]:
+    """Manual sync — user-triggered only. Supports push, pull, and bidirectional modes."""
     _configure_sync(request)
     if not sync_engine.is_configured:
-        raise HTTPException(status_code=400, detail="Sync not configured — Supabase credentials required")
-    return await sync_engine.full_sync()
+        raise HTTPException(status_code=400, detail="Sync not configured — sign in to enable cloud sync")
+
+    mode = req.mode
+    if mode == "push":
+        return await sync_engine.push_all()
+    elif mode == "pull":
+        return await sync_engine.pull_all()
+    elif mode == "bidirectional":
+        return await sync_engine.full_sync()
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid sync mode: {mode}. Use push, pull, or bidirectional.")
 
 
 @router.post("/sync/pull")
 async def pull_changes(request: Request) -> dict[str, Any]:
-    """Pull incremental changes from Supabase."""
     _configure_sync(request)
     if not sync_engine.is_configured:
         return {"pulled": 0, "conflicts": 0, "reason": "not_configured"}
@@ -653,7 +797,6 @@ async def pull_changes(request: Request) -> dict[str, Any]:
 
 @router.post("/sync/pull-note")
 async def pull_single_note(req: PullRemoteChangeRequest, request: Request) -> dict[str, Any]:
-    """Pull a specific note from Supabase (e.g. after Realtime notification)."""
     _configure_sync(request)
     if not sync_engine.is_configured:
         raise HTTPException(status_code=400, detail="Sync not configured")
@@ -690,8 +833,24 @@ async def stop_watcher(request: Request) -> dict[str, str]:
 
 @router.get("/conflicts")
 async def list_conflicts(request: Request) -> dict[str, Any]:
-    conflicts = file_manager.list_conflicts()
-    return {"conflicts": conflicts, "count": len(conflicts)}
+    conflict_ids = file_manager.list_conflicts()
+    details: list[dict[str, Any]] = []
+    for note_id in conflict_ids:
+        conflict_dir = file_manager.base_dir / ".sync" / "conflicts" / note_id
+        local_file = conflict_dir / "local.md"
+        remote_file = conflict_dir / "remote.md"
+        entry: dict[str, Any] = {"note_id": note_id}
+        if local_file.exists():
+            entry["local_content"] = local_file.read_text(encoding="utf-8")
+        if remote_file.exists():
+            entry["remote_content"] = remote_file.read_text(encoding="utf-8")
+        repo = _get_notes_repo()
+        sqlite_note = await repo.get(note_id)
+        if sqlite_note:
+            entry["label"] = sqlite_note.get("label", sqlite_note.get("title", ""))
+            entry["folder_name"] = sqlite_note.get("folder_name", "General")
+        details.append(entry)
+    return {"conflicts": details, "count": len(details)}
 
 
 @router.post("/conflicts/{note_id}/resolve")
@@ -699,7 +858,9 @@ async def resolve_conflict(
     note_id: str, req: ConflictResolveRequest, request: Request
 ) -> dict[str, Any]:
     _configure_sync(request)
-    result = await sync_engine.resolve_conflict(note_id, req.resolution)
+    result = await sync_engine.resolve_conflict(
+        note_id, req.resolution, merged_content=req.merged_content
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Conflict not found")
     return {"status": "resolved", "resolution": req.resolution}
@@ -714,13 +875,16 @@ async def list_shares(request: Request) -> list[dict[str, Any]]:
     _configure_sync(request)
     if not sync_engine.is_configured:
         return []
-    user_id = _get_user_id(request)
-    owned = await supabase_docs.list_shares(owner_id=user_id)
-    shared_with_me = await supabase_docs.list_shares(shared_with_id=user_id)
-    return [
-        *[{**s, "_direction": "owned"} for s in owned],
-        *[{**s, "_direction": "shared_with_me"} for s in shared_with_me],
-    ]
+    try:
+        user_id = _get_user_id(request)
+        owned = await supabase_docs.list_shares(owner_id=user_id)
+        shared_with_me = await supabase_docs.list_shares(shared_with_id=user_id)
+        return [
+            *[{**s, "_direction": "owned"} for s in owned],
+            *[{**s, "_direction": "shared_with_me"} for s in shared_with_me],
+        ]
+    except Exception:
+        return []
 
 
 @router.post("/shares")
@@ -770,7 +934,10 @@ async def list_mappings(request: Request) -> dict[str, Any]:
 
     cloud_mappings: list[dict[str, Any]] = []
     if sync_engine.is_configured and user_id:
-        cloud_mappings = await supabase_docs.list_mappings(user_id, sync_engine.device_id)
+        try:
+            cloud_mappings = await supabase_docs.list_mappings(user_id, sync_engine.device_id)
+        except Exception:
+            pass
 
     local_mappings = file_manager.load_local_mappings()
     return {
@@ -785,7 +952,6 @@ async def create_mapping(req: MappingRequest, request: Request) -> dict[str, Any
     _configure_sync(request)
     user_id = _get_user_id_optional(request)
 
-    # Save locally first
     local_mappings = file_manager.load_local_mappings()
     if req.folder_id not in local_mappings:
         local_mappings[req.folder_id] = []
@@ -793,7 +959,6 @@ async def create_mapping(req: MappingRequest, request: Request) -> dict[str, Any
         local_mappings[req.folder_id].append(req.local_path)
     file_manager.save_local_mappings(local_mappings)
 
-    cloud_result: dict[str, Any] = {}
     if sync_engine.is_configured and user_id:
         _fire_and_forget(supabase_docs.create_mapping(
             user_id=user_id,
@@ -802,7 +967,7 @@ async def create_mapping(req: MappingRequest, request: Request) -> dict[str, Any
             local_path=req.local_path,
         ))
 
-    return {"folder_id": req.folder_id, "local_path": req.local_path, **cloud_result}
+    return {"folder_id": req.folder_id, "local_path": req.local_path}
 
 
 @router.delete("/mappings/{mapping_id}")
@@ -834,19 +999,16 @@ async def delete_mapping(
 
 @router.get("/local/folders")
 async def list_local_folders() -> list[str]:
-    """List folders on the local filesystem."""
     return file_manager.list_folders()
 
 
 @router.get("/local/files")
 async def scan_local_files() -> list[dict[str, str]]:
-    """Scan all .md files in the notes directory."""
     return file_manager.scan_all()
 
 
 @router.get("/local/files/{file_path:path}")
 async def read_local_file(file_path: str) -> dict[str, Any]:
-    """Read a local .md file by its relative path."""
     content = file_manager.read_note(file_path)
     if content is None:
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
