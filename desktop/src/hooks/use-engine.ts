@@ -221,11 +221,19 @@ export function useEngine(authenticated = true) {
       // Sync persisted settings to Tauri + engine.
       syncAllSettings().catch(() => {});
 
-      // Configure cloud sync if already authenticated at connect time.
+      // Configure cloud sync + push JWT to Python if already authenticated at connect time.
+      // This covers the race where INITIAL_SESSION fired before the engine was discovered.
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.access_token && session?.user?.id) {
           lastCloudConfigureRef.current = Date.now();
+          // Push the JWT first so Python SyncEngine has it before configureCloudSync triggers agent sync.
+          engine.syncTokenToPython(
+            session.access_token,
+            session.user.id,
+            session.refresh_token ?? undefined,
+            session.expires_in ?? undefined,
+          ).catch(() => {});
           await engine.configureCloudSync(session.access_token, session.user.id);
           engine.cloudHeartbeat().catch(() => {});
         }

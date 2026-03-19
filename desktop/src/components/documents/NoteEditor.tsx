@@ -16,11 +16,17 @@ import {
   ImageIcon,
   Save,
   Loader2,
+  Mic,
+  MicOff,
+  Check,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { DocNote } from "@/lib/api";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useTranscription } from "@/hooks/use-transcription";
+import { usePermissionsContext } from "@/contexts/PermissionsContext";
 
 interface NoteEditorProps {
   note: DocNote;
@@ -42,6 +48,83 @@ export function NoteEditor({
   const [label, setLabel] = useState(note.label);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevNoteIdRef = useRef(note.id);
+
+  // Inline dictation state
+  const [showDictation, setShowDictation] = useState(false);
+  const [dictationText, setDictationText] = useState("");
+  const [transcriptionState, transcriptionActions] = useTranscription();
+  const { check, request } = usePermissionsContext();
+  const prevSegmentCountRef = useRef(0);
+
+  // Accumulate live segments into dictationText
+  useEffect(() => {
+    if (!showDictation) return;
+    if (transcriptionState.segments.length > prevSegmentCountRef.current) {
+      const newSegs = transcriptionState.segments.slice(prevSegmentCountRef.current);
+      prevSegmentCountRef.current = transcriptionState.segments.length;
+      const newText = newSegs.map((s) => s.text).filter((t) => t.length > 0).join(" ");
+      if (newText) {
+        setDictationText((prev) => (prev ? prev + " " + newText : newText));
+      }
+    }
+  }, [transcriptionState.segments, showDictation]);
+
+  const handleOpenDictation = useCallback(async () => {
+    const status = await check("microphone");
+    if (status === "not_determined") {
+      await request("microphone");
+    }
+    setDictationText("");
+    prevSegmentCountRef.current = 0;
+    setShowDictation(true);
+  }, [check, request]);
+
+  const handleStartDictation = useCallback(async () => {
+    setDictationText("");
+    prevSegmentCountRef.current = 0;
+    await transcriptionActions.startRecording();
+  }, [transcriptionActions]);
+
+  const handleStopDictation = useCallback(async () => {
+    await transcriptionActions.stopRecording();
+  }, [transcriptionActions]);
+
+  const handleInsertDictation = useCallback(() => {
+    if (!dictationText.trim()) {
+      setShowDictation(false);
+      return;
+    }
+    const ta = textareaRef.current;
+    let newContent: string;
+    if (ta) {
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const separator = start > 0 && content[start - 1] !== "\n" ? "\n\n" : "";
+      newContent =
+        content.substring(0, start) +
+        separator +
+        dictationText.trim() +
+        "\n\n" +
+        content.substring(end);
+    } else {
+      newContent = content
+        ? content + "\n\n" + dictationText.trim()
+        : dictationText.trim();
+    }
+    setContent(newContent);
+    onChange(newContent);
+    setShowDictation(false);
+    setDictationText("");
+  }, [dictationText, content, onChange]);
+
+  const handleCancelDictation = useCallback(async () => {
+    if (transcriptionState.isRecording) {
+      await transcriptionActions.stopRecording();
+    }
+    setShowDictation(false);
+    setDictationText("");
+    prevSegmentCountRef.current = 0;
+  }, [transcriptionState.isRecording, transcriptionActions]);
 
   // Sync state when note changes
   useEffect(() => {
@@ -195,6 +278,124 @@ export function NoteEditor({
                 {"icon" in btn && <btn.icon className="h-3.5 w-3.5" />}
               </button>
             ),
+          )}
+          {/* Dictation button — only shown when voice setup is complete */}
+          {transcriptionState.setupStatus?.setup_complete && (
+            <>
+              <div className="w-px h-4 bg-border mx-1" />
+              <button
+                onClick={handleOpenDictation}
+                title="Dictate into note"
+                className={cn(
+                  "rounded p-1.5 transition-colors",
+                  showDictation
+                    ? "text-red-500 bg-red-500/10"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                )}
+              >
+                <Mic className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Inline dictation panel */}
+      {showDictation && (
+        <div className="border-b bg-muted/30 px-4 py-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={
+                transcriptionState.isRecording
+                  ? handleStopDictation
+                  : transcriptionState.isProcessingTail
+                  ? undefined
+                  : handleStartDictation
+              }
+              disabled={
+                transcriptionState.isProcessingTail ||
+                !transcriptionState.activeModel
+              }
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-full transition-all shrink-0",
+                transcriptionState.isRecording
+                  ? "bg-red-500 text-white hover:bg-red-600"
+                  : transcriptionState.isProcessingTail
+                  ? "bg-amber-500 text-white cursor-wait"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+              )}
+              style={
+                transcriptionState.isRecording && transcriptionState.liveRms > 0.00005
+                  ? {
+                      boxShadow: `0 0 ${6 + Math.min(transcriptionState.liveRms * 5000, 20)}px rgba(239,68,68,${Math.min(0.3 + transcriptionState.liveRms * 150, 0.6)})`,
+                    }
+                  : undefined
+              }
+            >
+              {transcriptionState.isProcessingTail ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : transcriptionState.isRecording ? (
+                <MicOff className="h-4 w-4" />
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
+            </button>
+
+            {/* Live RMS bar */}
+            {transcriptionState.isRecording && (
+              <div className="flex-1 flex items-center gap-2">
+                <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+                <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className={cn(
+                      "h-full rounded-full transition-all duration-75",
+                      transcriptionState.liveRms > 0.001
+                        ? "bg-green-500"
+                        : transcriptionState.liveRms > 0.0001
+                        ? "bg-yellow-500"
+                        : "bg-red-400"
+                    )}
+                    style={{ width: `${Math.min(transcriptionState.liveRms * 10000, 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            {!transcriptionState.isRecording && !transcriptionState.isProcessingTail && (
+              <span className="text-xs text-muted-foreground flex-1">
+                {transcriptionState.activeModel
+                  ? dictationText
+                    ? "Click the mic to keep recording, or insert below"
+                    : "Click the mic to start dictating"
+                  : "Voice model not loaded. Go to Voice → Setup first."}
+              </span>
+            )}
+            {transcriptionState.isProcessingTail && (
+              <span className="text-xs text-amber-500 flex-1">Finishing…</span>
+            )}
+
+            {/* Insert / Cancel */}
+            <button
+              onClick={handleInsertDictation}
+              disabled={!dictationText.trim()}
+              className="flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+            >
+              <Check className="h-3 w-3" />
+              Insert
+            </button>
+            <button
+              onClick={handleCancelDictation}
+              className="flex items-center gap-1 rounded-md px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
+            >
+              <X className="h-3 w-3" />
+              Cancel
+            </button>
+          </div>
+
+          {/* Dictation text preview */}
+          {dictationText && (
+            <div className="rounded-md border bg-background/60 px-3 py-2">
+              <p className="text-sm leading-relaxed text-foreground/90">{dictationText}</p>
+            </div>
           )}
         </div>
       )}

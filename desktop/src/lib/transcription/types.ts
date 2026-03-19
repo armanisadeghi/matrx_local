@@ -54,3 +54,26 @@ export interface AudioDeviceInfo {
   sample_rates: number[];
   channels: number[];
 }
+
+/** A persisted transcription recording session. */
+export interface TranscriptionSession {
+  id: string;
+  /** User-supplied title, or null if untitled */
+  title: string | null;
+  /** ISO timestamp of when recording started */
+  createdAt: string;
+  /** ISO timestamp of last update (segments appended, title changed, etc.) */
+  updatedAt: string;
+  /** Duration in seconds (populated when recording stops) */
+  durationSecs: number;
+  /** Total characters in the full transcript */
+  charCount: number;
+  /** The whisper model used */
+  modelUsed: string | null;
+  /** Audio device used (null = system default) */
+  deviceUsed: string | null;
+  /** All transcribed segments */
+  segments: WhisperSegment[];
+  /** Concatenated full transcript text */
+  fullText: string;
+}

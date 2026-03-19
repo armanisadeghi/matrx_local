@@ -12,6 +12,7 @@ one it can validate beforehand.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Optional
 
@@ -47,6 +48,10 @@ async def save_token(req: TokenRequest) -> dict[str, Any]:
     Called by the React frontend after every successful auth (login, token refresh,
     initial session restore).  Python reads it on startup and whenever it needs to
     make authenticated API calls (e.g. SyncEngine fetching user prompts).
+
+    After saving, triggers a background sync of user-specific data (agents/prompts)
+    so the local SQLite cache is populated immediately rather than waiting for the
+    next scheduled sync interval.
     """
     expires_at: Optional[int] = None
     if req.expires_in:
@@ -62,10 +67,31 @@ async def save_token(req: TokenRequest) -> dict[str, Any]:
     # Keep the in-memory cache hot so matrx-ai picks up the new token immediately.
     set_jwt_cache(req.access_token)
     logger.info(
-        "[token_routes] JWT saved for user_id=%s expires_at=%s",
+        "[token_routes] JWT saved for user_id=%s expires_at=%s — triggering background agent sync",
         req.user_id,
         expires_at,
     )
+
+    # Trigger an immediate background sync of user-specific data (agents/prompts).
+    # The startup sync_all() runs before the JWT is available, so user prompts are
+    # never fetched on startup. We kick a sync here so the UI gets user agents
+    # as soon as the token is delivered — no 10-minute wait.
+    async def _sync_after_token() -> None:
+        try:
+            from app.services.local_db.sync_engine import get_sync_engine
+            engine = get_sync_engine()
+            await engine.sync_agents()
+            logger.info("[token_routes] Post-login agent sync complete for user_id=%s", req.user_id)
+        except Exception as exc:
+            logger.warning("[token_routes] Post-login agent sync failed: %s", exc)
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_sync_after_token())
+    except Exception:
+        pass
+
     return {"status": "ok", "user_id": req.user_id}
 
 

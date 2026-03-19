@@ -407,12 +407,17 @@ async def get_note(note_id: str, request: Request) -> dict[str, Any]:
     """Get a note — reads local file. Falls back to Supabase if not found locally."""
     _configure_sync(request)
 
+    logger.debug("[get_note] GET /notes/%s", note_id)
+
     # Find by deterministic ID
     for f in file_manager.scan_all():
         if _note_id_for_path(f["file_path"]) == note_id:
             record = _build_note_record(f["file_path"])
             if record:
+                logger.debug("[get_note] Found local file: %s", f["file_path"])
                 return record
+
+    logger.warning("[get_note] Note id=%s not found locally, trying Supabase", note_id)
 
     # Not found locally — try Supabase as fallback (e.g. note created on another device)
     if sync_engine.is_configured:
@@ -422,7 +427,7 @@ async def get_note(note_id: str, request: Request) -> dict[str, Any]:
             _fire_and_forget(sync_engine.pull_note(note_id))
             return remote
 
-    raise HTTPException(status_code=404, detail="Note not found")
+    raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
 
 
 @router.post("/notes")
@@ -430,10 +435,13 @@ async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any
     """Create a note locally. Background-syncs to Supabase."""
     _configure_sync(request)
     user_id = _get_user_id_optional(request)
-    note_id = str(uuid.uuid4())
 
     # ── Local first ──────────────────────────────────────────────────────────
     file_path = file_manager.write_note(req.folder_name, req.label, req.content)
+
+    # Use the deterministic UUID derived from file_path so that subsequent
+    # update/get calls (which also derive the ID from file_path) will match.
+    note_id = _note_id_for_path(file_path)
 
     result: dict[str, Any] = {
         "id": note_id,
@@ -448,6 +456,11 @@ async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any
         "_synced_to_cloud": False,
         "_source": "local",
     }
+
+    logger.info(
+        "[create_note] Created note id=%s file_path=%s folder=%s label=%r",
+        note_id, file_path, req.folder_name, req.label,
+    )
 
     # ── Fire-and-forget Supabase sync ─────────────────────────────────────────
     if sync_engine.is_configured and user_id:
@@ -472,19 +485,36 @@ async def update_note(
     """Update a note locally. Background-syncs to Supabase."""
     _configure_sync(request)
 
-    # Find the existing local file
+    logger.info(
+        "[update_note] PUT /notes/%s label=%r content_len=%s",
+        note_id,
+        req.label,
+        len(req.content) if req.content is not None else "None",
+    )
+
+    # Find the existing local file by matching the deterministic note ID.
     existing_record: dict[str, Any] | None = None
-    for f in file_manager.scan_all():
-        if _note_id_for_path(f["file_path"]) == note_id:
+    all_files = file_manager.scan_all()
+    logger.debug("[update_note] scanning %d local files for id=%s", len(all_files), note_id)
+    for f in all_files:
+        candidate_id = _note_id_for_path(f["file_path"])
+        if candidate_id == note_id:
             existing_record = _build_note_record(f["file_path"])
+            logger.info("[update_note] Found local file: %s", f["file_path"])
             break
 
     if existing_record is None:
+        logger.warning(
+            "[update_note] Note id=%s not found locally. Trying Supabase fallback. "
+            "Known local IDs sample: %s",
+            note_id,
+            [_note_id_for_path(f["file_path"]) for f in all_files[:5]],
+        )
         # Try Supabase as fallback (note may have been created on another device)
         if sync_engine.is_configured:
             existing_record = await supabase_docs.get_note(note_id)
         if existing_record is None:
-            raise HTTPException(status_code=404, detail="Note not found")
+            raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
 
     label = req.label if req.label is not None else existing_record.get("label", "")
     content = req.content if req.content is not None else existing_record.get("content", "")

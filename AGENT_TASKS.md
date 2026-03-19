@@ -5,7 +5,7 @@
 
 ---
 
-## 🔴 AGENT PRIORITY QUEUE (updated 2026-03-02)
+## 🔴 AGENT PRIORITY QUEUE (updated 2026-03-18)
 
 > Pick tasks from top to bottom. Each is self-contained. Do not start a task that depends on an unresolved one above it.
 
@@ -14,6 +14,10 @@
 1. [x] **Dashboard: User profile "Not Found"** — Fixed 2026-03-02: Added user profile card to Dashboard.tsx with avatar, name, email, provider. `auth.user` and `auth.signOut` now passed from App.tsx.
 2. [x] **Dashboard: Browser Engine "standby"** — Fixed 2026-03-02: Label now shows "Not Installed" (not "Not Found") and install instruction `uv sync --extra browser`. Status uses `playwright_available` from SystemInfo tool.
 3. **Documents: New Folder / New Note do nothing** — Code trace complete: handlers are correctly wired. Silence suggests Supabase `note_folders` table RLS issue or table missing. Arman must verify in Supabase dashboard (see ARMAN_TASKS). SyncStatusBar now shows even when status is null.
+3a. [x] **Notes not saving (uuid mismatch)** — Fixed 2026-03-18: `create_note` generated a random `uuid4()` but `update_note` looked up notes using deterministic `uuid5(file_path)`. These never matched → every save returned 404. Fixed: compute ID from `_note_id_for_path(file_path)` in `create_note`. Comprehensive logging added to `update_note`/`get_note`.
+3b. [x] **Agents not syncing for logged-in user** — Fixed 2026-03-18: SyncEngine ran `sync_agents()` on startup before the JWT was available, so user prompts were always skipped. Fix: `POST /auth/token` now triggers immediate background `sync_agents()` after saving JWT. Also `initialize()` in `use-engine.ts` now calls `syncTokenToPython()` before `configureCloudSync()` to close the INITIAL_SESSION race. `/chat/agents` also kicks a background sync when builtins exist but user agents are empty and a JWT is stored.
+3c. [ ] **Agent not found error when using agents in chat** — `{"detail":"Agent not found: ce657368-415b-4acd-bad6-823cb6752d94"}` — likely caused by agents not syncing (fixed above) or matrx-ai looking up agent by ID in the server DB instead of local SQLite. Needs verification after agent sync fix is deployed.
+3d. [ ] **"Local" chat tab missing** — Need a new tab alongside Chat/Co-work/Code that routes messages to local LLM (llama-server) rather than cloud providers.
 4. [x] **Documents: Sync bar is cosmetic** — Fixed 2026-03-02: `SyncStatusBar` now always renders (shows "Not configured" placeholder instead of null). Sync button triggers real `triggerSync()` call.
 5. [x] **Web search tool: argument errors** — Investigated 2026-03-02: argument mapping is correct (`keywords: list[str]` → `tags` field type). Root cause is `BRAVE_API_KEY` not configured. Add `BRAVE_API_KEY=<key>` to `.env` to enable. Not a code bug.
 6. [x] **Notify tool: does nothing** — Fixed 2026-03-02: `notify.py` now has platform-specific fallbacks: macOS (osascript), Windows (PowerShell toast), Linux (notify-send), last resort (log). No longer requires `plyer`.
@@ -65,6 +69,7 @@
 - [ ] **New Folder doesn't work** — Code is correctly wired. Likely Supabase RLS issue on `note_folders` table. Arman: verify table exists and RLS allows inserts.
 - [ ] **New Note doesn't work** — Same as above.
 - [x] **Sync bar claims "Connected" but does nothing** — Fixed 2026-03-02: `SyncStatusBar` always renders now (with "Not configured" placeholder). Sync button triggers real sync.
+- [x] **Notes not saving (all updates returning 404)** — Fixed 2026-03-18: UUID mismatch between create and update. See 3a above.
 
 ---
 
@@ -346,4 +351,4 @@
 
 ---
 
-_Last updated: 2026-03-02 (priority queue added)_
+_Last updated: 2026-03-18_

@@ -234,7 +234,7 @@ async def list_agents() -> dict[str, Any]:
     SQLite is populated by SyncEngine. If empty and never synced, triggers
     a background sync and returns syncing=True.
     """
-    from app.services.local_db.repositories import AgentsRepo, SyncMetaRepo
+    from app.services.local_db.repositories import AgentsRepo, SyncMetaRepo, TokenRepo
     from app.services.local_db.sync_engine import get_sync_engine
 
     logger.info("[chat_routes /agents] Request received")
@@ -242,14 +242,17 @@ async def list_agents() -> dict[str, Any]:
     # Resolve the authenticated user_id from the stored JWT so we only return
     # this user's own agents (builtins are always included).
     user_id: str | None = None
+    jwt: str | None = None
     try:
-        from app.services.local_db.repositories import TokenRepo
         token_repo = TokenRepo()
         token_row = await token_repo.get()
-        if token_row:
+        if token_row and not token_repo.is_expired(token_row):
             user_id = token_row.get("user_id") or None
+            jwt = token_row.get("access_token") or None
     except Exception:
         pass
+
+    logger.info("[chat_routes /agents] user_id from stored JWT: %s", user_id)
 
     repo = AgentsRepo()
     all_agents = await repo.list_all(user_id=user_id)
@@ -257,11 +260,16 @@ async def list_agents() -> dict[str, Any]:
     builtins = [_shape_agent_from_sqlite(a) for a in all_agents if a.get("source") == "builtin"]
     user_agents = [_shape_agent_from_sqlite(a) for a in all_agents if a.get("source") == "user"]
 
-    if not builtins:
-        sync_meta = SyncMetaRepo()
-        meta = await sync_meta.get_last_sync("agents")
-        never_synced = meta is None or meta.get("last_synced_at") is None
+    logger.info(
+        "[chat_routes /agents] Found in SQLite: %d builtins, %d user agents",
+        len(builtins), len(user_agents),
+    )
 
+    sync_meta = SyncMetaRepo()
+    meta = await sync_meta.get_last_sync("agents")
+    never_synced = meta is None or meta.get("last_synced_at") is None
+
+    if not builtins:
         if never_synced:
             logger.info(
                 "[chat_routes /agents] SQLite empty and never synced — triggering background sync"
@@ -273,13 +281,20 @@ async def list_agents() -> dict[str, Any]:
                 "source": "sqlite", "syncing": True,
                 "totals": {"builtins": 0, "user": 0, "shared": 0, "total": 0},
             }
+        logger.info("[chat_routes /agents] SQLite empty but sync ran — no builtins from server")
+
+    # If we have a JWT but no user agents, kick a background sync to fetch them.
+    # This covers the case where builtins synced before the JWT was available.
+    if jwt and user_id and not user_agents:
+        logger.info(
+            "[chat_routes /agents] No user agents in SQLite but JWT is available — "
+            "triggering background agent sync for user_id=%s",
+            user_id,
+        )
+        engine = get_sync_engine()
+        asyncio.create_task(engine.sync_agents())
 
     total = len(builtins) + len(user_agents)
-    logger.info(
-        "[chat_routes /agents] Returning %d builtins, %d user agents from SQLite",
-        len(builtins),
-        len(user_agents),
-    )
     return {
         "builtins": sorted(builtins, key=lambda x: x["name"]),
         "user": sorted(user_agents, key=lambda x: x["name"]),
@@ -293,6 +308,69 @@ async def list_agents() -> dict[str, Any]:
             "total": total,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Sync status + force-sync endpoint for chat data (models, agents)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sync/status")
+async def chat_sync_status() -> dict[str, Any]:
+    """Return the sync status for all chat-related data from local SQLite."""
+    from app.services.local_db.repositories import (
+        SyncMetaRepo, ModelsRepo, AgentsRepo, TokenRepo, PromptBuiltinsRepo, PromptsRepo,
+    )
+    from app.services.local_db.sync_engine import get_sync_engine
+
+    sync_meta = SyncMetaRepo()
+    all_meta = await sync_meta.get_all_sync_status()
+
+    models_count = await ModelsRepo().count()
+    agents_count_total = len(await AgentsRepo().list_all())
+    builtins_count = await PromptBuiltinsRepo().count()
+
+    user_id: str | None = None
+    jwt_present = False
+    try:
+        token_repo = TokenRepo()
+        token_row = await token_repo.get()
+        if token_row:
+            user_id = token_row.get("user_id") or None
+            jwt_present = not token_repo.is_expired(token_row)
+    except Exception:
+        pass
+
+    prompts_count = 0
+    if user_id:
+        prompts_count = await PromptsRepo().count(user_id)
+
+    engine = get_sync_engine()
+
+    return {
+        "sync_engine_running": engine.running,
+        "jwt_present": jwt_present,
+        "user_id": user_id,
+        "counts": {
+            "models": models_count,
+            "agents_total": agents_count_total,
+            "prompt_builtins": builtins_count,
+            "user_prompts": prompts_count,
+        },
+        "last_sync": {m["entity_type"]: m for m in all_meta},
+    }
+
+
+@router.post("/sync/trigger")
+async def trigger_chat_sync() -> dict[str, Any]:
+    """Force an immediate full sync of chat data (models, agents, tools) from the server."""
+    from app.services.local_db.sync_engine import get_sync_engine
+
+    logger.info("[chat_routes /sync/trigger] Manual sync triggered")
+    engine = get_sync_engine()
+    results = await engine.sync_all()
+    logger.info("[chat_routes /sync/trigger] Sync complete: %s", results)
+    return {"status": "ok", "results": results}
 
 
 # ---------------------------------------------------------------------------

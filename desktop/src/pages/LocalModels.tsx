@@ -25,7 +25,6 @@ import {
   Settings,
   X,
   FolderOpen,
-  Link,
   Plus,
   PackagePlus,
 } from "lucide-react";
@@ -217,6 +216,13 @@ function SetupTab() {
   } = state;
   const { detectHardware, quickSetup, cancelDownload, clearError } = actions;
 
+  useEffect(() => {
+    if (!hardwareResult && !isDetecting) {
+      detectHardware().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const isModelDownloaded = hardwareResult
     ? downloadedModels.some((m) => m.filename === hardwareResult.recommended_filename)
     : false;
@@ -251,7 +257,7 @@ function SetupTab() {
               disabled={isDetecting}
               onClick={detectHardware}
             >
-              {isDetecting ? "Detecting…" : hardwareResult ? "Re-detect" : "Detect Hardware"}
+              {isDetecting ? "Detecting…" : "Re-detect"}
             </Button>
           </div>
         </CardHeader>
@@ -400,9 +406,9 @@ function SetupTab() {
               ? "Start Inference Server"
               : "Download & Start"}
           </Button>
-          {!hardwareResult && !isDetecting && (
+          {!hardwareResult && isDetecting && (
             <p className="text-xs text-center text-muted-foreground">
-              Detect hardware first to get a recommendation.
+              Detecting hardware…
             </p>
           )}
         </CardContent>
@@ -411,178 +417,13 @@ function SetupTab() {
   );
 }
 
-// ── Model Card ────────────────────────────────────────────────────────────
+// ── Custom Model Inline Row ───────────────────────────────────────────────
 
-function ModelCard({
-  model,
-  isDownloaded,
-  isServerRunning,
-  downloadingFilename,
-  downloadProgress,
-  onDownload,
-  onDownloadAndRun,
-  onLoad,
-  onDelete,
-  onCancel,
-}: {
-  model: LlmModelInfo;
-  isDownloaded: boolean;
-  isServerRunning: boolean;
-  downloadingFilename: string | null;
-  downloadProgress: { percent: number; part: number; total_parts: number; bytes_downloaded: number } | null;
-  onDownload: (model: LlmModelInfo) => void;
-  onDownloadAndRun: (model: LlmModelInfo) => void;
-  onLoad: (model: LlmModelInfo) => void;
-  onDelete: (filename: string) => void;
-  onCancel: () => void;
-}) {
-  const isDownloadingThis = downloadingFilename === model.filename;
-
-  return (
-    <Card className={isDownloaded ? "border-green-500/30" : ""}>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <CardTitle className="text-sm">{model.name}</CardTitle>
-              {model.is_split && (
-                <Badge variant="outline" className="text-xs">
-                  {model.hf_parts.length + 1} parts
-                </Badge>
-              )}
-              {model.tier === "Default" && (
-                <Badge className="text-xs bg-blue-500/20 text-blue-600 border-blue-500/30">
-                  Recommended
-                </Badge>
-              )}
-              {isDownloaded && (
-                <Badge className="text-xs bg-green-500/20 text-green-600 border-green-500/30">
-                  <CheckCircle2 className="h-3 w-3 mr-1" />
-                  Downloaded
-                </Badge>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">{model.description}</p>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0 space-y-4">
-        {/* Stats Grid */}
-        <div className="grid grid-cols-4 gap-3 text-xs">
-          <div className="rounded-lg bg-muted/40 px-3 py-2">
-            <p className="text-muted-foreground mb-1">Disk</p>
-            <p className="font-semibold">{model.disk_size_gb.toFixed(1)} GB</p>
-          </div>
-          <div className="rounded-lg bg-muted/40 px-3 py-2">
-            <p className="text-muted-foreground mb-1">RAM</p>
-            <p className="font-semibold">{model.ram_required_gb.toFixed(0)} GB</p>
-          </div>
-          <div className="rounded-lg bg-muted/40 px-3 py-2">
-            <p className="text-muted-foreground mb-1">Speed</p>
-            <p className="font-semibold">{model.speed}</p>
-          </div>
-          <div className="rounded-lg bg-muted/40 px-3 py-2">
-            <p className="text-muted-foreground mb-2">Tool Calling</p>
-            <ToolCallRating rating={model.tool_calling_rating} />
-          </div>
-        </div>
-
-        {/* Download progress for this card */}
-        {isDownloadingThis && downloadProgress && (
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>
-                {downloadProgress.total_parts > 1
-                  ? `Part ${downloadProgress.part}/${downloadProgress.total_parts}`
-                  : "Downloading"}
-              </span>
-              <span>{formatBytes(downloadProgress.bytes_downloaded)}</span>
-            </div>
-            <Progress value={downloadProgress.percent} className="h-1.5" />
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {downloadProgress.percent.toFixed(1)}%
-              </span>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-5 px-1 text-xs text-destructive"
-                onClick={onCancel}
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div className="flex flex-wrap gap-2">
-          {isDownloaded ? (
-            <>
-              {!isServerRunning && (
-                <Button
-                  size="sm"
-                  className="gap-1"
-                  onClick={() => onLoad(model)}
-                >
-                  <Play className="h-3 w-3" />
-                  Load & Run
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
-                onClick={() => onDelete(model.filename)}
-              >
-                <Trash2 className="h-3 w-3" />
-                Delete
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                size="sm"
-                className="gap-1"
-                disabled={isDownloadingThis}
-                onClick={() => onDownloadAndRun(model)}
-              >
-                <Zap className="h-3 w-3" />
-                Download & Run
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1"
-                disabled={isDownloadingThis}
-                onClick={() => onDownload(model)}
-              >
-                <Download className="h-3 w-3" />
-                Download Only
-              </Button>
-            </>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ── Custom Model Section ──────────────────────────────────────────────────
-
-/**
- * Lets users add their own GGUF models two ways:
- *  1. Paste a direct download URL (any GGUF from HuggingFace or elsewhere)
- *  2. Pick a .gguf file already on disk (Tauri only — uses a hidden file input)
- */
-function CustomModelSection({ onAdded }: { onAdded: () => void }) {
+function CustomModelRow({ onAdded }: { onAdded: () => void }) {
   const [state, actions] = useLlmContext();
   const { isDownloading, downloadProgress, downloadCancelled } = state;
 
-  const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"url" | "local">("url");
-
-  // URL download state
   const [url, setUrl] = useState("");
   const [customFilename, setCustomFilename] = useState("");
   const [isImporting, setIsImporting] = useState(false);
@@ -596,17 +437,13 @@ function CustomModelSection({ onAdded }: { onAdded: () => void }) {
       const segments = new URL(u).pathname.split("/");
       const last = segments[segments.length - 1];
       if (last.endsWith(".gguf")) return last;
-    } catch {
-      // not a valid URL yet — ignore
-    }
+    } catch { /* ignore */ }
     return "";
   };
 
   const handleUrlChange = (u: string) => {
     setUrl(u);
-    if (!customFilename) {
-      setCustomFilename(deriveFilenameFromUrl(u));
-    }
+    if (!customFilename) setCustomFilename(deriveFilenameFromUrl(u));
   };
 
   const handleUrlDownload = async () => {
@@ -614,16 +451,8 @@ function CustomModelSection({ onAdded }: { onAdded: () => void }) {
     setSuccessMsg(null);
     const trimmedUrl = url.trim();
     if (!trimmedUrl) return;
-
-    let filename = customFilename.trim();
-    if (!filename) {
-      filename = deriveFilenameFromUrl(trimmedUrl);
-    }
-    if (!filename) {
-      filename = "custom-model.gguf";
-    }
+    let filename = customFilename.trim() || deriveFilenameFromUrl(trimmedUrl) || "custom-model.gguf";
     if (!filename.endsWith(".gguf")) filename += ".gguf";
-
     try {
       await actions.downloadModel(filename, [trimmedUrl]);
       setSuccessMsg(`Downloaded: ${filename}`);
@@ -641,24 +470,15 @@ function CustomModelSection({ onAdded }: { onAdded: () => void }) {
     setSuccessMsg(null);
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // In Tauri the webview exposes the real filesystem path via `file.path`
-    // (a Tauri-specific extension). Fall back gracefully in browser.
     const filePath = (file as File & { path?: string }).path;
-
     if (!isTauri() || !filePath) {
-      setLocalError(
-        "Local file import only works in the desktop app. " +
-          "If you're already in the desktop app, try restarting it."
-      );
+      setLocalError("Local file import only works in the desktop app.");
       return;
     }
-
     if (!file.name.endsWith(".gguf")) {
       setLocalError("Only .gguf files are supported.");
       return;
     }
-
     setIsImporting(true);
     try {
       const saved = await actions.importLocalModel(filePath, customFilename.trim());
@@ -670,197 +490,108 @@ function CustomModelSection({ onAdded }: { onAdded: () => void }) {
       setLocalError(msg);
     } finally {
       setIsImporting(false);
-      // Reset file input so the same file can be picked again if needed
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
   const progressPercent = downloadProgress?.percent ?? 0;
+  const isCustomDownloading = isDownloading && downloadProgress && !downloadProgress.filename.startsWith("ggml");
 
   return (
-    <Card className="border-dashed">
-      <CardHeader className="pb-3">
-        <button
-          className="flex items-center justify-between w-full text-left"
-          onClick={() => setOpen((v) => !v)}
-        >
-          <CardTitle className="text-sm flex items-center gap-2 text-muted-foreground">
-            <PackagePlus className="h-4 w-4" />
-            Add Custom Model
-          </CardTitle>
-          <Plus
-            className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-45" : ""}`}
-          />
-        </button>
-        {!open && (
-          <CardDescription className="text-xs mt-1">
-            Add any GGUF model from a URL or from a file already on your machine.
-          </CardDescription>
-        )}
-      </CardHeader>
+    <div className="rounded-lg border border-dashed bg-muted/10 p-4 space-y-3">
+      <div className="flex items-center gap-3">
+        <PackagePlus className="h-4 w-4 text-muted-foreground shrink-0" />
+        <span className="text-sm font-medium text-muted-foreground">Add Custom Model</span>
+        <div className="flex gap-0.5 rounded-md border p-0.5 bg-muted/30 ml-auto">
+          <button
+            className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+              mode === "url" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setMode("url")}
+          >
+            URL
+          </button>
+          <button
+            className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+              mode === "local" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"
+            }`}
+            onClick={() => setMode("local")}
+          >
+            Local File
+          </button>
+        </div>
+      </div>
 
-      {open && (
-        <CardContent className="space-y-4">
-          {/* Mode toggle */}
-          <div className="flex gap-1 rounded-lg border p-1 bg-muted/30 w-fit">
-            <button
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                mode === "url"
-                  ? "bg-background shadow text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setMode("url")}
-            >
-              <Link className="h-3 w-3" />
-              Download from URL
-            </button>
-            <button
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                mode === "local"
-                  ? "bg-background shadow text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setMode("local")}
-            >
-              <FolderOpen className="h-3 w-3" />
-              Use Local File
-            </button>
-          </div>
+      <input ref={fileInputRef} type="file" accept=".gguf" className="hidden" onChange={handleLocalFile} />
 
-          {/* Optional custom filename */}
-          <div className="space-y-1.5">
-            <Label className="text-xs">
-              Save as (optional)
-            </Label>
+      <div className="flex items-end gap-2">
+        {mode === "url" ? (
+          <div className="flex-1">
             <Input
-              placeholder="my-model.gguf — leave blank to use the source filename"
-              value={customFilename}
-              onChange={(e) => setCustomFilename(e.target.value)}
-              className="text-sm h-8"
+              placeholder="https://huggingface.co/.../model.gguf"
+              value={url}
+              onChange={(e) => handleUrlChange(e.target.value)}
+              className="text-xs h-8 font-mono"
             />
           </div>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 h-8"
+            disabled={isImporting}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <FolderOpen className="h-3 w-3" />
+            {isImporting ? "Importing…" : "Choose .gguf"}
+          </Button>
+        )}
+        <Input
+          placeholder="Save as (optional)"
+          value={customFilename}
+          onChange={(e) => setCustomFilename(e.target.value)}
+          className="text-xs h-8 w-44"
+        />
+        {mode === "url" && (
+          <Button
+            size="sm"
+            className="gap-1 h-8 px-3"
+            disabled={!url.trim() || isDownloading}
+            onClick={handleUrlDownload}
+          >
+            <Download className="h-3 w-3" />
+            {isDownloading ? "Downloading…" : "Add"}
+          </Button>
+        )}
+      </div>
 
-          {mode === "url" ? (
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">Download URL</Label>
-                <Input
-                  placeholder="https://huggingface.co/.../model.gguf"
-                  value={url}
-                  onChange={(e) => handleUrlChange(e.target.value)}
-                  className="text-sm h-8 font-mono"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Direct link to any .gguf file. HuggingFace, GitHub, or any CDN.
-                </p>
-              </div>
-
-              {/* Download progress */}
-              {isDownloading && downloadProgress && !downloadProgress.filename.startsWith("ggml") && (
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Downloading…</span>
-                    <span>{formatBytes(downloadProgress.bytes_downloaded)}</span>
-                  </div>
-                  <Progress value={progressPercent} className="h-1.5" />
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">{progressPercent.toFixed(1)}%</span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-5 px-1 text-xs text-destructive"
-                      onClick={actions.cancelDownload}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {downloadCancelled && (
-                <p className="text-xs text-amber-500 flex items-center gap-1">
-                  <AlertCircle className="h-3 w-3" />
-                  Download cancelled.
-                </p>
-              )}
-
-              <Button
-                size="sm"
-                className="w-full gap-1.5"
-                disabled={!url.trim() || isDownloading}
-                onClick={handleUrlDownload}
-              >
-                {isDownloading ? (
-                  <><Download className="h-3.5 w-3.5 animate-bounce" />Downloading…</>
-                ) : (
-                  <><Download className="h-3.5 w-3.5" />Download Model</>
-                )}
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Pick a .gguf file already on your machine. It will be copied into the
-                app's models folder so it can be managed here.
-              </p>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".gguf"
-                className="hidden"
-                onChange={handleLocalFile}
-              />
-
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full gap-1.5"
-                disabled={isImporting}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <FolderOpen className="h-3.5 w-3.5" />
-                {isImporting ? "Importing…" : "Choose .gguf File…"}
-              </Button>
-
-              <div className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
-                <p className="font-medium">Requirements</p>
-                <ul className="list-disc list-inside space-y-0.5">
-                  <li>Must be a valid GGUF file (llama.cpp format)</li>
-                  <li>Compatible with llama-server (most chat/instruct models work)</li>
-                  <li>Quantized versions (Q4_K_M, Q5_K_M, etc.) are recommended</li>
-                  <li>
-                    Find models at{" "}
-                    <a
-                      href="https://huggingface.co/models?library=gguf&sort=trending"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline hover:text-foreground"
-                    >
-                      huggingface.co
-                    </a>
-                  </li>
-                </ul>
-              </div>
-            </div>
-          )}
-
-          {/* Feedback */}
-          {localError && (
-            <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-              {localError}
-            </div>
-          )}
-          {successMsg && (
-            <div className="flex items-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs text-green-600">
-              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              {successMsg}
-            </div>
-          )}
-        </CardContent>
+      {isCustomDownloading && downloadProgress && (
+        <div className="flex items-center gap-3">
+          <Progress value={progressPercent} className="h-1.5 flex-1" />
+          <span className="text-xs text-muted-foreground tabular-nums w-12 text-right">{progressPercent.toFixed(0)}%</span>
+          <button className="text-xs text-destructive hover:underline" onClick={actions.cancelDownload}>Cancel</button>
+        </div>
       )}
-    </Card>
+
+      {downloadCancelled && (
+        <p className="text-xs text-amber-500 flex items-center gap-1">
+          <AlertCircle className="h-3 w-3" />
+          Cancelled.
+        </p>
+      )}
+      {localError && (
+        <p className="text-xs text-destructive flex items-center gap-1">
+          <AlertCircle className="h-3 w-3 shrink-0" />
+          {localError}
+        </p>
+      )}
+      {successMsg && (
+        <p className="text-xs text-green-600 flex items-center gap-1">
+          <CheckCircle2 className="h-3 w-3 shrink-0" />
+          {successMsg}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -873,6 +604,7 @@ function ModelsTab() {
     downloadProgress,
     isDownloading,
     isStarting,
+    isDetecting,
     startingModelName,
     serverStartProgress,
     serverLogs,
@@ -884,12 +616,17 @@ function ModelsTab() {
 
   const [downloadingFilename, setDownloadingFilename] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
-  // Ensure hardware/models are loaded
-  const ensureHardware = useCallback(async () => {
-    if (!hardwareResult) {
-      return await detectHardware();
+  useEffect(() => {
+    if (!hardwareResult && !isDetecting) {
+      detectHardware().catch(() => {});
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const ensureHardware = useCallback(async () => {
+    if (!hardwareResult) return await detectHardware();
     return hardwareResult;
   }, [hardwareResult, detectHardware]);
 
@@ -931,14 +668,31 @@ function ModelsTab() {
     }
   };
 
+  const handleLoadCustom = async (filename: string) => {
+    setLocalError(null);
+    try {
+      const hw = await ensureHardware();
+      await startServer(filename, hw.recommended_gpu_layers, 4096);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setLocalError(msg);
+    }
+  };
+
   const allModels = hardwareResult?.all_models ?? [];
+  const customModels = downloadedModels.filter(
+    (dm) => !allModels.some((m) => m.filename === dm.filename)
+  );
+  const isRunning = !!serverStatus?.running;
+  const runningModelPath = serverStatus?.model_path ?? "";
 
   return (
     <div className="space-y-4">
       {(error || localError) && (
-        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-          <span className="whitespace-pre-wrap">{error ?? localError}</span>
+          <span className="whitespace-pre-wrap flex-1">{error ?? localError}</span>
+          <button className="text-xs underline shrink-0" onClick={() => setLocalError(null)}>Dismiss</button>
         </div>
       )}
 
@@ -950,90 +704,200 @@ function ModelsTab() {
         />
       )}
 
-      {allModels.length === 0 && (
-        <Card>
-          <CardContent className="pt-6 text-center text-muted-foreground text-sm">
-            <Cpu className="h-8 w-8 mx-auto mb-3 opacity-30" />
-            <p>Run hardware detection first to see available models.</p>
-            <Button
-              size="sm"
-              variant="outline"
-              className="mt-3"
-              onClick={detectHardware}
-            >
-              Detect Hardware
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="space-y-3">
-        {allModels.map((model) => {
-          const isDownloaded = downloadedModels.some(
-            (m) => m.filename === model.filename
-          );
-          return (
-            <ModelCard
-              key={model.filename}
-              model={model}
-              isDownloaded={isDownloaded}
-              isServerRunning={!!serverStatus?.running}
-              downloadingFilename={isDownloading ? downloadingFilename : null}
-              downloadProgress={
-                downloadingFilename === model.filename ? downloadProgress : null
-              }
-              onDownload={(m) => handleDownload(m, false)}
-              onDownloadAndRun={(m) => handleDownload(m, true)}
-              onLoad={handleLoad}
-              onDelete={handleDelete}
-              onCancel={cancelDownload}
-            />
-          );
-        })}
-      </div>
-
-      {/* Custom models already on disk but not in the catalog */}
-      {downloadedModels.some(
-        (dm) => !allModels.some((m) => m.filename === dm.filename)
-      ) && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium text-muted-foreground">Your Custom Models</h3>
-          {downloadedModels
-            .filter((dm) => !allModels.some((m) => m.filename === dm.filename))
-            .map((dm) => (
-              <Card key={dm.filename}>
-                <CardContent className="py-3 px-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">{dm.name}</p>
-                    <p className="text-xs text-muted-foreground">{dm.size_gb} GB • Custom</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1"
-                      onClick={() => startServer(dm.filename, 99, 4096)}
-                    >
-                      <Play className="h-3 w-3" />
-                      Load
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive hover:bg-destructive/10"
-                      onClick={() => handleDelete(dm.filename)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+      {allModels.length === 0 && !isDetecting && (
+        <div className="rounded-lg border bg-muted/20 px-6 py-8 text-center text-sm text-muted-foreground">
+          <Cpu className="h-6 w-6 mx-auto mb-2 opacity-30" />
+          <p>Detecting hardware to find compatible models…</p>
+          <Button size="sm" variant="outline" className="mt-3" onClick={detectHardware}>
+            Retry Detection
+          </Button>
         </div>
       )}
 
-      {/* Add a new custom model */}
-      <CustomModelSection onAdded={listModels} />
+      {isDetecting && allModels.length === 0 && (
+        <div className="rounded-lg border bg-muted/20 px-6 py-8 text-center text-sm text-muted-foreground">
+          <Activity className="h-5 w-5 mx-auto mb-2 animate-pulse text-blue-500" />
+          Detecting hardware…
+        </div>
+      )}
+
+      {allModels.length > 0 && (
+        <div className="rounded-lg border overflow-hidden">
+          {/* Table header */}
+          <div className="grid grid-cols-[1fr_72px_64px_72px_80px_100px] gap-px items-center px-4 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b">
+            <span>Model</span>
+            <span className="text-right">Size</span>
+            <span className="text-right">RAM</span>
+            <span className="text-center">Speed</span>
+            <span className="text-center">Tools</span>
+            <span className="text-right">Action</span>
+          </div>
+
+          {/* Model rows */}
+          {allModels.map((model) => {
+            const isDownloaded = downloadedModels.some((m) => m.filename === model.filename);
+            const isDownloadingThis = isDownloading && downloadingFilename === model.filename;
+            const isThisRunning = isRunning && runningModelPath.includes(model.filename);
+            const isExpanded = expandedRow === model.filename;
+
+            return (
+              <div key={model.filename} className="border-b last:border-b-0">
+                <div
+                  className={`grid grid-cols-[1fr_72px_64px_72px_80px_100px] gap-px items-center px-4 py-2.5 text-sm transition-colors hover:bg-muted/20 ${
+                    isThisRunning ? "bg-green-500/5" : ""
+                  }`}
+                >
+                  {/* Name + badges */}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <button
+                      className="flex items-center gap-1.5 min-w-0 text-left"
+                      onClick={() => setExpandedRow(isExpanded ? null : model.filename)}
+                    >
+                      <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                      <span className="font-medium truncate">{model.name}</span>
+                    </button>
+                    {model.tier === "Default" && (
+                      <Badge className="text-[10px] px-1.5 py-0 bg-blue-500/15 text-blue-600 border-blue-500/30 shrink-0">
+                        rec
+                      </Badge>
+                    )}
+                    {isThisRunning && (
+                      <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
+                    )}
+                  </div>
+
+                  {/* Size */}
+                  <span className="text-xs text-muted-foreground text-right tabular-nums">
+                    {model.disk_size_gb.toFixed(1)} GB
+                  </span>
+
+                  {/* RAM */}
+                  <span className="text-xs text-muted-foreground text-right tabular-nums">
+                    {model.ram_required_gb.toFixed(0)} GB
+                  </span>
+
+                  {/* Speed */}
+                  <span className="text-xs text-muted-foreground text-center">{model.speed}</span>
+
+                  {/* Tool calling rating */}
+                  <div className="flex justify-center">
+                    <ToolCallRating rating={model.tool_calling_rating} />
+                  </div>
+
+                  {/* Action button — single context-aware button */}
+                  <div className="flex justify-end">
+                    {isDownloadingThis ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs text-destructive"
+                        onClick={cancelDownload}
+                      >
+                        <X className="h-3 w-3 mr-1" />
+                        Cancel
+                      </Button>
+                    ) : isDownloaded ? (
+                      <div className="flex gap-1">
+                        {!isThisRunning && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs gap-1"
+                            onClick={() => handleLoad(model)}
+                            disabled={isStarting}
+                          >
+                            <Play className="h-3 w-3" />
+                            Run
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDelete(model.filename)}
+                          title="Delete model"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs gap-1"
+                        onClick={() => handleDownload(model, false)}
+                        disabled={isDownloading}
+                      >
+                        <Download className="h-3 w-3" />
+                        Get
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Download progress bar — inline beneath the row */}
+                {isDownloadingThis && downloadProgress && (
+                  <div className="px-4 pb-2 flex items-center gap-3">
+                    <Progress value={downloadProgress.percent} className="h-1 flex-1" />
+                    <span className="text-xs text-muted-foreground tabular-nums w-16 text-right">
+                      {downloadProgress.percent.toFixed(0)}% · {formatBytes(downloadProgress.bytes_downloaded)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Expandable description row */}
+                {isExpanded && (
+                  <div className="px-4 pb-3 pl-9">
+                    <p className="text-xs text-muted-foreground leading-relaxed">{model.description}</p>
+                    {model.is_split && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Split into {model.hf_parts.length + 1} parts · {model.context_length.toLocaleString()} context
+                      </p>
+                    )}
+                    {!model.is_split && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {model.context_length.toLocaleString()} context length
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Custom models in the same table */}
+          {customModels.map((dm) => {
+            const isThisRunning = isRunning && runningModelPath.includes(dm.filename);
+            return (
+              <div key={dm.filename} className={`grid grid-cols-[1fr_72px_64px_72px_80px_100px] gap-px items-center px-4 py-2.5 text-sm border-b last:border-b-0 ${isThisRunning ? "bg-green-500/5" : ""}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-medium truncate pl-5">{dm.name}</span>
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">custom</Badge>
+                  {isThisRunning && <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />}
+                </div>
+                <span className="text-xs text-muted-foreground text-right tabular-nums">{dm.size_gb} GB</span>
+                <span className="text-xs text-muted-foreground text-right">—</span>
+                <span className="text-xs text-muted-foreground text-center">—</span>
+                <span className="text-xs text-muted-foreground text-center">—</span>
+                <div className="flex justify-end gap-1">
+                  {!isThisRunning && (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs gap-1" onClick={() => handleLoadCustom(dm.filename)} disabled={isStarting}>
+                      <Play className="h-3 w-3" />
+                      Run
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(dm.filename)} title="Delete model">
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Always-visible custom model input */}
+      <CustomModelRow onAdded={listModels} />
     </div>
   );
 }
@@ -2163,6 +2027,10 @@ function HardwareTab() {
 
   useEffect(() => {
     listModels();
+    if (!hardwareResult && !isDetecting) {
+      detectHardware().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listModels]);
 
   return (

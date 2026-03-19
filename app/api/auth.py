@@ -31,8 +31,10 @@ _PUBLIC_PATHS = frozenset(
         "/chat/tools",
         "/chat/tools/by-category",
         "/chat/tools/anthropic",
-        "/chat/models",   # read-only model list, no user data
-        "/chat/agents",   # read-only agent/prompt list, no user data — frontend calls this before auth
+        "/chat/models",         # read-only model list, no user data
+        "/chat/agents",         # read-only agent/prompt list, no user data — frontend calls this before auth
+        "/chat/sync/status",    # read-only sync status — useful for diagnostics before auth
+        "/chat/sync/trigger",   # force sync — public so it can be called from setup/diagnostics
         "/remote-scraper/queue/poller-stats",
         "/docs",
         "/openapi.json",

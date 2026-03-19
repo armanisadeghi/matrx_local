@@ -2,9 +2,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
+import { useTranscriptionSessions } from "@/hooks/use-transcription-sessions";
 import { usePermissionsContext } from "@/contexts/PermissionsContext";
 import { Button } from "@/components/ui/button";
 import { DownloadProgress } from "@/components/DownloadProgress";
+import { TranscriptionMiniMode } from "@/components/TranscriptionMiniMode";
+import { engine } from "@/lib/api";
 import {
   Mic,
   MicOff,
@@ -21,6 +24,14 @@ import {
   ChevronRight,
   Loader2,
   Info,
+  Clock,
+  Copy,
+  Check,
+  Plus,
+  Pencil,
+  FileText,
+  Minimize2,
+  ChevronLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emitClientLog } from "@/hooks/use-client-log";
@@ -28,6 +39,7 @@ import type {
   WhisperModelTier,
   HardwareDetectionResult,
   ModelInfo,
+  TranscriptionSession,
 } from "@/lib/transcription/types";
 
 const TABS = [
@@ -43,6 +55,10 @@ const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const [state, actions] = useTranscription();
+  const [sessionsState, sessionsActions] = useTranscriptionSessions();
+  const [isMiniMode, setIsMiniMode] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const recordingStartRef = useRef<number>(0);
 
   // Wire state changes to the unified log bus
   useEffect(() => {
@@ -131,24 +147,122 @@ export function Voice() {
     deleteModel: wrappedDeleteModel,
   };
 
+  // Session-aware recording start: always create a new session
+  const handleStartNewRecording = useCallback(async () => {
+    const session = sessionsActions.startNew(
+      state.activeModel,
+      state.selectedDevice
+    );
+    setActiveSessionId(session.id);
+    recordingStartRef.current = Date.now();
+    await actions.startRecording();
+  }, [sessionsActions, state.activeModel, state.selectedDevice, actions]);
+
+  // Session-aware continue recording (append to existing session)
+  const handleContinueRecording = useCallback(async (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    recordingStartRef.current = Date.now();
+    await actions.startRecording();
+  }, [actions]);
+
+  // When stopping, finalize the session
+  const handleStopRecording = useCallback(async () => {
+    await actions.stopRecording();
+    if (activeSessionId) {
+      const elapsed = Math.round((Date.now() - recordingStartRef.current) / 1000);
+      sessionsActions.finalize(activeSessionId, elapsed);
+    }
+  }, [actions, activeSessionId, sessionsActions]);
+
+  // When new segments arrive, persist them immediately
+  const prevSegmentCountRef = useRef(0);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    if (state.segments.length > prevSegmentCountRef.current) {
+      const newSegs = state.segments.slice(prevSegmentCountRef.current);
+      prevSegmentCountRef.current = state.segments.length;
+      sessionsActions.append(activeSessionId, newSegs);
+    }
+  }, [state.segments, activeSessionId, sessionsActions]);
+
+  // Reset segment tracking when recording starts fresh
+  useEffect(() => {
+    if (state.isRecording) {
+      prevSegmentCountRef.current = 0;
+    }
+  }, [state.isRecording]);
+
+  // Open the viewing session to the active recording session when one starts
+  useEffect(() => {
+    if (activeSessionId) {
+      sessionsActions.open(activeSessionId);
+    }
+  }, [activeSessionId, sessionsActions]);
+
+  if (isMiniMode) {
+    return (
+      <TranscriptionMiniMode
+        isRecording={state.isRecording}
+        isProcessingTail={state.isProcessingTail}
+        isCalibrating={state.isCalibrating}
+        liveRms={state.liveRms}
+        recentText={state.fullTranscript}
+        onStartRecording={handleStartNewRecording}
+        onStopRecording={handleStopRecording}
+        onExpand={() => setIsMiniMode(false)}
+        onClose={() => setIsMiniMode(false)}
+      />
+    );
+  }
+
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title="Voice"
         description="Local speech-to-text transcription powered by Whisper"
-      />
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setIsMiniMode(true)}
+          className="gap-1.5 text-muted-foreground"
+          title="Switch to compact floating mode"
+        >
+          <Minimize2 className="h-4 w-4" />
+          Mini Mode
+        </Button>
+      </PageHeader>
       <SubTabBar tabs={TABS} value={tab} onValueChange={setTab} />
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-hidden">
         {tab === "setup" && (
-          <SetupTab state={state} actions={wrappedActions} />
+          <div className="h-full overflow-y-auto p-6">
+            <SetupTab state={state} actions={wrappedActions} />
+          </div>
         )}
         {tab === "transcribe" && (
-          <TranscribeTab state={state} actions={actions} />
+          <TranscribeTab
+            state={state}
+            actions={{
+              ...actions,
+              startRecording: handleStartNewRecording,
+              stopRecording: handleStopRecording,
+            }}
+            sessionsState={sessionsState}
+            sessionsActions={sessionsActions}
+            activeSessionId={activeSessionId}
+            onContinueSession={handleContinueRecording}
+          />
         )}
         {tab === "models" && (
-          <ModelsTab state={state} actions={wrappedActions} />
+          <div className="h-full overflow-y-auto p-6">
+            <ModelsTab state={state} actions={wrappedActions} />
+          </div>
         )}
-        {tab === "devices" && <DevicesTab state={state} actions={actions} />}
+        {tab === "devices" && (
+          <div className="h-full overflow-y-auto p-6">
+            <DevicesTab state={state} actions={actions} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -227,7 +341,6 @@ function SetupTab({
           </div>
         </div>
 
-        {/* Download progress */}
         <DownloadProgress
           progress={state.downloadProgress}
           isDownloading={state.isDownloading}
@@ -236,7 +349,6 @@ function SetupTab({
         />
       </div>
 
-      {/* Error display */}
       {state.error && (
         <div className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
           <AlertCircle className="mt-0.5 h-4 w-4 text-red-500 flex-shrink-0" />
@@ -255,11 +367,8 @@ function SetupTab({
         </div>
       )}
 
-      {/* Hardware Info */}
       <HardwareInfoCard state={state} actions={actions} />
 
-
-      {/* How it works */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
         <h3 className="font-semibold flex items-center gap-2">
           <Info className="h-4 w-4 text-muted-foreground" />
@@ -276,7 +385,7 @@ function SetupTab({
           </div>
           <div className="flex items-start gap-3">
             <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">3</div>
-            <p><strong className="text-foreground">Future: Wake words</strong> — This system will support custom wake words that trigger AI agents automatically.</p>
+            <p><strong className="text-foreground">Every recording saved</strong> — All sessions are persisted locally. Browse your history in the Transcribe tab.</p>
           </div>
         </div>
       </div>
@@ -296,7 +405,6 @@ function HardwareInfoCard({
   const hw = state.hardwareResult;
   const didAutoDetect = useRef(false);
 
-  // Auto-detect on first render if we have no hardware info yet
   useEffect(() => {
     if (!hw && !state.isDetecting && !didAutoDetect.current) {
       didAutoDetect.current = true;
@@ -330,7 +438,6 @@ function HardwareInfoCard({
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Hardware specs grid */}
           <div className="grid grid-cols-2 gap-3">
             <HardwareStat
               icon={<HardDrive className="h-4 w-4" />}
@@ -354,7 +461,6 @@ function HardwareInfoCard({
             />
           </div>
 
-          {/* Recommendation */}
           <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
@@ -371,8 +477,7 @@ function HardwareInfoCard({
             </div>
             {hw.can_upgrade && (
               <p className="text-xs text-amber-500 mt-1">
-                Your system can handle a higher-quality model. Check the Models
-                tab for options.
+                Your system can handle a higher-quality model. Check the Models tab for options.
               </p>
             )}
           </div>
@@ -407,12 +512,29 @@ function HardwareStat({
 function TranscribeTab({
   state,
   actions,
+  sessionsState,
+  sessionsActions,
+  activeSessionId,
+  onContinueSession,
 }: {
   state: ReturnType<typeof useTranscription>[0];
-  actions: ReturnType<typeof useTranscription>[1];
+  actions: ReturnType<typeof useTranscription>[1] & {
+    startRecording: () => Promise<void>;
+    stopRecording: () => Promise<void>;
+  };
+  sessionsState: ReturnType<typeof useTranscriptionSessions>[0];
+  sessionsActions: ReturnType<typeof useTranscriptionSessions>[1];
+  activeSessionId: string | null;
+  onContinueSession: (sessionId: string) => Promise<void>;
 }) {
   const { permissions, check, request, openSettings } = usePermissionsContext();
   const [permError, setPermError] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(true);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [pushingToNote, setPushingToNote] = useState<string | null>(null);
+  const [pushSuccess, setPushSuccess] = useState<string | null>(null);
 
   // Load device list if not yet populated
   useEffect(() => {
@@ -422,22 +544,16 @@ function TranscribeTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /**
-   * Permission-gated start: checks microphone TCC status before invoking
-   * start_transcription. Handles all four AVAuthorizationStatus cases so
-   * the user always gets a clear, actionable message — never silent failure.
-   */
   const handleStartRecording = useCallback(async () => {
     setPermError(null);
-    const status = (await check("microphone"));
+    const status = await check("microphone");
     if (status === "granted") {
       await actions.startRecording();
       return;
     }
     if (status === "not_determined") {
-      // Show the OS permission dialog. After the user responds, re-check.
       await request("microphone");
-      const recheck = (await check("microphone"));
+      const recheck = await check("microphone");
       if (recheck === "granted") {
         await actions.startRecording();
       } else {
@@ -454,22 +570,83 @@ function TranscribeTab({
       await openSettings("microphone");
       return;
     }
-    // "unavailable" or "unknown" — try anyway; Rust will emit whisper-error if it fails
     await actions.startRecording();
   }, [check, request, openSettings, actions]);
+
+  const handleContinueRecording = useCallback(async (sessionId: string) => {
+    setPermError(null);
+    const status = await check("microphone");
+    if (status === "granted") {
+      sessionsActions.open(sessionId);
+      await onContinueSession(sessionId);
+      return;
+    }
+    if (status === "not_determined") {
+      await request("microphone");
+      const recheck = await check("microphone");
+      if (recheck === "granted") {
+        sessionsActions.open(sessionId);
+        await onContinueSession(sessionId);
+      } else {
+        setPermError("Microphone access is required for transcription.");
+      }
+      return;
+    }
+    setPermError("Microphone access denied. Check System Settings → Privacy & Security.");
+  }, [check, request, onContinueSession, sessionsActions]);
+
+  const handleCopy = useCallback((text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  }, []);
+
+  const handlePushToNote = useCallback(async (session: TranscriptionSession) => {
+    if (!engine.engineUrl) return;
+    setPushingToNote(session.id);
+    try {
+      const date = new Date(session.createdAt);
+      const label = session.title
+        ? session.title
+        : `Voice Note — ${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+      await engine.createNote("local", {
+        label,
+        content: session.fullText,
+        folder_name: "Voice Notes",
+      });
+      setPushSuccess(session.id);
+      setTimeout(() => setPushSuccess(null), 3000);
+    } catch (err) {
+      console.error("[voice] push to note failed:", err);
+    } finally {
+      setPushingToNote(null);
+    }
+  }, []);
+
+  const handleStartTitleEdit = useCallback((session: TranscriptionSession) => {
+    setEditingTitleId(session.id);
+    setTitleDraft(session.title ?? "");
+  }, []);
+
+  const handleSaveTitle = useCallback(() => {
+    if (!editingTitleId) return;
+    sessionsActions.rename(editingTitleId, titleDraft.trim() || null);
+    setEditingTitleId(null);
+  }, [editingTitleId, titleDraft, sessionsActions]);
 
   const setupDoneInConfig = state.setupStatus?.setup_complete ?? false;
   const modelLoadedInMemory = state.activeModel !== null;
 
-  // Config says ready but model isn't in memory yet — it's being auto-loaded
-  // on startup. Show a spinner instead of the unhelpful "Setup Required" gate.
+  const defaultDevice = state.audioDevices.find((d) => d.is_default);
+  const activeDeviceName = state.selectedDevice ?? defaultDevice?.name ?? "System default";
+
   if (setupDoneInConfig && !modelLoadedInMemory) {
     return (
-      <div className="mx-auto max-w-2xl">
-        <div className="flex flex-col items-center justify-center rounded-xl border bg-card p-12 text-center space-y-4">
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="flex flex-col items-center justify-center rounded-xl border bg-card p-12 text-center space-y-4 max-w-md w-full">
           <Loader2 className="h-10 w-10 text-primary animate-spin" />
           <h3 className="text-lg font-semibold">Loading model…</h3>
-          <p className="text-sm text-muted-foreground max-w-md">
+          <p className="text-sm text-muted-foreground">
             {state.setupStatus?.selected_model
               ? `Loading ${state.setupStatus.selected_model} into memory. This takes a few seconds.`
               : "Initializing transcription engine…"}
@@ -490,255 +667,490 @@ function TranscribeTab({
 
   if (!setupDoneInConfig) {
     return (
-      <div className="mx-auto max-w-2xl">
-        <div className="flex flex-col items-center justify-center rounded-xl border bg-card p-12 text-center space-y-4">
+      <div className="flex h-full items-center justify-center p-6">
+        <div className="flex flex-col items-center justify-center rounded-xl border bg-card p-12 text-center space-y-4 max-w-md w-full">
           <Mic className="h-12 w-12 text-muted-foreground/30" />
           <h3 className="text-lg font-semibold">Setup Required</h3>
           <p className="text-sm text-muted-foreground max-w-md">
-            Complete the voice setup first to enable transcription. Go to the
-            Setup tab and click "One-Click Setup".
+            Complete the voice setup first to enable transcription. Go to the Setup tab and click "One-Click Setup".
           </p>
         </div>
       </div>
     );
   }
 
-  // Resolve which device is actually active (for display when "Default" is selected)
-  const defaultDevice = state.audioDevices.find((d) => d.is_default);
-  const activeDeviceName = state.selectedDevice ?? defaultDevice?.name ?? "System default";
+  const viewingSession = sessionsState.viewingSession;
+  const isViewingActive = viewingSession?.id === activeSessionId && state.isRecording;
+  const displaySegments = isViewingActive ? state.segments : (viewingSession?.segments ?? []);
+  const displayText = isViewingActive ? state.fullTranscript : (viewingSession?.fullText ?? "");
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {/* Active configuration status bar */}
-      <div className="rounded-xl border bg-card px-5 py-4">
-        <div className="flex items-center gap-6 flex-wrap">
-          <div className="flex items-center gap-2 min-w-0">
-            <Cpu className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground">Model</p>
-              <p className="text-sm font-medium truncate">
-                {state.activeModel ?? (
-                  <span className="text-amber-500 italic">No model loaded</span>
-                )}
-              </p>
-            </div>
-          </div>
-          <div className="w-px h-8 bg-border flex-shrink-0 hidden sm:block" />
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            <Mic className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground">
-                Microphone{state.selectedDevice ? "" : " (system default)"}
-              </p>
-              <p className="text-sm font-medium truncate">{activeDeviceName}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Recording controls */}
-      <div className="rounded-xl border bg-card p-6">
-        <div className="mb-4">
-          <h3 className="font-semibold">Live Transcription</h3>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {state.isRecording
-              ? "Listening… speak into your microphone"
-              : state.isProcessingTail
-              ? "Processing remaining audio…"
-              : "Click the microphone to start transcribing"}
-          </p>
-        </div>
-
-        {/* Device quick-select */}
-        {state.audioDevices.length > 0 && (
-          <div className="mb-4 flex flex-wrap gap-2">
+    <div className="flex h-full overflow-hidden">
+      {/* ── Sidebar: Session History ── */}
+      {showHistory && (
+        <div className="w-64 shrink-0 border-r flex flex-col h-full">
+          <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Recordings
+            </span>
             <button
-              onClick={() => actions.setSelectedDevice(null)}
+              onClick={() => setShowHistory(false)}
+              className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              title="Hide sidebar"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* New Recording button */}
+          <div className="px-2 py-2 shrink-0">
+            <button
+              onClick={handleStartRecording}
+              disabled={state.isRecording || state.isProcessingTail}
               className={cn(
-                "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
-                !state.selectedDevice
-                  ? "border-primary bg-primary/10 text-primary font-medium"
-                  : "border-border text-muted-foreground hover:border-primary/40"
+                "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                state.isRecording || state.isProcessingTail
+                  ? "bg-muted text-muted-foreground cursor-not-allowed"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90"
               )}
             >
-              <Volume2 className="h-3 w-3" />
-              Default
-              {!state.selectedDevice && defaultDevice && (
-                <span className="text-primary/70 ml-1">({defaultDevice.name})</span>
-              )}
+              <Plus className="h-4 w-4 shrink-0" />
+              New Recording
             </button>
-            {state.audioDevices.map((dev, i) => (
-              <button
-                key={i}
-                onClick={() => actions.setSelectedDevice(dev.name)}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors max-w-[220px]",
-                  state.selectedDevice === dev.name
-                    ? "border-primary bg-primary/10 text-primary font-medium"
-                    : "border-border text-muted-foreground hover:border-primary/40"
-                )}
-              >
-                <Mic className="h-3 w-3 flex-shrink-0" />
-                <span className="truncate">{dev.name}</span>
-              </button>
-            ))}
           </div>
-        )}
 
-        <div className="flex flex-col items-center gap-4 py-6">
-          {/* Permission status indicator — shown when mic is not granted */}
-          {permissions.get("microphone")?.status === "denied" && !state.isRecording && (
-            <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-500">
-              <MicOff className="h-4 w-4 flex-shrink-0" />
-              <span>Microphone access denied.</span>
-              <button
-                className="underline underline-offset-2 hover:text-amber-400"
-                onClick={() => openSettings("microphone")}
-              >
-                Open Settings
-              </button>
-            </div>
-          )}
-
-          <button
-            onClick={
-              state.isRecording
-                ? actions.stopRecording
-                : state.isProcessingTail
-                ? undefined // disabled while flushing
-                : handleStartRecording
-            }
-            disabled={state.isProcessingTail}
-            className={cn(
-              "flex h-20 w-20 items-center justify-center rounded-full transition-all duration-300",
-              state.isRecording
-                ? "bg-red-500 text-white shadow-lg shadow-red-500/25 hover:bg-red-600"
-                : state.isProcessingTail
-                ? "bg-amber-500 text-white shadow-lg shadow-amber-500/25 cursor-wait"
-                : "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90"
-            )}
-            style={
-              state.isRecording && state.liveRms > 0.00005
-                ? { boxShadow: `0 0 ${8 + Math.min(state.liveRms * 8000, 40)}px ${4 + Math.min(state.liveRms * 4000, 20)}px rgba(239,68,68,${Math.min(0.2 + state.liveRms * 200, 0.6)})` }
-                : undefined
-            }
-          >
-            {state.isProcessingTail ? (
-              <Loader2 className="h-8 w-8 animate-spin" />
-            ) : state.isRecording ? (
-              <MicOff className="h-8 w-8" />
+          {/* Session list */}
+          <div className="flex-1 overflow-y-auto">
+            {sessionsState.sessions.length === 0 ? (
+              <div className="px-4 py-8 text-center">
+                <Mic className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
+                <p className="text-xs text-muted-foreground">No recordings yet</p>
+              </div>
             ) : (
-              <Mic className="h-8 w-8" />
+              <div className="p-2 space-y-0.5">
+                {sessionsState.sessions.map((session) => {
+                  const isActive = session.id === activeSessionId && state.isRecording;
+                  const isViewing = session.id === sessionsState.viewingSessionId;
+                  const date = new Date(session.createdAt);
+
+                  return (
+                    <button
+                      key={session.id}
+                      onClick={() => sessionsActions.open(session.id)}
+                      className={cn(
+                        "w-full text-left rounded-lg px-3 py-2.5 transition-colors group relative",
+                        isViewing
+                          ? "bg-primary/10 text-primary"
+                          : "hover:bg-muted text-foreground"
+                      )}
+                    >
+                      <div className="flex items-start gap-2">
+                        {isActive ? (
+                          <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse mt-1 shrink-0" />
+                        ) : (
+                          <Mic className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium truncate leading-tight">
+                            {session.title ?? formatSessionTitle(date)}
+                          </p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <Clock className="h-2.5 w-2.5 text-muted-foreground/60 shrink-0" />
+                            <span className="text-[10px] text-muted-foreground/60">
+                              {formatRelativeTime(date)}
+                            </span>
+                            {session.charCount > 0 && (
+                              <span className="text-[10px] text-muted-foreground/60">
+                                · {session.charCount}c
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             )}
-          </button>
+          </div>
+        </div>
+      )}
 
-          {state.isProcessingTail && (
-            <p className="text-xs text-amber-500 text-center">
-              Finishing transcription of last audio chunk…
-            </p>
+      {/* ── Main panel ── */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
+        {/* Show history toggle when sidebar is hidden */}
+        {!showHistory && (
+          <div className="shrink-0 px-4 pt-3">
+            <button
+              onClick={() => setShowHistory(true)}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+              Show history
+            </button>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Active config bar */}
+          <div className="rounded-xl border bg-card px-4 py-3">
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-2 min-w-0">
+                <Cpu className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground">Model</p>
+                  <p className="text-sm font-medium truncate">
+                    {state.activeModel ?? (
+                      <span className="text-amber-500 italic">No model loaded</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="w-px h-8 bg-border shrink-0 hidden sm:block" />
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <Mic className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-foreground">
+                    Microphone{state.selectedDevice ? "" : " (system default)"}
+                  </p>
+                  <p className="text-sm font-medium truncate">{activeDeviceName}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Permission error */}
+          {permError && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 text-amber-500 shrink-0" />
+              <p className="text-sm text-amber-400">{permError}</p>
+            </div>
           )}
 
-          {/* Live audio level meter */}
-          {state.isRecording && (
-            <div className="w-full max-w-xs space-y-1.5">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
-                  {state.isCalibrating ? "Calibrating mic level…" : "Recording"}
-                  {state.selectedDevice && (
-                    <span className="text-muted-foreground/60">· {state.selectedDevice}</span>
-                  )}
-                </span>
-                <span className="font-mono tabular-nums">
-                  {state.liveRms > 0 ? (state.liveRms * 1000).toFixed(2) : "—"}
-                </span>
-              </div>
-              <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-                <div
+          {/* Engine error */}
+          {state.error && (
+            <div className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+              <AlertCircle className="mt-0.5 h-4 w-4 text-red-500 shrink-0" />
+              <p className="text-sm text-red-400">{state.error}</p>
+            </div>
+          )}
+
+          {/* Recording controls */}
+          <div className="rounded-xl border bg-card p-5">
+            <div className="mb-3">
+              <h3 className="font-semibold">
+                {state.isRecording
+                  ? "Recording…"
+                  : state.isProcessingTail
+                  ? "Processing…"
+                  : "Ready to Record"}
+              </h3>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {state.isRecording
+                  ? "Listening… speak into your microphone"
+                  : state.isProcessingTail
+                  ? "Processing remaining audio…"
+                  : "Each recording is automatically saved to history"}
+              </p>
+            </div>
+
+            {/* Device quick-select */}
+            {state.audioDevices.length > 0 && (
+              <div className="mb-4 flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => actions.setSelectedDevice(null)}
                   className={cn(
-                    "h-full rounded-full transition-all duration-75",
-                    state.liveRms > 0.001 ? "bg-green-500" : state.liveRms > 0.0001 ? "bg-yellow-500" : "bg-red-400"
+                    "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+                    !state.selectedDevice
+                      ? "border-primary bg-primary/10 text-primary font-medium"
+                      : "border-border text-muted-foreground hover:border-primary/40"
                   )}
-                  style={{ width: `${Math.min(state.liveRms * 10000, 100)}%` }}
-                />
+                >
+                  <Volume2 className="h-3 w-3" />
+                  Default
+                </button>
+                {state.audioDevices.map((dev, i) => (
+                  <button
+                    key={i}
+                    onClick={() => actions.setSelectedDevice(dev.name)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors max-w-[200px]",
+                      state.selectedDevice === dev.name
+                        ? "border-primary bg-primary/10 text-primary font-medium"
+                        : "border-border text-muted-foreground hover:border-primary/40"
+                    )}
+                  >
+                    <Mic className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{dev.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="flex flex-col items-center gap-3 py-4">
+              {/* Mic permission denied banner */}
+              {permissions.get("microphone")?.status === "denied" && !state.isRecording && (
+                <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-500">
+                  <MicOff className="h-4 w-4 shrink-0" />
+                  <span>Microphone access denied.</span>
+                  <button
+                    className="underline underline-offset-2 hover:text-amber-400"
+                    onClick={() => openSettings("microphone")}
+                  >
+                    Open Settings
+                  </button>
+                </div>
+              )}
+
+              {/* Main mic button */}
+              <button
+                onClick={
+                  state.isRecording
+                    ? actions.stopRecording
+                    : state.isProcessingTail
+                    ? undefined
+                    : handleStartRecording
+                }
+                disabled={state.isProcessingTail}
+                className={cn(
+                  "flex h-20 w-20 items-center justify-center rounded-full transition-all duration-300",
+                  state.isRecording
+                    ? "bg-red-500 text-white shadow-lg shadow-red-500/25 hover:bg-red-600"
+                    : state.isProcessingTail
+                    ? "bg-amber-500 text-white shadow-lg shadow-amber-500/25 cursor-wait"
+                    : "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90"
+                )}
+                style={
+                  state.isRecording && state.liveRms > 0.00005
+                    ? { boxShadow: `0 0 ${8 + Math.min(state.liveRms * 8000, 40)}px ${4 + Math.min(state.liveRms * 4000, 20)}px rgba(239,68,68,${Math.min(0.2 + state.liveRms * 200, 0.6)})` }
+                    : undefined
+                }
+              >
+                {state.isProcessingTail ? (
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                ) : state.isRecording ? (
+                  <MicOff className="h-8 w-8" />
+                ) : (
+                  <Mic className="h-8 w-8" />
+                )}
+              </button>
+
+              {state.isProcessingTail && (
+                <p className="text-xs text-amber-500 text-center">
+                  Finishing transcription of last audio chunk…
+                </p>
+              )}
+
+              {/* Live audio level meter */}
+              {state.isRecording && (
+                <div className="w-full max-w-xs space-y-1.5">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                      {state.isCalibrating ? "Calibrating mic level…" : "Recording"}
+                      {state.selectedDevice && (
+                        <span className="text-muted-foreground/60">· {state.selectedDevice}</span>
+                      )}
+                    </span>
+                    <span className="font-mono tabular-nums">
+                      {state.liveRms > 0 ? (state.liveRms * 1000).toFixed(2) : "—"}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all duration-75",
+                        state.liveRms > 0.001 ? "bg-green-500" : state.liveRms > 0.0001 ? "bg-yellow-500" : "bg-red-400"
+                      )}
+                      style={{ width: `${Math.min(state.liveRms * 10000, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Viewing session / live transcript */}
+          {(viewingSession || state.isRecording) && (
+            <div className="rounded-xl border bg-card">
+              {/* Session header */}
+              {viewingSession && (
+                <div className="flex items-center gap-3 px-5 py-3 border-b">
+                  {editingTitleId === viewingSession.id ? (
+                    <div className="flex-1 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={titleDraft}
+                        onChange={(e) => setTitleDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveTitle();
+                          if (e.key === "Escape") setEditingTitleId(null);
+                        }}
+                        placeholder="Add a title…"
+                        autoFocus
+                        className="flex-1 bg-transparent text-sm font-medium outline-none border-b border-primary/50 pb-0.5"
+                      />
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={handleSaveTitle}>
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => setEditingTitleId(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <h3 className="font-semibold truncate text-sm">
+                        {viewingSession.title ?? formatSessionTitle(new Date(viewingSession.createdAt))}
+                      </h3>
+                      {isViewingActive && (
+                        <span className="flex items-center gap-1 text-xs text-red-500">
+                          <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                          Live
+                        </span>
+                      )}
+                      <button
+                        onClick={() => handleStartTitleEdit(viewingSession)}
+                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                        title="Edit title"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Continue recording */}
+                    {!state.isRecording && !state.isProcessingTail && viewingSession.segments.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs gap-1"
+                        onClick={() => handleContinueRecording(viewingSession.id)}
+                        title="Continue recording into this session"
+                      >
+                        <Mic className="h-3 w-3" />
+                        Continue
+                      </Button>
+                    )}
+
+                    {/* Push to note */}
+                    {viewingSession.fullText.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                          "h-7 px-2 text-xs gap-1",
+                          pushSuccess === viewingSession.id && "text-emerald-500"
+                        )}
+                        onClick={() => handlePushToNote(viewingSession)}
+                        disabled={pushingToNote === viewingSession.id}
+                        title="Save transcript as a note"
+                      >
+                        {pushingToNote === viewingSession.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : pushSuccess === viewingSession.id ? (
+                          <Check className="h-3 w-3" />
+                        ) : (
+                          <FileText className="h-3 w-3" />
+                        )}
+                        {pushSuccess === viewingSession.id ? "Saved!" : "Push to Note"}
+                      </Button>
+                    )}
+
+                    {/* Copy */}
+                    {viewingSession.fullText.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                          "h-7 px-2 text-xs gap-1",
+                          copiedId === viewingSession.id && "text-emerald-500"
+                        )}
+                        onClick={() => handleCopy(viewingSession.fullText, viewingSession.id)}
+                        title="Copy transcript"
+                      >
+                        {copiedId === viewingSession.id ? (
+                          <Check className="h-3 w-3" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                        {copiedId === viewingSession.id ? "Copied!" : "Copy"}
+                      </Button>
+                    )}
+
+                    {/* Delete */}
+                    {!isViewingActive && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 px-0 text-muted-foreground hover:text-red-500"
+                        onClick={() => sessionsActions.remove(viewingSession.id)}
+                        title="Delete recording"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Transcript content */}
+              <div className="px-5 py-4">
+                {viewingSession && (
+                  <div className="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
+                    <span>{new Date(viewingSession.createdAt).toLocaleString()}</span>
+                    {viewingSession.durationSecs > 0 && (
+                      <span>· {formatDuration(viewingSession.durationSecs)}</span>
+                    )}
+                    {viewingSession.modelUsed && (
+                      <span>· {viewingSession.modelUsed}</span>
+                    )}
+                  </div>
+                )}
+
+                {displaySegments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground italic">
+                    {state.isRecording
+                      ? "Waiting for speech…"
+                      : state.isProcessingTail
+                      ? "Processing last audio chunk…"
+                      : "No transcript yet. Start recording to begin."}
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {displaySegments.map((seg, i) => (
+                      <div key={i} className="flex items-start gap-3 text-sm group">
+                        <span className="text-xs text-muted-foreground font-mono pt-0.5 opacity-0 group-hover:opacity-100 transition-opacity min-w-[52px] shrink-0">
+                          {formatTime(seg.start_sec)}
+                        </span>
+                        <span className="leading-relaxed">{seg.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {displayText.length > 0 && (
+                  <div className="border-t mt-4 pt-4">
+                    <p className="text-xs text-muted-foreground mb-2 font-medium">Full transcript</p>
+                    <p className="text-sm leading-relaxed">{displayText}</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
-        </div>
-      </div>
 
-      {/* Permission error */}
-      {permError && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
-          <AlertCircle className="mt-0.5 h-4 w-4 text-amber-500 flex-shrink-0" />
-          <p className="text-sm text-amber-400">{permError}</p>
-        </div>
-      )}
-
-      {/* Transcription / Rust error */}
-      {state.error && (
-        <div className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
-          <AlertCircle className="mt-0.5 h-4 w-4 text-red-500 flex-shrink-0" />
-          <p className="text-sm text-red-400">{state.error}</p>
-        </div>
-      )}
-
-      {/* Transcript output */}
-      <div className="rounded-xl border bg-card p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Transcript</h3>
-          {state.segments.length > 0 && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  navigator.clipboard.writeText(state.fullTranscript);
-                }}
-              >
-                Copy
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={actions.clearSegments}
-              >
-                Clear
-              </Button>
+          {/* Empty state when no session selected and not recording */}
+          {!viewingSession && !state.isRecording && (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <Mic className="h-12 w-12 text-muted-foreground/20 mb-4" />
+              <h3 className="text-sm font-medium text-muted-foreground">No recording selected</h3>
+              <p className="text-xs text-muted-foreground/60 mt-1">
+                Click "New Recording" or select one from the sidebar
+              </p>
             </div>
           )}
         </div>
-
-        {state.segments.length === 0 ? (
-          <p className="text-sm text-muted-foreground italic">
-            {state.isRecording
-              ? "Waiting for speech…"
-              : state.isProcessingTail
-              ? "Processing last audio chunk…"
-              : "No transcript yet. Start recording to begin."}
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {state.segments.map((seg, i) => (
-              <div key={i} className="flex items-start gap-3 text-sm group">
-                <span className="text-xs text-muted-foreground font-mono pt-0.5 opacity-0 group-hover:opacity-100 transition-opacity min-w-[60px]">
-                  {formatTime(seg.start_sec)}
-                </span>
-                <span>{seg.text}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Full merged transcript */}
-        {state.fullTranscript.length > 0 && (
-          <div className="border-t pt-4 mt-4">
-            <p className="text-xs text-muted-foreground mb-2 font-medium">
-              Full transcript
-            </p>
-            <p className="text-sm leading-relaxed">{state.fullTranscript}</p>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -784,8 +1196,7 @@ function ModelsTab({
       <div className="rounded-xl border bg-card p-6 space-y-4">
         <h3 className="font-semibold">Available Models</h3>
         <p className="text-sm text-muted-foreground">
-          All models use the same API — switching models only changes accuracy
-          and speed. English-only models are optimized for English transcription.
+          All models use the same API — switching models only changes accuracy and speed.
         </p>
 
         <div className="space-y-3">
@@ -793,8 +1204,7 @@ function ModelsTab({
             const isDownloaded = downloaded.includes(model.filename);
             const isActive = state.activeModel === model.filename;
             const isDownloading = downloadingFile === model.filename;
-            const isRecommended =
-              hw?.recommended_filename === model.filename;
+            const isRecommended = hw?.recommended_filename === model.filename;
 
             return (
               <div
@@ -819,9 +1229,7 @@ function ModelsTab({
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      {model.description}
-                    </p>
+                    <p className="text-sm text-muted-foreground">{model.description}</p>
                   </div>
                 </div>
 
@@ -865,17 +1273,13 @@ function ModelsTab({
                       </Button>
                     </div>
                   ) : (
-                    <Button
-                      size="sm"
-                      onClick={() => handleDownloadAndActivate(model)}
-                    >
+                    <Button size="sm" onClick={() => handleDownloadAndActivate(model)}>
                       <Download className="mr-1 h-3 w-3" />
                       Download & Activate
                     </Button>
                   )}
                 </div>
 
-                {/* Download progress for this model */}
                 {isDownloading && (
                   <DownloadProgress
                     progress={state.downloadProgress}
@@ -901,26 +1305,20 @@ function ModelsTab({
         )}
       </div>
 
-      {/* Model file info */}
       <div className="rounded-xl border bg-card p-6 space-y-3">
         <h3 className="font-semibold text-sm">Technical Details</h3>
         <div className="space-y-2 text-xs text-muted-foreground">
           <p>
-            Models are GGML format files from the whisper.cpp project. They are
-            downloaded from Hugging Face and stored locally.
+            Models are GGML format files from the whisper.cpp project. Downloaded from Hugging Face and stored locally.
           </p>
           <p>
-            <code className="bg-muted px-1 py-0.5 rounded">.en</code> suffix
-            means English-only (optimized). For multilingual support, different
-            models will be available in a future update.
+            <code className="bg-muted px-1 py-0.5 rounded">.en</code> suffix means English-only (optimized).
           </p>
           <p>
-            Switching models reinitializes the transcription context. The API is
-            identical across all models — only accuracy and speed change.
+            Switching models reinitializes the transcription context. The API is identical across all models.
           </p>
         </div>
       </div>
-
     </div>
   );
 }
@@ -947,16 +1345,8 @@ function DevicesTab({
 
   useEffect(() => {
     handleRefresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const handleSelect = (deviceName: string) => {
-    actions.setSelectedDevice(deviceName);
-  };
-
-  const handleUseDefault = () => {
-    actions.setSelectedDevice(null);
-  };
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -983,10 +1373,9 @@ function DevicesTab({
           </Button>
         </div>
 
-        {/* Active selection banner */}
         {state.selectedDevice && (
           <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
-            <Mic className="h-4 w-4 text-primary flex-shrink-0" />
+            <Mic className="h-4 w-4 text-primary shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-primary">Selected for transcription</p>
               <p className="text-sm font-semibold truncate">{state.selectedDevice}</p>
@@ -994,8 +1383,8 @@ function DevicesTab({
             <Button
               variant="ghost"
               size="sm"
-              onClick={handleUseDefault}
-              className="text-xs text-muted-foreground hover:text-foreground flex-shrink-0"
+              onClick={() => actions.setSelectedDevice(null)}
+              className="text-xs text-muted-foreground hover:text-foreground shrink-0"
             >
               Use Default
             </Button>
@@ -1004,7 +1393,7 @@ function DevicesTab({
 
         {!state.selectedDevice && (
           <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
-            <Volume2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+            <Volume2 className="h-4 w-4 text-muted-foreground shrink-0" />
             <p className="text-xs text-muted-foreground">
               Using system default microphone. Select a device below to override.
             </p>
@@ -1021,7 +1410,7 @@ function DevicesTab({
             <p className="text-sm text-muted-foreground">
               {isRefreshing
                 ? "Scanning for audio devices…"
-                : "No audio input devices detected. Make sure a microphone is connected."}
+                : "No audio input devices detected."}
             </p>
           </div>
         ) : (
@@ -1045,7 +1434,7 @@ function DevicesTab({
                   <div className="flex items-center gap-3">
                     <Mic
                       className={cn(
-                        "h-4 w-4 flex-shrink-0",
+                        "h-4 w-4 shrink-0",
                         isSelected ? "text-primary" : "text-muted-foreground"
                       )}
                     />
@@ -1070,33 +1459,28 @@ function DevicesTab({
                       </div>
                       <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
                         {device.sample_rates.length > 0 && (
-                          <span>
-                            {device.sample_rates.map((r) => `${r / 1000}kHz`).join(", ")}
-                          </span>
+                          <span>{device.sample_rates.map((r) => `${r / 1000}kHz`).join(", ")}</span>
                         )}
                         {device.channels.length > 0 && (
-                          <span>
-                            {device.channels.join("/")}ch
-                          </span>
+                          <span>{device.channels.join("/")}ch</span>
                         )}
                       </div>
                     </div>
-                    {!isSelected && (
+                    {!isSelected ? (
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => handleSelect(device.name)}
-                        className="flex-shrink-0 text-xs"
+                        onClick={() => actions.setSelectedDevice(device.name)}
+                        className="shrink-0 text-xs"
                       >
                         Select
                       </Button>
-                    )}
-                    {isSelected && (
+                    ) : (
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={handleUseDefault}
-                        className="flex-shrink-0 text-xs text-muted-foreground"
+                        onClick={() => actions.setSelectedDevice(null)}
+                        className="shrink-0 text-xs text-muted-foreground"
                       >
                         Deselect
                       </Button>
@@ -1113,18 +1497,13 @@ function DevicesTab({
         <h3 className="font-semibold text-sm">Requirements</h3>
         <div className="space-y-2 text-xs text-muted-foreground">
           <p>
-            Whisper requires <strong>16kHz mono</strong> audio input. Most
-            modern microphones support this natively. Audio is automatically
-            resampled if your device delivers a different rate.
+            Whisper requires <strong>16kHz mono</strong> audio input. Most modern microphones support this natively.
           </p>
           <p>
-            For best results, use a dedicated microphone rather than a laptop's
-            built-in mic. External USB microphones typically have better noise
-            cancellation.
+            For best results, use a dedicated microphone. External USB microphones typically have better noise cancellation.
           </p>
           <p>
-            Your device selection is remembered across sessions. The transcription
-            engine will use it automatically when you start recording.
+            Your device selection is remembered across sessions.
           </p>
         </div>
       </div>
@@ -1163,6 +1542,37 @@ function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function formatDuration(secs: number): string {
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
+function formatSessionTitle(date: Date): string {
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const isThisYear = date.getFullYear() === now.getFullYear();
+
+  if (isToday) {
+    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  }
+  if (isThisYear) {
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatRelativeTime(date: Date): string {
+  const now = Date.now();
+  const diff = Math.floor((now - date.getTime()) / 1000);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function getGpuLabel(hw: HardwareDetectionResult): string {
