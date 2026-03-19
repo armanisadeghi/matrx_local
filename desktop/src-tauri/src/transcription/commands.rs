@@ -1,17 +1,24 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use whisper_cpp_plus::TranscriptionParams;
 
 use super::{
     audio_capture, config::TranscriptionConfig, downloader, hardware::HardwareProfile,
     manager::TranscriptionManager, model_selector,
+    wake_word::{WakeWordMode, WakeWordState},
 };
+
+// Default model used for wake word detection (fastest whisper model).
+const WAKE_WORD_DEFAULT_MODEL: &str = "ggml-tiny.en.bin";
 
 /// Tauri-managed state holding the active transcription context.
 pub struct TranscriptionState(pub Mutex<Option<TranscriptionManager>>);
 
 /// Tauri-managed state for active recording session.
-pub struct RecordingState(pub std::sync::Arc<Mutex<bool>>);
+pub struct RecordingState(pub Arc<Mutex<bool>>);
+
+/// Tauri-managed state for the wake-word subsystem.
+pub struct WakeWordAppState(pub Arc<WakeWordState>);
 
 // ── Hardware Detection ─────────────────────────────────────────────────────
 
@@ -453,4 +460,154 @@ pub fn get_voice_setup_status(app: AppHandle) -> serde_json::Value {
         "selected_model": config.selected_model,
         "downloaded_models": downloaded,
     })
+}
+
+// ── Wake Word Commands ──────────────────────────────────────────────────────
+
+/// Check whether the default wake word model (ggml-tiny.en.bin) is present.
+/// The wake word system reuses the existing whisper models — no separate download.
+#[tauri::command]
+pub fn check_kws_model_exists(app: AppHandle) -> bool {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| downloader::wake_word_model_exists(&d.join("models"), WAKE_WORD_DEFAULT_MODEL))
+        .unwrap_or(false)
+}
+
+/// Start wake-word listening mode.
+///
+/// Requires voice setup to have been completed (ggml-tiny.en.bin downloaded).
+/// If already running, un-mutes without restarting the thread.
+#[tauri::command]
+pub async fn start_wake_word(
+    app: AppHandle,
+    ww_state: State<'_, WakeWordAppState>,
+    device_name: Option<String>,
+) -> Result<(), String> {
+    // Microphone permission check (macOS TCC)
+    #[cfg(target_os = "macos")]
+    {
+        let granted = tauri_plugin_macos_permissions::check_microphone_permission().await;
+        if !granted {
+            return Err("microphone_permission_denied".to_string());
+        }
+    }
+
+    let models_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("models");
+
+    // Verify the tiny model exists
+    if !downloader::wake_word_model_exists(&models_dir, WAKE_WORD_DEFAULT_MODEL) {
+        return Err(format!(
+            "Wake word model not found ({}). Complete voice setup first.",
+            WAKE_WORD_DEFAULT_MODEL
+        ));
+    }
+
+    // If already running, just un-mute
+    if *ww_state.0.running.lock().unwrap() {
+        *ww_state.0.mode.lock().unwrap() = WakeWordMode::Listening;
+        let _ = app.emit("wake-word-mode", WakeWordMode::Listening);
+        return Ok(());
+    }
+
+    // Configure and start the thread
+    *ww_state.0.models_dir.lock().unwrap() = Some(models_dir);
+    *ww_state.0.mode.lock().unwrap() = WakeWordMode::Listening;
+    *ww_state.0.running.lock().unwrap() = true;
+
+    let _ = app.emit("wake-word-mode", WakeWordMode::Listening);
+
+    super::wake_word::spawn_wake_word_thread(app, ww_state.0.clone(), device_name);
+
+    Ok(())
+}
+
+/// Stop wake-word detection entirely (tears down the background thread).
+#[tauri::command]
+pub fn stop_wake_word(
+    app: AppHandle,
+    ww_state: State<'_, WakeWordAppState>,
+) -> Result<(), String> {
+    *ww_state.0.running.lock().unwrap() = false;
+    *ww_state.0.mode.lock().unwrap() = WakeWordMode::Muted;
+    let _ = app.emit("wake-word-mode", WakeWordMode::Muted);
+    Ok(())
+}
+
+/// Mute wake-word detection (thread keeps running but ignores audio).
+#[tauri::command]
+pub fn mute_wake_word(
+    app: AppHandle,
+    ww_state: State<'_, WakeWordAppState>,
+) -> Result<(), String> {
+    *ww_state.0.mode.lock().unwrap() = WakeWordMode::Muted;
+    let _ = app.emit("wake-word-mode", WakeWordMode::Muted);
+    Ok(())
+}
+
+/// Resume listening after mute.
+#[tauri::command]
+pub fn unmute_wake_word(
+    app: AppHandle,
+    ww_state: State<'_, WakeWordAppState>,
+) -> Result<(), String> {
+    *ww_state.0.mode.lock().unwrap() = WakeWordMode::Listening;
+    let _ = app.emit("wake-word-mode", WakeWordMode::Listening);
+    Ok(())
+}
+
+/// Dismiss: user heard a false trigger — pause for 10 s then resume.
+#[tauri::command]
+pub fn dismiss_wake_word(
+    app: AppHandle,
+    ww_state: State<'_, WakeWordAppState>,
+) -> Result<(), String> {
+    super::wake_word::apply_dismiss(&ww_state.0);
+    let _ = app.emit("wake-word-mode", WakeWordMode::Dismissed);
+    Ok(())
+}
+
+/// Manually trigger as though the wake word was spoken (the "Wake up" button).
+/// This fires a "wake-word-detected" event directly without any audio check.
+#[tauri::command]
+pub fn trigger_wake_word(app: AppHandle) -> Result<(), String> {
+    let _ = app.emit(
+        "wake-word-detected",
+        serde_json::json!({ "keyword": "MANUAL", "score": 1.0 }),
+    );
+    Ok(())
+}
+
+/// Update the keyword phrase at runtime.
+/// Takes effect on the next detection window.
+#[tauri::command]
+pub fn configure_wake_word(
+    ww_state: State<'_, WakeWordAppState>,
+    keyword: Option<String>,
+    model_filename: Option<String>,
+) -> Result<(), String> {
+    if let Some(kw) = keyword {
+        *ww_state.0.keyword.lock().unwrap() = kw.to_lowercase();
+    }
+    if let Some(fname) = model_filename {
+        *ww_state.0.model_filename.lock().unwrap() = fname;
+    }
+    Ok(())
+}
+
+/// Get the current wake-word mode.
+#[tauri::command]
+pub fn get_wake_word_mode(ww_state: State<'_, WakeWordAppState>) -> WakeWordMode {
+    ww_state.0.mode.lock().unwrap().clone()
+}
+
+/// Get whether the KWS background thread is running.
+#[tauri::command]
+pub fn is_wake_word_running(ww_state: State<'_, WakeWordAppState>) -> bool {
+    *ww_state.0.running.lock().unwrap()
 }

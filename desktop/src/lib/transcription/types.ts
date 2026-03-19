@@ -55,6 +55,24 @@ export interface AudioDeviceInfo {
   channels: number[];
 }
 
+// ── Wake Word ─────────────────────────────────────────────────────────────────
+
+/** Operational mode of the wake-word subsystem. */
+export type WakeWordMode = "listening" | "muted" | "dismissed";
+
+/** Payload of the "wake-word-detected" event. */
+export interface WakeWordDetectedEvent {
+  /** The keyword string returned by the KWS model, or "MANUAL" for manual trigger. */
+  keyword: string;
+}
+
+/** Status of the wake word system. */
+export interface WakeWordStatus {
+  mode: WakeWordMode;
+  isRunning: boolean;
+  kmsModelReady: boolean;
+}
+
 /** A persisted transcription recording session. */
 export interface TranscriptionSession {
   id: string;

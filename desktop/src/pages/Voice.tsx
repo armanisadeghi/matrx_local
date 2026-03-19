@@ -3,6 +3,9 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
 import { useTranscriptionSessions } from "@/hooks/use-transcription-sessions";
+import { useWakeWord } from "@/hooks/use-wake-word";
+import { WakeWordOverlay } from "@/components/WakeWordOverlay";
+import { WakeWordControls } from "@/components/WakeWordControls";
 import { usePermissionsContext } from "@/contexts/PermissionsContext";
 import { Button } from "@/components/ui/button";
 import { DownloadProgress } from "@/components/DownloadProgress";
@@ -59,6 +62,30 @@ export function Voice() {
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const recordingStartRef = useRef<number>(0);
+
+  // ── Wake word integration ────────────────────────────────────────────────
+  // onWake: called when wake word fires — starts a new transcription session
+  const handleWake = useCallback(async () => {
+    const session = sessionsActions.startNew(state.activeModel, state.selectedDevice);
+    setActiveSessionId(session.id);
+    recordingStartRef.current = Date.now();
+    await actions.startRecording();
+  }, [sessionsActions, state.activeModel, state.selectedDevice, actions]);
+
+  // onSleep: called when active session should close
+  const handleSleep = useCallback(async () => {
+    await actions.stopRecording();
+    if (activeSessionId) {
+      const elapsed = Math.round((Date.now() - recordingStartRef.current) / 1000);
+      sessionsActions.finalize(activeSessionId, elapsed);
+    }
+  }, [actions, activeSessionId, sessionsActions]);
+
+  const [wwState, wwActions] = useWakeWord(
+    handleWake,
+    handleSleep,
+    state.fullTranscript,
+  );
 
   // Wire state changes to the unified log bus
   useEffect(() => {
@@ -192,12 +219,10 @@ export function Voice() {
     }
   }, [state.isRecording]);
 
-  // Open the viewing session to the active recording session when one starts
-  useEffect(() => {
-    if (activeSessionId) {
-      sessionsActions.open(activeSessionId);
-    }
-  }, [activeSessionId, sessionsActions]);
+  // Note: we intentionally do NOT auto-switch viewingSessionId here.
+  // The session is opened by sessionsActions.startNew() directly inside
+  // the hook, and the user's sidebar selection must never be overridden
+  // by the recording state.
 
   if (isMiniMode) {
     return (
@@ -217,20 +242,43 @@ export function Voice() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Wake-word overlay — renders over the entire app window */}
+      <WakeWordOverlay
+        uiMode={wwState.uiMode}
+        rms={state.liveRms || wwState.listenRms}
+        transcript={state.fullTranscript}
+        onDismiss={wwActions.dismiss}
+      />
+
       <PageHeader
         title="Voice"
         description="Local speech-to-text transcription powered by Whisper"
       >
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setIsMiniMode(true)}
-          className="gap-1.5 text-muted-foreground"
-          title="Switch to compact floating mode"
-        >
-          <Minimize2 className="h-4 w-4" />
-          Mini Mode
-        </Button>
+        {/* Wake word controls strip — lives in the header action area */}
+        <div className="flex items-center gap-2">
+          <WakeWordControls
+            uiMode={wwState.uiMode}
+            listenRms={wwState.listenRms}
+            kmsModelReady={wwState.kmsModelReady}
+            downloadProgress={wwState.downloadProgress}
+            onSetup={wwActions.setup}
+            onMute={wwActions.mute}
+            onUnmute={wwActions.unmute}
+            onManualTrigger={wwActions.manualTrigger}
+            onDismiss={wwActions.dismiss}
+            disabled={state.isInitializing}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsMiniMode(true)}
+            className="gap-1.5 text-muted-foreground"
+            title="Switch to compact floating mode"
+          >
+            <Minimize2 className="h-4 w-4" />
+            Mini Mode
+          </Button>
+        </div>
       </PageHeader>
       <SubTabBar tabs={TABS} value={tab} onValueChange={setTab} />
       <div className="flex-1 overflow-hidden">
@@ -535,6 +583,42 @@ function TranscribeTab({
   const [titleDraft, setTitleDraft] = useState("");
   const [pushingToNote, setPushingToNote] = useState<string | null>(null);
   const [pushSuccess, setPushSuccess] = useState<string | null>(null);
+  // Local editable draft for the transcript text — synced from viewing session
+  const [textDraft, setTextDraft] = useState<string>("");
+  const textDraftSessionRef = useRef<string | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync textDraft when the viewed session changes or gets new segments
+  const viewingSession = sessionsState.viewingSession;
+  const isViewingActive = viewingSession?.id === activeSessionId && state.isRecording;
+
+  useEffect(() => {
+    if (!viewingSession) return;
+    // If switching to a different session, load its saved text.
+    if (textDraftSessionRef.current !== viewingSession.id) {
+      textDraftSessionRef.current = viewingSession.id;
+      setTextDraft(viewingSession.fullText);
+      return;
+    }
+    // Same session — only update the draft while actively recording (new segments arriving).
+    // Do NOT overwrite user edits once recording stops.
+    if (isViewingActive) {
+      const liveText = state.fullTranscript;
+      setTextDraft(liveText);
+    }
+  }, [viewingSession, viewingSession?.fullText, isViewingActive, state.fullTranscript]);
+
+  // Debounced save: persist user edits 600ms after they stop typing
+  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newText = e.target.value;
+    setTextDraft(newText);
+    if (!textDraftSessionRef.current) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    const sid = textDraftSessionRef.current;
+    saveTimerRef.current = setTimeout(() => {
+      sessionsActions.updateText(sid, newText);
+    }, 600);
+  }, [sessionsActions]);
 
   // Load device list if not yet populated
   useEffect(() => {
@@ -679,10 +763,8 @@ function TranscribeTab({
     );
   }
 
-  const viewingSession = sessionsState.viewingSession;
-  const isViewingActive = viewingSession?.id === activeSessionId && state.isRecording;
-  const displaySegments = isViewingActive ? state.segments : (viewingSession?.segments ?? []);
-  const displayText = isViewingActive ? state.fullTranscript : (viewingSession?.fullText ?? "");
+  // viewingSession and isViewingActive are now declared at the top of TranscribeTab
+  // so the text-sync effect can reference them.
 
   return (
     <div className="flex h-full overflow-hidden">

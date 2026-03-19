@@ -19,6 +19,18 @@ const VALID_WHISPER_MAGIC: &[[u8; 4]] = &[
 /// VAD model required for streaming transcription.
 pub const VAD_MODEL_FILENAME: &str = "ggml-silero-v6.2.0.bin";
 
+// ── Wake word model helpers ──────────────────────────────────────────────────
+//
+// Wake word detection reuses the existing whisper models.  The default model
+// is ggml-tiny.en.bin (75 MB) which is fast enough for 2-second windows.
+// No additional download is needed beyond what voice setup already fetches.
+
+/// Returns true if the given whisper model file exists and is valid.
+/// Used by the wake word system to verify the tiny model is present.
+pub fn wake_word_model_exists(models_dir: &Path, filename: &str) -> bool {
+    is_valid_model(&models_dir.join(filename))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgress {
     pub filename: String,

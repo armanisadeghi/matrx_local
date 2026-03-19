@@ -24,6 +24,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/hooks/use-theme";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useAutoUpdate } from "@/hooks/use-auto-update";
+import { useTranscription } from "@/hooks/use-transcription";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EngineMonitor } from "@/components/EngineRecoveryModal";
 import { UpdateDialog } from "@/components/UpdateDialog";
@@ -32,11 +33,14 @@ import { NotificationToastContainer } from "@/components/notifications/Notificat
 import { StartupScreen } from "@/components/StartupScreen";
 import { FirstRunScreen } from "@/components/FirstRunScreen";
 import { DevTerminalPanel, DevTerminalProvider } from "@/components/DevTerminalPanel";
+import { CompactRecorderWindow } from "@/components/CompactRecorderWindow";
 import { PermissionsProvider } from "@/contexts/PermissionsContext";
 import { AudioDevicesProvider } from "@/contexts/AudioDevicesContext";
 import { engine } from "@/lib/api";
+import { isTauri } from "@/lib/sidecar";
 import { initUnifiedLog, initTauriLogStream, stopEngineStreams } from "@/hooks/use-unified-log";
 import supabase from "@/lib/supabase";
+import { Mic } from "lucide-react";
 
 const SETUP_DISMISSED_KEY = "matrx-setup-dismissed";
 
@@ -78,6 +82,46 @@ export default function App() {
 
   const notif = useNotifications();
   const [updateState, updateActions] = useAutoUpdate();
+
+  // ---------------------------------------------------------------------------
+  // Compact recorder mode — shrinks the OS window to a tiny floating recorder
+  // ---------------------------------------------------------------------------
+  const [isCompact, setIsCompact] = useState(false);
+  const [transcriptionState, transcriptionActions] = useTranscription();
+
+  // Accumulated transcript text — append segments as they arrive.
+  const [compactTranscript, setCompactTranscript] = useState("");
+  useEffect(() => {
+    if (isCompact && transcriptionState.segments.length > 0) {
+      setCompactTranscript(
+        transcriptionState.segments.map((s) => s.text).join(" ").trim()
+      );
+    }
+  }, [transcriptionState.segments, isCompact]);
+
+  const invokeSetCompactMode = useCallback(async (enabled: boolean) => {
+    if (!isTauri()) return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("set_compact_mode", { enabled });
+    } catch (e) {
+      console.warn("[compact-mode] set_compact_mode failed:", e);
+    }
+  }, []);
+
+  const enterCompactMode = useCallback(async () => {
+    setCompactTranscript("");
+    setIsCompact(true);
+    await invokeSetCompactMode(true);
+  }, [invokeSetCompactMode]);
+
+  const exitCompactMode = useCallback(async () => {
+    if (transcriptionState.isRecording) {
+      await transcriptionActions.stopRecording();
+    }
+    setIsCompact(false);
+    await invokeSetCompactMode(false);
+  }, [invokeSetCompactMode, transcriptionState.isRecording, transcriptionActions]);
 
   // ---------------------------------------------------------------------------
   // Unified log streams — self-initiating, independent of which page is open
@@ -298,6 +342,26 @@ export default function App() {
     );
   }
 
+  // ── Compact recorder mode takeover ─────────────────────────────────────────
+  // When compact mode is active the entire app is replaced by the tiny recorder
+  // UI that perfectly fits the shrunken OS window.
+  if (isCompact) {
+    return (
+      <ErrorBoundary>
+        <CompactRecorderWindow
+          isRecording={transcriptionState.isRecording}
+          isProcessingTail={transcriptionState.isProcessingTail}
+          isCalibrating={transcriptionState.isCalibrating}
+          liveRms={transcriptionState.liveRms}
+          transcript={compactTranscript}
+          onStartRecording={transcriptionActions.startRecording}
+          onStopRecording={transcriptionActions.stopRecording}
+          onExpand={exitCompactMode}
+        />
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <DevTerminalProvider>
@@ -357,6 +421,17 @@ export default function App() {
         <UpdateDialog state={updateState} actions={updateActions} />
         {/* Persistent debug terminal — toggled via TerminalToggleButton in AppLayout */}
         <DevTerminalPanel />
+        {/* Global compact-mode trigger — visible from any page when authenticated */}
+        {auth.isAuthenticated && (
+          <button
+            onClick={enterCompactMode}
+            className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full bg-primary/90 px-3 py-2 text-primary-foreground shadow-lg backdrop-blur-sm transition-all hover:bg-primary hover:scale-105 active:scale-95"
+            title="Enter compact recorder mode"
+          >
+            <Mic className="h-4 w-4" />
+            <span className="text-xs font-medium leading-none">Record</span>
+          </button>
+        )}
       </TooltipProvider>
       </AudioDevicesProvider>
       </PermissionsProvider>

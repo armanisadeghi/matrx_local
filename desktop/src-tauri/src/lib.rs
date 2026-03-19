@@ -17,6 +17,7 @@ use tauri_plugin_updater::UpdaterExt;
 
 mod transcription;
 use transcription::commands::*;
+use transcription::wake_word::WakeWordState; // needed for WakeWordState::new() in .manage()
 
 mod llm;
 use llm::commands::*;
@@ -383,6 +384,67 @@ async fn get_close_to_tray(state: tauri::State<'_, CloseToTray>) -> Result<bool,
     Ok(state.0.load(Ordering::Relaxed))
 }
 
+/// Resize the main window to a compact recorder size or restore to full size.
+///
+/// Compact size: 420 × 240 px — just enough for a mic button + live transcript.
+/// The minimum-size constraints are temporarily lifted so the window can shrink
+/// below the normal 900 × 600 minimum. Restoring re-applies the original min size.
+#[tauri::command]
+async fn set_compact_mode(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri::{LogicalSize, LogicalPosition};
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+
+    if enabled {
+        // Remove min-size constraint first so the window can actually shrink.
+        window
+            .set_min_size(Some(LogicalSize::new(200u32, 160u32)))
+            .map_err(|e| e.to_string())?;
+        window
+            .set_size(LogicalSize::new(420u32, 240u32))
+            .map_err(|e| e.to_string())?;
+        // Position near the bottom-right of the screen (best-effort — no monitor API needed).
+        if let Ok(monitor) = window.current_monitor() {
+            if let Some(m) = monitor {
+                let size = m.size();
+                let scale = m.scale_factor();
+                let sw = (size.width as f64 / scale) as u32;
+                let sh = (size.height as f64 / scale) as u32;
+                let x = sw.saturating_sub(440) as i32;
+                let y = sh.saturating_sub(280) as i32;
+                let _ = window.set_position(LogicalPosition::new(x, y));
+            }
+        }
+        window
+            .set_decorations(false)
+            .map_err(|e| e.to_string())?;
+        window
+            .set_always_on_top(true)
+            .map_err(|e| e.to_string())?;
+    } else {
+        // Re-apply the normal minimum before resizing up.
+        window
+            .set_decorations(true)
+            .map_err(|e| e.to_string())?;
+        window
+            .set_always_on_top(false)
+            .map_err(|e| e.to_string())?;
+        window
+            .set_min_size(Some(LogicalSize::new(900u32, 600u32)))
+            .map_err(|e| e.to_string())?;
+        window
+            .set_size(LogicalSize::new(1400u32, 900u32))
+            .map_err(|e| e.to_string())?;
+        window
+            .center()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 /// Fetch a URL from Rust (bypasses all browser security restrictions).
 /// Returns base64-encoded body + headers so the frontend can display it.
 #[tauri::command]
@@ -635,6 +697,7 @@ pub fn run() {
         .manage(PendingOAuthUrl(Mutex::new(None)))
         .manage(TranscriptionState(Mutex::new(None)))
         .manage(RecordingState(Arc::new(Mutex::new(false))))
+        .manage(WakeWordAppState(Arc::new(WakeWordState::new())))
         .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
             llm::server::LlmServer::new(),
         )) as llm::commands::LlmServerState)
@@ -651,6 +714,7 @@ pub fn run() {
             set_close_to_tray,
             get_close_to_tray,
             check_for_updates,
+            set_compact_mode,
             proxy_fetch,
             get_pending_oauth_url,
             // Transcription commands
@@ -666,6 +730,17 @@ pub fn run() {
             stop_transcription,
             list_audio_input_devices,
             get_voice_setup_status,
+            // Wake word commands
+            check_kws_model_exists,
+            start_wake_word,
+            stop_wake_word,
+            mute_wake_word,
+            unmute_wake_word,
+            dismiss_wake_word,
+            trigger_wake_word,
+            configure_wake_word,
+            get_wake_word_mode,
+            is_wake_word_running,
             // LLM commands
             start_llm_server,
             stop_llm_server,

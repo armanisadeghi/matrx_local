@@ -111,6 +111,22 @@ export function renameSession(
   return sessions[idx];
 }
 
+/** Overwrite the fullText of a session (user-edited content) and recount chars. */
+export function updateSessionText(
+  sessionId: string,
+  newText: string,
+): TranscriptionSession | null {
+  const sessions = loadSessions();
+  const idx = sessions.findIndex((s) => s.id === sessionId);
+  if (idx === -1) return null;
+
+  sessions[idx].fullText = newText;
+  sessions[idx].charCount = newText.length;
+  sessions[idx].updatedAt = new Date().toISOString();
+  saveSessions(sessions);
+  return sessions[idx];
+}
+
 /** Delete a session by ID. */
 export function deleteSession(sessionId: string): void {
   const sessions = loadSessions();
