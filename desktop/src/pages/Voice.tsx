@@ -1141,7 +1141,7 @@ function TranscribeTab({
                     )}
 
                     {/* Copy */}
-                    {viewingSession.fullText.length > 0 && (
+                    {textDraft.length > 0 && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -1177,10 +1177,10 @@ function TranscribeTab({
                 </div>
               )}
 
-              {/* Transcript content */}
-              <div className="px-5 py-4">
+              {/* Transcript content — editable textarea */}
+              <div className="flex flex-col">
                 {viewingSession && (
-                  <div className="flex items-center gap-3 mb-3 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-3 px-5 py-2 border-b border-border/40 text-xs text-muted-foreground">
                     <span>{new Date(viewingSession.createdAt).toLocaleString()}</span>
                     {viewingSession.durationSecs > 0 && (
                       <span>· {formatDuration(viewingSession.durationSecs)}</span>
@@ -1188,35 +1188,52 @@ function TranscribeTab({
                     {viewingSession.modelUsed && (
                       <span>· {viewingSession.modelUsed}</span>
                     )}
+                    {viewingSession.charCount > 0 && (
+                      <span className="ml-auto">{viewingSession.charCount} chars</span>
+                    )}
                   </div>
                 )}
 
-                {displaySegments.length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic">
-                    {state.isRecording
-                      ? "Waiting for speech…"
+                {/* Live pulsing indicator between segments while recording */}
+                {isViewingActive && (
+                  <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-red-500/5">
+                    <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+                    <span className="text-xs text-red-500 font-medium">
+                      {state.isCalibrating ? "Calibrating microphone…" : "Listening — transcript updates as each chunk is processed"}
+                    </span>
+                  </div>
+                )}
+                {state.isProcessingTail && viewingSession?.id === activeSessionId && (
+                  <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-amber-500/5">
+                    <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin shrink-0" />
+                    <span className="text-xs text-amber-500 font-medium">Finishing final audio chunk…</span>
+                  </div>
+                )}
+
+                <textarea
+                  className={cn(
+                    "w-full resize-none bg-transparent px-5 py-4 text-sm leading-relaxed",
+                    "focus:outline-none placeholder:text-muted-foreground/50",
+                    "min-h-[200px]",
+                    isViewingActive && "cursor-default select-text"
+                  )}
+                  value={textDraft}
+                  onChange={handleTextChange}
+                  readOnly={isViewingActive}
+                  placeholder={
+                    state.isRecording
+                      ? "Listening… transcript will appear here as you speak"
                       : state.isProcessingTail
                       ? "Processing last audio chunk…"
-                      : "No transcript yet. Start recording to begin."}
-                  </p>
-                ) : (
-                  <div className="space-y-1">
-                    {displaySegments.map((seg, i) => (
-                      <div key={i} className="flex items-start gap-3 text-sm group">
-                        <span className="text-xs text-muted-foreground font-mono pt-0.5 opacity-0 group-hover:opacity-100 transition-opacity min-w-[52px] shrink-0">
-                          {formatTime(seg.start_sec)}
-                        </span>
-                        <span className="leading-relaxed">{seg.text}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      : "No transcript yet. Start recording to begin.\n\nYou can also type or paste text here directly."
+                  }
+                  spellCheck
+                />
 
-                {displayText.length > 0 && (
-                  <div className="border-t mt-4 pt-4">
-                    <p className="text-xs text-muted-foreground mb-2 font-medium">Full transcript</p>
-                    <p className="text-sm leading-relaxed">{displayText}</p>
-                  </div>
+                {!isViewingActive && textDraft.length > 0 && (
+                  <p className="px-5 pb-2 text-[10px] text-muted-foreground/50 text-right">
+                    Click to edit · auto-saved
+                  </p>
                 )}
               </div>
             </div>
