@@ -54,7 +54,20 @@ _DEFAULT_ORIGINS = ",".join([
     "tauri://localhost",       # macOS WebKit
     "http://tauri.localhost",  # Windows WebView2 / Linux WebKitGTK
 ])
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
+# Tauri origins are always required — they cannot be removed via env var because
+# the desktop app (WebView2 on Windows, WebKit on macOS) needs them to reach the
+# local engine. Any additional origins from the env var are appended.
+_TAURI_ORIGINS = {
+    "tauri://localhost",       # macOS WebKit
+    "http://tauri.localhost",  # Windows WebView2 / Linux WebKitGTK
+}
+_env_origins = os.getenv("ALLOWED_ORIGINS", "")
+_extra = [o.strip() for o in _env_origins.split(",") if o.strip()] if _env_origins else []
+ALLOWED_ORIGINS: list[str] = list(
+    dict.fromkeys(  # preserve order, deduplicate
+        _DEFAULT_ORIGINS.split(",") + _extra + list(_TAURI_ORIGINS)
+    )
+)
 
 # Regex covers wildcard subdomains that can't be listed exhaustively:
 #   *.aimatrx.com, *.appmatrx.com, *.mymatrx.com, *.codematrx.com,

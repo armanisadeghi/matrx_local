@@ -5,6 +5,7 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import router as api_router
 from app.api.tool_routes import router as tool_router
@@ -198,6 +199,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(
         "[app/main.py] ── Matrx Local startup ─────────────────────────────────────"
     )
+    logger.info("[app/main.py] CORS allowed origins: %s", ALLOWED_ORIGINS)
 
     # Phase 0a: Open local SQLite database (offline-first data store).
     # This MUST be the first phase — all data reads come from SQLite.
@@ -536,33 +538,22 @@ app.include_router(platform_router)
 # at module level would crash because matrx_ai imports trigger an ORM auto-fetch
 # before the 'supabase_automation_matrix' config is registered.
 
-app.add_middleware(AuthMiddleware)
-
-# CORS middleware must be registered AFTER AuthMiddleware so that Starlette
-# places it as the outer wrapper (add_middleware is processed in reverse order).
-# It handles OPTIONS preflights before AuthMiddleware ever sees them.
+# ── Middleware registration ────────────────────────────────────────────────────
 #
-# allow_origins:        exact origins (localhost, production domains)
-# allow_origin_regex:   wildcard subdomains (*.aimatrx.com, Vercel previews, etc.)
-# allow_headers:        explicit list — "*" is invalid when allow_credentials=True
-# allow_private_network: required for Windows WebView2 (Edge-based) which enforces the
-#                        Private Network Access spec and sends Access-Control-Request-Private-Network
-#                        on every preflight from http://tauri.localhost → http://127.0.0.1:*.
-#                        Without this, ALL OPTIONS preflights return 400 on Windows builds.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-User-Id", "X-API-Key", "Accept"],
-    allow_private_network=True,
-    max_age=600,
-)
+# Starlette/FastAPI processes add_middleware() calls in REVERSE registration order:
+# the LAST add_middleware() call becomes the OUTERMOST wrapper.
+# @app.middleware("http") also calls add_middleware() internally.
+#
+# Required order (outermost → innermost):
+#   1. CORSMiddleware  — must be first to handle OPTIONS preflights before auth
+#   2. AuthMiddleware  — validates Bearer tokens for protected routes
+#   3. log_requests    — logs all requests/responses (innermost, sees final status codes)
+#
+# To achieve this, we register in REVERSE: log_requests first, then Auth, then CORS.
+# We define log_requests as a regular function and register it via add_middleware so
+# we control placement explicitly (unlike @app.middleware which always inserts at [0]).
 
-
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
+async def _log_requests_dispatch(request: Request, call_next):
     import json as _json
     import time as _time
 
@@ -659,6 +650,31 @@ async def log_requests(request: Request, call_next):
     )
 
     return response
+
+
+# Register middlewares in reverse desired order (last registered = outermost):
+#   Step 1: log_requests (will be innermost after CORS and Auth are added)
+app.add_middleware(BaseHTTPMiddleware, dispatch=_log_requests_dispatch)
+#   Step 2: AuthMiddleware (wraps log_requests; inner to CORS)
+app.add_middleware(AuthMiddleware)
+#   Step 3: CORSMiddleware (outermost — handles OPTIONS preflights first)
+#
+# allow_origins:        exact origins (localhost + all Tauri app origins)
+# allow_origin_regex:   wildcard subdomains (*.aimatrx.com, Vercel previews, etc.)
+# allow_headers:        explicit list — "*" is invalid when allow_credentials=True
+# allow_private_network: responds to Access-Control-Request-Private-Network headers
+#                        sent by Windows WebView2 (Edge-based engine) for requests
+#                        from http://tauri.localhost → http://127.0.0.1:*
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-User-Id", "X-API-Key", "Accept"],
+    allow_private_network=True,
+    max_age=600,
+)
 
 
 @app.websocket("/ws")
