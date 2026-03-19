@@ -160,13 +160,6 @@ function tabFilter(tab: TabId): (l: ClientLogLine) => boolean {
   return () => true; // overview + all
 }
 
-function tabClearSources(tab: TabId): string[] | null {
-  if (tab === "server") return ["server", "tauri", "syslog"];
-  if (tab === "client") return ["engine", "auth", "voice", "setup"];
-  if (tab === "http")   return ["access"];
-  return null; // all / overview → clear everything
-}
-
 // ---------------------------------------------------------------------------
 // Group similar
 // ---------------------------------------------------------------------------
