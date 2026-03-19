@@ -685,7 +685,7 @@ function TranscribeTab({
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
-  const handlePushToNote = useCallback(async (session: TranscriptionSession) => {
+  const handlePushToNote = useCallback(async (session: TranscriptionSession, currentText: string) => {
     if (!engine.engineUrl) return;
     setPushingToNote(session.id);
     try {
@@ -695,7 +695,7 @@ function TranscribeTab({
         : `Voice Note — ${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
       await engine.createNote("local", {
         label,
-        content: session.fullText,
+        content: currentText,
         folder_name: "Voice Notes",
       });
       setPushSuccess(session.id);
@@ -1117,7 +1117,7 @@ function TranscribeTab({
                     )}
 
                     {/* Push to note */}
-                    {viewingSession.fullText.length > 0 && (
+                    {textDraft.length > 0 && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -1125,7 +1125,7 @@ function TranscribeTab({
                           "h-7 px-2 text-xs gap-1",
                           pushSuccess === viewingSession.id && "text-emerald-500"
                         )}
-                        onClick={() => handlePushToNote(viewingSession)}
+                        onClick={() => handlePushToNote(viewingSession, textDraft)}
                         disabled={pushingToNote === viewingSession.id}
                         title="Save transcript as a note"
                       >
@@ -1149,7 +1149,7 @@ function TranscribeTab({
                           "h-7 px-2 text-xs gap-1",
                           copiedId === viewingSession.id && "text-emerald-500"
                         )}
-                        onClick={() => handleCopy(viewingSession.fullText, viewingSession.id)}
+                        onClick={() => handleCopy(textDraft, viewingSession.id)}
                         title="Copy transcript"
                       >
                         {copiedId === viewingSession.id ? (
