@@ -542,9 +542,13 @@ app.add_middleware(AuthMiddleware)
 # places it as the outer wrapper (add_middleware is processed in reverse order).
 # It handles OPTIONS preflights before AuthMiddleware ever sees them.
 #
-# allow_origins:       exact origins (localhost, production domains)
-# allow_origin_regex:  wildcard subdomains (*.aimatrx.com, Vercel previews, etc.)
-# allow_headers:       explicit list — "*" is invalid when allow_credentials=True
+# allow_origins:        exact origins (localhost, production domains)
+# allow_origin_regex:   wildcard subdomains (*.aimatrx.com, Vercel previews, etc.)
+# allow_headers:        explicit list — "*" is invalid when allow_credentials=True
+# allow_private_network: required for Windows WebView2 (Edge-based) which enforces the
+#                        Private Network Access spec and sends Access-Control-Request-Private-Network
+#                        on every preflight from http://tauri.localhost → http://127.0.0.1:*.
+#                        Without this, ALL OPTIONS preflights return 400 on Windows builds.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -552,6 +556,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-User-Id", "X-API-Key", "Accept"],
+    allow_private_network=True,
     max_age=600,
 )
 

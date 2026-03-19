@@ -62,6 +62,43 @@ import sys
 import threading
 from pathlib import Path
 
+# ── Windows asyncio pipe transport noise suppressor ──────────────────────────
+#
+# On Windows, when the Tauri sidecar pipe's read-end is closed (e.g. on app
+# exit or restart) while Python is still writing log output, asyncio raises
+# ConnectionResetError (WinError 10054) inside _ProactorBasePipeTransport.
+# These errors are caught by asyncio's exception handler and printed to stderr
+# as unhandled exceptions — flooding the Tauri sidecar log panel with noise.
+# They are harmless: the process is shutting down or the pipe is gone.
+#
+# We install a custom asyncio exception handler that silently discards this
+# specific error and lets all others through to the default handler.
+if _sys.platform == "win32":
+    import asyncio as _asyncio
+
+    def _win_asyncio_exception_handler(loop: object, context: dict) -> None:
+        exc = context.get("exception")
+        if isinstance(exc, ConnectionResetError) and exc.winerror == 10054:  # type: ignore[attr-defined]
+            return  # Pipe read-end closed — expected on shutdown, suppress.
+        msg = context.get("message", "")
+        if "ConnectionResetError" in msg and "10054" in msg:
+            return  # Same error surfaced as a string rather than exception object.
+        # Delegate to asyncio's default handler for everything else.
+        _asyncio.get_event_loop_policy()
+        loop.default_exception_handler(context)  # type: ignore[union-attr]
+
+    # We can't call get_event_loop() at module level (no running loop yet),
+    # so we install the handler lazily via a ProactorEventLoop subclass.
+    # However, the simplest safe approach is to patch the policy's new_event_loop.
+    _orig_new_event_loop = _asyncio.DefaultEventLoopPolicy.new_event_loop
+
+    def _patched_new_event_loop(self: object) -> _asyncio.AbstractEventLoop:
+        loop = _orig_new_event_loop(self)  # type: ignore[arg-type]
+        loop.set_exception_handler(_win_asyncio_exception_handler)
+        return loop
+
+    _asyncio.DefaultEventLoopPolicy.new_event_loop = _patched_new_event_loop  # type: ignore[method-assign]
+
 from app.common.platform_ctx import CAPABILITIES, PLATFORM
 
 def _read_version() -> str:

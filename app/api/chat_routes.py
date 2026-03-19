@@ -340,6 +340,7 @@ def build_ai_sub_app() -> "FastAPI":  # noqa: F821  (imported inside to avoid ci
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_private_network=True,
         expose_headers=["X-Conversation-ID", "X-Request-ID"],
     )
 
