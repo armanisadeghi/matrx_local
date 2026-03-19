@@ -16,8 +16,12 @@ import type { AgentInfo, AgentSource } from "@/types/agents";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type SortOption = "name-asc" | "name-desc" | "source" | "favorites-first";
+/** Matches admin prompts filter: include rows with no category / no tags. */
+const NONE_SENTINEL = "__none__";
+
+type SortOption = "name-asc" | "name-desc" | "source" | "category-asc";
 type SourceFilter = "all" | AgentSource;
+type FavFilter = "all" | "yes" | "no";
 
 interface AgentPickerProps {
   agents: AgentInfo[];
@@ -34,7 +38,8 @@ interface AgentPickerProps {
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const SOURCE_LABELS: Record<AgentSource, string> = {
-  builtin: "Built-in",
+  /** Public catalog from `prompt_builtins` (synced from AIDream). */
+  builtin: "Catalog",
   user: "Mine",
   shared: "Shared",
 };
@@ -48,9 +53,63 @@ const SOURCE_ICONS: Record<AgentSource, React.ReactNode> = {
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "name-asc", label: "Name (A–Z)" },
   { value: "name-desc", label: "Name (Z–A)" },
+  { value: "category-asc", label: "Category (A–Z)" },
   { value: "source", label: "By source" },
-  { value: "favorites-first", label: "Favorites first" },
 ];
+
+const FAV_OPTIONS: { value: FavFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "yes", label: "Favorites only" },
+  { value: "no", label: "Not favorites" },
+];
+
+// ─── Search scoring (aligned with matrx-admin PromptsGrid weights, agent fields) ─
+
+function computeAgentSearchScore(agent: AgentInfo, token: string): number {
+  const q = token.toLowerCase();
+  if (!q) return 0;
+  let score = 0;
+  const name = (agent.name ?? "").toLowerCase();
+  const desc = (agent.description ?? "").toLowerCase();
+
+  if (name === q) score += 10000;
+  else if (name.startsWith(q)) score += 5000;
+  else if (name.includes(q)) score += 2000;
+
+  if (desc === q) score += 1000;
+  else if (desc.includes(q)) score += 500;
+
+  if (agent.category?.toLowerCase().includes(q)) score += 300;
+  if (agent.tags?.some((t) => t.toLowerCase().includes(q))) score += 300;
+  if (agent.source.toLowerCase().includes(q)) score += 150;
+  if (agent.id?.toLowerCase().includes(q)) score += 50;
+
+  if (
+    agent.variable_defaults?.some(
+      (v) =>
+        v.name?.toLowerCase().includes(q) ||
+        v.defaultValue?.toLowerCase().includes(q) ||
+        v.helpText?.toLowerCase().includes(q),
+    )
+  )
+    score += 10;
+
+  return score;
+}
+
+function agentMatchesSearch(agent: AgentInfo, query: string): boolean {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return true;
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  return tokens.every((t) => computeAgentSearchScore(agent, t) > 0);
+}
+
+function totalSearchScore(agent: AgentInfo, query: string): number {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return 0;
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  return tokens.reduce((sum, t) => sum + computeAgentSearchScore(agent, t), 0);
+}
 
 // ─── Highlight helper ────────────────────────────────────────────────────────
 
@@ -164,6 +223,11 @@ export function AgentPicker({
   const [sortBy, setSortBy] = useState<SortOption>("name-asc");
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [favoritesFirst, setFavoritesFirst] = useState(true);
+  const [favFilter, setFavFilter] = useState<FavFilter>("all");
+  /** Inclusion model (empty = no filter), with NONE_SENTINEL for uncategorized / untagged. */
+  const [includedCategories, setIncludedCategories] = useState<string[]>([]);
+  const [includedTags, setIncludedTags] = useState<string[]>([]);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -223,47 +287,44 @@ export function AgentPicker({
     return Array.from(cats).sort();
   }, [agents]);
 
-  const [excludedCategories, setExcludedCategories] = useState<Set<string>>(
-    new Set(),
-  );
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const allTags = useMemo(() => {
+    const tags = new Set<string>();
+    agents.forEach((a) => {
+      a.tags?.forEach((t) => {
+        if (t) tags.add(t);
+      });
+    });
+    return Array.from(tags).sort();
+  }, [agents]);
 
   const hasActiveFilters =
     sourceFilter !== "all" ||
     sortBy !== "name-asc" ||
-    excludedCategories.size > 0 ||
-    favoritesOnly;
+    includedCategories.length > 0 ||
+    includedTags.length > 0 ||
+    favFilter !== "all" ||
+    !favoritesFirst;
 
   const resetFilters = useCallback(() => {
     setSourceFilter("all");
     setSortBy("name-asc");
-    setExcludedCategories(new Set());
-    setFavoritesOnly(false);
+    setIncludedCategories([]);
+    setIncludedTags([]);
+    setFavFilter("all");
+    setFavoritesFirst(true);
   }, []);
 
-  // Filtered + sorted agents
-  const filtered = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
-
-    let result = agents.filter((a) => {
-      if (sourceFilter !== "all" && a.source !== sourceFilter) return false;
-      if (favoritesOnly && !a.is_favorite) return false;
-      if (a.category && excludedCategories.has(a.category)) return false;
-      if (!q) return true;
-
-      return (
-        a.name.toLowerCase().includes(q) ||
-        a.description?.toLowerCase().includes(q) ||
-        a.category?.toLowerCase().includes(q) ||
-        a.tags?.some((t) => t.toLowerCase().includes(q)) ||
-        a.source.toLowerCase().includes(q)
-      );
-    });
-
-    result = [...result].sort((a, b) => {
+  const compareAgents = useCallback(
+    (a: AgentInfo, b: AgentInfo): number => {
       switch (sortBy) {
         case "name-desc":
           return b.name.localeCompare(a.name);
+        case "category-asc": {
+          const ca = (a.category ?? "\uffff").toLowerCase();
+          const cb = (b.category ?? "\uffff").toLowerCase();
+          const c = ca.localeCompare(cb);
+          return c !== 0 ? c : a.name.localeCompare(b.name);
+        }
         case "source": {
           const order: Record<AgentSource, number> = {
             builtin: 0,
@@ -273,19 +334,77 @@ export function AgentPicker({
           const diff = order[a.source] - order[b.source];
           return diff !== 0 ? diff : a.name.localeCompare(b.name);
         }
-        case "favorites-first": {
-          const aFav = a.is_favorite ? 0 : 1;
-          const bFav = b.is_favorite ? 0 : 1;
-          return aFav !== bFav ? aFav - bFav : a.name.localeCompare(b.name);
-        }
         case "name-asc":
         default:
           return a.name.localeCompare(b.name);
       }
+    },
+    [sortBy],
+  );
+
+  // Filtered + sorted agents
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim();
+
+    let result = agents.filter((a) => {
+      if (sourceFilter !== "all" && a.source !== sourceFilter) return false;
+
+      if (favFilter === "yes" && !a.is_favorite) return false;
+      if (favFilter === "no" && a.is_favorite) return false;
+
+      if (includedCategories.length > 0) {
+        const cat = a.category ?? null;
+        const isUncategorized = !cat;
+        if (isUncategorized) {
+          if (!includedCategories.includes(NONE_SENTINEL)) return false;
+        } else if (!includedCategories.includes(cat)) {
+          return false;
+        }
+      }
+
+      if (includedTags.length > 0) {
+        const isUntagged = !a.tags?.length;
+        if (isUntagged) {
+          if (!includedTags.includes(NONE_SENTINEL)) return false;
+        } else if (!a.tags?.some((t) => includedTags.includes(t))) {
+          return false;
+        }
+      }
+
+      if (q && !agentMatchesSearch(a, q)) return false;
+      return true;
     });
 
+    result = [...result];
+    if (q) {
+      result.sort((a, b) => {
+        const sa = totalSearchScore(a, q);
+        const sb = totalSearchScore(b, q);
+        if (sb !== sa) return sb - sa;
+        return compareAgents(a, b);
+      });
+    } else {
+      result.sort((a, b) => {
+        if (favoritesFirst && favFilter === "all") {
+          const aFav = a.is_favorite ? 1 : 0;
+          const bFav = b.is_favorite ? 1 : 0;
+          if (bFav !== aFav) return bFav - aFav;
+        }
+        return compareAgents(a, b);
+      });
+    }
+
     return result;
-  }, [agents, searchQuery, sourceFilter, sortBy, excludedCategories, favoritesOnly]);
+  }, [
+    agents,
+    searchQuery,
+    sourceFilter,
+    compareAgents,
+    includedCategories,
+    includedTags,
+    favFilter,
+    favoritesFirst,
+  ]);
 
   // Group by source when sort === "source" or by category otherwise
   const grouped = useMemo(() => {
@@ -315,19 +434,38 @@ export function AgentPicker({
     return null;
   }, [filtered, sortBy]);
 
+  const hasUncategorized = useMemo(
+    () => agents.some((a) => !a.category),
+    [agents],
+  );
+  const hasUntagged = useMemo(
+    () => agents.some((a) => !a.tags?.length),
+    [agents],
+  );
+
+  const toggleIncluded = useCallback(
+    (list: string[], setList: (v: string[]) => void, val: string) => {
+      if (list.includes(val)) setList(list.filter((x) => x !== val));
+      else setList([...list, val]);
+    },
+    [],
+  );
+
   if (!open) return null;
 
   const activeFilterCount =
     (sourceFilter !== "all" ? 1 : 0) +
     (sortBy !== "name-asc" ? 1 : 0) +
-    excludedCategories.size +
-    (favoritesOnly ? 1 : 0);
+    includedCategories.length +
+    includedTags.length +
+    (favFilter !== "all" ? 1 : 0) +
+    (!favoritesFirst ? 1 : 0);
 
   return (
     <div
       ref={panelRef}
-      className="glass absolute bottom-full left-0 mb-2 flex w-[380px] max-w-[calc(100vw-2rem)] flex-col rounded-xl shadow-xl"
-      style={{ maxHeight: "min(480px, calc(100vh - 200px))" }}
+      className="glass absolute bottom-full left-0 z-50 mb-2 flex w-[min(440px,calc(100vw-2rem))] flex-col rounded-xl shadow-xl"
+      style={{ maxHeight: "min(520px, calc(100vh - 200px))" }}
     >
       {/* Header: search + filter toggle */}
       <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2.5">
@@ -335,7 +473,7 @@ export function AgentPicker({
         <input
           ref={searchRef}
           type="text"
-          placeholder="Search agents…"
+          placeholder="Search agents by name, tags, variables…"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/60 outline-none"
@@ -367,59 +505,79 @@ export function AgentPicker({
         </button>
       </div>
 
+      {/* Mine / Catalog / Shared pills — mirrors matrx-admin PromptsGrid tabs + public catalog */}
+      {availableSources.length >= 1 && (
+        <div className="flex flex-wrap items-center gap-1 border-b border-border/40 px-3 py-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mr-1">
+            Show
+          </span>
+          <SourceChip
+            label="All"
+            active={sourceFilter === "all"}
+            onClick={() => setSourceFilter("all")}
+          />
+          {availableSources.map((src) => (
+            <SourceChip
+              key={src}
+              label={SOURCE_LABELS[src]}
+              icon={SOURCE_ICONS[src]}
+              active={sourceFilter === src}
+              onClick={() =>
+                setSourceFilter(sourceFilter === src ? "all" : src)
+              }
+            />
+          ))}
+        </div>
+      )}
+
       {/* Filter panel */}
       {showFilters && (
-        <div className="border-b border-border/50 px-3 py-2.5 space-y-2.5">
-          {/* Source filter chips */}
-          {availableSources.length > 1 && (
-            <div>
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Source
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                <SourceChip
-                  label="All"
-                  active={sourceFilter === "all"}
-                  onClick={() => setSourceFilter("all")}
-                />
-                {availableSources.map((src) => (
-                  <SourceChip
-                    key={src}
-                    label={SOURCE_LABELS[src]}
-                    icon={SOURCE_ICONS[src]}
-                    active={sourceFilter === src}
-                    onClick={() =>
-                      setSourceFilter(sourceFilter === src ? "all" : src)
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Category exclusions */}
-          {allCategories.length > 0 && (
+        <div className="border-b border-border/50 px-3 py-2.5 space-y-2.5 max-h-[240px] overflow-y-auto">
+          {/* Category — inclusion chips (admin DesktopFilterPanel semantics) */}
+          {(allCategories.length > 0 || hasUncategorized) && (
             <div>
               <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Category
               </p>
               <div className="flex flex-wrap gap-1.5">
+                {hasUncategorized && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      toggleIncluded(
+                        includedCategories,
+                        setIncludedCategories,
+                        NONE_SENTINEL,
+                      )
+                    }
+                    className={cn(
+                      "rounded-md border px-2 py-0.5 text-[11px] transition-colors italic",
+                      includedCategories.includes(NONE_SENTINEL)
+                        ? "border-primary/50 bg-primary/10 text-primary"
+                        : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60",
+                    )}
+                  >
+                    No category
+                  </button>
+                )}
                 {allCategories.map((cat) => {
-                  const excluded = excludedCategories.has(cat);
+                  const on = includedCategories.includes(cat);
                   return (
                     <button
+                      type="button"
                       key={cat}
-                      onClick={() => {
-                        const next = new Set(excludedCategories);
-                        if (excluded) next.delete(cat);
-                        else next.add(cat);
-                        setExcludedCategories(next);
-                      }}
+                      onClick={() =>
+                        toggleIncluded(
+                          includedCategories,
+                          setIncludedCategories,
+                          cat,
+                        )
+                      }
                       className={cn(
                         "rounded-md border px-2 py-0.5 text-[11px] transition-colors",
-                        excluded
-                          ? "border-border/50 bg-transparent text-muted-foreground/50 line-through"
-                          : "border-border bg-muted/50 text-foreground hover:bg-accent/50",
+                        on
+                          ? "border-primary/50 bg-primary/10 text-primary font-medium"
+                          : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60",
                       )}
                     >
                       {cat}
@@ -427,27 +585,148 @@ export function AgentPicker({
                   );
                 })}
               </div>
+              {includedCategories.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIncludedCategories([])}
+                  className="mt-1 text-[10px] text-primary hover:underline"
+                >
+                  Clear categories
+                </button>
+              )}
             </div>
           )}
 
-          {/* Sort + favorites row */}
-          <div className="flex items-center gap-2">
-            {/* Sort dropdown */}
-            <div className="relative flex-1">
+          {/* Tags — inclusion */}
+          {(allTags.length > 0 || hasUntagged) && (
+            <div>
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Tags
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {hasUntagged && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      toggleIncluded(includedTags, setIncludedTags, NONE_SENTINEL)
+                    }
+                    className={cn(
+                      "rounded-md border px-2 py-0.5 text-[11px] transition-colors italic",
+                      includedTags.includes(NONE_SENTINEL)
+                        ? "border-primary/50 bg-primary/10 text-primary"
+                        : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60",
+                    )}
+                  >
+                    No tags
+                  </button>
+                )}
+                {allTags.map((tag) => {
+                  const on = includedTags.includes(tag);
+                  return (
+                    <button
+                      type="button"
+                      key={tag}
+                      onClick={() =>
+                        toggleIncluded(includedTags, setIncludedTags, tag)
+                      }
+                      className={cn(
+                        "rounded-md border px-2 py-0.5 text-[11px] transition-colors",
+                        on
+                          ? "border-primary/50 bg-primary/10 text-primary font-medium"
+                          : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60",
+                      )}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+              {includedTags.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIncludedTags([])}
+                  className="mt-1 text-[10px] text-primary hover:underline"
+                >
+                  Clear tags
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Favorites filter — admin-style */}
+          <div>
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Favorites
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {FAV_OPTIONS.map((opt) => (
+                <button
+                  type="button"
+                  key={opt.value}
+                  onClick={() => setFavFilter(opt.value)}
+                  className={cn(
+                    "rounded-md border px-2 py-0.5 text-[11px] transition-colors",
+                    favFilter === opt.value
+                      ? "border-primary/50 bg-primary/10 text-primary font-medium"
+                      : "border-border bg-muted/30 text-muted-foreground hover:bg-muted/60",
+                  )}
+                >
+                  {opt.value === "yes" && (
+                    <Star className="inline h-2.5 w-2.5 mr-0.5 align-middle fill-amber-400 text-amber-400" />
+                  )}
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Pin favorites + sort + reset */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setFavoritesFirst((v) => !v)}
+              disabled={favFilter !== "all"}
+              className={cn(
+                "flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors",
+                favFilter !== "all" && "opacity-40 cursor-not-allowed",
+                favoritesFirst && favFilter === "all"
+                  ? "border-amber-400/50 bg-amber-400/10 text-amber-600 dark:text-amber-400"
+                  : "border-border text-muted-foreground hover:bg-muted/50",
+              )}
+              title={
+                favFilter !== "all"
+                  ? "Only applies when showing all favorites"
+                  : "Pin starred agents to the top"
+              }
+            >
+              <Star
+                className={cn(
+                  "h-3 w-3",
+                  favoritesFirst && favFilter === "all"
+                    ? "fill-amber-400 text-amber-400"
+                    : "",
+                )}
+              />
+              Favorites first
+            </button>
+
+            <div className="relative flex-1 min-w-[140px]">
               <button
+                type="button"
                 onClick={() => setShowSortMenu((v) => !v)}
                 className="flex w-full items-center justify-between rounded-md border border-border bg-muted/30 px-2 py-1 text-[11px] text-foreground hover:bg-muted/60 transition-colors"
               >
                 <span className="text-muted-foreground mr-1">Sort:</span>
-                <span className="flex-1 text-left">
+                <span className="flex-1 truncate text-left">
                   {SORT_OPTIONS.find((o) => o.value === sortBy)?.label}
                 </span>
-                <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
               </button>
               {showSortMenu && (
-                <div className="glass absolute bottom-full left-0 mb-1 z-10 min-w-full rounded-lg p-1 shadow-lg">
+                <div className="glass absolute bottom-full left-0 right-0 mb-1 z-20 max-h-48 overflow-y-auto rounded-lg p-1 shadow-lg">
                   {SORT_OPTIONS.map((opt) => (
                     <button
+                      type="button"
                       key={opt.value}
                       onClick={() => {
                         setSortBy(opt.value);
@@ -470,29 +749,9 @@ export function AgentPicker({
               )}
             </div>
 
-            {/* Favorites toggle */}
-            <button
-              onClick={() => setFavoritesOnly((v) => !v)}
-              className={cn(
-                "flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors",
-                favoritesOnly
-                  ? "border-amber-400/50 bg-amber-400/10 text-amber-500"
-                  : "border-border text-muted-foreground hover:text-foreground hover:bg-muted/50",
-              )}
-              title="Favorites only"
-            >
-              <Star
-                className={cn(
-                  "h-3 w-3",
-                  favoritesOnly ? "fill-amber-400 text-amber-400" : "",
-                )}
-              />
-              Favorites
-            </button>
-
-            {/* Reset */}
             {hasActiveFilters && (
               <button
+                type="button"
                 onClick={resetFilters}
                 className="rounded-md p-1 text-muted-foreground hover:text-foreground transition-colors"
                 title="Reset filters"

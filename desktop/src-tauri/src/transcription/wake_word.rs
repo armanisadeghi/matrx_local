@@ -68,7 +68,10 @@ impl WakeWordState {
             running: Mutex::new(false),
             models_dir: Mutex::new(None),
             model_filename: Mutex::new("ggml-tiny.en.bin".to_string()),
-            keyword: Mutex::new("hey matrx".to_string()),
+            // Whisper transcribes "matrx" as "matrix" — use the common spelling
+            // so the substring match actually fires. Will be replaced by trained
+            // phonemes when sherpa-onnx KWS bindings land.
+            keyword: Mutex::new("hey matrix".to_string()),
         }
     }
 }

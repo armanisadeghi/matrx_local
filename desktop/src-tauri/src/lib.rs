@@ -230,11 +230,27 @@ fn graceful_shutdown_sync(
     sidecar_state: &SidecarState,
     transcription_state: &TranscriptionState,
     llm_process: &llm::commands::LlmProcessHandle,
+    wake_word_state: Option<&WakeWordAppState>,
 ) {
     // Idempotent guard: if already called (e.g. tray quit fires ExitRequested too),
     // skip the second run to avoid double-kill and spurious lock contention.
     if SHUTDOWN_DONE.swap(true, Ordering::SeqCst) {
         return;
+    }
+
+    // 0. Signal the wake-word thread to stop and wait a brief moment for it to exit.
+    //
+    //    The wake-word thread holds its own WhisperContext (loaded from ggml-tiny.en.bin).
+    //    If the process exits while that context is still alive, GGML's C atexit handlers
+    //    call ggml_abort() → SIGABRT → macOS crash report, same as the main transcription
+    //    context.  We set running=false here so the 50ms-tick loop exits cleanly and Rust
+    //    drops the TranscriptionManager before the process terminates.
+    //
+    //    We sleep at most 120ms (just over 2 tick cycles) — enough time for the thread to
+    //    see the flag and exit its loop without making quit feel sluggish.
+    if let Some(ww) = wake_word_state {
+        *ww.0.running.lock().unwrap() = false;
+        std::thread::sleep(std::time::Duration::from_millis(120));
     }
 
     // 1. Kill llama-server child process FIRST — it holds GGML Metal GPU state.
@@ -264,7 +280,7 @@ fn graceful_shutdown_sync(
             .output();
     }
 
-    // 2. Drop the WhisperContext — this runs GGML cleanup in Rust before
+    // 2. Drop the main WhisperContext — this runs GGML cleanup in Rust before
     //    any C atexit handlers, preventing ggml_abort on process exit.
     if let Ok(mut guard) = transcription_state.0.lock() {
         *guard = None; // Drops TranscriptionManager → WhisperContext → GGML
@@ -294,8 +310,9 @@ async fn restart_for_update(
     sidecar_state: tauri::State<'_, SidecarState>,
     transcription_state: tauri::State<'_, TranscriptionState>,
     llm_process: tauri::State<'_, llm::commands::LlmProcessHandle>,
+    wake_word_state: tauri::State<'_, WakeWordAppState>,
 ) -> Result<(), String> {
-    graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_process);
+    graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_process, Some(&wake_word_state));
 
     // Give child processes a moment to exit cleanly before we restart.
     // This avoids orphaned port bindings on the new instance's startup.
@@ -629,7 +646,13 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let sidecar_state = app.state::<SidecarState>();
                 let transcription_state = app.state::<TranscriptionState>();
                 let llm_process = app.state::<llm::commands::LlmProcessHandle>();
-                graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_process);
+                let wake_word_state = app.try_state::<WakeWordAppState>();
+                graceful_shutdown_sync(
+                    &sidecar_state,
+                    &transcription_state,
+                    &llm_process,
+                    wake_word_state.as_deref(),
+                );
                 app.exit(0);
             }
             _ => {}
@@ -858,7 +881,8 @@ pub fn run() {
                         window.app_handle().try_state::<TranscriptionState>(),
                         window.app_handle().try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
-                        graceful_shutdown_sync(&sidecar, &transcription, &llm_proc);
+                        let ww = window.app_handle().try_state::<WakeWordAppState>();
+                        graceful_shutdown_sync(&sidecar, &transcription, &llm_proc, ww.as_deref());
                     }
                     // Fall through: window closes normally, app exits when last window closes.
                 }
@@ -905,7 +929,8 @@ pub fn run() {
                         app.try_state::<TranscriptionState>(),
                         app.try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
-                        graceful_shutdown_sync(&sidecar, &transcription, &llm_proc);
+                        let ww = app.try_state::<WakeWordAppState>();
+                        graceful_shutdown_sync(&sidecar, &transcription, &llm_proc, ww.as_deref());
                     }
                 }
 

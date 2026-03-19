@@ -59,7 +59,7 @@
     },
     "linux": {
       "deb": {
-        "depends": []
+        "depends": ["libasound2", "libgomp1", "libwebkit2gtk-4.1-0"]
       }
     }
   },
