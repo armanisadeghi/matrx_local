@@ -109,7 +109,7 @@ export function WakeWordOverlay({ uiMode, rms, transcript, onDismiss }: WakeWord
         setVisible(false);
         setExiting(false);
       }, 600);
-    } else if (uiMode !== "active" && prev === "active") {
+    } else if (prev === "active") {
       setExiting(true);
       setTimeout(() => {
         setVisible(false);

@@ -17,7 +17,7 @@
  * confirm the microphone is alive even in "listening" mode.
  */
 
-import { Mic, MicOff, Zap, X, Download, Loader2 } from "lucide-react";
+import { Mic, MicOff, Zap, X, Loader2 } from "lucide-react";
 import type { WakeWordUIMode } from "@/hooks/use-wake-word";
 import type { DownloadProgress } from "@/lib/transcription/types";
 
