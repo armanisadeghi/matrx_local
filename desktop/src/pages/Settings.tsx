@@ -34,6 +34,10 @@ import {
   Radio,
   QrCode,
   Link,
+  KeyRound,
+  Eye,
+  EyeOff,
+  Trash2,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
@@ -53,6 +57,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useLocation } from "react-router-dom";
 import type { EngineStatus } from "@/hooks/use-engine";
 import { engine } from "@/lib/api";
 import type { ProxyStatus, InstanceInfo, Capability } from "@/lib/api";
@@ -71,6 +76,13 @@ import {
 import type { StoragePath } from "@/lib/api";
 
 type AuthActions = ReturnType<typeof useAuth>;
+
+interface ApiKeyProviderStatus {
+  provider: string;
+  label: string;
+  description: string;
+  configured: boolean;
+}
 
 interface SettingsProps {
   engineStatus: EngineStatus;
@@ -95,8 +107,12 @@ export function Settings({
   updateState,
   updateActions,
 }: SettingsProps) {
+  const location = useLocation();
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [activeTab, setActiveTab] = useState("general");
+  const [activeTab, setActiveTab] = useState(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("tab") ?? "general";
+  });
   const [restarting, setRestarting] = useState(false);
 
   // Proxy state
@@ -139,6 +155,14 @@ export function Settings({
   const [newForbiddenUrl, setNewForbiddenUrl] = useState("");
   const [forbiddenSaving, setForbiddenSaving] = useState(false);
 
+  // API key state
+  const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProviderStatus[]>([]);
+  const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
+  const [apiKeyVisible, setApiKeyVisible] = useState<Record<string, boolean>>({});
+  const [apiKeySaving, setApiKeySaving] = useState<Record<string, boolean>>({});
+  const [apiKeyDeleting, setApiKeyDeleting] = useState<Record<string, boolean>>({});
+  const [apiKeyMessages, setApiKeyMessages] = useState<Record<string, { ok: boolean; text: string }>>({});
+
   useEffect(() => {
     loadSettings().then(setSettings);
     loadForbiddenUrls();
@@ -152,6 +176,7 @@ export function Settings({
     loadCapabilities();
     loadStoragePaths();
     loadTunnelStatus();
+    loadApiKeyStatus();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineStatus]);
 
@@ -347,6 +372,66 @@ export function Settings({
     }
   }, [engineStatus]);
 
+  const loadApiKeyStatus = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    try {
+      const data = await engine.get("/settings/api-keys") as { providers: ApiKeyProviderStatus[] };
+      setApiKeyProviders(data?.providers ?? []);
+    } catch {
+      // Non-critical
+    }
+  }, [engineStatus]);
+
+  const handleApiKeySave = useCallback(async (provider: string) => {
+    const key = apiKeyInputs[provider]?.trim();
+    if (!key) return;
+    setApiKeySaving(prev => ({ ...prev, [provider]: true }));
+    setApiKeyMessages(prev => ({ ...prev, [provider]: undefined as never }));
+    try {
+      await engine.put(`/settings/api-keys/${provider}`, { key });
+      setApiKeyProviders(prev =>
+        prev.map(p => p.provider === provider ? { ...p, configured: true } : p)
+      );
+      setApiKeyInputs(prev => ({ ...prev, [provider]: "" }));
+      setApiKeyMessages(prev => ({ ...prev, [provider]: { ok: true, text: "Key saved" } }));
+      setTimeout(() => setApiKeyMessages(prev => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
+      }), 3000);
+    } catch (err) {
+      setApiKeyMessages(prev => ({
+        ...prev,
+        [provider]: { ok: false, text: err instanceof Error ? err.message : "Failed to save" },
+      }));
+    } finally {
+      setApiKeySaving(prev => ({ ...prev, [provider]: false }));
+    }
+  }, [apiKeyInputs]);
+
+  const handleApiKeyDelete = useCallback(async (provider: string) => {
+    setApiKeyDeleting(prev => ({ ...prev, [provider]: true }));
+    try {
+      await engine.delete(`/settings/api-keys/${provider}`);
+      setApiKeyProviders(prev =>
+        prev.map(p => p.provider === provider ? { ...p, configured: false } : p)
+      );
+      setApiKeyMessages(prev => ({ ...prev, [provider]: { ok: true, text: "Key removed" } }));
+      setTimeout(() => setApiKeyMessages(prev => {
+        const next = { ...prev };
+        delete next[provider];
+        return next;
+      }), 3000);
+    } catch (err) {
+      setApiKeyMessages(prev => ({
+        ...prev,
+        [provider]: { ok: false, text: err instanceof Error ? err.message : "Failed to remove" },
+      }));
+    } finally {
+      setApiKeyDeleting(prev => ({ ...prev, [provider]: false }));
+    }
+  }, []);
+
   const handleTunnelToggle = async (enable: boolean) => {
     setTunnelLoading(true);
     try {
@@ -449,6 +534,7 @@ export function Settings({
 
   const settingsTabs = [
     { value: "general", label: "General" },
+    { value: "api-keys", label: "API Keys" },
     { value: "storage", label: "Storage" },
     { value: "proxy", label: "Proxy" },
     { value: "remote", label: "Remote Access" },
@@ -654,6 +740,167 @@ export function Settings({
                       )}
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          {/* ── API Keys Tab ─────────────────────────────────── */}
+          {activeTab === "api-keys" && (
+            <>
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <KeyRound className="h-4 w-4 text-primary" />
+                    AI Provider API Keys
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Enter your own API keys to use AI providers directly from this device.
+                    Keys are stored locally on this machine only and are never sent to AI Matrx servers.
+                    Leave a key blank if you don't have one — that provider will be unavailable.
+                  </p>
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+                    Keys are base64-encoded in local storage. Do not enter keys you cannot afford to rotate.
+                    A cloud relay (no user keys required) is planned for a future release.
+                  </div>
+                </CardContent>
+              </Card>
+
+              {engineStatus !== "connected" ? (
+                <Card>
+                  <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                    Connect the engine to manage API keys.
+                  </CardContent>
+                </Card>
+              ) : apiKeyProviders.length === 0 ? (
+                <Card>
+                  <CardContent className="py-8 text-center">
+                    <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-foreground" />
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {apiKeyProviders.map((p) => {
+                    const inputVal = apiKeyInputs[p.provider] ?? "";
+                    const visible = apiKeyVisible[p.provider] ?? false;
+                    const saving = apiKeySaving[p.provider] ?? false;
+                    const deleting = apiKeyDeleting[p.provider] ?? false;
+                    const msg = apiKeyMessages[p.provider];
+                    const canSave = inputVal.trim().length > 0;
+                    return (
+                      <Card key={p.provider}>
+                        <CardContent className="py-4">
+                          <div className="flex items-start gap-3">
+                            <div className="min-w-0 flex-1 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium">{p.label}</span>
+                                {p.configured ? (
+                                  <Badge variant="success" className="text-xs">Configured</Badge>
+                                ) : (
+                                  <Badge variant="secondary" className="text-xs">Not set</Badge>
+                                )}
+                              </div>
+                              <p className="text-xs text-muted-foreground">{p.description}</p>
+                              <div className="flex items-center gap-2">
+                                <div className="relative flex-1">
+                                  <Input
+                                    type={visible ? "text" : "password"}
+                                    value={inputVal}
+                                    onChange={(e) =>
+                                      setApiKeyInputs(prev => ({ ...prev, [p.provider]: e.target.value }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" && canSave) void handleApiKeySave(p.provider);
+                                    }}
+                                    placeholder={p.configured ? "Enter new key to update" : "Enter API key"}
+                                    className="pr-9 font-mono text-xs"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setApiKeyVisible(prev => ({ ...prev, [p.provider]: !prev[p.provider] }))
+                                    }
+                                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                                    tabIndex={-1}
+                                  >
+                                    {visible
+                                      ? <EyeOff className="h-3.5 w-3.5" />
+                                      : <Eye className="h-3.5 w-3.5" />
+                                    }
+                                  </button>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  disabled={!canSave || saving}
+                                  onClick={() => void handleApiKeySave(p.provider)}
+                                  className="shrink-0"
+                                >
+                                  {saving
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    : <Check className="h-3.5 w-3.5" />
+                                  }
+                                  Save
+                                </Button>
+                                {p.configured && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={deleting}
+                                    onClick={() => void handleApiKeyDelete(p.provider)}
+                                    className="shrink-0 text-destructive hover:text-destructive"
+                                  >
+                                    {deleting
+                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      : <Trash2 className="h-3.5 w-3.5" />
+                                    }
+                                    Remove
+                                  </Button>
+                                )}
+                              </div>
+                              {msg && (
+                                <p className={`text-xs ${msg.ok ? "text-green-500" : "text-destructive"}`}>
+                                  {msg.text}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    Where do I get API keys?
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-1.5 text-xs text-muted-foreground">
+                  {[
+                    { label: "OpenAI", url: "https://platform.openai.com/api-keys" },
+                    { label: "Anthropic", url: "https://console.anthropic.com/settings/keys" },
+                    { label: "Google (Gemini)", url: "https://aistudio.google.com/app/apikey" },
+                    { label: "Groq", url: "https://console.groq.com/keys" },
+                    { label: "Together AI", url: "https://api.together.ai/settings/api-keys" },
+                    { label: "xAI (Grok)", url: "https://console.x.ai/" },
+                    { label: "Cerebras", url: "https://cloud.cerebras.ai/platform" },
+                  ].map(({ label, url }) => (
+                    <div key={label} className="flex items-center justify-between">
+                      <span>{label}</span>
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-primary hover:underline"
+                      >
+                        Get key <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
             </>

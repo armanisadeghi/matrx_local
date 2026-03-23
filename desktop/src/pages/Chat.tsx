@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { AlertTriangle, X } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { useAgents } from "@/hooks/use-agents";
@@ -24,6 +25,7 @@ interface AiStatusWarning {
 }
 
 export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
+  const navigate = useNavigate();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [aiWarning, setAiWarning] = useState<AiStatusWarning | null>(null);
   const [aiWarningDismissed, setAiWarningDismissed] = useState(false);
@@ -207,6 +209,12 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
                 <p className="mt-0.5 text-xs text-muted-foreground">{aiWarning.detail}</p>
               )}
             </div>
+            <button
+              onClick={() => navigate("/settings?tab=api-keys")}
+              className="shrink-0 whitespace-nowrap text-xs text-amber-500 hover:text-amber-400 underline transition-colors"
+            >
+              Configure API keys →
+            </button>
             <button
               onClick={() => setAiWarningDismissed(true)}
               className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"

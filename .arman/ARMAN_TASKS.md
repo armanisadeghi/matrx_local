@@ -34,6 +34,9 @@ All three are needed for CI builds to produce working binaries. Go to repo **Set
 
 ## 🟡 FUTURE — Not Urgent
 
+### Cloud AI Relay (needed before public launch)
+- [ ] **Build AIDream server relay endpoint** — Add a POST `/ai/relay` endpoint on `server.app.matrxserver.com` that accepts a Supabase JWT + AI request payload, validates the JWT, and forwards the request to the appropriate AI provider using platform-owned API keys. This removes the need for users to supply their own keys. Coordinate with agent to wire `matrx_ai` to call the relay instead of providers directly when no user key is stored.
+
 - [x] **Windows MSI → NSIS** — Done. Installer switched to NSIS with custom `installer-hooks.nsh` (2026-03-16).
 - [x] **First-run wizard** — Done. Setup wizard with auto-install implemented (2026-03-11).
 - [ ] **Rate limiting** on remote scraper server per user.

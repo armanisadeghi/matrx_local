@@ -1171,6 +1171,14 @@ class EngineAPI {
     });
   }
 
+  async put(path: string, body: unknown): Promise<unknown> {
+    return this.request(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
   async delete(path: string): Promise<unknown> {
     return this.request(path, { method: "DELETE" });
   }

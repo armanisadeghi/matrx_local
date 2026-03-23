@@ -46,6 +46,18 @@
 
 21. **First-run wizard** — On first launch (no settings file), show a wizard: Sign in → Engine health → optional capabilities install → done.
 
+---
+
+### AI Provider Keys & Cloud Relay (added 2026-03-22)
+
+- [x] **User API key storage implemented** — `ApiKeysRepo` in `repositories.py` stores per-provider keys in the `app_settings` SQLite blob (base64-obfuscated). `key_manager.py` injects them into `os.environ` at startup and on every save. `GET/PUT/DELETE /settings/api-keys/{provider}` routes wired in `settings_routes.py`. Settings page has an "API Keys" tab (second tab). Chat page amber banner links to Settings when no providers are configured.
+
+- [ ] **Cloud relay auth** — Users should not need their own API keys. Implement a relay service where authenticated users (via Supabase JWT) forward AI requests to our AIDream server, which makes provider calls using platform-owned keys. The `AppContext.api_keys` dict field in `matrx_ai` is a placeholder for per-user key injection — it is not currently wired to provider constructors. Two options: (1) patch `matrx_ai` provider `__init__` methods to check `AppContext.api_keys` before `os.environ`; (2) route through a cloud endpoint that handles provider calls server-side. Blocked until AIDream server relay endpoint is built. Track in ARMAN_TASKS for the server work.
+
+- [ ] **API key rotation reminder** — Add a "last updated" timestamp to stored API keys and show a UI hint after 90 days suggesting the user rotate their key. Requires adding a `{provider}_key_updated_at` field alongside the key in the settings blob.
+
+- [ ] **OS keychain encryption for API keys** — Upgrade from base64 obfuscation to OS-native keychain storage (macOS Keychain / Windows Credential Manager / libsecret on Linux) using Tauri's `tauri-plugin-stronghold` or native Keychain plugin. Significant complexity — implement only if user data security requirements increase.
+
 ### Voice — Wake Word System (added 2026-03-18)
 
 - [x] **Wake word architecture implemented** — Whisper-tiny based on-device detection. Rust: `transcription/wake_word.rs` with dedicated AudioCapture thread, 2-second inference windows, cooldown + dismiss state machine. New Tauri commands: `start_wake_word`, `stop_wake_word`, `mute_wake_word`, `unmute_wake_word`, `dismiss_wake_word`, `trigger_wake_word`, `configure_wake_word`, `get_wake_word_mode`, `is_wake_word_running`.
