@@ -2,6 +2,7 @@
 
 Includes:
 - Engine settings (headless_scraping, scrape_delay)
+- Wake word engine preference (whisper vs openWakeWord, model, threshold)
 - Forbidden URL list
 - Storage path overrides (GET /settings/paths, PUT /settings/paths/{name},
   DELETE /settings/paths/{name} to reset to default)
@@ -10,12 +11,13 @@ Includes:
 from __future__ import annotations
 
 import re
-from typing import Any, List
+from typing import Any, List, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.services.cloud_sync.settings_sync import get_settings_sync
+from app.services.local_db.repositories import AppSettingsRepo
 from app.services.paths.manager import all_paths, set_path, reset_path, safe_dir
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -117,6 +119,40 @@ async def replace_forbidden_urls(body: ForbiddenUrlsResponse) -> ForbiddenUrlsRe
     sync = get_settings_sync()
     sync.set("forbidden_urls", normalized)
     return ForbiddenUrlsResponse(urls=normalized)
+
+
+# ── Wake word settings ────────────────────────────────────────────────────────
+
+_WW_SETTINGS_KEY = "wake_word"
+
+_WW_DEFAULTS: dict[str, Any] = {
+    "engine": "whisper",          # "whisper" | "oww"
+    "oww_model": "hey_jarvis",    # OWW model name (when engine == "oww")
+    "oww_threshold": 0.5,         # detection confidence threshold
+    "custom_keyword": "hey matrix",  # keyword for the whisper engine
+}
+
+
+class WakeWordSettings(BaseModel):
+    engine: Literal["whisper", "oww"] = "whisper"
+    oww_model: str = "hey_jarvis"
+    oww_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    custom_keyword: str = "hey matrix"
+
+
+@router.get("/wake-word", response_model=WakeWordSettings)
+async def get_wake_word_settings() -> WakeWordSettings:
+    repo = AppSettingsRepo()
+    stored: dict[str, Any] = await repo.get(_WW_SETTINGS_KEY, {})
+    merged = {**_WW_DEFAULTS, **stored}
+    return WakeWordSettings(**merged)
+
+
+@router.put("/wake-word", response_model=WakeWordSettings)
+async def save_wake_word_settings(req: WakeWordSettings) -> WakeWordSettings:
+    repo = AppSettingsRepo()
+    await repo.set(_WW_SETTINGS_KEY, req.model_dump())
+    return req
 
 
 # ── Storage paths ─────────────────────────────────────────────────────────────

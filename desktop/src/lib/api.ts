@@ -249,6 +249,178 @@ class EngineAPI {
     return resp.json();
   }
 
+  // ── Wake word settings (SQLite-persisted) ──────────────────────────────
+
+  /** Fetch the user's wake word engine preference from the sidecar SQLite store. */
+  async getWakeWordSettings(): Promise<import("./transcription/types").WakeWordSettings> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/settings/wake-word`, { headers });
+    if (!resp.ok) throw new Error(`Failed to get wake word settings: ${resp.status}`);
+    const raw = await resp.json();
+    // Convert snake_case → camelCase
+    return {
+      engine: raw.engine,
+      owwModel: raw.oww_model,
+      owwThreshold: raw.oww_threshold,
+      customKeyword: raw.custom_keyword,
+    };
+  }
+
+  /** Persist the user's wake word engine preference to the sidecar SQLite store. */
+  async saveWakeWordSettings(
+    settings: import("./transcription/types").WakeWordSettings,
+  ): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    // Convert camelCase → snake_case for the Python API
+    const body = {
+      engine: settings.engine,
+      oww_model: settings.owwModel,
+      oww_threshold: settings.owwThreshold,
+      custom_keyword: settings.customKeyword,
+    };
+    const resp = await fetch(`${this.baseUrl}/settings/wake-word`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) throw new Error(`Failed to save wake word settings: ${resp.status}`);
+  }
+
+  // ── openWakeWord engine control ──────────────────────────────────────────
+
+  /** Get OWW engine runtime status. */
+  async owwStatus(): Promise<import("./transcription/types").OwwStatus> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/wake-word/status`, { headers });
+    if (!resp.ok) throw new Error(`OWW status failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Start the OWW detection loop. */
+  async owwStart(opts?: {
+    modelName?: string;
+    threshold?: number;
+    deviceName?: string;
+  }): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/wake-word/start`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model_name: opts?.modelName ?? null,
+        threshold: opts?.threshold ?? null,
+        device_name: opts?.deviceName ?? null,
+      }),
+    });
+    if (!resp.ok) throw new Error(`OWW start failed: ${resp.status} ${await resp.text()}`);
+  }
+
+  /** Stop the OWW detection loop entirely. */
+  async owwStop(): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/wake-word/stop`, {
+      method: "POST",
+      headers: await this.authHeaders(),
+    });
+    if (!resp.ok) throw new Error(`OWW stop failed: ${resp.status}`);
+  }
+
+  /** Mute OWW (keeps thread alive). */
+  async owwMute(): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/wake-word/mute`, {
+      method: "POST",
+      headers: await this.authHeaders(),
+    });
+    if (!resp.ok) throw new Error(`OWW mute failed: ${resp.status}`);
+  }
+
+  /** Unmute OWW. */
+  async owwUnmute(): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/wake-word/unmute`, {
+      method: "POST",
+      headers: await this.authHeaders(),
+    });
+    if (!resp.ok) throw new Error(`OWW unmute failed: ${resp.status}`);
+  }
+
+  /** Dismiss OWW (10-second false-trigger cooldown). */
+  async owwDismiss(): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/wake-word/dismiss`, {
+      method: "POST",
+      headers: await this.authHeaders(),
+    });
+    if (!resp.ok) throw new Error(`OWW dismiss failed: ${resp.status}`);
+  }
+
+  /** Manually fire a wake-word-detected event (for testing). */
+  async owwTrigger(): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/wake-word/trigger`, {
+      method: "POST",
+      headers: await this.authHeaders(),
+    });
+    if (!resp.ok) throw new Error(`OWW trigger failed: ${resp.status}`);
+  }
+
+  /** Configure OWW model / threshold at runtime. */
+  async owwConfigure(opts: {
+    modelName?: string;
+    threshold?: number;
+  }): Promise<void> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/wake-word/configure`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model_name: opts.modelName ?? null,
+        threshold: opts.threshold ?? null,
+      }),
+    });
+    if (!resp.ok) throw new Error(`OWW configure failed: ${resp.status}`);
+  }
+
+  /** List all available OWW models (pre-trained + custom). */
+  async owwListModels(): Promise<import("./transcription/types").OwwModelsResponse> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/wake-word/models`, { headers });
+    if (!resp.ok) throw new Error(`OWW list models failed: ${resp.status}`);
+    return resp.json();
+  }
+
+  /** Download a pre-trained OWW model (returns when download completes). */
+  async owwDownloadModel(
+    name: string,
+  ): Promise<import("./transcription/types").OwwModelInfo> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const resp = await fetch(`${this.baseUrl}/wake-word/models/download`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model_name: name }),
+    });
+    if (!resp.ok) throw new Error(`OWW download failed: ${resp.status} ${await resp.text()}`);
+    return resp.json();
+  }
+
+  /**
+   * Open an EventSource SSE stream to the OWW detection service.
+   * The caller is responsible for closing it (eventSource.close()).
+   * The base URL must be discovered before calling this.
+   */
+  owwStream(): EventSource {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    return new EventSource(`${this.baseUrl}/wake-word/stream`);
+  }
+
   /** Get the list of available tools from the engine. */
   async listTools(): Promise<string[]> {
     if (!this.baseUrl) throw new Error("Engine not discovered");

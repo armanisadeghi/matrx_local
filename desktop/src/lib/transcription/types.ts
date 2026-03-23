@@ -60,10 +60,23 @@ export interface AudioDeviceInfo {
 /** Operational mode of the wake-word subsystem. */
 export type WakeWordMode = "listening" | "muted" | "dismissed";
 
+/** Which backend engine handles wake word detection. */
+export type WakeWordEngine = "whisper" | "oww";
+
 /** Payload of the "wake-word-detected" event. */
 export interface WakeWordDetectedEvent {
   /** The keyword string returned by the KWS model, or "MANUAL" for manual trigger. */
   keyword: string;
+  /** Confidence score 0–1 (OWW engine); always 1.0 for whisper engine and MANUAL. */
+  score?: number;
+}
+
+/** Persisted user preferences for the wake word system (stored in SQLite). */
+export interface WakeWordSettings {
+  engine: WakeWordEngine;
+  owwModel: string;
+  owwThreshold: number;
+  customKeyword: string;
 }
 
 /** Status of the wake word system. */
@@ -71,6 +84,37 @@ export interface WakeWordStatus {
   mode: WakeWordMode;
   isRunning: boolean;
   kmsModelReady: boolean;
+}
+
+/** An OWW model entry from GET /wake-word/models. */
+export interface OwwModelInfo {
+  name: string;
+  filename: string;
+  downloaded: boolean;
+  size_mb: number;
+  description: string;
+  is_built_in: boolean;
+  is_custom: boolean;
+}
+
+/** Response from GET /wake-word/models. */
+export interface OwwModelsResponse {
+  models: OwwModelInfo[];
+}
+
+/** Response from GET /wake-word/status. */
+export interface OwwStatus {
+  running: boolean;
+  mode: WakeWordMode;
+  model_name: string;
+  threshold: number;
+}
+
+/** Progress event from /wake-word/models/download-stream. */
+export interface OwwDownloadProgress {
+  bytes_done: number;
+  total_bytes: number;
+  percent: number;
 }
 
 /** A persisted transcription recording session. */

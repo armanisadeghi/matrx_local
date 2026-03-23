@@ -6,7 +6,9 @@ import { useTranscriptionSessions } from "@/hooks/use-transcription-sessions";
 import { useWakeWord } from "@/hooks/use-wake-word";
 import { WakeWordOverlay } from "@/components/WakeWordOverlay";
 import { WakeWordControls } from "@/components/WakeWordControls";
+import { WakeWordPage } from "@/pages/WakeWord";
 import { usePermissionsContext } from "@/contexts/PermissionsContext";
+import { loadSettings } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import { TranscriptionMiniMode } from "@/components/TranscriptionMiniMode";
@@ -50,6 +52,7 @@ const TABS = [
   { value: "transcribe", label: "Transcribe" },
   { value: "models", label: "Models" },
   { value: "devices", label: "Audio Devices" },
+  { value: "wakeword", label: "Wake Word" },
 ];
 
 const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
@@ -86,6 +89,32 @@ export function Voice() {
     handleSleep,
     state.fullTranscript,
   );
+
+  // ── Auto-start listen mode on mount if setting is enabled ────────────────
+  const didAutoStartRef = useRef(false);
+  useEffect(() => {
+    if (didAutoStartRef.current) return;
+    didAutoStartRef.current = true;
+    loadSettings().then((s) => {
+      if (s.wakeWordEnabled && s.wakeWordListenOnStartup) {
+        // Defer slightly so transcription init can settle first
+        setTimeout(() => void wwActions.setup(), 800);
+      }
+    }).catch(() => {});
+  // Intentionally empty deps — run once on mount only
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Publish transcript from the overlay directly to a note ───────────────
+  const handleOverlayPublishToNote = useCallback(async (text: string) => {
+    if (!engine.engineUrl) return;
+    const date = new Date();
+    await engine.createNote("local", {
+      label: `Voice Note — ${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`,
+      content: text,
+      folder_name: "Voice Notes",
+    });
+  }, []);
 
   // Wire state changes to the unified log bus
   useEffect(() => {
@@ -248,6 +277,7 @@ export function Voice() {
         rms={state.liveRms || wwState.listenRms}
         transcript={state.fullTranscript}
         onDismiss={wwActions.dismiss}
+        onPublishToNote={engine.engineUrl ? handleOverlayPublishToNote : undefined}
       />
 
       <PageHeader
@@ -310,6 +340,9 @@ export function Voice() {
           <div className="h-full overflow-y-auto p-6">
             <DevicesTab state={state} actions={actions} />
           </div>
+        )}
+        {tab === "wakeword" && (
+          <WakeWordPage wwState={wwState} wwActions={wwActions} />
         )}
       </div>
     </div>

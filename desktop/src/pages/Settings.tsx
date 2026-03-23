@@ -575,6 +575,43 @@ export function Settings({
 
                   <Separator />
 
+                  {/* ── Wake Word / Listen Mode ───────────────────── */}
+                  <div>
+                    <p className="text-sm font-medium mb-3">Wake Word / Listen Mode</p>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label htmlFor="ww-enabled">Enable Listen Mode</Label>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Master switch — turn off to disable wake-word detection entirely
+                          </p>
+                        </div>
+                        <Switch
+                          id="ww-enabled"
+                          checked={settings.wakeWordEnabled}
+                          onCheckedChange={(v) => updateSetting("wakeWordEnabled", v)}
+                        />
+                      </div>
+                      {settings.wakeWordEnabled && (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <Label htmlFor="ww-startup">Listen on Startup</Label>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Automatically enter listen mode when the app launches
+                            </p>
+                          </div>
+                          <Switch
+                            id="ww-startup"
+                            checked={settings.wakeWordListenOnStartup}
+                            onCheckedChange={(v) => updateSetting("wakeWordListenOnStartup", v)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <Separator />
+
                   {/* ── Notification Preferences ─────────────────── */}
                   <div>
                     <p className="text-sm font-medium mb-3">Notification Preferences</p>

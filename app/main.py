@@ -24,6 +24,7 @@ from app.api.fetch_proxy_routes import router as fetch_proxy_router
 from app.api.tunnel_routes import router as tunnel_router
 from app.api.setup_routes import router as setup_router
 from app.api.platform_routes import router as platform_router
+from app.api.wake_word_routes import router as wake_word_router
 from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, MATRX_HOME_DIR, TUNNEL_ENABLED
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
@@ -532,6 +533,7 @@ app.include_router(fetch_proxy_router)
 app.include_router(tunnel_router)
 app.include_router(setup_router)
 app.include_router(platform_router)
+app.include_router(wake_word_router)
 
 # NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler
 # (Phase 1b) AFTER initialize_matrx_ai() registers the DB config. Calling it here

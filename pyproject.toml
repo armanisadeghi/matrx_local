@@ -72,6 +72,10 @@ dependencies = [
     # Audio hardware I/O
     "sounddevice>=0.5.5",
     "numpy>=2.4.2",
+    # On-device wake word detection (ONNX inference, no cloud, cross-platform)
+    # openwakeword's tflite-runtime Linux dep has no cp313+ wheels; we use ONNX only.
+    "openwakeword>=0.6.0",
+    "onnxruntime>=1.18.0",
 ]
 
 [project.optional-dependencies]
@@ -90,3 +94,9 @@ dev = [
 
 [tool.uv]
 python-preference = "only-managed"
+# tflite-runtime has no Python 3.13/3.14 wheels.  openWakeWord uses it only on
+# Linux as a second inference backend — we drive it via onnxruntime exclusively.
+# The impossible marker ensures uv skips it entirely on all platforms.
+override-dependencies = [
+    "tflite-runtime ; python_version < '3.0'",
+]

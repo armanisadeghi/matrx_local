@@ -22,6 +22,9 @@ export interface AppSettings {
   // Notifications
   notificationSound: boolean;
   notificationSoundStyle: "chime" | "alert" | "success" | "error";
+  // Wake word / listen mode
+  wakeWordEnabled: boolean;       // master switch — if false, never start listening
+  wakeWordListenOnStartup: boolean; // auto-start listen mode when app launches
 }
 
 /** One storage path entry as returned by GET /settings/paths */
@@ -47,6 +50,8 @@ const DEFAULTS: AppSettings = {
   instanceName: "My Computer",
   notificationSound: true,
   notificationSoundStyle: "chime",
+  wakeWordEnabled: true,
+  wakeWordListenOnStartup: true,
 };
 
 export async function loadSettings(): Promise<AppSettings> {

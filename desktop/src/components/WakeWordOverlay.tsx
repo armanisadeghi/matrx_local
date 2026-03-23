@@ -1,273 +1,469 @@
 /**
  * WakeWordOverlay
  *
- * Full-screen overlay that appears for 2 seconds after wake-word detection,
- * then stays visible (with live pulse + transcript) while the active session
- * is open.  The screen-edge lighting animation communicates system state at
- * a glance:
+ * Two-phase UI on wake-word detection:
  *
- *   Waking   — rapid inward pulse of blue/teal light from all four edges
- *   Listening — gentle steady glow + voice-amplitude beat on the border
- *   Dismissed — brief red flash → fade to nothing
+ * Phase 1 — FLASH (2.5 s)
+ *   A full-screen high-visibility pulse covers the entire app window with an
+ *   expanding ring of light, confirming the system heard the user.
+ *   A short "ding" tone plays at the same instant.
  *
- * The overlay renders inside the Tauri window (we can't control the OS
- * screen outside our app window), so the lighting effect covers the full
- * app window borders.  This is intentional and gives a vivid "we heard you"
- * moment without any OS-level permissions.
+ * Phase 2 — TRANSCRIPT PANEL
+ *   After the flash fades, a compact draggable panel appears in the upper-right
+ *   corner.  It shows live transcription text in bright, legible white and stays
+ *   on screen until the active session ends or the user dismisses it.
  *
- * Layout:
- *   ┌─────────────────────────────────────┐
- *   │  [glow border — 6–24 px animated]   │
- *   │                                     │
- *   │       BIG TRANSCRIPT TEXT           │
- *   │       in the centre                 │
- *   │                                     │
- *   │  [X dismiss]          [voice ring]  │
- *   └─────────────────────────────────────┘
+ * Dismissed state
+ *   A brief red flash confirms dismissal, then both elements disappear.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { X, GripHorizontal, FileText } from "lucide-react";
 import type { WakeWordUIMode } from "@/hooks/use-wake-word";
+
+// ── Props ─────────────────────────────────────────────────────────────────────
 
 interface WakeWordOverlayProps {
   uiMode: WakeWordUIMode;
-  /** Live RMS from the microphone (0–1) — drives the pulse animation */
   rms: number;
-  /** The full accumulated transcript text for the active session */
   transcript: string;
   onDismiss: () => void;
+  onPublishToNote?: (text: string) => Promise<void>;
 }
 
-// ── Border glow colours per mode ──────────────────────────────────────────────
-const BORDER_COLORS: Record<string, string> = {
-  active: "rgba(99, 179, 237, ",     // sky blue
-  listening: "rgba(129, 230, 217, ", // teal
-  dismissed: "rgba(252, 129, 129, ", // soft red
-};
+// ── Keyframes injected once ───────────────────────────────────────────────────
 
-// ── Keyframe CSS injected once ────────────────────────────────────────────────
-const KEYFRAMES_ID = "ww-overlay-keyframes";
+const KEYFRAMES_ID = "ww-overlay-keyframes-v2";
 
 function ensureKeyframes() {
   if (document.getElementById(KEYFRAMES_ID)) return;
   const style = document.createElement("style");
   style.id = KEYFRAMES_ID;
   style.textContent = `
-    @keyframes ww-wake-pulse {
-      0%   { opacity: 0; transform: scale(0.96); }
-      40%  { opacity: 1; transform: scale(1.01); }
-      70%  { opacity: 0.7; transform: scale(1.0); }
-      100% { opacity: 0.4; transform: scale(1.0); }
+    /* Phase 1: full-screen flash ring */
+    @keyframes ww-flash-ring {
+      0%   { transform: scale(0.3); opacity: 0.9; }
+      60%  { transform: scale(1.05); opacity: 0.7; }
+      100% { transform: scale(1.3); opacity: 0; }
     }
-    @keyframes ww-border-breathe {
-      0%, 100% { opacity: 0.55; }
-      50%       { opacity: 1.0; }
-    }
-    @keyframes ww-text-appear {
-      from { opacity: 0; transform: translateY(8px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes ww-dismiss-flash {
-      0%   { opacity: 1; }
-      50%  { opacity: 0.6; }
+    @keyframes ww-flash-glow {
+      0%   { opacity: 0.95; }
+      40%  { opacity: 1; }
       100% { opacity: 0; }
     }
-    @keyframes ww-ring-spin {
-      from { transform: rotate(0deg); }
-      to   { transform: rotate(360deg); }
+    @keyframes ww-flash-bg {
+      0%   { opacity: 0.55; }
+      30%  { opacity: 0.35; }
+      100% { opacity: 0; }
+    }
+
+    /* Phase 2: transcript panel slide-in */
+    @keyframes ww-panel-in {
+      from { opacity: 0; transform: translateX(24px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Dismiss */
+    @keyframes ww-dismiss {
+      0%   { opacity: 1; }
+      40%  { opacity: 0.5; background: rgba(239,68,68,0.3); }
+      100% { opacity: 0; }
+    }
+
+    /* Transcript text breathing when empty */
+    @keyframes ww-breathe {
+      0%, 100% { opacity: 0.5; }
+      50%       { opacity: 1.0; }
+    }
+
+    /* RMS bar pulse */
+    @keyframes ww-rms-pulse {
+      0%   { transform: scaleY(0.6); }
+      50%  { transform: scaleY(1.0); }
+      100% { transform: scaleY(0.6); }
+    }
+
+    /* Border edge glow on the app window during listening */
+    @keyframes ww-edge-breathe {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(99,179,237,0.6), 0 0 40px 8px rgba(99,179,237,0.25), inset 0 0 30px 4px rgba(99,179,237,0.08); }
+      50%       { box-shadow: 0 0 0 4px rgba(99,179,237,0.9), 0 0 60px 12px rgba(99,179,237,0.40), inset 0 0 40px 6px rgba(99,179,237,0.12); }
+    }
+    @keyframes ww-edge-dismiss {
+      0%   { box-shadow: 0 0 0 4px rgba(239,68,68,0.8), 0 0 50px 10px rgba(239,68,68,0.4); }
+      100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
     }
   `;
   document.head.appendChild(style);
 }
 
+// ── Audio ding (generated via Web Audio API — no asset file needed) ──────────
+
+let _audioCtx: AudioContext | null = null;
+
+function playDing() {
+  try {
+    if (!_audioCtx) {
+      _audioCtx = new AudioContext();
+    }
+    const ctx = _audioCtx;
+    if (ctx.state === "suspended") {
+      void ctx.resume();
+    }
+
+    // Two-tone pleasant chime: root note + fifth
+    const now = ctx.currentTime;
+    const tones = [
+      { freq: 880, gain: 0.22, start: 0,    dur: 0.55 },
+      { freq: 1320, gain: 0.15, start: 0.06, dur: 0.50 },
+    ];
+
+    for (const { freq, gain, start, dur } of tones) {
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      env.gain.setValueAtTime(0, now + start);
+      env.gain.linearRampToValueAtTime(gain, now + start + 0.03);
+      env.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
+      osc.connect(env);
+      env.connect(ctx.destination);
+      osc.start(now + start);
+      osc.stop(now + start + dur + 0.05);
+    }
+  } catch {
+    // AudioContext blocked (e.g. no prior user gesture) — ignore silently
+  }
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function WakeWordOverlay({ uiMode, rms, transcript, onDismiss }: WakeWordOverlayProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animFrameRef = useRef<number>(0);
-  const [visible, setVisible] = useState(false);
-  const [exiting, setExiting] = useState(false);
-  const prevModeRef = useRef<WakeWordUIMode>("idle");
+export function WakeWordOverlay({
+  uiMode,
+  rms,
+  transcript,
+  onDismiss,
+  onPublishToNote,
+}: WakeWordOverlayProps) {
+  useEffect(() => { ensureKeyframes(); }, []);
 
-  useEffect(() => {
-    ensureKeyframes();
+  // Phase tracking
+  const [phase, setPhase] = useState<"hidden" | "flash" | "panel" | "exiting">("hidden");
+  const prevModeRef = useRef<WakeWordUIMode>("idle");
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exitTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Drag state for the transcript panel
+  const [panelPos, setPanelPos] = useState({ x: 0, y: 0 }); // offsets from default top-right
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  // Publishing feedback
+  const [publishing, setPublishing] = useState(false);
+  const [published, setPublished] = useState(false);
+
+  const clearTimers = useCallback(() => {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    if (exitTimerRef.current)  clearTimeout(exitTimerRef.current);
+    flashTimerRef.current = null;
+    exitTimerRef.current  = null;
   }, []);
 
-  // ── Visibility control ────────────────────────────────────────────────────
+  // ── Mode → phase transitions ───────────────────────────────────────────────
   useEffect(() => {
     const prev = prevModeRef.current;
     prevModeRef.current = uiMode;
 
-    if (uiMode === "active") {
-      setExiting(false);
-      setVisible(true);
-    } else if (uiMode === "dismissed" && prev === "active") {
-      // Flash red, then hide
-      setExiting(true);
-      setTimeout(() => {
-        setVisible(false);
-        setExiting(false);
-      }, 600);
-    } else if (prev === "active") {
-      setExiting(true);
-      setTimeout(() => {
-        setVisible(false);
-        setExiting(false);
-      }, 400);
+    if (uiMode === "active" && prev !== "active") {
+      // Wake detected — play ding, show flash, transition to panel after 2.5 s
+      clearTimers();
+      setPhase("flash");
+      setPublished(false);
+      playDing();
+      flashTimerRef.current = setTimeout(() => {
+        setPhase("panel");
+      }, 2500);
+    } else if (uiMode !== "active" && prev === "active") {
+      // Session ended — exit
+      clearTimers();
+      setPhase("exiting");
+      exitTimerRef.current = setTimeout(() => {
+        setPhase("hidden");
+      }, uiMode === "dismissed" ? 600 : 400);
     }
-  }, [uiMode]);
+  }, [uiMode, clearTimers]);
 
-  // ── Canvas voice-ring animation ───────────────────────────────────────────
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  useEffect(() => () => clearTimers(), [clearTimers]);
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    let localRms = rms;
-
-    const draw = () => {
-      // Smoothly converge toward the live rms value
-      localRms += (rms - localRms) * 0.15;
-
-      const W = canvas.width;
-      const H = canvas.height;
-      const cx = W / 2;
-      const cy = H / 2;
-
-      ctx.clearRect(0, 0, W, H);
-
-      // Draw concentric rings that pulse with RMS
-      const baseRadius = Math.min(W, H) * 0.3;
-      const rings = 4;
-      for (let i = rings; i >= 1; i--) {
-        const spread = localRms * 0.4 + 0.05;
-        const r = baseRadius * (1 + (i / rings) * spread);
-        const alpha = ((rings - i + 1) / rings) * (0.15 + localRms * 0.5);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(99, 179, 237, ${alpha})`;
-        ctx.lineWidth = 2 + (localRms * 6 * (rings - i + 1)) / rings;
-        ctx.stroke();
-      }
-
-      // Center dot pulses with voice
-      const dotR = 6 + localRms * 20;
-      const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, dotR);
-      gradient.addColorStop(0, `rgba(129, 230, 217, ${0.8 + localRms * 0.2})`);
-      gradient.addColorStop(1, `rgba(99, 179, 237, 0)`);
-      ctx.beginPath();
-      ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
-      ctx.fillStyle = gradient;
-      ctx.fill();
-
-      animFrameRef.current = requestAnimationFrame(draw);
+  // ── Drag handlers for the transcript panel ────────────────────────────────
+  const handleDragStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: panelPos.x,
+      origY: panelPos.y,
     };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      setPanelPos({
+        x: dragRef.current.origX + (ev.clientX - dragRef.current.startX),
+        y: dragRef.current.origY + (ev.clientY - dragRef.current.startY),
+      });
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [panelPos]);
 
-    animFrameRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(animFrameRef.current);
-  }, [rms]);
+  // ── Publish to note ───────────────────────────────────────────────────────
+  const handlePublish = useCallback(async () => {
+    if (!onPublishToNote || !transcript || publishing) return;
+    setPublishing(true);
+    try {
+      await onPublishToNote(transcript);
+      setPublished(true);
+    } catch {
+      // non-critical — user can try again
+    } finally {
+      setPublishing(false);
+    }
+  }, [onPublishToNote, transcript, publishing]);
 
-  if (!visible) return null;
+  if (phase === "hidden") return null;
 
-  const colorBase = exiting
-    ? BORDER_COLORS.dismissed
-    : BORDER_COLORS.active;
-
-  const borderGlow = `0 0 0 3px ${colorBase}0.8), 0 0 40px 8px ${colorBase}0.4), inset 0 0 40px 8px ${colorBase}0.1)`;
+  const isExiting = phase === "exiting";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center pointer-events-none"
-      style={{
-        animation: exiting
-          ? "ww-dismiss-flash 0.4s ease-out forwards"
-          : "ww-wake-pulse 0.5s ease-out forwards",
-      }}
-    >
-      {/* Screen-edge glow border */}
-      <div
-        className="absolute inset-0 rounded-none pointer-events-none"
-        style={{
-          boxShadow: borderGlow,
-          animation: exiting ? undefined : "ww-border-breathe 2s ease-in-out infinite",
-        }}
-      />
-
-      {/* Main content area — pointer-events on so dismiss button works */}
-      <div className="pointer-events-auto flex flex-col items-center gap-6 px-8 max-w-3xl w-full">
-
-        {/* Voice ring canvas */}
-        <canvas
-          ref={canvasRef}
-          width={180}
-          height={180}
-          className="flex-shrink-0"
-        />
-
-        {/* BIG transcript text */}
+    <>
+      {/* ── Phase 1: Full-screen flash ─────────────────────────────────── */}
+      {phase === "flash" && (
         <div
-          className="text-center"
+          className="fixed inset-0 z-[60] pointer-events-none overflow-hidden"
           style={{
-            animation: "ww-text-appear 0.3s ease-out",
+            animation: "ww-flash-bg 2.5s ease-out forwards",
+            background: "radial-gradient(ellipse at center, rgba(99,179,237,0.18) 0%, rgba(99,179,237,0.04) 60%, transparent 100%)",
           }}
         >
-          {transcript ? (
-            <p
-              className="font-bold leading-tight tracking-tight select-text"
+          {/* Expanding ring 1 */}
+          <div
+            className="absolute inset-0 flex items-center justify-center"
+            style={{ animation: "ww-flash-ring 2.2s cubic-bezier(0.2,0.8,0.3,1) forwards" }}
+          >
+            <div
+              className="rounded-full"
               style={{
-                fontSize: "clamp(1.5rem, 4vw, 3rem)",
-                color: "rgba(226, 232, 240, 0.95)",
-                textShadow: "0 0 30px rgba(99,179,237,0.6), 0 2px 8px rgba(0,0,0,0.8)",
-                maxHeight: "40vh",
-                overflowY: "auto",
-                wordBreak: "break-word",
+                width: "min(90vw, 90vh)",
+                height: "min(90vw, 90vh)",
+                border: "3px solid rgba(99,179,237,0.85)",
+                boxShadow: "0 0 60px 20px rgba(99,179,237,0.4), inset 0 0 60px 10px rgba(99,179,237,0.1)",
+              }}
+            />
+          </div>
+          {/* Expanding ring 2 (offset) */}
+          <div
+            className="absolute inset-0 flex items-center justify-center"
+            style={{ animation: "ww-flash-ring 2.5s 0.15s cubic-bezier(0.2,0.8,0.3,1) forwards" }}
+          >
+            <div
+              className="rounded-full"
+              style={{
+                width: "min(70vw, 70vh)",
+                height: "min(70vw, 70vh)",
+                border: "2px solid rgba(129,230,217,0.6)",
+                boxShadow: "0 0 40px 10px rgba(129,230,217,0.25)",
+              }}
+            />
+          </div>
+          {/* Edge glow on the window border */}
+          <div
+            className="absolute inset-0"
+            style={{ animation: "ww-flash-glow 2.5s ease-out forwards", boxShadow: "0 0 0 4px rgba(99,179,237,0.9), 0 0 80px 20px rgba(99,179,237,0.45), inset 0 0 80px 10px rgba(99,179,237,0.15)" }}
+          />
+          {/* Central "heard you" text */}
+          <div
+            className="absolute inset-0 flex items-center justify-center"
+            style={{ animation: "ww-flash-glow 2.5s ease-out forwards" }}
+          >
+            <p
+              className="font-bold tracking-widest uppercase select-none"
+              style={{
+                fontSize: "clamp(1.4rem, 3vw, 2.4rem)",
+                color: "rgba(226,232,240,0.95)",
+                textShadow: "0 0 40px rgba(99,179,237,0.9), 0 2px 12px rgba(0,0,0,0.7)",
+                letterSpacing: "0.25em",
               }}
             >
-              {transcript}
+              Listening
             </p>
-          ) : (
-            <p
-              className="font-medium tracking-widest uppercase"
-              style={{
-                fontSize: "clamp(1rem, 2vw, 1.5rem)",
-                color: "rgba(148, 210, 232, 0.7)",
-                textShadow: "0 0 20px rgba(99,179,237,0.4)",
-                letterSpacing: "0.2em",
-                animation: "ww-border-breathe 2s ease-in-out infinite",
-              }}
-            >
-              Listening…
-            </p>
-          )}
+          </div>
         </div>
+      )}
 
-        {/* Dismiss button */}
-        <button
-          onClick={onDismiss}
-          className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all"
+      {/* ── Window-edge glow during active phase ─────────────────────────── */}
+      {(phase === "panel" || phase === "flash") && !isExiting && (
+        <div
+          className="fixed inset-0 z-[55] pointer-events-none"
           style={{
-            background: "rgba(30, 41, 59, 0.85)",
-            border: "1px solid rgba(99,179,237,0.3)",
-            color: "rgba(148, 210, 232, 0.9)",
-            backdropFilter: "blur(12px)",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+            animation: phase === "panel"
+              ? "ww-edge-breathe 2s ease-in-out infinite"
+              : undefined,
+            boxShadow: phase === "flash"
+              ? "0 0 0 4px rgba(99,179,237,0.9), 0 0 80px 20px rgba(99,179,237,0.45)"
+              : undefined,
           }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "rgba(239,68,68,0.25)";
-            (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(239,68,68,0.5)";
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "rgba(30,41,59,0.85)";
-            (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(99,179,237,0.3)";
+        />
+      )}
+      {isExiting && (
+        <div
+          className="fixed inset-0 z-[55] pointer-events-none"
+          style={{ animation: "ww-edge-dismiss 0.6s ease-out forwards" }}
+        />
+      )}
+
+      {/* ── Phase 2: Draggable transcript panel ───────────────────────────── */}
+      {(phase === "panel" || isExiting) && (
+        <div
+          className="fixed z-[58] select-none"
+          style={{
+            top: 64,
+            right: 20,
+            transform: `translate(${panelPos.x}px, ${panelPos.y}px)`,
+            animation: isExiting
+              ? "ww-dismiss 0.5s ease-out forwards"
+              : "ww-panel-in 0.3s ease-out",
+            width: "min(420px, calc(100vw - 48px))",
           }}
         >
-          <X size={14} />
-          Not for me
-        </button>
-      </div>
+          <div
+            className="flex flex-col overflow-hidden"
+            style={{
+              background: "rgba(15, 23, 42, 0.92)",
+              border: "1px solid rgba(99,179,237,0.35)",
+              borderRadius: "12px",
+              boxShadow: "0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(99,179,237,0.1)",
+              backdropFilter: "blur(16px)",
+            }}
+          >
+            {/* Drag handle / title bar */}
+            <div
+              className="flex items-center justify-between px-3 py-2 cursor-grab active:cursor-grabbing"
+              style={{ borderBottom: "1px solid rgba(99,179,237,0.15)" }}
+              onMouseDown={handleDragStart}
+            >
+              <div className="flex items-center gap-2">
+                {/* RMS bars */}
+                <RmsBars rms={rms} />
+                <span
+                  className="text-xs font-semibold uppercase tracking-widest"
+                  style={{ color: "rgba(148,210,232,0.85)", letterSpacing: "0.18em" }}
+                >
+                  Listening
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <GripHorizontal size={14} style={{ color: "rgba(99,179,237,0.5)" }} />
+                <button
+                  onClick={onDismiss}
+                  className="ml-1 rounded p-1 transition-colors"
+                  style={{ color: "rgba(148,210,232,0.6)" }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = "rgba(239,68,68,0.9)";
+                    (e.currentTarget as HTMLButtonElement).style.background = "rgba(239,68,68,0.15)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color = "rgba(148,210,232,0.6)";
+                    (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+
+            {/* Transcript text */}
+            <div className="px-4 py-3" style={{ minHeight: 60, maxHeight: "40vh", overflowY: "auto" }}>
+              {transcript ? (
+                <p
+                  className="font-semibold leading-snug break-words"
+                  style={{
+                    fontSize: "clamp(1.1rem, 2.5vw, 1.7rem)",
+                    color: "rgba(241, 245, 249, 0.97)",
+                    textShadow: "0 0 20px rgba(99,179,237,0.5), 0 1px 4px rgba(0,0,0,0.8)",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {transcript}
+                </p>
+              ) : (
+                <p
+                  className="font-medium"
+                  style={{
+                    fontSize: "clamp(0.9rem, 2vw, 1.1rem)",
+                    color: "rgba(148,210,232,0.65)",
+                    animation: "ww-breathe 1.8s ease-in-out infinite",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  Speak now…
+                </p>
+              )}
+            </div>
+
+            {/* Footer actions */}
+            {onPublishToNote && transcript && (
+              <div
+                className="flex items-center justify-end gap-2 px-3 py-2"
+                style={{ borderTop: "1px solid rgba(99,179,237,0.12)" }}
+              >
+                <button
+                  onClick={handlePublish}
+                  disabled={publishing || published}
+                  className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all disabled:opacity-60"
+                  style={{
+                    background: published ? "rgba(34,197,94,0.15)" : "rgba(99,179,237,0.1)",
+                    border: `1px solid ${published ? "rgba(34,197,94,0.4)" : "rgba(99,179,237,0.3)"}`,
+                    color: published ? "rgba(134,239,172,0.9)" : "rgba(148,210,232,0.9)",
+                  }}
+                >
+                  <FileText size={12} />
+                  {publishing ? "Saving…" : published ? "Saved to note" : "Publish to note"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── RMS bars visualiser ───────────────────────────────────────────────────────
+
+function RmsBars({ rms }: { rms: number }) {
+  const bars = 4;
+  return (
+    <div className="flex items-end gap-0.5" style={{ height: 16 }}>
+      {Array.from({ length: bars }).map((_, i) => {
+        const threshold = (i + 1) / bars;
+        const active = rms >= threshold * 0.25;
+        return (
+          <div
+            key={i}
+            style={{
+              width: 3,
+              height: `${(i + 1) * 25}%`,
+              borderRadius: 1,
+              background: active
+                ? `rgba(99,179,237,${0.5 + rms * 0.5})`
+                : "rgba(99,179,237,0.18)",
+              transition: "background 0.08s",
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
