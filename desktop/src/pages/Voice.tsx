@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import { TranscriptionMiniMode } from "@/components/TranscriptionMiniMode";
 import { engine } from "@/lib/api";
-import { useLlm } from "@/hooks/use-llm";
+import { useLlmApp } from "@/contexts/LlmContext";
 import { useLlmPipeline } from "@/hooks/use-llm-pipeline";
 import type { TranscriptPolishOutput } from "@/hooks/use-llm-pipeline";
 import {
@@ -65,7 +65,7 @@ const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const [state, actions] = useTranscription();
-  const [llmState] = useLlm();
+  const [llmState] = useLlmApp();
   const llmPort = llmState.serverStatus?.port ?? null;
   const [sessionsState, sessionsActions] = useTranscriptionSessions();
   const [isMiniMode, setIsMiniMode] = useState(false);

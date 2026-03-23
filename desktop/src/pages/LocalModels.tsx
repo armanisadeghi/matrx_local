@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef, useCallback, createContext, useContext, useEffect } from "react";
-import { useLlm } from "@/hooks/use-llm";
 import type { LlmState, LlmActions, ServerStartProgress, ServerLogLine } from "@/hooks/use-llm";
+import { useLlmApp } from "@/contexts/LlmContext";
 import {
   Download,
   Trash2,
@@ -2228,8 +2228,8 @@ function HardwareTab() {
 // ── Page Root ─────────────────────────────────────────────────────────────
 
 export function LocalModels() {
-  // Single hook instance — all tabs share this state, no resets when switching tabs
-  const llm = useLlm();
+  // Use the shared app-level LLM context so Voice and other pages see the same server state
+  const llm = useLlmApp();
 
   return (
     <LlmContext.Provider value={llm}>

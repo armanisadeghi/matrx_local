@@ -141,6 +141,9 @@ export function Settings({
     mode: string;
   } | null>(null);
   const [tunnelLoading, setTunnelLoading] = useState(false);
+  // True while the initial GET /tunnel/status fetch is in-flight.
+  // Used to show a neutral loading state instead of a false "Stopped/OFF".
+  const [tunnelFetching, setTunnelFetching] = useState(false);
   const [tunnelCopied, setTunnelCopied] = useState(false);
 
   // Forbidden URLs state
@@ -172,13 +175,30 @@ export function Settings({
   useEffect(() => {
     if (engineStatus !== "connected") return;
     loadProxyStatus();
-    loadInstanceInfo();
     loadCapabilities();
     loadStoragePaths();
     loadTunnelStatus();
     loadApiKeyStatus();
+    // Instance info depends on cloud sync being configured (JWT pushed to Python).
+    // Load immediately for instance hardware info, then retry after 4s to catch
+    // the case where configureCloudSync hasn't finished yet and list_instances
+    // returns [] because the engine isn't authenticated to Supabase yet.
+    loadInstanceInfo();
+    const retry = setTimeout(() => loadInstanceInfo(), 4000);
+    return () => clearTimeout(retry);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineStatus]);
+
+  // Re-load remote tab data whenever the user navigates to it.
+  // This ensures the tunnel switch and device list always reflect live state
+  // rather than stale data from a previous visit.
+  useEffect(() => {
+    if (activeTab === "remote" && engineStatus === "connected") {
+      loadTunnelStatus();
+      loadInstanceInfo();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   const loadProxyStatus = useCallback(async () => {
     if (engineStatus !== "connected") return;
@@ -364,11 +384,14 @@ export function Settings({
 
   const loadTunnelStatus = useCallback(async () => {
     if (engineStatus !== "connected") return;
+    setTunnelFetching(true);
     try {
       const status = await engine.get("/tunnel/status") as typeof tunnelStatus;
       setTunnelStatus(status);
     } catch {
       // Non-critical
+    } finally {
+      setTunnelFetching(false);
     }
   }, [engineStatus]);
 
@@ -1197,11 +1220,17 @@ export function Settings({
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      {tunnelLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                      {(tunnelLoading || tunnelFetching) && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                       <Switch
                         id="tunnel-enabled"
-                        checked={tunnelStatus?.running ?? false}
-                        disabled={tunnelLoading || engineStatus !== "connected"}
+                        checked={
+                          // While a live status fetch is in-flight, show the persisted
+                          // preference so the switch never flickers to OFF on tab return.
+                          tunnelFetching
+                            ? (settings?.tunnelEnabled ?? false)
+                            : (tunnelStatus?.running ?? settings?.tunnelEnabled ?? false)
+                        }
+                        disabled={tunnelLoading || tunnelFetching || engineStatus !== "connected"}
                         onCheckedChange={handleTunnelToggle}
                       />
                     </div>
@@ -1213,17 +1242,19 @@ export function Settings({
                     <div>
                       <Label>Tunnel Status</Label>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {tunnelStatus?.running
-                          ? `Active · ${tunnelStatus.mode === "named" ? "Named tunnel (stable URL)" : "Quick tunnel (URL changes on restart)"}`
-                          : "Tunnel is not running"}
+                        {tunnelFetching
+                          ? "Checking tunnel status…"
+                          : tunnelStatus?.running
+                            ? `Active · ${tunnelStatus.mode === "named" ? "Named tunnel (stable URL)" : "Quick tunnel (URL changes on restart)"}`
+                            : "Tunnel is not running"}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant={tunnelStatus?.running ? "success" : "secondary"}>
-                        {tunnelStatus?.running ? "Running" : "Stopped"}
+                      <Badge variant={tunnelStatus?.running ? "success" : tunnelFetching ? "outline" : "secondary"}>
+                        {tunnelFetching ? "Checking…" : tunnelStatus?.running ? "Running" : "Stopped"}
                       </Badge>
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={loadTunnelStatus}>
-                        <RefreshCw className="h-3.5 w-3.5" />
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={loadTunnelStatus} disabled={tunnelFetching}>
+                        <RefreshCw className={`h-3.5 w-3.5 ${tunnelFetching ? "animate-spin" : ""}`} />
                       </Button>
                     </div>
                   </div>
@@ -1306,7 +1337,7 @@ export function Settings({
                     </>
                   )}
 
-                  {!tunnelStatus?.running && (
+                  {!tunnelFetching && !tunnelStatus?.running && (
                     <div className="rounded-lg border border-muted bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
                       <p className="font-medium text-foreground/70">How it works</p>
                       <p>
@@ -1325,6 +1356,9 @@ export function Settings({
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Monitor className="h-4 w-4 text-primary" /> Connected Devices
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 ml-auto" onClick={loadInstanceInfo} title="Refresh devices">
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </Button>
                   </CardTitle>
                   <p className="text-xs text-muted-foreground mt-1">
                     Devices linked to your account that can connect remotely.

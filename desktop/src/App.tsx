@@ -36,6 +36,7 @@ import { DevTerminalPanel, DevTerminalProvider } from "@/components/DevTerminalP
 import { CompactRecorderWindow } from "@/components/CompactRecorderWindow";
 import { PermissionsProvider } from "@/contexts/PermissionsContext";
 import { AudioDevicesProvider } from "@/contexts/AudioDevicesContext";
+import { LlmProvider } from "@/contexts/LlmContext";
 import { engine } from "@/lib/api";
 import { isTauri } from "@/lib/sidecar";
 import { initUnifiedLog, initTauriLogStream, stopEngineStreams } from "@/hooks/use-unified-log";
@@ -374,6 +375,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <DevTerminalProvider>
+      <LlmProvider>
       <PermissionsProvider>
       <AudioDevicesProvider>
       <TooltipProvider>
@@ -444,6 +446,7 @@ export default function App() {
       </TooltipProvider>
       </AudioDevicesProvider>
       </PermissionsProvider>
+      </LlmProvider>
       </DevTerminalProvider>
     </ErrorBoundary>
   );
