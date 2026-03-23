@@ -629,7 +629,7 @@ function HfTokenPanel({ forcedOpen = false }: { forcedOpen?: boolean }) {
   const handleSave = async () => {
     const trimmed = inputValue.trim();
     if (!trimmed.startsWith("hf_") && trimmed !== "") {
-      setLocalError("HuggingFace tokens start with "hf_". Please check and try again.");
+      setLocalError('HuggingFace tokens start with "hf_". Please check and try again.');
       return;
     }
     setSaving(true);
