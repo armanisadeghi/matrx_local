@@ -45,7 +45,7 @@ interface ModelRepoAnalyzerProps {
   hardwareResult: LlmHardwareResult | null;
   isDownloading: boolean;
   downloadProgress: LlmDownloadProgress | null;
-  onDownload: (filename: string, urls: string[]) => Promise<void>;
+  onDownload: (filename: string, urls: string[]) => void | Promise<void>;
   onDownloadComplete: () => void;
 }
 

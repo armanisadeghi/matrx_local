@@ -1105,13 +1105,8 @@ function ModelsTab() {
         hardwareResult={hardwareResult}
         isDownloading={isDownloading}
         downloadProgress={downloadProgress}
-        onDownload={async (filename, urls) => {
-          setDownloadingFilename(filename);
-          try {
-            await downloadModel(filename, urls);
-          } finally {
-            setDownloadingFilename(null);
-          }
+        onDownload={(filename, urls) => {
+          queueDownload(filename, urls);
         }}
         onDownloadComplete={listModels}
       />
