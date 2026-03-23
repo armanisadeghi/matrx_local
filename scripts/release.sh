@@ -119,9 +119,11 @@ monitor_build() {
     local start_epoch
     start_epoch=$(date +%s)
 
-    # Platform keys and labels (parallel arrays for bash 3 compat)
+    # Build job keys and labels — 4 platform builds + 1 rename post-job
     local PLATFORM_KEYS=("aarch64-apple-darwin" "x86_64-apple-darwin" "ubuntu" "windows")
     local PLATFORM_LABELS=("macOS ARM" "macOS x86" "Linux" "Windows")
+    local POST_JOB_KEY="rename-assets"
+    local POST_JOB_LABEL="Rename assets"
 
     # ── Status icon helper ──────────────────────────────────────────────
     status_icon() {
@@ -179,10 +181,14 @@ monitor_build() {
         echo -e "${RED}  📋 FAILURE LOGS${NC}"
         echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
+        # Build a combined list: platform keys+labels + rename post-job
+        local all_keys=("${PLATFORM_KEYS[@]}" "$POST_JOB_KEY")
+        local all_labels=("${PLATFORM_LABELS[@]}" "$POST_JOB_LABEL")
+
         local i
-        for i in 0 1 2 3; do
-            local key="${PLATFORM_KEYS[$i]}"
-            local label="${PLATFORM_LABELS[$i]}"
+        for i in "${!all_keys[@]}"; do
+            local key="${all_keys[$i]}"
+            local label="${all_labels[$i]}"
 
             local job_index
             job_index=$(echo "$jobs_json" | jq -r \
@@ -201,8 +207,6 @@ monitor_build() {
             echo -e "${BOLD}  ── ${label} (last ${LOG_TAIL} lines) ──────────────────────────────${NC}"
             echo ""
 
-            # gh run view --log filters to a specific job and streams the log
-            # We strip the step-name prefix GitHub prepends to each line, then tail.
             gh run view "$run_id" --repo "$repo" --job "$job_id" --log 2>/dev/null \
                 | sed 's/^[^\t]*\t[^\t]*\t//' \
                 | tail -"$LOG_TAIL" \
@@ -262,7 +266,7 @@ monitor_build() {
         echo ""
         echo -e "${BOLD}  📦 ${PROJECT_NAME} ${version} — Build Monitor${NC}"
         echo -e "  ─────────────────────────────────────────────────────────────"
-        echo -e "  Tag: ${GREEN}${tag}${NC}    Elapsed: ${CYAN}${elapsed_str}${NC}    Jobs: ${BOLD}${job_count}/4${NC}"
+        echo -e "  Tag: ${GREEN}${tag}${NC}    Elapsed: ${CYAN}${elapsed_str}${NC}    Jobs: ${BOLD}${job_count}/5${NC}"
         echo -e "  ─────────────────────────────────────────────────────────────"
         echo ""
 
@@ -273,15 +277,14 @@ monitor_build() {
         if [[ "$job_count" -eq 0 ]]; then
             echo -e "  ${CYAN}🔵 Waiting for jobs to be created...${NC}"
         else
-            # Match jobs to platform keys by scanning job names
+            # ── Platform build jobs ─────────────────────────────────────
             local i
             for i in 0 1 2 3; do
                 local key="${PLATFORM_KEYS[$i]}"
                 local label="${PLATFORM_LABELS[$i]}"
                 local padded_label
-                padded_label=$(printf '%-12s' "$label")
+                padded_label=$(printf '%-14s' "$label")
 
-                # Find this job's index in the JSON
                 local job_index
                 job_index=$(echo "$jobs_json" | jq -r \
                     "[.jobs[].name] | to_entries[] | select(.value | test(\"$key\")) | .key" 2>/dev/null | head -1)
@@ -300,9 +303,7 @@ monitor_build() {
                 color=$(status_color "$j_status" "$j_conclusion")
                 step=$(current_step "$jobs_json" "$job_index")
 
-                # Truncate step name if too long
-                [[ ${#step} -gt 42 ]] && step="${step:0:39}..."
-
+                [[ ${#step} -gt 40 ]] && step="${step:0:37}..."
                 echo -e "  ${icon} ${color}${padded_label}${NC}  ${step}"
 
                 if [[ "$j_status" == "completed" ]]; then
@@ -313,6 +314,41 @@ monitor_build() {
                     fi
                 fi
             done
+
+            # ── Post-build: rename-assets job ────────────────────────────
+            local rename_index
+            rename_index=$(echo "$jobs_json" | jq -r \
+                "[.jobs[].name] | to_entries[] | select(.value | test(\"${POST_JOB_KEY}\")) | .key" 2>/dev/null | head -1)
+
+            if [[ -z "$rename_index" ]]; then
+                local padded_post
+                padded_post=$(printf '%-14s' "$POST_JOB_LABEL")
+                if [[ "$completed_count" -ge 4 ]]; then
+                    echo -e "  🔵 ${CYAN}${padded_post}${NC}  waiting for builds..."
+                fi
+            else
+                local r_status r_conclusion
+                r_status=$(echo "$jobs_json" | jq -r ".jobs[$rename_index].status")
+                r_conclusion=$(echo "$jobs_json" | jq -r ".jobs[$rename_index].conclusion // \"\"")
+
+                local r_icon r_color r_step
+                r_icon=$(status_icon "$r_status" "$r_conclusion")
+                r_color=$(status_color "$r_status" "$r_conclusion")
+                r_step=$(current_step "$jobs_json" "$rename_index")
+
+                local padded_post
+                padded_post=$(printf '%-14s' "$POST_JOB_LABEL")
+                [[ ${#r_step} -gt 40 ]] && r_step="${r_step:0:37}..."
+                echo -e "  ${r_icon} ${r_color}${padded_post}${NC}  ${r_step}"
+
+                if [[ "$r_status" == "completed" ]]; then
+                    (( completed_count++ ))
+                    if [[ "$r_conclusion" != "success" && "$r_conclusion" != "skipped" ]]; then
+                        any_failed=true
+                        failed_platforms+=("$POST_JOB_LABEL")
+                    fi
+                fi
+            fi
         fi
 
         echo ""
@@ -322,7 +358,7 @@ monitor_build() {
         local run_status
         run_status=$(gh run view "$run_id" --repo "$repo" --json status --jq '.status' 2>/dev/null || echo "unknown")
 
-        if [[ "$run_status" == "completed" ]] || [[ "$completed_count" -ge 4 && "$job_count" -ge 4 ]]; then
+        if [[ "$run_status" == "completed" ]] || [[ "$completed_count" -ge 5 && "$job_count" -ge 5 ]]; then
             all_done=true
 
             # Final elapsed time

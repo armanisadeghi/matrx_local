@@ -310,32 +310,67 @@ jobs:
       - name: Patch latest.json URLs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${{ steps.version.outputs.version }}"
-          REPO="${{ github.repository }}"
           PREFIX="AI-Matrx_${VERSION}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
-          # Download latest.json
+          mkdir -p /tmp/updater
           gh release download "$TAG" --repo "$REPO" --pattern "latest.json" --dir /tmp/updater
 
-          # Patch the URLs to match new asset names
-          cd /tmp/updater
-          sed -i \
-            -e "s|AI\.Matrx_aarch64\.app\.tar\.gz|${PREFIX}_macOS-Apple-Silicon.app.tar.gz|g" \
-            -e "s|AI\.Matrx_x64\.app\.tar\.gz|${PREFIX}_macOS-Intel.app.tar.gz|g" \
-            -e "s|AI\.Matrx_${VERSION}_x64-setup\.nsis\.zip|${PREFIX}_Windows-Setup.nsis.zip|g" \
-            -e "s|AI\.Matrx_${VERSION}_x64-setup\.exe|${PREFIX}_Windows-Setup.exe|g" \
-            -e "s|AI\.Matrx_${VERSION}_amd64\.deb|${PREFIX}_Linux.deb|g" \
-            latest.json
+          # Rebuild the URL for each platform key by mapping to the known renamed filename.
+          # This is resilient to whatever Tauri named the original file — we only care about
+          # the final renamed asset names (set in the "Rename release assets" step above).
+          python3 << 'PYEOF'
+          import json, os
 
-          echo "📝 Patched latest.json:"
-          cat latest.json
+          tag      = os.environ["TAG"]
+          version  = os.environ["VERSION"]
+          repo     = os.environ["REPO"]
+          prefix   = f"AI-Matrx_{version}"
+          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+
+          # Map: latest.json platform key -> renamed asset filename
+          PLATFORM_ASSETS = {
+              "darwin-aarch64":      f"{prefix}_macOS-Apple-Silicon.app.tar.gz",
+              "darwin-aarch64-app":  f"{prefix}_macOS-Apple-Silicon.app.tar.gz",
+              "darwin-x86_64":       f"{prefix}_macOS-Intel.app.tar.gz",
+              "darwin-x86_64-app":   f"{prefix}_macOS-Intel.app.tar.gz",
+              "linux-x86_64":        f"{prefix}_Linux.deb",
+              "linux-x86_64-deb":    f"{prefix}_Linux.deb",
+              "windows-x86_64":      f"{prefix}_Windows.msi",
+              "windows-x86_64-msi":  f"{prefix}_Windows.msi",
+              "windows-x86_64-nsis": f"{prefix}_Windows-Setup.exe",
+          }
+
+          with open("/tmp/updater/latest.json") as f:
+              data = json.load(f)
+
+          patched = 0
+          for key, entry in data.get("platforms", {}).items():
+              if key in PLATFORM_ASSETS:
+                  new_url = f"{base_url}/{PLATFORM_ASSETS[key]}"
+                  if entry["url"] != new_url:
+                      print(f"  🔗 {key}: {entry['url'].split('/')[-1]} → {PLATFORM_ASSETS[key]}")
+                      entry["url"] = new_url
+                      patched += 1
+
+          with open("/tmp/updater/latest.json", "w") as f:
+              json.dump(data, f, indent=2)
+
+          print(f"\n✅ Patched {patched} URLs in latest.json")
+          PYEOF
+
+          echo ""
+          echo "📝 Final latest.json:"
+          cat /tmp/updater/latest.json
 
           # Re-upload
           gh release delete-asset "$TAG" --repo "$REPO" --yes "latest.json"
-          gh release upload "$TAG" --repo "$REPO" "latest.json"
+          gh release upload "$TAG" --repo "$REPO" /tmp/updater/latest.json
 
           echo ""
           echo "✅ latest.json updated"
@@ -343,10 +378,11 @@ jobs:
       - name: Fill missing platforms from previous releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Expose shell variables as env vars so the Python heredoc can read them
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          REPO="${{ github.repository }}"
 
           # All platform keys Tauri expects. If any are absent from the current
           # latest.json (because a platform build failed), we backfill them from
