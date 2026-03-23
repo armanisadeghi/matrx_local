@@ -48,6 +48,20 @@
 
 ---
 
+### Remote Access — Tunnel Persistence (fixed 2026-03-23)
+
+- [x] **Tunnel preference not persisted** — Root cause: `tunnel_enabled` was not in `DEFAULT_SETTINGS` in `settings_sync.py`, so the engine always defaulted to `TUNNEL_ENABLED=False` from `config.py` on every boot regardless of what the user had set in the UI. `POST /tunnel/start` and `POST /tunnel/stop` now call `settings_sync.set("tunnel_enabled", True/False)` immediately after the subprocess starts/stops. The Python engine reads the persisted value from `~/.matrx/settings.json` on startup (Phase 5 of lifespan). Fixed files: `app/services/cloud_sync/settings_sync.py` (added `tunnel_enabled` to DEFAULT_SETTINGS), `app/api/tunnel_routes.py` (persist on start/stop).
+
+- [x] **Frontend tunnel preference not tracked** — `AppSettings` in `settings.ts` had no `tunnelEnabled` field. The UI toggle only called the API but never saved the preference locally or via `saveSetting()`. Fixed: added `tunnelEnabled: boolean` to `AppSettings` and `DEFAULTS`, added `tunnelEnabled` case to `syncSetting()`, updated `mergeCloudSettings()` and `settingsToCloud()`. `Settings.tsx` `handleTunnelToggle` now calls `saveSetting("tunnelEnabled", enable)` after the API call so the preference is consistent across local storage, Python SQLite, and cloud.
+
+- [x] **WebSocket not connected when auth arrives after engine** — If the engine discovered before the user was authenticated, WS was skipped and never retried. The `SIGNED_IN` handler in `use-engine.ts` called `initialize()` but the mutex blocked it when the engine was already "connected". Fixed: SIGNED_IN handler now checks `wsConnectedRef` and calls `engine.connectWebSocket()` directly when the engine is connected but WS is not, without triggering a full re-init.
+
+- [ ] **Health check false-positive disconnects** — `isHealthy()` uses a 2s timeout on `GET /tools/list`. Any response > 2s during heavy tool execution flips status to "disconnected" after the 90s grace period. Consider increasing the health check timeout to 5s or using a dedicated lightweight `/health` endpoint that always responds fast.
+
+- [x] **WS URL missing from Supabase** — `app_instances` only stored `tunnel_url` (REST). Added `tunnel_ws_url` column (migration 006). `instance_manager.update_tunnel_url()` now auto-derives and stores both URLs. `settings_sync.heartbeat()` writes both every 5 minutes. `InstanceInfo` TypeScript type updated. Settings Connected Devices UI now shows and copies both REST + WS URLs.
+
+- [ ] **Quick tunnel URL is ephemeral** — `*.trycloudflare.com` URLs change on every engine restart. Remote clients (mobile app, browser) need to re-fetch from Supabase's `app_instances.tunnel_url` + `tunnel_ws_url` after each restart. This is expected behavior for quick tunnels but should be documented clearly in the UI. Named tunnel (stable URL) requires a `CLOUDFLARE_TUNNEL_TOKEN` in `.env`.
+
 ### AI Provider Keys & Cloud Relay (added 2026-03-22)
 
 - [x] **User API key storage implemented** — `ApiKeysRepo` in `repositories.py` stores per-provider keys in the `app_settings` SQLite blob (base64-obfuscated). `key_manager.py` injects them into `os.environ` at startup and on every save. `GET/PUT/DELETE /settings/api-keys/{provider}` routes wired in `settings_routes.py`. Settings page has an "API Keys" tab (second tab). Chat page amber banner links to Settings when no providers are configured.

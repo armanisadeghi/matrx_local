@@ -243,11 +243,19 @@ class InstanceManager:
             "board_id": info.get("board_id"),
         }
 
-    async def update_tunnel_url(self, tunnel_url: Optional[str], active: bool) -> bool:
-        """Push the current tunnel URL and active state to Supabase app_instances.
+    async def update_tunnel_url(
+        self,
+        tunnel_url: Optional[str],
+        active: bool,
+        tunnel_ws_url: Optional[str] = None,
+    ) -> bool:
+        """Push the current tunnel URLs (REST + WS) and active state to Supabase.
 
         Called when a tunnel starts or stops. Best-effort — never raises.
         Returns True on success, False on failure.
+
+        tunnel_ws_url is derived automatically if not supplied:
+          https://xyz.trycloudflare.com → wss://xyz.trycloudflare.com/ws
         """
         try:
             from app.services.cloud_sync.settings_sync import get_settings_sync
@@ -259,9 +267,14 @@ class InstanceManager:
                 logger.debug("update_tunnel_url: settings sync not configured, skipping")
                 return False
 
+            # Derive WS URL from REST URL if not explicitly provided
+            if tunnel_url and not tunnel_ws_url:
+                tunnel_ws_url = tunnel_url.replace("https://", "wss://") + "/ws"
+
             now = datetime.now(timezone.utc).isoformat()
             payload = {
                 "tunnel_url": tunnel_url,
+                "tunnel_ws_url": tunnel_ws_url,
                 "tunnel_active": active,
                 "tunnel_updated_at": now,
                 "last_seen": now,
@@ -278,8 +291,8 @@ class InstanceManager:
                 resp = await client.patch(url, json=payload, headers=headers)
                 if resp.is_success:
                     logger.debug(
-                        "Tunnel URL updated in Supabase: active=%s url=%s",
-                        active, tunnel_url,
+                        "Tunnel URLs updated in Supabase: active=%s rest=%s ws=%s",
+                        active, tunnel_url, tunnel_ws_url,
                     )
                     return True
                 else:

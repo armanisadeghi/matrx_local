@@ -64,6 +64,13 @@ async def tunnel_start(body: TunnelStartRequest | None = None) -> TunnelStatus:
                    "Check logs for details.",
         )
 
+    # Persist the user's preference so it auto-starts on next engine boot.
+    try:
+        from app.services.cloud_sync.settings_sync import get_settings_sync
+        get_settings_sync().set("tunnel_enabled", True)
+    except Exception:
+        logger.debug("[tunnel] Could not persist tunnel_enabled=True", exc_info=True)
+
     # Push the new URL to Supabase asynchronously (best-effort)
     try:
         from app.services.cloud_sync.instance_manager import get_instance_manager
@@ -100,6 +107,13 @@ async def tunnel_stop() -> TunnelStatus:
         return TunnelStatus(**tm.get_status())
 
     await tm.stop()
+
+    # Persist the user's preference so it stays off on next engine boot.
+    try:
+        from app.services.cloud_sync.settings_sync import get_settings_sync
+        get_settings_sync().set("tunnel_enabled", False)
+    except Exception:
+        logger.debug("[tunnel] Could not persist tunnel_enabled=False", exc_info=True)
 
     # Clear tunnel URL in Supabase (best-effort)
     try:

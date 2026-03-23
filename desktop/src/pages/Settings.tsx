@@ -437,6 +437,9 @@ export function Settings({
     try {
       const result = await engine.post(enable ? "/tunnel/start" : "/tunnel/stop", {}) as typeof tunnelStatus;
       setTunnelStatus(result);
+      // Persist preference so the engine auto-starts/stops the tunnel on next boot.
+      await saveSetting("tunnelEnabled", enable);
+      setSettings((prev) => prev ? { ...prev, tunnelEnabled: enable } : prev);
     } catch (err) {
       console.error("[Settings] Tunnel toggle failed:", err);
     } finally {
@@ -1337,34 +1340,58 @@ export function Settings({
                     <div className="space-y-2">
                       {instances.map((inst) => {
                         const isThis = inst.instance_id === instanceInfo?.instance_id;
-                        const hasTunnel = !!(inst as { tunnel_url?: string }).tunnel_url;
+                        const hasTunnel = !!inst.tunnel_active && !!inst.tunnel_url;
                         return (
                           <div
                             key={inst.instance_id}
-                            className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2.5"
+                            className="rounded-lg bg-muted/50 px-3 py-2.5 space-y-1.5"
                           >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
-                              <div className="min-w-0">
-                                <p className="text-sm font-medium truncate">
-                                  {inst.instance_name || inst.hostname || "Unknown"}
-                                </p>
-                                <p className="text-xs text-muted-foreground">
-                                  {inst.platform} {inst.architecture}
-                                  {inst.last_seen && ` · ${new Date(inst.last_seen).toLocaleDateString()}`}
-                                </p>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium truncate">
+                                    {inst.instance_name || inst.hostname || "Unknown"}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {inst.platform} {inst.architecture}
+                                    {inst.last_seen && ` · ${new Date(inst.last_seen).toLocaleDateString()}`}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                {hasTunnel && (
+                                  <Badge variant="success" className="text-xs gap-1">
+                                    <Radio className="h-2.5 w-2.5" /> Tunnel Active
+                                  </Badge>
+                                )}
+                                {isThis && (
+                                  <Badge variant="outline" className="text-xs">This Device</Badge>
+                                )}
                               </div>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              {hasTunnel && (
-                                <Badge variant="success" className="text-xs gap-1">
-                                  <Radio className="h-2.5 w-2.5" /> Tunnel Active
-                                </Badge>
-                              )}
-                              {isThis && (
-                                <Badge variant="outline" className="text-xs">This Device</Badge>
-                              )}
-                            </div>
+                            {hasTunnel && (
+                              <div className="pl-7 space-y-1">
+                                <div className="flex items-center gap-1.5">
+                                  <code className="flex-1 truncate text-xs font-mono text-muted-foreground">{inst.tunnel_url}</code>
+                                  <Button
+                                    variant="ghost" size="sm" className="h-5 w-5 p-0 shrink-0"
+                                    onClick={() => inst.tunnel_url && navigator.clipboard.writeText(inst.tunnel_url)}
+                                    title="Copy REST URL"
+                                  ><Copy className="h-3 w-3" /></Button>
+                                </div>
+                                {inst.tunnel_ws_url && (
+                                  <div className="flex items-center gap-1.5">
+                                    <code className="flex-1 truncate text-xs font-mono text-muted-foreground">{inst.tunnel_ws_url}</code>
+                                    <Button
+                                      variant="ghost" size="sm" className="h-5 w-5 p-0 shrink-0"
+                                      onClick={() => inst.tunnel_ws_url && navigator.clipboard.writeText(inst.tunnel_ws_url!)}
+                                      title="Copy WebSocket URL"
+                                    ><Copy className="h-3 w-3" /></Button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}

@@ -37,6 +37,9 @@ export function useEngine(authenticated = true) {
   const initializingRef = useRef(false);
   const statusRef = useRef(state.status);
   statusRef.current = state.status;
+  // Mirrors the wsConnected state for use inside closures without stale capture.
+  const wsConnectedRef = useRef(state.wsConnected);
+  wsConnectedRef.current = state.wsConnected;
   // Timestamp when the engine was first discovered. Used to suppress false
   // "disconnected" flips during the engine's slow startup phase (~60s).
   const connectedAtRef = useRef<number | null>(null);
@@ -289,13 +292,25 @@ export function useEngine(authenticated = true) {
   // the SIGNED_IN event that fires from setSession() in completeOAuthExchange,
   // in case the authenticated prop hasn't propagated yet when it fires.
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN") {
-        initialize();
+        // If the engine is already connected but WS was skipped (auth not ready at init
+        // time), connect WS now without re-running the full initialization sequence.
+        if (statusRef.current === "connected" && !wsConnectedRef.current && session?.access_token) {
+          try {
+            await engine.connectWebSocket();
+            update({ wsConnected: true });
+            emitClientLog("success", "WebSocket connected (deferred — auth arrived after engine)", "engine");
+          } catch (err) {
+            emitClientLog("warn", `Deferred WebSocket connection failed: ${err}`, "engine");
+          }
+        } else {
+          initialize();
+        }
       }
     });
     return () => subscription.unsubscribe();
-  }, [initialize]);
+  }, [initialize, update]);
 
   useEffect(() => {
     mountedRef.current = true;

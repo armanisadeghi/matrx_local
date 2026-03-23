@@ -2111,6 +2111,11 @@ export interface InstanceInfo {
   last_seen?: string;
   is_active?: boolean;
   id?: string;
+  // Remote access — both REST and WebSocket URLs for the active Cloudflare tunnel
+  tunnel_url?: string | null;
+  tunnel_ws_url?: string | null;
+  tunnel_active?: boolean;
+  tunnel_updated_at?: string | null;
 }
 
 // ---- Device & Permission types ----

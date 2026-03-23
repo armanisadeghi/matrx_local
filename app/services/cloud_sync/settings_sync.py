@@ -56,6 +56,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "minimize_to_tray": True,
     # Instance
     "instance_name": "My Computer",
+    # Remote access — user's explicit preference persisted across restarts
+    "tunnel_enabled": False,
 }
 
 
@@ -499,12 +501,15 @@ class SettingsSync:
 
         import httpx
 
-        # Include current tunnel state so remote devices never see stale URLs
+        # Include current tunnel state (REST + WS) so remote devices never see stale URLs.
+        # Both URLs are written every heartbeat — if the tunnel restarted and got a new
+        # trycloudflare.com address the DB is corrected within one heartbeat interval.
         try:
             from app.services.tunnel.manager import get_tunnel_manager
             tm = get_tunnel_manager()
             tunnel_payload: dict = {
                 "tunnel_url": tm.url if tm.running else None,
+                "tunnel_ws_url": tm.ws_url if tm.running else None,
                 "tunnel_active": tm.running,
             }
         except Exception:

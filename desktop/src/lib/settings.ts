@@ -17,6 +17,8 @@ export interface AppSettings {
   // Proxy
   proxyEnabled: boolean;
   proxyPort: number;
+  // Remote access
+  tunnelEnabled: boolean; // persisted preference — engine auto-starts tunnel on boot when true
   // Instance
   instanceName: string;
   // Notifications
@@ -47,6 +49,7 @@ const DEFAULTS: AppSettings = {
   scrapeDelay: "1.0",
   proxyEnabled: true,
   proxyPort: 22180,
+  tunnelEnabled: false,
   instanceName: "My Computer",
   notificationSound: true,
   notificationSoundStyle: "chime",
@@ -133,6 +136,16 @@ async function syncSetting<K extends keyof AppSettings>(
           await engine.proxyStart(all.proxyPort);
         }
         break;
+
+      case "tunnelEnabled":
+        if (engine.engineUrl) {
+          if (all.tunnelEnabled) {
+            await engine.post("/tunnel/start", {});
+          } else {
+            await engine.post("/tunnel/stop", {});
+          }
+        }
+        break;
     }
   } catch (err) {
     console.warn(`[settings] Failed to sync ${key}:`, err);
@@ -185,6 +198,7 @@ export function mergeCloudSettings(
     ...local,
     proxyEnabled: cloud.proxy_enabled !== undefined ? Boolean(cloud.proxy_enabled) : local.proxyEnabled,
     proxyPort: cloud.proxy_port !== undefined ? Number(cloud.proxy_port) : local.proxyPort,
+    tunnelEnabled: cloud.tunnel_enabled !== undefined ? Boolean(cloud.tunnel_enabled) : local.tunnelEnabled,
     headlessScraping: cloud.headless_scraping !== undefined ? Boolean(cloud.headless_scraping) : local.headlessScraping,
     scrapeDelay: cloud.scrape_delay !== undefined ? String(cloud.scrape_delay) : local.scrapeDelay,
     theme: (cloud.theme as AppSettings["theme"]) || local.theme,
@@ -205,6 +219,7 @@ export function settingsToCloud(settings: AppSettings): Record<string, unknown> 
   return {
     proxy_enabled: settings.proxyEnabled,
     proxy_port: settings.proxyPort,
+    tunnel_enabled: settings.tunnelEnabled,
     headless_scraping: settings.headlessScraping,
     scrape_delay: parseFloat(settings.scrapeDelay) || 1.0,
     theme: settings.theme,
