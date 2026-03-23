@@ -236,28 +236,30 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VERSION="${{ steps.version.outputs.version }}"
           REPO="${{ github.repository }}"
-          PREFIX="AI-Matrx_${VERSION}"
 
           echo "🏷  Tag: $TAG  Version: $VERSION"
           echo ""
 
-          # Fetch current asset list
-          ASSETS=$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')
+          # Fetch asset list as JSON (id + name) in one API call
+          ASSETS_JSON=$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.assets[] | {id: .id, name: .name}' | jq -s '.')
 
           rename_asset() {
             local old="$1" new="$2"
             if [[ "$old" == "$new" ]]; then return; fi
+            # Look up the asset ID by name
+            local asset_id
+            asset_id=$(echo "$ASSETS_JSON" | jq -r ".[] | select(.name == \"$old\") | .id")
+            if [[ -z "$asset_id" ]]; then
+              echo "  ⚠  Asset not found: $old (skipping)"
+              return
+            fi
             echo "  📦 $old → $new"
-            # Download, delete old, rename on disk, upload with new name
-            gh release download "$TAG" --repo "$REPO" --pattern "$old" --dir /tmp/assets
-            gh release delete-asset "$TAG" --repo "$REPO" --yes "$old"
-            mv "/tmp/assets/$old" "/tmp/assets/$new"
-            gh release upload "$TAG" --repo "$REPO" "/tmp/assets/$new"
+            # PATCH the asset name in-place — no download/upload needed
+            gh api --method PATCH "repos/${REPO}/releases/assets/${asset_id}" \
+              -f name="$new" --silent
           }
 
-          mkdir -p /tmp/assets
-
-          for ASSET in $ASSETS; do
+          for ASSET in $(echo "$ASSETS_JSON" | jq -r '.[].name'); do
             case "$ASSET" in
               # ── macOS Apple Silicon ──
               *_aarch64.app.tar.gz)
@@ -295,8 +297,8 @@ jobs:
               *_x64-setup.nsis.zip.sig)
                 rename_asset "$ASSET" "ai-matrx-windows-installer-${VERSION}.nsis.zip.sig" ;;
 
-              # ── Skip latest.json / source archives ──
-              latest.json|*.zip|*.tar.gz)
+              # ── Skip latest.json (patched in next step) ──
+              latest.json)
                 echo "  ⏭  Skipping $ASSET" ;;
 
               *)
