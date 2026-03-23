@@ -104,6 +104,40 @@ class SensitiveDataFilter(logging.Filter):
         return f"{val[:10]}...{val[-10:]}"
 
 
+class _RootLogBridge(logging.Handler):
+    """Forwards WARNING+ records from the root logger to the system_logger file+console.
+
+    This ensures that any module using logging.getLogger(__name__) — third-party
+    libraries, tool modules, uvicorn internals — has its warnings and errors
+    captured in system.log and visible in the Activity tab, not silently dropped.
+
+    We only bridge WARNING+ (not DEBUG/INFO) to avoid flooding system.log with
+    high-volume informational output from libraries that log everything at INFO.
+    """
+
+    def __init__(self, target_logger: logging.Logger) -> None:
+        super().__init__(level=logging.WARNING)
+        self._target = target_logger
+        self.addFilter(SensitiveDataFilter())
+
+    def emit(self, record: logging.LogRecord) -> None:
+        # Avoid re-entrancy: records already originating from system_logger skip the bridge.
+        if record.name == "system_logger":
+            return
+        # Re-emit at the same level so WARNING stays WARNING, ERROR stays ERROR, etc.
+        # Prefix with the original logger name so the source is identifiable in system.log.
+        try:
+            # Expand any %-style args into the message now, before we forward it.
+            # We build a plain string message so system_logger receives a ready-to-log
+            # string with no leftover args (avoids double-expansion).
+            expanded = record.getMessage()
+            prefix = f"[{record.name}] "
+            # Forward exc_info so tracebacks appear in system.log for bridged records.
+            self._target.log(record.levelno, prefix + expanded, exc_info=record.exc_info or None)
+        except Exception:
+            self.handleError(record)
+
+
 class SystemLogger:
     def __init__(self):
         self.logger = logging.getLogger("system_logger")
@@ -149,6 +183,19 @@ class SystemLogger:
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         )
         self.logger.addHandler(file_handler)
+
+        # Bridge: forward WARNING+ from the root logger (and all child loggers that
+        # propagate) into system_logger so third-party and tool module warnings/errors
+        # are captured in system.log and reach the Activity tab.
+        root_logger = logging.getLogger()
+        # Only attach once — guard against re-entrancy if configure_logging is called again.
+        bridge_exists = any(isinstance(h, _RootLogBridge) for h in root_logger.handlers)
+        if not bridge_exists:
+            bridge = _RootLogBridge(self.logger)
+            root_logger.addHandler(bridge)
+            # Ensure the root logger is at least at WARNING so it passes records to the bridge.
+            if root_logger.level == logging.NOTSET or root_logger.level > logging.WARNING:
+                root_logger.setLevel(logging.WARNING)
 
     def disable_console_logging(self):
         if self.console_handler and self.console_handler in self.logger.handlers:

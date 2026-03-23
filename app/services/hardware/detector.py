@@ -133,15 +133,21 @@ def _detect_gpus() -> list[dict[str, Any]]:
             )
             import json as _json
             data = _json.loads(out)
-            for gpu in data.get("SPDisplaysDataType", []):
+            for i, gpu in enumerate(data.get("SPDisplaysDataType", [])):
                 vram_str = gpu.get("spdisplays_vram") or gpu.get("spdisplays_vram_shared", "")
                 vram_mb = _parse_vram_str(vram_str)
+                # _name is the standard display name in system_profiler JSON output
+                name = (
+                    gpu.get("_name")
+                    or gpu.get("spdisplays_device-id")
+                    or "Unknown GPU"
+                )
                 gpus.append({
-                    "name": gpu.get("spdisplays_device-id", gpu.get("spdisplays_ndrvs", [{}])[0].get("spdisplays_name", "Unknown GPU")) if not gpu.get("_name") else gpu.get("_name"),
+                    "name": name,
                     "vram_mb": vram_mb,
                     "driver_version": gpu.get("spdisplays_metalversion") or None,
                     "backend": "metal",
-                    "is_primary": True,
+                    "is_primary": i == 0,
                 })
         except Exception as exc:
             logger.debug("macOS GPU (json) detection failed: %s — trying text fallback", exc)
@@ -243,69 +249,91 @@ def _detect_gpus() -> list[dict[str, Any]]:
     except Exception:
         pass
 
-    # Merge: if nvidia-smi already found the same GPU, add Vulkan as an
-    # additional backend flag rather than a second entry.
+    # Merge: if nvidia-smi already found the same GPU, just upgrade its backend
+    # tag to "cuda+vulkan" rather than adding a second entry.  New devices
+    # (AMD, Intel iGPU) get appended directly to gpus only — we must NOT
+    # mutate vulkan_gpus while iterating over it.
     nvidia_names = {g["name"].lower() for g in gpus}
+    new_from_vulkan: list[dict[str, Any]] = []
     for vk_gpu in vulkan_gpus:
         name_lc = vk_gpu.get("name", "").lower()
         if any(name_lc in nn or nn in name_lc for nn in nvidia_names):
-            # Already covered — just tag it as supporting vulkan too
+            # Already covered by nvidia-smi — upgrade backend flag
             for g in gpus:
                 if g["name"].lower() in name_lc or name_lc in g["name"].lower():
                     g["backend"] = "cuda+vulkan"
         else:
-            # New device (AMD, Intel iGPU, etc.)
+            # New device (AMD, Intel iGPU, etc.) — add to gpus
             vk_gpu.setdefault("vram_mb", None)
             vk_gpu.setdefault("driver_version", None)
-            vulkan_gpus.append(vk_gpu)
-            gpus.append(vk_gpu)
+            new_from_vulkan.append(vk_gpu)
+    gpus.extend(new_from_vulkan)
 
     # ── Windows fallback: wmic for GPU name/VRAM if nothing found ────────────
     if _IS_WIN and not gpus:
         try:
+            # Use /value to avoid wmic CSV alphabetical column-sort ambiguity.
             out = _run(
                 ["wmic", "path", "win32_VideoController",
-                 "get", "Name,AdapterRAM", "/format:csv"],
+                 "get", "Name,AdapterRAM", "/value"],
                 timeout=5,
             )
+            current_gpu: dict[str, str] = {}
+            def _flush_gpu(d: dict) -> None:
+                name = d.get("Name", "").strip()
+                if not name:
+                    return
+                vram_bytes: int | None = None
+                try:
+                    vram_bytes = int(d.get("AdapterRAM", "0") or "0")
+                except ValueError:
+                    pass
+                gpus.append({
+                    "name": name,
+                    "vram_mb": vram_bytes // (1024 * 1024) if vram_bytes else None,
+                    "driver_version": None,
+                    "backend": "unknown",
+                    "is_primary": len(gpus) == 0,
+                })
             for line in out.splitlines():
-                parts = line.strip().split(",")
-                if len(parts) >= 3 and parts[1] and parts[1] != "Name":
-                    vram_bytes = None
-                    try:
-                        vram_bytes = int(parts[2])
-                    except (ValueError, IndexError):
-                        pass
-                    gpus.append({
-                        "name": parts[1].strip(),
-                        "vram_mb": vram_bytes // (1024 * 1024) if vram_bytes else None,
-                        "driver_version": None,
-                        "backend": "unknown",
-                        "is_primary": len(gpus) == 0,
-                    })
+                line = line.strip()
+                if not line:
+                    if current_gpu:
+                        _flush_gpu(current_gpu)
+                        current_gpu = {}
+                elif "=" in line:
+                    key, _, val = line.partition("=")
+                    current_gpu[key.strip()] = val.strip()
+            if current_gpu:
+                _flush_gpu(current_gpu)
         except Exception:
             pass
 
     # ── Linux fallback: /sys/class/drm ───────────────────────────────────────
+    # Only look at card* entries, not renderD* or other device nodes, to avoid
+    # creating duplicate entries for the same physical GPU.
     if _IS_LIN and not gpus:
         import pathlib
         try:
             for drm_dir in sorted(pathlib.Path("/sys/class/drm").iterdir()):
+                # Only process card* entries (not renderD128, etc.)
+                if not drm_dir.name.startswith("card"):
+                    continue
                 vendor_file = drm_dir / "device" / "vendor"
                 model_file = drm_dir / "device" / "product_name"
                 if not vendor_file.exists():
                     continue
                 name = model_file.read_text().strip() if model_file.exists() else drm_dir.name
-                vram_mb: int | None = None
+                drm_vram_mb: int | None = None
                 mem_file = drm_dir / "device" / "mem_info_vram_total"
                 if mem_file.exists():
                     try:
-                        vram_mb = int(mem_file.read_text().strip()) // (1024 * 1024)
+                        drm_vram_mb = int(mem_file.read_text().strip()) // (1024 * 1024)
                     except Exception:
                         pass
                 gpus.append({
                     "name": name,
-                    "vram_mb": vram_mb,
+                    "vram_mb": drm_vram_mb,
                     "driver_version": None,
                     "backend": "vulkan",
                     "is_primary": len(gpus) == 0,
@@ -412,29 +440,35 @@ def _detect_ram() -> dict[str, Any]:
             pass
     elif _IS_WIN:
         try:
+            # Use /value format to get key=value pairs — avoids CSV column-order
+            # ambiguity (wmic sorts CSV columns alphabetically, which would put
+            # Capacity before MemoryType and Speed).
             out = _run(
                 ["wmic", "memorychip", "get",
-                 "MemoryType,Speed,Capacity", "/format:csv"],
+                 "MemoryType,Speed", "/value"],
                 timeout=5,
             )
+            # SMBIOS memory type codes
+            _MEM_TYPE_MAP = {
+                20: "DDR", 21: "DDR2", 24: "DDR3",
+                26: "DDR4", 34: "DDR5",
+            }
             for line in out.splitlines():
-                parts = line.strip().split(",")
-                if len(parts) >= 4 and parts[1].isdigit():
-                    mem_type_code = int(parts[1])
-                    # SMBIOS memory type codes
-                    _MEM_TYPE_MAP = {
-                        20: "DDR", 21: "DDR2", 24: "DDR3",
-                        26: "DDR4", 34: "DDR5",
-                    }
-                    if info["type"] is None:
-                        info["type"] = _MEM_TYPE_MAP.get(mem_type_code, f"Type {mem_type_code}")
+                line = line.strip()
+                if line.lower().startswith("memorytype=") and info["type"] is None:
                     try:
-                        speed = int(parts[2])
-                        if speed > 0 and info["speed_mhz"] is None:
-                            info["speed_mhz"] = speed
-                    except (ValueError, IndexError):
+                        code = int(line.split("=", 1)[-1].strip())
+                        if code > 0:
+                            info["type"] = _MEM_TYPE_MAP.get(code, f"Type {code}")
+                    except ValueError:
                         pass
-                    break
+                elif line.lower().startswith("speed=") and info["speed_mhz"] is None:
+                    try:
+                        speed = int(line.split("=", 1)[-1].strip())
+                        if speed > 0:
+                            info["speed_mhz"] = speed
+                    except ValueError:
+                        pass
         except Exception:
             pass
     elif _IS_LIN:
@@ -588,26 +622,45 @@ def _detect_monitors() -> list[dict[str, Any]]:
             pass
 
     elif _IS_WIN and not monitors:
-        # Fallback: wmic desktopmonitor
+        # Fallback: wmic desktopmonitor — use /value to avoid CSV column-sort issues
         try:
             out = _run(
                 ["wmic", "desktopmonitor", "get",
-                 "Name,ScreenWidth,ScreenHeight", "/format:csv"],
+                 "Name,ScreenWidth,ScreenHeight", "/value"],
                 timeout=5,
             )
+            # Collect key=value pairs for each monitor block
+            current_mon: dict[str, str] = {}
             for line in out.splitlines():
-                parts = line.strip().split(",")
-                if len(parts) >= 4 and parts[1] and parts[1] != "Name":
-                    try:
-                        monitors.append({
-                            "name": parts[1].strip(),
-                            "width_px": int(parts[3]) if parts[3].strip() else None,
-                            "height_px": int(parts[2]) if parts[2].strip() else None,
-                            "is_primary": len(monitors) == 0,
-                            "refresh_hz": None,
-                        })
-                    except (ValueError, IndexError):
-                        pass
+                line = line.strip()
+                if not line:
+                    if current_mon:
+                        try:
+                            monitors.append({
+                                "name": current_mon.get("Name", f"Display {len(monitors) + 1}"),
+                                "width_px": int(current_mon["ScreenWidth"]) if current_mon.get("ScreenWidth", "").isdigit() else None,
+                                "height_px": int(current_mon["ScreenHeight"]) if current_mon.get("ScreenHeight", "").isdigit() else None,
+                                "is_primary": len(monitors) == 0,
+                                "refresh_hz": None,
+                            })
+                        except (ValueError, KeyError):
+                            pass
+                        current_mon = {}
+                elif "=" in line:
+                    key, _, val = line.partition("=")
+                    current_mon[key.strip()] = val.strip()
+            # Final block (no trailing blank line)
+            if current_mon:
+                try:
+                    monitors.append({
+                        "name": current_mon.get("Name", f"Display {len(monitors) + 1}"),
+                        "width_px": int(current_mon["ScreenWidth"]) if current_mon.get("ScreenWidth", "").isdigit() else None,
+                        "height_px": int(current_mon["ScreenHeight"]) if current_mon.get("ScreenHeight", "").isdigit() else None,
+                        "is_primary": len(monitors) == 0,
+                        "refresh_hz": None,
+                    })
+                except (ValueError, KeyError):
+                    pass
         except Exception:
             pass
 

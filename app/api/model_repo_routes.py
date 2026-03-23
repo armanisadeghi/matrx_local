@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from typing import Literal
 
 import httpx
@@ -266,14 +267,7 @@ def _pick_recommended(entries: list[ModelFileEntry], capacity_gb: float | None) 
     if capacity_gb is None:
         return
 
-    candidates = [
-        e for e in entries
-        if e.compatibility_status == "works"
-        and e.role == "main_model"
-        and not e.is_split  # prefer single-file when it fits
-        or (e.compatibility_status == "works" and e.role == "main_model" and e.is_split and e.part_index in (None, 1))
-    ]
-    # Also include split model representatives
+    # All "works" main_model GGUF entries (split models represented by their first-part entry)
     candidates = [
         e for e in entries
         if e.compatibility_status == "works" and e.role == "main_model"
@@ -286,10 +280,9 @@ def _pick_recommended(entries: list[ModelFileEntry], capacity_gb: float | None) 
     budget = capacity_gb * 0.90
 
     def score(e: ModelFileEntry) -> tuple[int, float]:
-        quant_score = _QUANT_QUALITY.get(e.quant or "", 0) if e.quant else 0
-        # Prefer Q4_K_M specifically (score 5), then maximize size within budget
+        # Prefer Q4_K_M, then maximize size within budget
         is_q4km = (e.quant or "").upper() == "Q4_K_M"
-        size_score = e.total_size_bytes if e.total_size_bytes / 1024**3 <= budget else 0
+        size_score = float(e.total_size_bytes) if e.total_size_bytes / 1024**3 <= budget else 0.0
         return (1 if is_q4km else 0, size_score)
 
     candidates.sort(key=score, reverse=True)
@@ -410,8 +403,6 @@ class HuggingFaceProvider(ModelRepoProvider):
         # ── Group split parts ────────────────────────────────────────────────
         # For split models: compute total_size_bytes, collect all part URLs,
         # then emit only the first-part entry as the representative.
-        from collections import defaultdict
-
         split_groups: dict[str, list[dict]] = defaultdict(list)
         standalone: list[dict] = []
 

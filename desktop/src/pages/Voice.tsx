@@ -1113,7 +1113,7 @@ function TranscribeTab({
               {state.isProcessingTail && (
                 <div className="flex flex-col items-center gap-2 text-center">
                   <p className="text-xs text-amber-500">
-                    Finishing transcription of last audio chunk…
+                    Finishing transcription of remaining audio…
                   </p>
                   <button
                     onClick={actions.forceReset}
@@ -1307,7 +1307,7 @@ function TranscribeTab({
                 {state.isProcessingTail && viewingSession?.id === activeSessionId && (
                   <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-amber-500/5">
                     <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin shrink-0" />
-                    <span className="text-xs text-amber-500 font-medium">Finishing final audio chunk…</span>
+                    <span className="text-xs text-amber-500 font-medium">Finishing transcription of remaining audio…</span>
                   </div>
                 )}
 

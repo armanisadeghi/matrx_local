@@ -45,8 +45,8 @@ interface ModelRepoAnalyzerProps {
   hardwareResult: LlmHardwareResult | null;
   isDownloading: boolean;
   downloadProgress: LlmDownloadProgress | null;
-  onDownload: (filename: string, urls: string[]) => void | Promise<void>;
-  onDownloadComplete: () => void;
+  /** Called synchronously to enqueue the download. */
+  onDownload: (filename: string, urls: string[]) => void;
 }
 
 // ── Status icon ───────────────────────────────────────────────────────────
@@ -356,14 +356,14 @@ export function ModelRepoAnalyzer({
   isDownloading,
   downloadProgress,
   onDownload,
-  onDownloadComplete,
 }: ModelRepoAnalyzerProps) {
   const [url, setUrl] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<RepoAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
-  const [activeDownloadFile, setActiveDownloadFile] = useState<string | null>(null);
+  // Track which file is actively downloading by watching downloadProgress from the hook
+  const activeDownloadFile = isDownloading && downloadProgress ? downloadProgress.filename : null;
 
   const hw = hardwareResult ? hardwarePayload(hardwareResult) : null;
 
@@ -384,21 +384,13 @@ export function ModelRepoAnalyzer({
   }, [url, hw]);
 
   const handleDownload = useCallback(
-    async (entry: ModelFileEntry) => {
-      setActiveDownloadFile(entry.filename);
-      try {
-        await onDownload(entry.filename, entry.download_urls);
-        onDownloadComplete();
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (!msg.toLowerCase().includes("cancel")) {
-          setError(`Download failed: ${msg}`);
-        }
-      } finally {
-        setActiveDownloadFile(null);
-      }
+    (entry: ModelFileEntry) => {
+      setError(null);
+      onDownload(entry.filename, entry.download_urls);
+      // onDownloadComplete (listModels) is called by the queue system when done;
+      // no need to call it here since queueDownload is synchronous.
     },
-    [onDownload, onDownloadComplete]
+    [onDownload]
   );
 
   // Partition entries for display

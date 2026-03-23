@@ -205,6 +205,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info("[app/main.py] CORS allowed origins: %s", ALLOWED_ORIGINS)
 
+    # ── Config validation warnings ────────────────────────────────────────────
+    import os as _os
+    if not _os.getenv("SUPABASE_JWT_SECRET", "").strip():
+        logger.warning(
+            "[app/main.py] SUPABASE_JWT_SECRET is not set — incoming user JWTs cannot be "
+            "validated server-side. AI authenticated calls will be rejected. "
+            "Set SUPABASE_JWT_SECRET in your .env file (Supabase → Project Settings → API → JWT Secret)."
+        )
+
     # Phase 0a: Open local SQLite database (offline-first data store).
     # This MUST be the first phase — all data reads come from SQLite.
     # The database lives at ~/.matrx/matrx.db (outside the app folder) so it
@@ -641,8 +650,15 @@ async def _log_requests_dispatch(request: Request, call_next):
         "/ports",
         "/version",
         "/logs/access",
+        # SSE streaming endpoints — connection is INFO, individual frames are not logged
+        "/logs/stream",
+        "/logs/access/stream",
+        "/setup/logs",
         # Setup/dashboard polling (fires every 2-5s)
         "/setup/status",
+        # AI status — polled on page mount
+        "/chat/ai-status",
+        "/chat/local-llm/status",
         # Device monitoring polling (fires every 2-10s)
         "/devices/system",
         "/devices/permissions",
@@ -660,6 +676,8 @@ async def _log_requests_dispatch(request: Request, call_next):
         "/cloud/instance",
         "/cloud/instances",
         "/capabilities",
+        # Hardware polling
+        "/hardware/status",
     })
 
     # OPTIONS preflights are always silent — they carry no data.
@@ -677,11 +695,12 @@ async def _log_requests_dispatch(request: Request, call_next):
         pass
 
     # ── Request line ──────────────────────────────────────────────────────────
+    # At INFO level: compact single line (method + path). Full body goes to DEBUG
+    # only, avoiding kilobytes of JSON flooding the INFO stream for every POST.
+    log("→ %s %s", request.method, display_path)
     if body is not None:
         body_str = _json.dumps(body, indent=2, ensure_ascii=False)
-        log("→ %s %s\n%s", request.method, display_path, body_str)
-    else:
-        log("→ %s %s", request.method, display_path)
+        logger.debug("   body: %s", body_str)
 
     response = await call_next(request)
     duration_ms = (_time.monotonic() - t0) * 1000

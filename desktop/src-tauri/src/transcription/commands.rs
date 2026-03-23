@@ -4,8 +4,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use whisper_cpp_plus::TranscriptionParams;
 
 use super::{
-    audio_capture, config::TranscriptionConfig, downloader, hardware::HardwareProfile,
-    manager::TranscriptionManager, model_selector,
+    audio_capture,
+    config::TranscriptionConfig,
+    downloader,
+    hardware::HardwareProfile,
+    manager::TranscriptionManager,
+    model_selector,
     wake_word::{WakeWordMode, WakeWordState},
 };
 
@@ -281,9 +285,7 @@ pub async fn start_transcription(
     // join it on quit, guaranteeing the GGML WhisperContext is fully dropped.
     let handle = std::thread::spawn(move || {
         // Start audio capture — always returns 16kHz mono after internal resampling
-        let capture = match audio_capture::AudioCapture::start_with_device(
-            device_name.as_deref()
-        ) {
+        let capture = match audio_capture::AudioCapture::start_with_device(device_name.as_deref()) {
             Ok(c) => c,
             Err(e) => {
                 let _ = app_events.emit("whisper-error", e);
@@ -317,6 +319,9 @@ pub async fn start_transcription(
         loop {
             let still_recording = *recording_flag.lock().unwrap();
 
+            // Drain whatever the CPAL callback has produced since the last tick.
+            // When mic is stopped we do one final drain to capture any in-flight
+            // samples that arrived between the flag flip and this tick.
             let samples = capture.drain();
             if !samples.is_empty() {
                 accumulated.extend_from_slice(&samples);
@@ -341,66 +346,52 @@ pub async fn start_transcription(
                     }
                 }
 
-                // Emit live RMS every ~250ms for the UI audio meter (every 5 loop ticks at 50ms each).
-                let recent = accumulated.len().min(sample_rate as usize / 4);
-                if recent > 0 && loop_ticks % 5 == 0 {
-                    let rms_live = rms_energy(&accumulated[accumulated.len() - recent..]);
-                    let _ = app_events.emit("whisper-rms", rms_live);
+                // Emit live RMS every ~250ms for the UI audio meter (only while actively recording).
+                if still_recording {
+                    let recent = accumulated.len().min(sample_rate as usize / 4);
+                    if recent > 0 && loop_ticks % 5 == 0 {
+                        let rms_live = rms_energy(&accumulated[accumulated.len() - recent..]);
+                        let _ = app_events.emit("whisper-rms", rms_live);
+                    }
                 }
             }
 
             loop_ticks += 1;
 
-            // Flush a full chunk, or flush whatever is left when recording stops.
-            let flush_now = accumulated.len() >= target_samples;
-            let flush_tail = !still_recording && !accumulated.is_empty();
-
-            if flush_now || flush_tail {
-                // On stop, flush whatever remains (may be < 5 s). On normal chunks,
-                // always consume exactly target_samples to keep alignment stable.
-                let chunk_len = if flush_now { target_samples } else { accumulated.len() };
-                let audio_chunk = accumulated.drain(0..chunk_len).collect::<Vec<f32>>();
-
-                // Gate on RMS energy — skip Whisper for silent/near-silent chunks to
-                // prevent hallucinated output ("Thanks for watching", "you", etc.)
-                let rms = rms_energy(&audio_chunk);
-                if rms >= silence_threshold {
-                    let params = TranscriptionParams::builder()
-                        .language("en")
-                        .n_threads(n_threads)
-                        .build();
-
-                    match ctx.transcribe_with_params(&audio_chunk, params) {
-                        Ok(transcription) => {
-                            for seg in &transcription.segments {
-                                let text = seg.text.trim().to_string();
-                                // Skip empty and common hallucination strings
-                                if text.is_empty() || is_hallucination(&text) {
-                                    continue;
-                                }
-                                let _ = app_events.emit(
-                                    "whisper-segment",
-                                    serde_json::json!({
-                                        "text": text,
-                                        "start_sec": seg.start_seconds(),
-                                        "end_sec": seg.end_seconds(),
-                                    }),
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            let _ = app_events.emit(
-                                "whisper-error",
-                                format!("Transcription error: {}", e),
-                            );
-                        }
-                    }
-                }
+            // Transcription is fully decoupled from microphone state.
+            //
+            // While recording: flush full 5-second chunks as they accumulate.
+            // After recording stops: keep flushing — in chunks up to target_samples —
+            // until accumulated is completely empty. Only then signal the frontend.
+            //
+            // This guarantees no audio is ever lost when the mic is stopped, even
+            // if many seconds of data are still buffered.
+            if accumulated.len() >= target_samples {
+                // Full 5-second chunk — consume exactly target_samples to keep alignment.
+                let audio_chunk: Vec<f32> = accumulated.drain(0..target_samples).collect();
+                transcribe_chunk(
+                    &audio_chunk,
+                    &ctx,
+                    n_threads,
+                    silence_threshold,
+                    &app_events,
+                );
+            } else if !still_recording && !accumulated.is_empty() {
+                // Mic is off and we have a sub-5-second tail — flush it all at once.
+                let audio_chunk: Vec<f32> = accumulated.drain(..).collect();
+                transcribe_chunk(
+                    &audio_chunk,
+                    &ctx,
+                    n_threads,
+                    silence_threshold,
+                    &app_events,
+                );
             }
 
-            // After draining the tail, signal the frontend that all audio has
-            // been processed, then exit the loop.
-            if !still_recording {
+            // Only exit when the mic is stopped AND all buffered audio has been
+            // processed. The transcription system is intentionally unaware of
+            // microphone state beyond this single exit condition.
+            if !still_recording && accumulated.is_empty() {
                 let _ = app_events.emit("whisper-stopped", serde_json::Value::Null);
                 break;
             }
@@ -424,6 +415,50 @@ fn rms_energy(samples: &[f32]) -> f32 {
     }
     let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
     (sum_sq / samples.len() as f32).sqrt()
+}
+
+/// Run Whisper on a single audio chunk and emit whisper-segment events.
+///
+/// Skips the chunk silently if its RMS is below `silence_threshold` (avoids
+/// hallucinations on quiet/silent segments). Emits `whisper-error` on failure.
+fn transcribe_chunk(
+    audio_chunk: &[f32],
+    ctx: &whisper_cpp_plus::WhisperContext,
+    n_threads: i32,
+    silence_threshold: f32,
+    app_events: &AppHandle,
+) {
+    let rms = rms_energy(audio_chunk);
+    if rms < silence_threshold {
+        return;
+    }
+
+    let params = TranscriptionParams::builder()
+        .language("en")
+        .n_threads(n_threads)
+        .build();
+
+    match ctx.transcribe_with_params(audio_chunk, params) {
+        Ok(transcription) => {
+            for seg in &transcription.segments {
+                let text = seg.text.trim().to_string();
+                if text.is_empty() || is_hallucination(&text) {
+                    continue;
+                }
+                let _ = app_events.emit(
+                    "whisper-segment",
+                    serde_json::json!({
+                        "text": text,
+                        "start_sec": seg.start_seconds(),
+                        "end_sec": seg.end_seconds(),
+                    }),
+                );
+            }
+        }
+        Err(e) => {
+            let _ = app_events.emit("whisper-error", format!("Transcription error: {}", e));
+        }
+    }
 }
 
 /// Common Whisper hallucination strings emitted when fed silence or noise.
@@ -552,10 +587,7 @@ pub async fn start_wake_word(
 
 /// Stop wake-word detection entirely (tears down the background thread).
 #[tauri::command]
-pub fn stop_wake_word(
-    app: AppHandle,
-    ww_state: State<'_, WakeWordAppState>,
-) -> Result<(), String> {
+pub fn stop_wake_word(app: AppHandle, ww_state: State<'_, WakeWordAppState>) -> Result<(), String> {
     *ww_state.0.running.lock().unwrap() = false;
     *ww_state.0.mode.lock().unwrap() = WakeWordMode::Muted;
     let _ = app.emit("wake-word-mode", WakeWordMode::Muted);
@@ -564,10 +596,7 @@ pub fn stop_wake_word(
 
 /// Mute wake-word detection (thread keeps running but ignores audio).
 #[tauri::command]
-pub fn mute_wake_word(
-    app: AppHandle,
-    ww_state: State<'_, WakeWordAppState>,
-) -> Result<(), String> {
+pub fn mute_wake_word(app: AppHandle, ww_state: State<'_, WakeWordAppState>) -> Result<(), String> {
     *ww_state.0.mode.lock().unwrap() = WakeWordMode::Muted;
     let _ = app.emit("wake-word-mode", WakeWordMode::Muted);
     Ok(())

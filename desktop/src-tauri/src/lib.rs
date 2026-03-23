@@ -337,9 +337,12 @@ fn graceful_shutdown_sync(
     //     use-after-free → SIGABRT crash report.
     //
     //     We signal the thread to stop (set flag=false) and join it with a 5-second
-    //     timeout.  The thread's loop exits after draining the final audio tail (at most
-    //     one 5-second Whisper chunk), so this should complete well within the timeout
-    //     under normal conditions.
+    //     timeout.  The thread's loop drains all remaining accumulated audio before
+    //     exiting — typically the user has already stopped recording before quitting,
+    //     so there is nothing to drain.  In the worst case (quit while actively
+    //     recording with a full 30-second buffer) the thread may need several seconds
+    //     to flush all chunks through Whisper; the 5-second timeout is a best-effort
+    //     safeguard and is sufficient for typical use.
     if let Some(rec) = recording_state {
         *rec.flag.lock().unwrap() = false;
         let handle = rec.thread_handle.lock().unwrap().take();

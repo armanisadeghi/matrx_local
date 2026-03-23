@@ -114,14 +114,21 @@ class WebSocketManager:
 
         req_id = request_id or f"auto-{id(msg)}"
 
-        # High-frequency monitoring tools — log at DEBUG to avoid flooding the terminal.
+        # High-frequency monitoring tools — always DEBUG to avoid terminal flooding.
         # These fire every 10s from the Dashboard/Ports pages and produce repetitive output.
         _QUIET_TOOLS = frozenset({"ListPorts", "SystemResources", "SystemInfo", "ListProcesses"})
-        ws_log = logger.debug if tool_name in _QUIET_TOOLS else logger.info
+        is_quiet = tool_name in _QUIET_TOOLS
 
-        import json as _json
-        input_str = _json.dumps(tool_input, indent=2, ensure_ascii=False) if tool_input else "{}"
-        ws_log("→ WS tool=%s  id=%s\n%s", tool_name, req_id, input_str)
+        # At INFO level: log tool name + id only (compact, scannable).
+        # Full JSON input is logged at DEBUG so it's available when needed without flooding INFO.
+        if is_quiet:
+            logger.debug("→ WS tool=%s  id=%s", tool_name, req_id)
+        else:
+            import json as _json
+            input_str = _json.dumps(tool_input, indent=2, ensure_ascii=False) if tool_input else "{}"
+            logger.info("→ WS tool=%s  id=%s", tool_name, req_id)
+            logger.debug("   input: %s", input_str)
+
         task = asyncio.create_task(self._run_tool(conn, req_id, tool_name, tool_input))
         conn._running_tasks[req_id] = task
         task.add_done_callback(lambda _: conn._running_tasks.pop(req_id, None))
@@ -131,7 +138,7 @@ class WebSocketManager:
     ) -> None:
         import time as _time
         _QUIET_TOOLS = frozenset({"ListPorts", "SystemResources", "SystemInfo", "ListProcesses"})
-        ws_log = logger.debug if tool_name in _QUIET_TOOLS else logger.info
+        is_quiet = tool_name in _QUIET_TOOLS
         t0 = _time.monotonic()
         try:
             result = await dispatch(tool_name, tool_input, conn.session)
@@ -147,13 +154,17 @@ class WebSocketManager:
             if result.metadata:
                 response["metadata"] = result.metadata
 
-            # Log output preview — truncate long results so the terminal stays readable
-            out = result.output
-            if isinstance(out, str) and len(out) > 300:
-                out_preview = out[:300] + f"… (+{len(result.output) - 300} chars)"
+            # Log result summary at INFO; full preview only at DEBUG.
+            if is_quiet:
+                logger.debug("← WS tool=%s  type=%s  (%.0fms)", tool_name, result.type.value, duration_ms)
             else:
-                out_preview = out
-            ws_log("← WS tool=%s  type=%s  (%.0fms)\n%s", tool_name, result.type.value, duration_ms, out_preview)
+                out = result.output
+                if isinstance(out, str) and len(out) > 300:
+                    out_preview = out[:300] + f"… (+{len(result.output) - 300} chars)"
+                else:
+                    out_preview = out
+                logger.info("← WS tool=%s  type=%s  (%.0fms)", tool_name, result.type.value, duration_ms)
+                logger.debug("   output: %s", out_preview)
 
             await self._send(conn, response)
 

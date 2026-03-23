@@ -81,6 +81,17 @@
 19. [x] **Transcribe Audio: live mode** — Fixed 2026-03-02: `AudioMediaPanel.tsx` now has two sub-tabs: "Live Mic" (record → auto-transcribe, or record-only + manual transcribe) and "From File" (path input + transcribe). Duration selector (15s/30s/1m/2m), Whisper model selector (tiny/base/small), error display. Result routing via `lastToolRef` prevents cross-tool contamination.
 20. [x] **Browser control UI** — Fixed 2026-03-02: Complete rewrite of `BrowserPanel.tsx`. Now has: (1) Automation tab with ordered step builder (navigate/click/type/extract/screenshot/eval) with add/remove/reorder, run-all with per-step status icons (pending/running/done/error), and inline output; (2) Auto-screenshot toggle captures page after each step; (3) Session indicator (green dot when active, tab count); (4) Live Page View shows latest screenshot with manual refresh; (5) Quick Nav and Console tabs preserved.
 
+### P2 — (continued)
+
+- [x] **System hardware inventory — central detection, DB storage, cloud push, UI tab (2026-03-23):**
+  - `app/services/hardware/detector.py` — single detection module covering CPUs, GPUs (Metal/CUDA/Vulkan/ROCm), RAM (type+speed), all audio inputs/outputs (sounddevice), video capture devices, monitors (screeninfo), network adapters (psutil — type/MAC/IP/speed), storage volumes (psutil — type/used/free). All sections wrapped in independent try/except.
+  - `app/api/hardware_routes.py` — `GET /hardware` (cached, instant), `POST /hardware/refresh` (re-detect + cloud push). Cache populated once at startup; lazy fallback on first request.
+  - `app/main.py` Phase 0d — hardware detection at startup, cloud push as background task.
+  - `migrations/008_system_hardware.sql` — applied to Supabase: `system_hardware jsonb` + `hardware_detected_at timestamptz` columns added to `app_instances`.
+  - `desktop/src/lib/api.ts` — full TypeScript types (`HardwareProfile`, `HardwareCpu`, `HardwareGpu`, `HardwareRam`, `HardwareAudioDevice`, `HardwareVideoDevice`, `HardwareMonitor`, `HardwareNetworkAdapter`, `HardwareStorageDevice`, `HardwareResponse`) + `engine.getHardware()` and `engine.refreshHardware()` methods.
+  - `desktop/src/pages/Settings.tsx` — "System" tab with sections: Processor, Graphics (with GPU warning for CPU-only), Memory, Audio Devices (inputs + outputs), Camera, Displays, Network Adapters, Storage. Refresh button re-detects and pushes to cloud.
+  - **Bugs fixed during audit:** Vulkan merge logic mutated loop list (fixed); Linux DRM listed renderD* entries creating duplicates (fixed: filter to card* only); Windows wmic CSV column-sort bugs in RAM type/speed, monitor size, and GPU name/VRAM (fixed: use /value format); macOS GPU name extraction simplified to use `_name` key.
+
 ### P3 — Polish (nice to have)
 
 21. **First-run wizard** — On first launch (no settings file), show a wizard: Sign in → Engine health → optional capabilities install → done.
@@ -114,6 +125,10 @@
 - [ ] **API key rotation reminder** — Add a "last updated" timestamp to stored API keys and show a UI hint after 90 days suggesting the user rotate their key. Requires adding a `{provider}_key_updated_at` field alongside the key in the settings blob.
 
 - [ ] **OS keychain encryption for API keys** — Upgrade from base64 obfuscation to OS-native keychain storage (macOS Keychain / Windows Credential Manager / libsecret on Linux) using Tauri's `tauri-plugin-stronghold` or native Keychain plugin. Significant complexity — implement only if user data security requirements increase.
+
+### Voice — Transcription Bug Fixes (added 2026-03-23)
+
+- [x] **Audio lost when mic stopped mid-recording** — Fixed: Rust transcription loop in `commands.rs` exited immediately after the first tail flush even when `accumulated` held multiple seconds of unprocessed audio. Root cause: `if !still_recording { emit whisper-stopped; break }` ran after the first chunk flush regardless of remaining buffer. Fix: decouple loop exit from mic state — thread now continues flushing `accumulated` in full 5-second chunks (or a single sub-5s tail flush) until completely empty, *then* emits `whisper-stopped` and exits. Extracted inline transcription logic into `transcribe_chunk()` helper. No TypeScript changes needed — the hook's event contract is unchanged.
 
 ### Voice — Wake Word System (added 2026-03-18)
 

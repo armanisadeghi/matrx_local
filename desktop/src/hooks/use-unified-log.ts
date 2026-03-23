@@ -6,6 +6,7 @@
  *   "syslog"  → engine /logs/stream SSE (raw system.log tail)
  *   "access"  → engine /logs/access/stream SSE (structured HTTP requests)
  *   "tauri"   → Tauri IPC sidecar-log events (Rust ring buffer + live)
+ *   "llm"     → Tauri llm-server-log events (llama-server stdout/stderr)
  *   "engine"  → engine discovery/connection lifecycle (emitted by use-engine)
  *   "auth"    → Supabase auth lifecycle (emitted by use-auth)
  *   "voice"   → transcription / whisper (emitted by voice hooks)
@@ -76,6 +77,7 @@ interface StreamState {
   stopSyslog: (() => void) | null;
   stopAccess: (() => void) | null;
   stopTauri: (() => void) | null;
+  stopLlm: (() => void) | null;
 }
 
 const _state: StreamState = {
@@ -86,6 +88,7 @@ const _state: StreamState = {
   stopSyslog: null,
   stopAccess: null,
   stopTauri: null,
+  stopLlm: null,
 };
 
 // Pause state change event so subscribers can react
@@ -158,11 +161,26 @@ export function clearClientLogBySource(source: string): void {
 // Level inference helpers
 // ---------------------------------------------------------------------------
 
+// Strips ANSI escape codes so color-formatted console output from the Python
+// sidecar doesn't prevent keyword matching (e.g. "\x1b[33mWARNING\x1b[0m").
+const _ANSI_RE = /\x1b\[[0-9;]*m/g;
+
+function stripAnsi(text: string): string {
+  return text.replace(_ANSI_RE, "");
+}
+
 function inferServerLevel(text: string): LogLevel {
-  const t = text.toLowerCase();
-  if (t.includes("error") || t.includes("failed") || t.includes("traceback") || t.includes("exception")) return "error";
+  const t = stripAnsi(text).toLowerCase();
+  if (t.includes("error") || t.includes("failed") || t.includes("traceback") || t.includes("exception") || t.includes("critical") || t.includes("fatal")) return "error";
   if (t.includes("warning") || t.includes("warn")) return "warn";
   if (t.includes("ready") || t.includes("✓") || t.includes("started") || t.includes("success")) return "success";
+  return "info";
+}
+
+/** Map llama-server log kinds (from Rust classify_log_line) to unified levels. */
+function llmKindToLevel(kind: string): LogLevel {
+  if (kind === "error") return "error";
+  if (kind === "ready") return "success";
   return "info";
 }
 
@@ -278,7 +296,16 @@ async function startSyslogStream(engineUrl: string, getToken: () => Promise<stri
 
   const connect = async () => {
     const token = await getToken();
-    if (!token || !active) return;
+    if (!active) return;
+    if (!token) {
+      // Warn once so the user knows why detailed server logs are missing.
+      emitClientLog(
+        "warn",
+        "Activity: detailed server log stream requires authentication — some warnings and errors may not appear until you sign in.",
+        "syslog",
+      );
+      return;
+    }
     const url = `${engineUrl}/logs/stream?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef = es;
@@ -306,6 +333,30 @@ async function startSyslogStream(engineUrl: string, getToken: () => Promise<stri
     esRef?.close();
     esRef = null;
   };
+}
+
+// ---------------------------------------------------------------------------
+// Tauri llm-server-log IPC  (llama-server stdout/stderr → Activity)
+// ---------------------------------------------------------------------------
+
+async function startLlmStream(): Promise<() => void> {
+  let unlistenFn: (() => void) | null = null;
+
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlisten = await listen<{ line: string; kind: string }>(
+      "llm-server-log",
+      (event) => {
+        if (_state.paused) return;
+        const { line, kind } = event.payload;
+        // Prepend a source tag so it's visually distinct in the Activity list.
+        emitClientLog(llmKindToLevel(kind), `[llama-server] ${line}`, "llm");
+      },
+    );
+    unlistenFn = unlisten;
+  } catch { /* not in Tauri — browser dev mode */ }
+
+  return () => { unlistenFn?.(); };
 }
 
 // ---------------------------------------------------------------------------
@@ -445,11 +496,15 @@ export async function initUnifiedLog(
 }
 
 /**
- * Initialize the Tauri sidecar listener. Call once on app mount (no engine required).
+ * Initialize the Tauri sidecar listener and llm-server-log listener.
+ * Call once on app mount (no engine required).
  */
 export async function initTauriLogStream(): Promise<void> {
   if (!_state.stopTauri) {
     _state.stopTauri = await startTauriStream();
+  }
+  if (!_state.stopLlm) {
+    _state.stopLlm = await startLlmStream();
   }
 }
 
@@ -467,12 +522,14 @@ export function stopEngineStreams(): void {
 }
 
 /**
- * Stop the Tauri sidecar log listener. Call on app unmount to remove the
- * Tauri IPC event listener and prevent it from leaking after the WebView tears down.
+ * Stop the Tauri sidecar log listener and the llm-server-log listener.
+ * Call on app unmount to remove Tauri IPC event listeners.
  */
 export function stopTauriStream(): void {
   _state.stopTauri?.();
   _state.stopTauri = null;
+  _state.stopLlm?.();
+  _state.stopLlm = null;
 }
 
 /**

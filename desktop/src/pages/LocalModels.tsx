@@ -724,7 +724,7 @@ function HfTokenPanel({ forcedOpen = false }: { forcedOpen?: boolean }) {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               className="text-xs h-8 font-mono flex-1"
-              onKeyDown={(e) => e.key === "Enter" && handleSave()}
+              onKeyDown={(e) => { if (e.key === "Enter") void handleSave(); }}
             />
             <Button size="sm" className="h-8 px-3" disabled={!inputValue.trim() || saving} onClick={handleSave}>
               {saving ? "Saving…" : "Save"}
@@ -1114,10 +1114,7 @@ function ModelsTab() {
         hardwareResult={hardwareResult}
         isDownloading={isDownloading}
         downloadProgress={downloadProgress}
-        onDownload={(filename, urls) => {
-          queueDownload(filename, urls);
-        }}
-        onDownloadComplete={listModels}
+        onDownload={queueDownload}
       />
 
       {/* HuggingFace token — shown expanded when a XET download failed, collapsed otherwise */}

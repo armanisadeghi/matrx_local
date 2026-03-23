@@ -1428,7 +1428,7 @@ export function Settings({
                         )}
                         Import {bulkSelected.size > 0 ? `${bulkSelected.size} key${bulkSelected.size !== 1 ? "s" : ""}` : "Selected Keys"}
                       </Button>
-                      {bulkParsed.length > 0 && (
+                      {bulkParsed.some((e) => e.provider !== null) && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1437,11 +1437,15 @@ export function Settings({
                             const matchedKeys = bulkParsed
                               .filter((e) => e.provider !== null)
                               .map((e) => e.rawKey);
-                            const allSelected = matchedKeys.every((k) => bulkSelected.has(k));
+                            const allSelected =
+                              matchedKeys.length > 0 &&
+                              matchedKeys.every((k) => bulkSelected.has(k));
                             setBulkSelected(allSelected ? new Set() : new Set(matchedKeys));
                           }}
                         >
-                          {bulkParsed.filter((e) => e.provider !== null).every((e) => bulkSelected.has(e.rawKey))
+                          {bulkParsed
+                            .filter((e) => e.provider !== null)
+                            .every((e) => bulkSelected.has(e.rawKey))
                             ? "Deselect All"
                             : "Select All"}
                         </Button>
