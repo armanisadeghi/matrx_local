@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
   systemPrompts,
@@ -17,7 +17,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
   Plus,
-  Pencil,
   Trash2,
   Copy,
   Check,
@@ -29,7 +28,6 @@ import {
   ArrowLeft,
   Save,
   RotateCcw,
-  ExternalLink,
   ChevronRight,
   Tag,
   Clock,
@@ -358,7 +356,7 @@ function PromptRow({
   prompt,
   isActive,
   onSelect,
-  onPin,
+  onPin: _onPin,
 }: {
   prompt: PromptEntry;
   isActive: boolean;
@@ -397,7 +395,6 @@ function PromptRow({
 
 export function SystemPrompts() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
 
   // All user prompts (reactive — reloaded on any mutation)
   const [userPrompts, setUserPrompts] = useState<SystemPrompt[]>(() => systemPrompts.list());

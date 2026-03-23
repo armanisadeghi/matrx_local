@@ -27,7 +27,6 @@ import {
   FolderOpen,
   Plus,
   PackagePlus,
-  BookOpen,
   ExternalLink,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
