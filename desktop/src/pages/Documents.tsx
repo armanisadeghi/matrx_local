@@ -36,7 +36,7 @@ interface DocumentsProps {
 }
 
 export function Documents({ engineStatus, userId }: DocumentsProps) {
-  const docs = useDocuments(userId);
+  const docs = useDocuments(userId, engineStatus);
   const [showSidebar, setShowSidebar] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(false);
   const [rightPanelTab, setRightPanelTab] = useState<

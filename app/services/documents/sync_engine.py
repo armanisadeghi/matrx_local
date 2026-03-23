@@ -208,8 +208,8 @@ class SyncEngine:
                 await repo.set_sync_status(note_id, "synced", remote_hash=c_hash)
 
             except Exception:
-                logger.warning(
-                    "Supabase push failed for note %s — saved locally only.",
+                logger.debug(
+                    "Supabase push failed for note %s — saved locally only (non-critical).",
                     note_id,
                     exc_info=True,
                 )
@@ -226,7 +226,7 @@ class SyncEngine:
         try:
             note = await self.sb.get_note(note_id)
         except Exception:
-            logger.warning("Failed to pull note %s from Supabase", note_id)
+            logger.debug("Failed to pull note %s from Supabase (non-critical)", note_id)
             return None
 
         if not note:
@@ -302,7 +302,7 @@ class SyncEngine:
         try:
             notes = await self.sb.get_notes_since(self._user_id, last_version)
         except Exception:
-            logger.warning("Failed to pull changes from Supabase")
+            logger.debug("Failed to pull changes from Supabase (non-critical)")
             return {"pulled": 0, "conflicts": 0, "error": "network_error"}
 
         pulled = 0
@@ -687,8 +687,8 @@ class SyncEngine:
                             is_new_note=True,
                         )
                 except Exception:
-                    logger.warning(
-                        "Failed to push external change for %s (queued locally)",
+                    logger.debug(
+                        "Failed to push external change for %s (queued locally, non-critical)",
                         file_path,
                         exc_info=True,
                     )

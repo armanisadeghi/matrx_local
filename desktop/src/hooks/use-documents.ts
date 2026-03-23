@@ -21,6 +21,7 @@ import type {
   DocShare,
   ConflictDetail,
 } from "@/lib/api";
+import type { EngineStatus } from "@/hooks/use-engine";
 
 export type SyncMode = "push" | "pull" | "bidirectional";
 
@@ -58,7 +59,7 @@ const INITIAL_STATE: DocumentsState = {
   lastSyncResult: null,
 };
 
-export function useDocuments(userId: string | null) {
+export function useDocuments(userId: string | null, engineStatus?: EngineStatus) {
   const [state, setState] = useState<DocumentsState>(INITIAL_STATE);
   const mountedRef = useRef(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -69,7 +70,10 @@ export function useDocuments(userId: string | null) {
     }
   }, []);
 
-  const engineReady = !!engine.engineUrl;
+  // engineReady is true when: the engine URL is known AND the engine status is
+  // "connected" (or not provided — legacy callers that don't pass engineStatus).
+  // This ensures the hook re-fires when the engine finishes starting up.
+  const engineReady = !!engine.engineUrl && (engineStatus === undefined || engineStatus === "connected");
 
   // ── Load folder tree — local filesystem, no auth required ───────────────
 
@@ -410,7 +414,9 @@ export function useDocuments(userId: string | null) {
       mountedRef.current = false;
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [engineReady, userId, loadTree, loadNotes, loadSyncStatus, loadConflicts, update]);
+    // engineStatus is intentionally included so the effect re-runs when the
+    // engine transitions from "starting"/"discovering" → "connected".
+  }, [engineReady, engineStatus, userId, loadTree, loadNotes, loadSyncStatus, loadConflicts, update]);
 
   return {
     ...state,

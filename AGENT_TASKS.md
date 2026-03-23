@@ -75,8 +75,10 @@
 
 ### Documents
 
-- [ ] **New Folder doesn't work** — Code is correctly wired. Likely Supabase RLS issue on `note_folders` table. Arman: verify table exists and RLS allows inserts.
-- [ ] **New Note doesn't work** — Same as above.
+- [x] **New Folder / New Note errors on startup** — Fixed 2026-03-22. Three root causes found and resolved:
+  1. **Wrong Supabase API key for PostgREST**: `supabase_client.py` and `settings_sync.py` were sending `sb_publishable_*` as the `apikey` header to PostgREST. PostgREST only accepts JWT-format keys; the publishable key is not a JWT → 404 on every cloud write. Fixed: added `SUPABASE_ANON_KEY` to `config.py` and updated both clients to use it.
+  2. **Startup race condition**: `use-documents.ts` computed `engineReady = !!engine.engineUrl` as a snapshot at render time. If the user navigated to Notes while the engine was still starting (WebSocket disconnect 1006 + SSE stream errors during the ~30s engine boot), `engineReady` was false and the hook never retried. Fixed: `useDocuments` now accepts `engineStatus` prop; the `useEffect` re-fires when `engineStatus` transitions to `"connected"`.
+  3. **Noisy cloud failures in stderr**: Supabase push errors were logged at WARNING level with `exc_info=True`, flooding stderr (shown as sidecar IPC errors). Cloud sync failure is non-critical — all cloud write failures downgraded to DEBUG level.
 - [x] **Sync bar claims "Connected" but does nothing** — Fixed 2026-03-02: `SyncStatusBar` always renders now (with "Not configured" placeholder). Sync button triggers real sync.
 - [x] **Notes not saving (all updates returning 404)** — Fixed 2026-03-18: UUID mismatch between create and update. See 3a above.
 
