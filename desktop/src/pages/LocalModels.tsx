@@ -286,9 +286,18 @@ function SetupTab() {
                   {hardwareResult.hardware.is_apple_silicon
                     ? "Apple Silicon (Metal)"
                     : hardwareResult.hardware.supports_cuda
-                    ? `CUDA — ${((hardwareResult.hardware.gpu_vram_mb ?? 0) / 1024).toFixed(0)} GB VRAM`
-                    : "CPU only"}
+                    ? `CUDA${hardwareResult.hardware.gpu_name ? ` — ${hardwareResult.hardware.gpu_name}` : ""} — ${((hardwareResult.hardware.gpu_vram_mb ?? 0) / 1024).toFixed(0)} GB VRAM`
+                    : hardwareResult.hardware.supports_vulkan
+                    ? `Vulkan${hardwareResult.hardware.gpu_name ? ` — ${hardwareResult.hardware.gpu_name}` : ""}${hardwareResult.hardware.gpu_vram_mb ? ` — ${((hardwareResult.hardware.gpu_vram_mb) / 1024).toFixed(0)} GB VRAM` : ""}`
+                    : "No GPU detected — CPU inference"}
                 </p>
+                {!hardwareResult.hardware.is_apple_silicon
+                  && !hardwareResult.hardware.supports_cuda
+                  && !hardwareResult.hardware.supports_vulkan && (
+                  <p className="text-xs text-amber-500 mt-0.5">
+                    GPU not found. Ensure GPU drivers are installed and try Re-detect.
+                  </p>
+                )}
               </div>
               <div>
                 <p className="text-muted-foreground text-xs">Recommended</p>

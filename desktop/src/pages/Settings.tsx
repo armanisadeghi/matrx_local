@@ -38,6 +38,15 @@ import {
   Eye,
   EyeOff,
   Trash2,
+  FileUp,
+  FileCheck,
+  SkipForward,
+  Mic,
+  Speaker,
+  Camera,
+  Network,
+  Layers,
+  MemoryStick,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
@@ -60,7 +69,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useLocation } from "react-router-dom";
 import type { EngineStatus } from "@/hooks/use-engine";
 import { engine } from "@/lib/api";
-import type { ProxyStatus, InstanceInfo, Capability } from "@/lib/api";
+import type { ProxyStatus, InstanceInfo, Capability, HardwareProfile } from "@/lib/api";
 import type { useAuth } from "@/hooks/use-auth";
 import type { Theme } from "@/hooks/use-theme";
 
@@ -74,6 +83,8 @@ import {
   type AppSettings,
 } from "@/lib/settings";
 import type { StoragePath } from "@/lib/api";
+import { parseEnvBlock, type ParsedEnvEntry } from "@/lib/api-key-patterns";
+import { Textarea } from "@/components/ui/textarea";
 
 type AuthActions = ReturnType<typeof useAuth>;
 
@@ -166,6 +177,19 @@ export function Settings({
   const [apiKeyDeleting, setApiKeyDeleting] = useState<Record<string, boolean>>({});
   const [apiKeyMessages, setApiKeyMessages] = useState<Record<string, { ok: boolean; text: string }>>({});
 
+  // Hardware profile state
+  const [hardwareProfile, setHardwareProfile] = useState<HardwareProfile | null>(null);
+  const [hardwareLoading, setHardwareLoading] = useState(false);
+  const [hardwareError, setHardwareError] = useState<string | null>(null);
+
+  // Bulk import state
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [bulkEnvText, setBulkEnvText] = useState("");
+  const [bulkParsed, setBulkParsed] = useState<ParsedEnvEntry[]>([]);
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ saved: string[]; skipped: string[]; errors: Record<string, string> } | null>(null);
+
   useEffect(() => {
     loadSettings().then(setSettings);
     loadForbiddenUrls();
@@ -190,8 +214,6 @@ export function Settings({
   }, [engineStatus]);
 
   // Re-load remote tab data whenever the user navigates to it.
-  // This ensures the tunnel switch and device list always reflect live state
-  // rather than stale data from a previous visit.
   useEffect(() => {
     if (activeTab === "remote" && engineStatus === "connected") {
       loadTunnelStatus();
@@ -199,6 +221,42 @@ export function Settings({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+
+  // Load hardware profile when the system tab becomes active.
+  useEffect(() => {
+    if (activeTab === "system" && engineStatus === "connected" && !hardwareProfile) {
+      loadHardwareProfile();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, engineStatus]);
+
+  const loadHardwareProfile = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    setHardwareLoading(true);
+    setHardwareError(null);
+    try {
+      const result = await engine.getHardware();
+      setHardwareProfile(result.profile);
+    } catch (err) {
+      setHardwareError(String(err));
+    } finally {
+      setHardwareLoading(false);
+    }
+  }, [engineStatus]);
+
+  const refreshHardwareProfile = useCallback(async () => {
+    if (engineStatus !== "connected") return;
+    setHardwareLoading(true);
+    setHardwareError(null);
+    try {
+      const result = await engine.refreshHardware();
+      setHardwareProfile(result.profile);
+    } catch (err) {
+      setHardwareError(String(err));
+    } finally {
+      setHardwareLoading(false);
+    }
+  }, [engineStatus]);
 
   const loadProxyStatus = useCallback(async () => {
     if (engineStatus !== "connected") return;
@@ -455,6 +513,51 @@ export function Settings({
     }
   }, []);
 
+  const handleBulkEnvChange = useCallback((text: string) => {
+    setBulkEnvText(text);
+    setBulkResult(null);
+    const parsed = parseEnvBlock(text);
+    setBulkParsed(parsed);
+    // Auto-select all entries that match a known provider
+    setBulkSelected(new Set(
+      parsed
+        .filter((e) => e.provider !== null)
+        .map((e) => e.rawKey),
+    ));
+  }, []);
+
+  const handleBulkImport = useCallback(async () => {
+    const toSave = bulkParsed.filter(
+      (e) => e.provider !== null && bulkSelected.has(e.rawKey),
+    );
+    if (toSave.length === 0) return;
+
+    setBulkSaving(true);
+    setBulkResult(null);
+    try {
+      const result = await engine.post("/settings/api-keys/bulk", {
+        keys: toSave.map((e) => ({ provider: e.provider!, key: e.rawValue })),
+      }) as { saved: string[]; skipped: string[]; errors: Record<string, string> };
+      setBulkResult(result);
+      if (result.saved.length > 0) {
+        // Refresh the provider status list so badges update
+        await loadApiKeyStatus();
+        // Clear the textarea on success
+        setBulkEnvText("");
+        setBulkParsed([]);
+        setBulkSelected(new Set());
+      }
+    } catch (err) {
+      setBulkResult({
+        saved: [],
+        skipped: [],
+        errors: { _: err instanceof Error ? err.message : String(err) },
+      });
+    } finally {
+      setBulkSaving(false);
+    }
+  }, [bulkParsed, bulkSelected, loadApiKeyStatus]);
+
   const handleTunnelToggle = async (enable: boolean) => {
     setTunnelLoading(true);
     try {
@@ -560,6 +663,7 @@ export function Settings({
 
   const settingsTabs = [
     { value: "general", label: "General" },
+    { value: "system", label: "System" },
     { value: "api-keys", label: "API Keys" },
     { value: "storage", label: "Storage" },
     { value: "proxy", label: "Proxy" },
@@ -771,6 +875,380 @@ export function Settings({
             </>
           )}
 
+          {/* ── System Hardware Tab ──────────────────────────── */}
+          {activeTab === "system" && (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-medium">System Hardware</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {hardwareProfile?.detected_at
+                      ? `Last detected: ${new Date(hardwareProfile.detected_at).toLocaleString()}`
+                      : "Hardware inventory for this machine"}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={refreshHardwareProfile}
+                  disabled={hardwareLoading || engineStatus !== "connected"}
+                >
+                  {hardwareLoading
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : <RefreshCw className="h-4 w-4" />}
+                  {hardwareLoading ? "Detecting…" : "Refresh"}
+                </Button>
+              </div>
+
+              {hardwareError && (
+                <Card className="border-destructive/50">
+                  <CardContent className="pt-4">
+                    <div className="flex items-center gap-2 text-destructive text-sm">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>{hardwareError}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {hardwareLoading && !hardwareProfile && (
+                <Card>
+                  <CardContent className="pt-6 pb-6 flex items-center justify-center gap-3 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span className="text-sm">Scanning hardware…</span>
+                  </CardContent>
+                </Card>
+              )}
+
+              {engineStatus !== "connected" && (
+                <Card>
+                  <CardContent className="pt-6 pb-6 flex items-center justify-center gap-2 text-muted-foreground">
+                    <AlertCircle className="h-4 w-4" />
+                    <span className="text-sm">Engine not connected — hardware data unavailable</span>
+                  </CardContent>
+                </Card>
+              )}
+
+              {hardwareProfile && !hardwareProfile.error && (
+                <>
+                  {/* CPUs */}
+                  {hardwareProfile.cpus.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Cpu className="h-4 w-4 text-primary" />
+                          {hardwareProfile.cpus.length === 1 ? "Processor" : `Processors (${hardwareProfile.cpus.length})`}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {hardwareProfile.cpus.map((cpu, i) => (
+                          <div key={i} className="space-y-1">
+                            {hardwareProfile.cpus.length > 1 && (
+                              <p className="text-xs font-medium text-muted-foreground">CPU {i + 1}</p>
+                            )}
+                            <p className="text-sm font-medium">{cpu.model}</p>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                              {cpu.physical_cores != null && (
+                                <span>{cpu.physical_cores} physical cores / {cpu.logical_cores} threads</span>
+                              )}
+                              {cpu.architecture && <span>Architecture: {cpu.architecture}</span>}
+                              {cpu.frequency_mhz != null && (
+                                <span>
+                                  {(cpu.frequency_mhz / 1000).toFixed(2)} GHz
+                                  {cpu.frequency_max_mhz ? ` (max ${(cpu.frequency_max_mhz / 1000).toFixed(2)} GHz)` : ""}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* GPUs */}
+                  {hardwareProfile.gpus.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Layers className="h-4 w-4 text-primary" />
+                          {hardwareProfile.gpus.length === 1 ? "Graphics" : `Graphics (${hardwareProfile.gpus.length})`}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {hardwareProfile.gpus.map((gpu, i) => (
+                          <div key={i} className={i > 0 ? "pt-3 border-t" : ""}>
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium">{gpu.name}</p>
+                              <div className="flex gap-1">
+                                {gpu.is_primary && (
+                                  <Badge variant="outline" className="text-xs">Primary</Badge>
+                                )}
+                                <Badge
+                                  variant={gpu.backend === "cpu" ? "secondary" : "default"}
+                                  className="text-xs capitalize"
+                                >
+                                  {gpu.backend}
+                                </Badge>
+                              </div>
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
+                              {gpu.vram_mb != null && (
+                                <p>
+                                  {gpu.vram_note === "unified_memory"
+                                    ? `${(gpu.vram_mb / 1024).toFixed(0)} GB unified memory`
+                                    : `${(gpu.vram_mb / 1024).toFixed(1)} GB VRAM`}
+                                </p>
+                              )}
+                              {gpu.driver_version && <p>Driver: {gpu.driver_version}</p>}
+                              {gpu.backend === "cpu" && (
+                                <p className="text-amber-500">No GPU acceleration — CPU inference only</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* RAM */}
+                  {hardwareProfile.ram && hardwareProfile.ram.total_mb != null && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <MemoryStick className="h-4 w-4 text-primary" />
+                          Memory (RAM)
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                          <div>
+                            <span className="text-muted-foreground text-xs">Total</span>
+                            <p className="font-medium">{(hardwareProfile.ram.total_mb / 1024).toFixed(1)} GB</p>
+                          </div>
+                          {hardwareProfile.ram.available_mb != null && (
+                            <div>
+                              <span className="text-muted-foreground text-xs">Available</span>
+                              <p className="font-medium">{(hardwareProfile.ram.available_mb / 1024).toFixed(1)} GB</p>
+                            </div>
+                          )}
+                          {hardwareProfile.ram.type && (
+                            <div>
+                              <span className="text-muted-foreground text-xs">Type</span>
+                              <p className="font-medium">{hardwareProfile.ram.type}</p>
+                            </div>
+                          )}
+                          {hardwareProfile.ram.speed_mhz != null && (
+                            <div>
+                              <span className="text-muted-foreground text-xs">Speed</span>
+                              <p className="font-medium">{hardwareProfile.ram.speed_mhz} MHz</p>
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Audio Inputs */}
+                  {(hardwareProfile.audio_inputs.length > 0 || hardwareProfile.audio_outputs.length > 0) && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Mic className="h-4 w-4 text-primary" />
+                          Audio Devices
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        {hardwareProfile.audio_inputs.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-muted-foreground mb-2">
+                              INPUT ({hardwareProfile.audio_inputs.length})
+                            </p>
+                            <div className="space-y-1.5">
+                              {hardwareProfile.audio_inputs.map((d, i) => (
+                                <div key={i} className="flex items-center justify-between text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <Mic className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                    <span className="truncate max-w-[260px]">{d.name}</span>
+                                  </div>
+                                  <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                                    {d.channels != null ? `${d.channels}ch` : ""}
+                                    {d.default_sample_rate ? ` · ${(d.default_sample_rate / 1000).toFixed(1)}kHz` : ""}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {hardwareProfile.audio_inputs.length > 0 && hardwareProfile.audio_outputs.length > 0 && (
+                          <Separator />
+                        )}
+                        {hardwareProfile.audio_outputs.length > 0 && (
+                          <div>
+                            <p className="text-xs font-medium text-muted-foreground mb-2">
+                              OUTPUT ({hardwareProfile.audio_outputs.length})
+                            </p>
+                            <div className="space-y-1.5">
+                              {hardwareProfile.audio_outputs.map((d, i) => (
+                                <div key={i} className="flex items-center justify-between text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <Speaker className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                    <span className="truncate max-w-[260px]">{d.name}</span>
+                                  </div>
+                                  <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                                    {d.channels != null ? `${d.channels}ch` : ""}
+                                    {d.default_sample_rate ? ` · ${(d.default_sample_rate / 1000).toFixed(1)}kHz` : ""}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {hardwareProfile.audio_inputs.length === 0 && hardwareProfile.audio_outputs.length === 0 && (
+                          <p className="text-sm text-muted-foreground">No audio devices found</p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Video capture devices */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Camera className="h-4 w-4 text-primary" />
+                        Camera &amp; Video Capture
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {hardwareProfile.video_devices.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No video capture devices found</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {hardwareProfile.video_devices.map((d, i) => (
+                            <div key={i} className="flex items-center gap-2 text-sm">
+                              <Camera className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              <span>{d.name}</span>
+                              {d.device && (
+                                <span className="text-xs text-muted-foreground font-mono">{d.device}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Monitors */}
+                  {hardwareProfile.monitors.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Monitor className="h-4 w-4 text-primary" />
+                          Displays ({hardwareProfile.monitors.length})
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {hardwareProfile.monitors.map((m, i) => (
+                          <div key={i} className={i > 0 ? "pt-3 border-t" : ""}>
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium">{m.name}</p>
+                              {m.is_primary && <Badge variant="outline" className="text-xs">Primary</Badge>}
+                            </div>
+                            <div className="mt-0.5 text-xs text-muted-foreground">
+                              {m.width_px != null && m.height_px != null && (
+                                <span>{m.width_px} × {m.height_px}</span>
+                              )}
+                              {m.refresh_hz != null && (
+                                <span> @ {m.refresh_hz} Hz</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Network */}
+                  {hardwareProfile.network_adapters.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <Network className="h-4 w-4 text-primary" />
+                          Network Adapters ({hardwareProfile.network_adapters.filter(a => a.type !== "loopback").length})
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {hardwareProfile.network_adapters
+                          .filter(a => a.type !== "loopback")
+                          .map((a, i) => (
+                            <div key={i} className={i > 0 ? "pt-3 border-t" : ""}>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  {a.type === "wifi"
+                                    ? <Wifi className="h-3.5 w-3.5 text-muted-foreground" />
+                                    : <Network className="h-3.5 w-3.5 text-muted-foreground" />}
+                                  <span className="text-sm font-medium">{a.name}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <Badge variant="outline" className="text-xs capitalize">{a.type}</Badge>
+                                  <span className={`h-2 w-2 rounded-full ${a.is_up ? "bg-green-500" : "bg-muted"}`} />
+                                </div>
+                              </div>
+                              <div className="mt-0.5 text-xs text-muted-foreground space-y-0.5">
+                                {a.ipv4.length > 0 && <p>IPv4: {a.ipv4.join(", ")}</p>}
+                                {a.mac && <p>MAC: {a.mac}</p>}
+                                {a.speed_mbps != null && a.speed_mbps > 0 && (
+                                  <p>{a.speed_mbps >= 1000 ? `${(a.speed_mbps / 1000).toFixed(0)} Gbps` : `${a.speed_mbps} Mbps`}</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Storage */}
+                  {hardwareProfile.storage.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <HardDrive className="h-4 w-4 text-primary" />
+                          Storage ({hardwareProfile.storage.length} volume{hardwareProfile.storage.length !== 1 ? "s" : ""})
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {hardwareProfile.storage.map((s, i) => (
+                          <div key={i} className={i > 0 ? "pt-3 border-t" : ""}>
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium font-mono truncate max-w-[200px]">{s.mountpoint}</span>
+                              <div className="flex items-center gap-1.5">
+                                {s.disk_type !== "unknown" && (
+                                  <Badge variant="outline" className="text-xs uppercase">{s.disk_type}</Badge>
+                                )}
+                                {s.fstype && <span className="text-xs text-muted-foreground">{s.fstype}</span>}
+                              </div>
+                            </div>
+                            <div className="mt-1.5">
+                              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                                <span>{s.used_gb.toFixed(1)} GB used of {s.total_gb.toFixed(1)} GB</span>
+                                <span>{s.free_gb.toFixed(1)} GB free</span>
+                              </div>
+                              <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${s.percent_used > 90 ? "bg-destructive" : s.percent_used > 75 ? "bg-amber-500" : "bg-primary"}`}
+                                  style={{ width: `${s.percent_used}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              )}
+            </>
+          )}
+
           {/* ── API Keys Tab ─────────────────────────────────── */}
           {activeTab === "api-keys" && (
             <>
@@ -792,6 +1270,185 @@ export function Settings({
                     A cloud relay (no user keys required) is planned for a future release.
                   </div>
                 </CardContent>
+              </Card>
+
+              {/* ── Bulk .env import ──────────────────────────── */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                      <FileUp className="h-4 w-4 text-primary" />
+                      Bulk Import from .env
+                    </CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        setBulkImportOpen((v) => !v);
+                        if (bulkImportOpen) {
+                          setBulkEnvText("");
+                          setBulkParsed([]);
+                          setBulkSelected(new Set());
+                          setBulkResult(null);
+                        }
+                      }}
+                    >
+                      {bulkImportOpen ? "Cancel" : "Open"}
+                    </Button>
+                  </div>
+                  {!bulkImportOpen && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Paste a .env file and we'll detect and import matching API keys automatically.
+                    </p>
+                  )}
+                </CardHeader>
+
+                {bulkImportOpen && (
+                  <CardContent className="space-y-3 pt-0">
+                    <p className="text-xs text-muted-foreground">
+                      Paste any block of <code className="font-mono bg-muted px-1 rounded">KEY=VALUE</code> lines.
+                      We'll detect known provider keys — including alternate names like{" "}
+                      <code className="font-mono bg-muted px-1 rounded">GEMINI_API_KEY</code> →&nbsp;Google and{" "}
+                      <code className="font-mono bg-muted px-1 rounded">CLAUDE_API_KEY</code> →&nbsp;Anthropic.
+                    </p>
+
+                    <Textarea
+                      value={bulkEnvText}
+                      onChange={(e) => handleBulkEnvChange(e.target.value)}
+                      placeholder={`OPENAI_API_KEY=sk-...\nGEMINI_API_KEY=AIzaSy...\nANTHROPIC_API_KEY=sk-ant-...\n# Comments and unrecognised lines are ignored`}
+                      className="font-mono text-xs min-h-32 resize-y"
+                      spellCheck={false}
+                    />
+
+                    {/* Parsed preview */}
+                    {bulkParsed.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          {bulkParsed.filter((e) => e.provider).length} of {bulkParsed.length} line
+                          {bulkParsed.length !== 1 ? "s" : ""} matched a known provider:
+                        </p>
+                        {bulkParsed.map((entry) => {
+                          const matched = entry.provider !== null;
+                          const selected = bulkSelected.has(entry.rawKey);
+                          return (
+                            <div
+                              key={entry.rawKey}
+                              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors ${
+                                matched
+                                  ? selected
+                                    ? "border-primary/40 bg-primary/5"
+                                    : "border-border/50 bg-muted/20 opacity-60"
+                                  : "border-border/30 bg-muted/10 opacity-40"
+                              }`}
+                            >
+                              {matched ? (
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={(e) => {
+                                    setBulkSelected((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(entry.rawKey);
+                                      else next.delete(entry.rawKey);
+                                      return next;
+                                    });
+                                  }}
+                                  className="h-3.5 w-3.5 accent-primary shrink-0"
+                                />
+                              ) : (
+                                <SkipForward className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
+                              )}
+
+                              <code className="flex-1 truncate font-mono text-muted-foreground">
+                                {entry.rawKey}
+                              </code>
+
+                              {matched ? (
+                                <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
+                                  → {entry.label}
+                                </span>
+                              ) : (
+                                <span className="shrink-0 text-[10px] text-muted-foreground/50">
+                                  unrecognised
+                                </span>
+                              )}
+
+                              <code className="max-w-[120px] truncate font-mono text-muted-foreground/50">
+                                {entry.rawValue.slice(0, 8)}…
+                              </code>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Result banner */}
+                    {bulkResult && (
+                      <div className={`rounded-lg border px-3 py-2 text-xs space-y-0.5 ${
+                        Object.keys(bulkResult.errors).length > 0
+                          ? "border-red-500/30 bg-red-500/5 text-red-400"
+                          : "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+                      }`}>
+                        {bulkResult.saved.length > 0 && (
+                          <p>
+                            <FileCheck className="mr-1 inline h-3.5 w-3.5" />
+                            Saved: {bulkResult.saved.join(", ")}
+                          </p>
+                        )}
+                        {bulkResult.skipped.length > 0 && (
+                          <p className="text-muted-foreground">
+                            Skipped (unknown): {bulkResult.skipped.join(", ")}
+                          </p>
+                        )}
+                        {Object.entries(bulkResult.errors).map(([k, v]) => (
+                          <p key={k}>
+                            <AlertCircle className="mr-1 inline h-3.5 w-3.5" />
+                            {k === "_" ? v : `${k}: ${v}`}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => void handleBulkImport()}
+                        disabled={
+                          bulkSaving ||
+                          bulkSelected.size === 0 ||
+                          engineStatus !== "connected"
+                        }
+                        className="flex-1"
+                      >
+                        {bulkSaving ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <FileUp className="h-3.5 w-3.5" />
+                        )}
+                        Import {bulkSelected.size > 0 ? `${bulkSelected.size} key${bulkSelected.size !== 1 ? "s" : ""}` : "Selected Keys"}
+                      </Button>
+                      {bulkParsed.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs text-muted-foreground"
+                          onClick={() => {
+                            const matchedKeys = bulkParsed
+                              .filter((e) => e.provider !== null)
+                              .map((e) => e.rawKey);
+                            const allSelected = matchedKeys.every((k) => bulkSelected.has(k));
+                            setBulkSelected(allSelected ? new Set() : new Set(matchedKeys));
+                          }}
+                        >
+                          {bulkParsed.filter((e) => e.provider !== null).every((e) => bulkSelected.has(e.rawKey))
+                            ? "Deselect All"
+                            : "Select All"}
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                )}
               </Card>
 
               {engineStatus !== "connected" ? (

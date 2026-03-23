@@ -26,6 +26,7 @@ from app.api.setup_routes import router as setup_router
 from app.api.platform_routes import router as platform_router
 from app.api.wake_word_routes import router as wake_word_router
 from app.api.model_repo_routes import router as model_repo_router
+from app.api.hardware_routes import router as hardware_router, run_initial_detection as run_hardware_detection
 from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, MATRX_HOME_DIR, TUNNEL_ENABLED
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
@@ -266,6 +267,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.warning(
             "[app/main.py] Phase 0c: Capability probe failed — some flags will be null",
+            exc_info=True,
+        )
+
+    # Phase 0d: Full system hardware detection.
+    # Runs once at startup; result is cached and served from GET /hardware.
+    # Cloud push (to app_instances.system_hardware) is scheduled as a background
+    # task inside run_initial_detection() so it does not delay startup.
+    logger.info("[app/main.py] Phase 0d: Detecting system hardware...")
+    try:
+        await run_hardware_detection()
+        logger.info("[app/main.py] Phase 0d: Hardware detection complete ✓")
+    except Exception:
+        logger.warning(
+            "[app/main.py] Phase 0d: Hardware detection failed — /hardware will re-probe on first request",
             exc_info=True,
         )
 
@@ -586,6 +601,7 @@ app.include_router(setup_router)
 app.include_router(platform_router)
 app.include_router(wake_word_router)
 app.include_router(model_repo_router)
+app.include_router(hardware_router)
 
 # NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler
 # (Phase 1b) AFTER initialize_matrx_ai() registers the DB config. Calling it here

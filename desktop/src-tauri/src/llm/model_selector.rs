@@ -210,7 +210,7 @@ pub fn select_llm_model(hw: &HardwareProfile) -> LlmModelSelection {
 }
 
 fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (LlmTier, String) {
-    // Apple Silicon — Metal offloads all layers efficiently
+    // ── Apple Silicon (Metal, unified memory) ────────────────────────────────
     if hw.is_apple_silicon {
         if total_ram_gb >= 16.0 {
             return (
@@ -225,36 +225,85 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
                     .to_string(),
             );
         }
+        // <8GB Apple Silicon — use compact model
+        return (
+            LlmTier::Low,
+            format!(
+                "Apple Silicon with {:.0}GB RAM — using compact Qwen3-4B model",
+                total_ram_gb
+            ),
+        );
     }
 
-    // CUDA GPU with dedicated VRAM
-    if hw.supports_cuda {
+    // ── Dedicated GPU (CUDA or Vulkan) ────────────────────────────────────────
+    // Both CUDA and Vulkan backends can use the gpu_vram_gb value for decisions.
+    // The Vulkan llama-server binary handles both NVIDIA (via Vulkan) and AMD/Intel.
+    if hw.supports_cuda || hw.supports_vulkan {
+        let backend = if hw.supports_cuda { "CUDA" } else { "Vulkan" };
+
+        if gpu_vram_gb >= 16.0 {
+            return (
+                LlmTier::HighAlt,
+                format!(
+                    "{} GPU with {:.0}GB VRAM — Mistral-24B fits with full GPU offload",
+                    backend, gpu_vram_gb
+                ),
+            );
+        }
         if gpu_vram_gb >= 8.0 {
             return (
                 LlmTier::High,
                 format!(
-                    "NVIDIA GPU with {:.0}GB VRAM — can run larger models with full GPU offload",
-                    gpu_vram_gb
+                    "{} GPU with {:.0}GB VRAM — Qwen2.5-14B recommended with full GPU offload",
+                    backend, gpu_vram_gb
                 ),
             );
         }
-        if gpu_vram_gb >= 4.0 {
+        if gpu_vram_gb >= 5.0 {
             return (
                 LlmTier::Default,
                 format!(
-                    "NVIDIA GPU with {:.0}GB VRAM — Qwen3-8B with partial GPU offload",
-                    gpu_vram_gb
+                    "{} GPU with {:.0}GB VRAM — Qwen3-8B fits with full GPU offload",
+                    backend, gpu_vram_gb
                 ),
             );
         }
+        if gpu_vram_gb >= 2.0 {
+            // Partial GPU offload — model runs mostly on CPU, some layers on GPU
+            return (
+                LlmTier::Default,
+                format!(
+                    "{} GPU with {:.0}GB VRAM — Qwen3-8B with partial GPU offload (faster than pure CPU)",
+                    backend, gpu_vram_gb
+                ),
+            );
+        }
+        // GPU detected but VRAM unknown or <2GB — still use Vulkan with 0 layers
+        // (the GPU may handle compute graph ops even without layer offloading)
+        return (
+            LlmTier::Low,
+            format!(
+                "{} GPU detected — using compact Qwen3-4B model; GPU acceleration active",
+                backend
+            ),
+        );
     }
 
-    // CPU-only path — be conservative
+    // ── CPU-only path ─────────────────────────────────────────────────────────
+    if total_ram_gb < 4.0 {
+        return (
+            LlmTier::LowAlt,
+            format!(
+                "Limited RAM ({:.0}GB) — Phi-4-mini is the smallest supported model",
+                total_ram_gb
+            ),
+        );
+    }
     if total_ram_gb < 6.0 {
         return (
             LlmTier::Low,
             format!(
-                "Limited RAM ({:.0}GB) — using compact Qwen3-4B model",
+                "{:.0}GB RAM — Qwen3-4B recommended; CPU inference is slower but functional",
                 total_ram_gb
             ),
         );
@@ -263,7 +312,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         return (
             LlmTier::Default,
             format!(
-                "{:.0}GB RAM detected — Qwen3-8B recommended (CPU inference will be slower)",
+                "{:.0}GB RAM — Qwen3-8B recommended (CPU inference; expect ~3–8 tokens/sec)",
                 total_ram_gb
             ),
         );
@@ -283,13 +332,20 @@ fn compute_gpu_layers(hw: &HardwareProfile, gpu_vram_gb: f32) -> i32 {
 /// the full `select_llm_model` flow.
 pub fn compute_gpu_layers_for_hw(hw: &HardwareProfile, gpu_vram_gb: f32) -> i32 {
     if hw.is_apple_silicon {
-        return 99; // Metal — offload all layers
+        return 99; // Metal — unified memory, offload all layers
     }
-    if gpu_vram_gb >= 8.0 {
-        return 99; // Full GPU offload
-    }
-    if gpu_vram_gb >= 4.0 {
-        return 20; // Partial offload
+    if hw.supports_cuda || hw.supports_vulkan {
+        if gpu_vram_gb >= 5.0 {
+            return 99; // Full GPU offload
+        }
+        if gpu_vram_gb >= 2.0 {
+            // Partial offload — heuristic: ~1 layer per 300MB VRAM, capped at 33
+            let layers = ((gpu_vram_gb * 1024.0 - 512.0) / 300.0) as i32;
+            return layers.max(1).min(33);
+        }
+        // <2GB or unknown VRAM — let the server decide; pass a small value
+        // so at least the embedding layer goes on GPU
+        return 1;
     }
     0 // CPU only
 }
@@ -301,11 +357,13 @@ fn can_upgrade_tier(
     is_apple_silicon: bool,
 ) -> bool {
     match tier {
-        LlmTier::Low | LlmTier::LowAlt => total_ram_gb >= 6.5,
+        LlmTier::LowAlt => total_ram_gb >= 4.0,
+        LlmTier::Low => total_ram_gb >= 6.5 || gpu_vram_gb >= 4.0,
         LlmTier::Default => {
             total_ram_gb >= 16.0 || gpu_vram_gb >= 8.0 || (is_apple_silicon && total_ram_gb >= 16.0)
         }
-        LlmTier::High | LlmTier::HighAlt => false,
+        LlmTier::High => gpu_vram_gb >= 16.0,
+        LlmTier::HighAlt => false,
     }
 }
 

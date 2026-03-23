@@ -18,7 +18,8 @@ BINARIES_DIR="$SCRIPT_DIR/../desktop/src-tauri/binaries"
 mkdir -p "$BINARIES_DIR"
 
 # llama.cpp release version — update when upgrading
-LLAMA_FALLBACK_VERSION="b8281"
+# b8358: fixes Windows GGUF magic-read regression (PR #17786 / MSVC regex issue)
+LLAMA_FALLBACK_VERSION="b8358"
 LLAMA_VERSION=""
 LLAMA_BASE=""
 LLAMA_REPO="ggml-org/llama.cpp"
@@ -50,6 +51,14 @@ ensure_llama_version() {
 
 # Returns the release asset filename for a given Tauri target triple.
 # IMPORTANT: Call ensure_llama_version BEFORE calling this in a $() subshell.
+#
+# Windows binary selection:
+#   We ship the Vulkan build instead of the CPU-only build.
+#   Vulkan works on NVIDIA, AMD, and Intel GPUs via a single binary — it is
+#   effectively the universal GPU backend on Windows. The Vulkan runtime is
+#   pre-installed with all modern GPU drivers (NVIDIA 2019+, AMD 2019+, Intel).
+#   For CPU-only machines the Vulkan binary falls back to CPU inference, so it
+#   is strictly better than the CPU-only build for all users.
 llama_asset_for_triple() {
     local ver="$LLAMA_VERSION"
     case "$1" in
@@ -57,7 +66,7 @@ llama_asset_for_triple() {
         x86_64-apple-darwin)        echo "llama-${ver}-bin-macos-x64.tar.gz" ;;
         x86_64-unknown-linux-gnu)   echo "llama-${ver}-bin-ubuntu-x64.tar.gz" ;;
         aarch64-unknown-linux-gnu)  echo "llama-${ver}-bin-ubuntu-x64.tar.gz" ;;  # fallback — no ARM Linux build
-        x86_64-pc-windows-msvc)     echo "llama-${ver}-bin-win-cpu-x64.zip" ;;
+        x86_64-pc-windows-msvc)     echo "llama-${ver}-bin-win-vulkan-x64.zip" ;;
         *)                          echo "" ;;
     esac
 }

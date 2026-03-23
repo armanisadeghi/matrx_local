@@ -258,17 +258,33 @@ fn build_server_args(
         port.to_string(),
         // Jinja template is required for tool calling with Qwen/Phi models
         "--jinja".to_string(),
-        // Flash attention — requires explicit value in llama.cpp b8281+
-        "-fa".to_string(),
-        "on".to_string(),
     ];
 
-    // Windows: disable memory-mapped file I/O for model loading.
-    // mmap on Windows uses CreateFileMapping which can fail for large files
-    // (>2GB) across split GGUF parts, causing "failed to load model" errors.
-    // CPU performance impact is negligible for interactive use.
+    // Flash attention — supported on all backends (Metal, CUDA, Vulkan, CPU with AVX2).
+    // The llama.cpp Vulkan Windows binary (our shipped binary) supports -fa.
+    args.push("-fa".to_string());
+    args.push("on".to_string());
+
     #[cfg(target_os = "windows")]
-    args.push("--no-mmap".to_string());
+    {
+        // Disable llama_params_fit (auto GPU-layer fitting) on Windows.
+        //
+        // llama_params_fit probes device memory by loading the model internally
+        // before the real load. On Windows it has known reliability issues:
+        //   - GGUF magic regression in older builds (fixed in b8358)
+        //   - llama_params_fit can infinite-loop or miscount VRAM on some configs
+        //
+        // With -fit off we skip the probe and pass -ngl directly (already
+        // correctly computed by detect_llm_hardware via compute_gpu_layers_for_hw).
+        args.push("-fit".to_string());
+        args.push("off".to_string());
+
+        // Disable memory-mapped file I/O for model loading.
+        // mmap on Windows uses CreateFileMapping which can fail for large files
+        // (>2GB) across split GGUF parts, causing "failed to load model" errors.
+        // CPU performance impact is negligible for interactive use.
+        args.push("--no-mmap".to_string());
+    }
 
     args
 }

@@ -308,3 +308,44 @@ async def delete_api_key(provider: str) -> ApiKeyStatus:
         description=meta["description"],
         configured=False,
     )
+
+
+class BulkApiKeyEntry(BaseModel):
+    provider: str
+    key: str = Field(min_length=1)
+
+
+class BulkApiKeyRequest(BaseModel):
+    keys: list[BulkApiKeyEntry]
+
+
+class BulkApiKeyResult(BaseModel):
+    saved: list[str]
+    skipped: list[str]
+    errors: dict[str, str]
+
+
+@router.post("/api-keys/bulk", response_model=BulkApiKeyResult)
+async def set_api_keys_bulk(req: BulkApiKeyRequest) -> BulkApiKeyResult:
+    """Save multiple AI provider API keys in one request.
+
+    Invalid providers are returned in `skipped`.  Per-key errors are
+    returned in `errors` keyed by provider name.
+    """
+    from app.services.ai.key_manager import set_user_key
+    saved: list[str] = []
+    skipped: list[str] = []
+    errors: dict[str, str] = {}
+
+    for entry in req.keys:
+        provider = entry.provider.strip().lower()
+        if provider not in VALID_PROVIDERS:
+            skipped.append(entry.provider)
+            continue
+        try:
+            await set_user_key(provider, entry.key.strip())
+            saved.append(provider)
+        except Exception as exc:  # noqa: BLE001
+            errors[provider] = str(exc)
+
+    return BulkApiKeyResult(saved=saved, skipped=skipped, errors=errors)

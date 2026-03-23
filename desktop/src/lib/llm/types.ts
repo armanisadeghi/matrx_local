@@ -29,8 +29,10 @@ export interface LlmHardwareResult {
     cpu_threads: number;
     gpu_vram_mb: number | null;
     supports_cuda: boolean;
+    supports_vulkan: boolean;
     supports_metal: boolean;
     is_apple_silicon: boolean;
+    gpu_name: string | null;
   };
   recommended_tier: LlmTier;
   recommended_filename: string;

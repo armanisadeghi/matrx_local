@@ -707,6 +707,18 @@ class EngineAPI {
     };
   }
 
+  /** Get the cached system hardware profile from the engine. */
+  async getHardware(): Promise<HardwareResponse> {
+    return this.request<HardwareResponse>("/hardware");
+  }
+
+  /** Re-run full hardware detection, update the cache, and push to cloud. */
+  async refreshHardware(): Promise<HardwareResponse> {
+    return this.request<HardwareResponse>("/hardware/refresh", {
+      method: "POST",
+    });
+  }
+
   /** Get browser status — returns defaults until a real endpoint is added. */
   async getBrowserStatus(): Promise<BrowserStatus> {
     if (!this.baseUrl) return {
@@ -2327,6 +2339,101 @@ export interface SetupCompleteEvent {
   had_errors: boolean;
   errors: string[];
   timestamp: number;
+}
+
+// ---- Hardware profile types ----
+
+export interface HardwareCpu {
+  model: string;
+  physical_cores: number | null;
+  logical_cores: number | null;
+  threads_per_core: number | null;
+  architecture: string | null;
+  frequency_mhz: number | null;
+  frequency_max_mhz: number | null;
+}
+
+export interface HardwareGpu {
+  name: string;
+  vram_mb: number | null;
+  driver_version: string | null;
+  backend: string; // 'metal' | 'cuda' | 'vulkan' | 'cuda+vulkan' | 'rocm' | 'cpu' | 'unknown'
+  is_primary: boolean;
+  device_type?: string;
+  vram_note?: string; // 'unified_memory' for Apple Silicon
+}
+
+export interface HardwareRam {
+  total_mb: number | null;
+  available_mb: number | null;
+  type: string | null;  // 'DDR4', 'DDR5', etc.
+  speed_mhz: number | null;
+}
+
+export interface HardwareAudioDevice {
+  name: string;
+  host_api: string;
+  channels: number | null;
+  default_sample_rate: number | null;
+}
+
+export interface HardwareVideoDevice {
+  name: string;
+  index: number;
+  device?: string;
+}
+
+export interface HardwareMonitor {
+  name: string;
+  width_px: number | null;
+  height_px: number | null;
+  width_mm?: number | null;
+  height_mm?: number | null;
+  x?: number;
+  y?: number;
+  is_primary: boolean;
+  refresh_hz: number | null;
+}
+
+export interface HardwareNetworkAdapter {
+  name: string;
+  type: string; // 'wifi' | 'ethernet' | 'loopback' | 'vpn' | 'bluetooth' | 'other'
+  mac: string | null;
+  ipv4: string[];
+  ipv6: string[];
+  is_up: boolean;
+  speed_mbps: number | null;
+}
+
+export interface HardwareStorageDevice {
+  device: string;
+  mountpoint: string;
+  fstype: string;
+  disk_type: string; // 'ssd' | 'hdd' | 'optical_or_usb' | 'unknown'
+  total_gb: number;
+  used_gb: number;
+  free_gb: number;
+  percent_used: number;
+}
+
+export interface HardwareProfile {
+  detected_at: string;
+  cpus: HardwareCpu[];
+  gpus: HardwareGpu[];
+  ram: HardwareRam;
+  audio_inputs: HardwareAudioDevice[];
+  audio_outputs: HardwareAudioDevice[];
+  video_devices: HardwareVideoDevice[];
+  monitors: HardwareMonitor[];
+  network_adapters: HardwareNetworkAdapter[];
+  storage: HardwareStorageDevice[];
+  error?: string;
+}
+
+export interface HardwareResponse {
+  profile: HardwareProfile;
+  cached: boolean;
+  detected_at: string | null;
 }
 
 // Singleton instance

@@ -7,8 +7,13 @@ pub struct HardwareProfile {
     pub cpu_threads: usize,
     pub gpu_vram_mb: Option<u64>,
     pub supports_cuda: bool,
+    /// True when a Vulkan-capable GPU is present (Windows/Linux).
+    /// This covers NVIDIA, AMD, and Intel GPUs via the Vulkan API.
+    pub supports_vulkan: bool,
     pub supports_metal: bool,
     pub is_apple_silicon: bool,
+    /// Human-readable GPU name(s) discovered during detection (for UI display).
+    pub gpu_name: Option<String>,
 }
 
 impl HardwareProfile {
@@ -21,7 +26,7 @@ impl HardwareProfile {
         let cpu_threads = sys.cpus().len();
 
         let is_apple_silicon = detect_apple_silicon();
-        let (gpu_vram_mb, supports_cuda) = detect_gpu_capabilities();
+        let (gpu_vram_mb, supports_cuda, supports_vulkan, gpu_name) = detect_gpu_capabilities();
 
         // Metal is available on all macOS (10.11+)
         let supports_metal = cfg!(target_os = "macos");
@@ -31,8 +36,10 @@ impl HardwareProfile {
             cpu_threads,
             gpu_vram_mb,
             supports_cuda,
+            supports_vulkan,
             supports_metal,
             is_apple_silicon,
+            gpu_name,
         }
     }
 }
@@ -52,28 +59,229 @@ fn detect_apple_silicon() -> bool {
     }
 }
 
-/// Best-effort GPU detection for NVIDIA CUDA.
-/// Returns (vram_mb, supports_cuda).
-fn detect_gpu_capabilities() -> (Option<u64>, bool) {
+/// Best-effort GPU detection.
+///
+/// Returns `(vram_mb, supports_cuda, supports_vulkan, gpu_name)`.
+///
+/// Detection order:
+///   1. `nvidia-smi` — most reliable for NVIDIA CUDA; also implies Vulkan.
+///   2. `vulkaninfo` — catches AMD, Intel, and NVIDIA when nvidia-smi is not on
+///      PATH. Available from Vulkan SDK or bundled with most GPU drivers.
+///   3. Windows `wmic path Win32_VideoController` — fallback that works without
+///      any SDK, gives us at least a GPU name and approximate VRAM.
+///   4. Linux `/sys/class/drm` VRAM files — no external tools required.
+fn detect_gpu_capabilities() -> (Option<u64>, bool, bool, Option<String>) {
+    #[cfg(target_os = "macos")]
+    {
+        return (None, false, false, None);
+    }
+
     #[cfg(not(target_os = "macos"))]
     {
-        if let Ok(output) = std::process::Command::new("nvidia-smi")
-            .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
-            .output()
-        {
-            if output.status.success() {
-                let text = String::from_utf8_lossy(&output.stdout);
-                if let Some(line) = text.lines().next() {
-                    if let Ok(mb) = line.trim().parse::<u64>() {
-                        return (Some(mb), true);
+        // ── 1. nvidia-smi (NVIDIA CUDA + Vulkan) ─────────────────────────────
+        if let Some(result) = try_nvidia_smi() {
+            return result;
+        }
+
+        // ── 2. vulkaninfo (AMD / Intel / NVIDIA without nvidia-smi on PATH) ──
+        if let Some(result) = try_vulkaninfo() {
+            return result;
+        }
+
+        // ── 3. Windows wmic fallback ──────────────────────────────────────────
+        #[cfg(target_os = "windows")]
+        if let Some(result) = try_wmic_gpu() {
+            return result;
+        }
+
+        // ── 4. Linux /sys/class/drm VRAM ─────────────────────────────────────
+        #[cfg(target_os = "linux")]
+        if let Some(result) = try_linux_drm_vram() {
+            return result;
+        }
+
+        (None, false, false, None)
+    }
+}
+
+/// Try `nvidia-smi` for NVIDIA CUDA detection.
+#[cfg(not(target_os = "macos"))]
+fn try_nvidia_smi() -> Option<(Option<u64>, bool, bool, Option<String>)> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().next()?.trim().to_string();
+    // Format: "VRAM_MiB, GPU Name"
+    let mut parts = line.splitn(2, ',');
+    let vram_str = parts.next()?.trim();
+    let name = parts.next().map(|s| s.trim().to_string());
+    let vram_mb = vram_str.parse::<u64>().ok()?;
+
+    // nvidia-smi success → CUDA present, Vulkan also present on any NVIDIA driver
+    Some((Some(vram_mb), true, true, name))
+}
+
+/// Try `vulkaninfo --summary` to detect Vulkan-capable GPUs (AMD, Intel, NVIDIA).
+/// Falls back to `vulkaninfo` without --summary for older SDK versions.
+#[cfg(not(target_os = "macos"))]
+fn try_vulkaninfo() -> Option<(Option<u64>, bool, bool, Option<String>)> {
+    // Try --summary first (Vulkan SDK 1.3.204+)
+    let output = std::process::Command::new("vulkaninfo")
+        .args(["--summary"])
+        .output()
+        .or_else(|_| {
+            std::process::Command::new("vulkaninfo").output()
+        })
+        .ok()?;
+
+    if !output.status.success() && output.stdout.is_empty() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    // Extract GPU name from "deviceName = ..." line
+    let gpu_name = text
+        .lines()
+        .find(|l| l.contains("deviceName"))
+        .and_then(|l| l.split('=').nth(1))
+        .map(|s| s.trim().trim_matches('"').to_string());
+
+    if gpu_name.is_none() && !text.contains("Vulkan") {
+        return None;
+    }
+
+    // We found a Vulkan device — try to parse VRAM from the output.
+    // vulkaninfo reports heap sizes in bytes under "memoryHeaps" sections.
+    // Device-local heaps (flags include DEVICE_LOCAL_BIT = 0x1) hold GPU VRAM.
+    let vram_mb = parse_vulkan_vram(&text);
+
+    Some((vram_mb, false, true, gpu_name))
+}
+
+/// Parse the largest device-local heap size from vulkaninfo output (bytes → MiB).
+#[cfg(not(target_os = "macos"))]
+fn parse_vulkan_vram(vulkaninfo_output: &str) -> Option<u64> {
+    // vulkaninfo outputs lines like:
+    //   size   = <N> (0xHEX) (N gib)
+    // immediately after "memoryHeaps[N]:" with "flags = ..." containing "DEVICE_LOCAL"
+    let mut max_vram_bytes: u64 = 0;
+    let mut in_device_local_heap = false;
+
+    for line in vulkaninfo_output.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("memoryHeaps[") {
+            in_device_local_heap = false;
+        }
+        if trimmed.contains("DEVICE_LOCAL") {
+            in_device_local_heap = true;
+        }
+        if in_device_local_heap && trimmed.starts_with("size") {
+            // "size   = 8589934592 (0x200000000) (8 gib)"
+            if let Some(num_str) = trimmed.split('=').nth(1) {
+                let num_part = num_str.trim().split_whitespace().next().unwrap_or("");
+                if let Ok(bytes) = num_part.parse::<u64>() {
+                    if bytes > max_vram_bytes {
+                        max_vram_bytes = bytes;
                     }
                 }
             }
         }
-        (None, false)
     }
-    #[cfg(target_os = "macos")]
-    {
-        (None, false)
+
+    if max_vram_bytes > 0 {
+        Some(max_vram_bytes / 1024 / 1024)
+    } else {
+        None
+    }
+}
+
+/// Windows fallback: use `wmic` to query VideoController info.
+/// Works without any GPU-specific SDK; gives GPU name and AdapterRAM.
+#[cfg(target_os = "windows")]
+fn try_wmic_gpu() -> Option<(Option<u64>, bool, bool, Option<String>)> {
+    let output = std::process::Command::new("wmic")
+        .args(["path", "Win32_VideoController", "get", "Name,AdapterRAM", "/format:csv"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    // CSV format: Node,AdapterRAM,Name
+    // Skip header row
+    let mut best_vram: u64 = 0;
+    let mut best_name: Option<String> = None;
+
+    for line in text.lines().skip(1) {
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() < 3 { continue; }
+        let adapter_ram_str = parts[1].trim();
+        let name = parts[2].trim().to_string();
+        if name.is_empty() || name == "Name" { continue; }
+
+        let vram_bytes = adapter_ram_str.parse::<u64>().unwrap_or(0);
+        if vram_bytes > best_vram {
+            best_vram = vram_bytes;
+            best_name = Some(name);
+        }
+    }
+
+    if best_name.is_none() {
+        return None;
+    }
+
+    // wmic AdapterRAM is bytes; convert to MiB
+    // Note: AdapterRAM often under-reports (BIOS-reported value), especially
+    // for dedicated GPUs where it's capped at 4GB by WDDM. Use it as a lower
+    // bound but treat any value >= 512MB as a usable discrete GPU.
+    let vram_mb = if best_vram >= 512 * 1024 * 1024 {
+        Some(best_vram / 1024 / 1024)
+    } else {
+        None
+    };
+
+    // We can't tell CUDA vs Vulkan from wmic alone. Assume Vulkan is available
+    // for any discrete GPU (all modern GPUs support Vulkan 1.1+).
+    // The Vulkan llama-server binary will handle the actual backend selection.
+    Some((vram_mb, false, true, best_name))
+}
+
+/// Linux fallback: read VRAM from DRM sysfs (works for AMD and Intel).
+#[cfg(target_os = "linux")]
+fn try_linux_drm_vram() -> Option<(Option<u64>, bool, bool, Option<String>)> {
+    let drm_path = std::path::Path::new("/sys/class/drm");
+    if !drm_path.exists() {
+        return None;
+    }
+
+    let mut max_vram_mb: u64 = 0;
+    let entries = std::fs::read_dir(drm_path).ok()?;
+
+    for entry in entries.flatten() {
+        let mem_info = entry.path().join("device/mem_info_vram_total");
+        if let Ok(content) = std::fs::read_to_string(&mem_info) {
+            if let Ok(bytes) = content.trim().parse::<u64>() {
+                let mb = bytes / 1024 / 1024;
+                if mb > max_vram_mb {
+                    max_vram_mb = mb;
+                }
+            }
+        }
+    }
+
+    if max_vram_mb >= 512 {
+        Some((Some(max_vram_mb), false, true, None))
+    } else {
+        None
     }
 }
