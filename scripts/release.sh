@@ -169,6 +169,53 @@ monitor_build() {
         echo "${step:-waiting...}"
     }
 
+    # ── Fetch and print tail logs for a failed job ───────────────────────
+    fetch_failure_logs() {
+        local repo="$1" run_id="$2" jobs_json="$3"
+        local LOG_TAIL=60   # lines per failed job
+
+        echo ""
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}  📋 FAILURE LOGS${NC}"
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+        local i
+        for i in 0 1 2 3; do
+            local key="${PLATFORM_KEYS[$i]}"
+            local label="${PLATFORM_LABELS[$i]}"
+
+            local job_index
+            job_index=$(echo "$jobs_json" | jq -r \
+                "[.jobs[].name] | to_entries[] | select(.value | test(\"$key\")) | .key" 2>/dev/null | head -1)
+            [[ -z "$job_index" ]] && continue
+
+            local j_conclusion
+            j_conclusion=$(echo "$jobs_json" | jq -r ".jobs[$job_index].conclusion // \"\"")
+            [[ "$j_conclusion" == "success" || "$j_conclusion" == "skipped" ]] && continue
+
+            local job_id
+            job_id=$(echo "$jobs_json" | jq -r ".jobs[$job_index].databaseId // .jobs[$job_index].id // \"\"")
+            [[ -z "$job_id" ]] && continue
+
+            echo ""
+            echo -e "${BOLD}  ── ${label} (last ${LOG_TAIL} lines) ──────────────────────────────${NC}"
+            echo ""
+
+            # gh run view --log filters to a specific job and streams the log
+            # We strip the step-name prefix GitHub prepends to each line, then tail.
+            gh run view "$run_id" --repo "$repo" --job "$job_id" --log 2>/dev/null \
+                | sed 's/^[^\t]*\t[^\t]*\t//' \
+                | tail -"$LOG_TAIL" \
+                | sed "s/^/    /" \
+            || echo -e "    ${YELLOW}(could not fetch logs — check the URL above)${NC}"
+
+            echo ""
+        done
+
+        echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+    }
+
     # ── Wait for workflow run to appear ─────────────────────────────────
     echo ""
     info "Waiting for GitHub Actions workflow to start for tag ${BOLD}${tag}${NC}..."
@@ -297,6 +344,7 @@ monitor_build() {
                 done
                 echo ""
                 echo -e "  Debug: ${CYAN}https://github.com/${repo}/actions/runs/${run_id}${NC}"
+                fetch_failure_logs "$repo" "$run_id" "$jobs_json"
             else
                 local RELEASE_URL="https://github.com/${repo}/releases/tag/${tag}"
                 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

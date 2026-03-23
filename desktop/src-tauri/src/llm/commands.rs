@@ -66,13 +66,13 @@ pub async fn start_llm_server(
         .start(&app, &model_path, gpu_layers, ctx, port)
         .await?;
 
-    // Persist config
+    // Persist config — reload first to preserve hf_token and any future fields,
+    // then update only the fields this command owns.
     if let Ok(config_dir) = app.path().app_data_dir() {
-        let config = LlmConfig {
-            selected_model: Some(model_filename),
-            setup_complete: true,
-            last_port: Some(port),
-        };
+        let mut config = LlmConfig::load(&config_dir);
+        config.selected_model = Some(model_filename);
+        config.setup_complete = true;
+        config.last_port = Some(port);
         let _ = config.save(&config_dir);
     }
 

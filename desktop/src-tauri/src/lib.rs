@@ -955,12 +955,10 @@ pub fn run() {
                     let mut server = llm_state.lock().await;
                     match server.start(&handle, &model_path_str, gpu_layers, ctx, port).await {
                         Ok(()) => {
-                            // Persist last_port update
-                            let updated = LlmConfig {
-                                selected_model: Some(filename.clone()),
-                                setup_complete: true,
-                                last_port: Some(port),
-                            };
+                            // Persist last_port update — reload config to preserve hf_token and
+                            // any other fields added in the future, then update only last_port.
+                            let mut updated = LlmConfig::load(&config_dir);
+                            updated.last_port = Some(port);
                             let _ = updated.save(&config_dir);
                             let _ = handle.emit("llm-server-ready", &server.status);
                             println!("[llm] Auto-started model: {}", filename);
