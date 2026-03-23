@@ -293,19 +293,28 @@ async function startSyslogStream(engineUrl: string, getToken: () => Promise<stri
   let active = true;
   let esRef: EventSource | null = null;
   const backoff = makeBackoff();
+  let noTokenWarned = false;
 
   const connect = async () => {
+    if (!active) return;
     const token = await getToken();
     if (!active) return;
     if (!token) {
       // Warn once so the user knows why detailed server logs are missing.
-      emitClientLog(
-        "warn",
-        "Activity: detailed server log stream requires authentication — some warnings and errors may not appear until you sign in.",
-        "syslog",
-      );
+      if (!noTokenWarned) {
+        noTokenWarned = true;
+        emitClientLog(
+          "warn",
+          "Activity: detailed server log stream requires authentication — some warnings and errors may not appear until you sign in.",
+          "syslog",
+        );
+      }
+      // Retry after a longer delay — the user may sign in shortly after engine connects.
+      setTimeout(connect, 10_000);
       return;
     }
+    // Token obtained — reset the no-token warning so it shows again if session lapses.
+    noTokenWarned = false;
     const url = `${engineUrl}/logs/stream?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef = es;

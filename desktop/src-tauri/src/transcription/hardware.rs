@@ -108,7 +108,10 @@ fn detect_gpu_capabilities() -> (Option<u64>, bool, bool, Option<String>) {
 #[cfg(not(target_os = "macos"))]
 fn try_nvidia_smi() -> Option<(Option<u64>, bool, bool, Option<String>)> {
     let output = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+        .args([
+            "--query-gpu=memory.total,name",
+            "--format=csv,noheader,nounits",
+        ])
         .output()
         .ok()?;
 
@@ -136,9 +139,7 @@ fn try_vulkaninfo() -> Option<(Option<u64>, bool, bool, Option<String>)> {
     let output = std::process::Command::new("vulkaninfo")
         .args(["--summary"])
         .output()
-        .or_else(|_| {
-            std::process::Command::new("vulkaninfo").output()
-        })
+        .or_else(|_| std::process::Command::new("vulkaninfo").output())
         .ok()?;
 
     if !output.status.success() && output.stdout.is_empty() {
@@ -208,7 +209,13 @@ fn parse_vulkan_vram(vulkaninfo_output: &str) -> Option<u64> {
 #[cfg(target_os = "windows")]
 fn try_wmic_gpu() -> Option<(Option<u64>, bool, bool, Option<String>)> {
     let output = std::process::Command::new("wmic")
-        .args(["path", "Win32_VideoController", "get", "Name,AdapterRAM", "/format:csv"])
+        .args([
+            "path",
+            "Win32_VideoController",
+            "get",
+            "Name,AdapterRAM",
+            "/format:csv",
+        ])
         .output()
         .ok()?;
 
@@ -224,10 +231,14 @@ fn try_wmic_gpu() -> Option<(Option<u64>, bool, bool, Option<String>)> {
 
     for line in text.lines().skip(1) {
         let parts: Vec<&str> = line.split(',').collect();
-        if parts.len() < 3 { continue; }
+        if parts.len() < 3 {
+            continue;
+        }
         let adapter_ram_str = parts[1].trim();
         let name = parts[2].trim().to_string();
-        if name.is_empty() || name == "Name" { continue; }
+        if name.is_empty() || name == "Name" {
+            continue;
+        }
 
         let vram_bytes = adapter_ram_str.parse::<u64>().unwrap_or(0);
         if vram_bytes > best_vram {

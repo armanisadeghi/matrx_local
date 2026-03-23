@@ -71,12 +71,7 @@ impl LlmModelInfo {
         let all_urls = self.all_part_urls();
         all_urls
             .iter()
-            .map(|url| {
-                url.rsplit('/')
-                    .next()
-                    .unwrap_or("unknown.gguf")
-                    .to_string()
-            })
+            .map(|url| url.rsplit('/').next().unwrap_or("unknown.gguf").to_string())
             .collect()
     }
 }

@@ -57,10 +57,7 @@ impl LlmServer {
         //          The DLLs are bundled in the resources/binaries/windows-dlls/
         //          directory. Windows searches PATH entries when loading DLLs so
         //          we inject that directory before spawning llama-server.exe.
-        let resource_dir: std::path::PathBuf = app
-            .path()
-            .resource_dir()
-            .unwrap_or_default();
+        let resource_dir: std::path::PathBuf = app.path().resource_dir().unwrap_or_default();
         let binaries_dir = resource_dir.join("binaries");
         let binaries_dir_str = binaries_dir.to_string_lossy().to_string();
 
@@ -398,13 +395,24 @@ impl LogKind {
 
 fn classify_log_line(line: &str) -> LogKind {
     let ll = line.to_lowercase();
-    if ll.contains("error") || ll.contains("fail") || ll.contains("fatal") || ll.contains("exiting due to") {
+    if ll.contains("error")
+        || ll.contains("fail")
+        || ll.contains("fatal")
+        || ll.contains("exiting due to")
+    {
         return LogKind::Error;
     }
-    if ll.contains("server is listening") || ll.contains("model loaded") || ll.contains("main: model loaded") {
+    if ll.contains("server is listening")
+        || ll.contains("model loaded")
+        || ll.contains("main: model loaded")
+    {
         return LogKind::Ready;
     }
-    if ll.contains("load_tensors") || ll.contains("loading model") || ll.contains("warming up") || ll.contains("offload") {
+    if ll.contains("load_tensors")
+        || ll.contains("loading model")
+        || ll.contains("warming up")
+        || ll.contains("offload")
+    {
         return LogKind::Loading;
     }
     if line.starts_with("print_info:") || line.starts_with("llama_model_loader:") {
@@ -429,7 +437,10 @@ fn infer_phase(log: &str) -> &'static str {
     if last_1k.contains("warming up") {
         return "warming up";
     }
-    if last_1k.contains("load_tensors") || last_1k.contains("offloading") || last_1k.contains("loading model tensors") {
+    if last_1k.contains("load_tensors")
+        || last_1k.contains("offloading")
+        || last_1k.contains("loading model tensors")
+    {
         return "loading tensors";
     }
     if last_1k.contains("loading model") || last_1k.contains("load_model") {
@@ -451,9 +462,14 @@ fn extract_crash_output(captured: &str) -> String {
         .lines()
         .filter(|l| {
             let ll = l.to_lowercase();
-            ll.contains("error") || ll.contains("fail") || ll.contains("argument")
-                || ll.contains("fatal") || ll.contains("exiting") || ll.contains("abort")
-                || ll.contains("killed") || ll.contains("signal")
+            ll.contains("error")
+                || ll.contains("fail")
+                || ll.contains("argument")
+                || ll.contains("fatal")
+                || ll.contains("exiting")
+                || ll.contains("abort")
+                || ll.contains("killed")
+                || ll.contains("signal")
         })
         .take(8)
         .collect();

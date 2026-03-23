@@ -6,7 +6,7 @@
  *
  * Tabs:
  *   Overview      — summary cards + per-source breakdown + Copy Issue Report
- *   Server        — engine SSE + sidecar IPC + raw syslog (source="server"|"tauri"|"syslog")
+ *   Server        — engine SSE + sidecar IPC + raw syslog + LLM server (source="server"|"tauri"|"syslog"|"llm")
  *   Client        — auth, engine discovery, voice, setup (source="engine"|"auth"|"voice"|"setup")
  *   HTTP          — structured HTTP request log (source="access")
  *   All           — every log line regardless of source
@@ -76,7 +76,7 @@ type TabId = "overview" | "server" | "client" | "http" | "all";
 const ALL_LEVELS: LogLevel[] = ["info", "success", "warn", "error", "data", "cmd"];
 const GROUPABLE_LEVELS = new Set<LogLevel>(["info", "success", "data", "cmd"]);
 
-const SERVER_SOURCES = new Set(["server", "tauri", "syslog"]);
+const SERVER_SOURCES = new Set(["server", "tauri", "syslog", "llm"]);
 const CLIENT_SOURCES = new Set(["engine", "auth", "voice", "setup"]);
 const HTTP_SOURCE = "access";
 
@@ -113,6 +113,7 @@ const SOURCE_LABELS: Record<string, string> = {
   server:  "Engine (SSE)",
   tauri:   "Sidecar IPC",
   syslog:  "System Log",
+  llm:     "LLM Server",
   engine:  "Engine Client",
   auth:    "Auth",
   voice:   "Voice",
@@ -636,7 +637,7 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
   const hasIssues   = totalErrors > 0 || totalWarns > 0;
 
   // Per-source breakdown
-  const sourceOrder = ["server", "tauri", "syslog", "engine", "auth", "voice", "setup", "access"];
+  const sourceOrder = ["server", "tauri", "syslog", "llm", "engine", "auth", "voice", "setup", "access"];
   type SourceStats = { info: number; success: number; warn: number; error: number; data: number; cmd: number; lastErr: string; lastWarn: string };
   const sourceMap = useMemo(() => {
     const map = new Map<string, SourceStats>();
@@ -848,7 +849,7 @@ export function Activity({ engineStatus }: ActivityProps) {
           <LogTab
             logs={serverLogs}
             emptyMessage="No server logs yet — engine stdout/stderr and syslog will appear here"
-            clearSources={["server", "tauri", "syslog"]}
+            clearSources={["server", "tauri", "syslog", "llm"]}
           />
         </TabsContent>
 

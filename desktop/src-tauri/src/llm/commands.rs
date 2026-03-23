@@ -22,7 +22,8 @@ pub type LlmServerState = Arc<Mutex<LlmServer>>;
 /// LlmServer also keeps its own process field for lifecycle management.
 /// When the server stops normally, both are cleared. At shutdown, we grab
 /// this handle directly and kill it even if the tokio mutex is locked.
-pub type LlmProcessHandle = Arc<std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>>;
+pub type LlmProcessHandle =
+    Arc<std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>>;
 
 /// Shared atomic flag used to request cancellation of an in-flight download.
 /// Set to true by `cancel_llm_download`; reset to false at the start of each
@@ -195,14 +196,20 @@ pub fn check_llm_model_exists(app: AppHandle, filename: String) -> bool {
                 if i == 0 {
                     Some(catalog.expected_size_bytes)
                 } else {
-                    catalog.hf_part_sizes.get(i - 1).copied().map(Some).flatten()
+                    catalog
+                        .hf_part_sizes
+                        .get(i - 1)
+                        .copied()
+                        .map(Some)
+                        .flatten()
                 }
             })
             .collect();
 
-        part_filenames.iter().zip(part_sizes.iter()).all(|(pf, &expected)| {
-            is_valid_gguf(&models_dir.join(pf), expected)
-        })
+        part_filenames
+            .iter()
+            .zip(part_sizes.iter())
+            .all(|(pf, &expected)| is_valid_gguf(&models_dir.join(pf), expected))
     } else {
         // Custom model — just check the single file
         let path = models_dir.join(&filename);
@@ -217,7 +224,10 @@ pub fn cancel_llm_download(
     cancel: State<'_, LlmDownloadCancelState>,
 ) -> Result<(), String> {
     cancel.store(true, Ordering::SeqCst);
-    let _ = app.emit("llm-download-cancelled", serde_json::json!({ "reason": "user_cancelled" }));
+    let _ = app.emit(
+        "llm-download-cancelled",
+        serde_json::json!({ "reason": "user_cancelled" }),
+    );
     Ok(())
 }
 
@@ -398,7 +408,9 @@ pub async fn download_llm_model(
                     if is_valid_gguf(&dest_path, expected_size) {
                         return Ok(dest_path.to_string_lossy().to_string());
                     }
-                    last_error = "Downloaded file failed validation (size mismatch or bad magic bytes)".to_string();
+                    last_error =
+                        "Downloaded file failed validation (size mismatch or bad magic bytes)"
+                            .to_string();
                     let _ = tokio::fs::remove_file(&dest_path).await;
                 }
                 Err(e) if e.contains("cancelled") => {
@@ -441,7 +453,9 @@ pub async fn download_llm_model(
         let size = if let Some(known) = part_expected_sizes[i] {
             known
         } else {
-            probe_content_length(&client, url, hf_token.as_deref()).await.unwrap_or(0)
+            probe_content_length(&client, url, hf_token.as_deref())
+                .await
+                .unwrap_or(0)
         };
         part_sizes.push(size);
     }
@@ -458,11 +472,7 @@ pub async fn download_llm_model(
         let part_num = i + 1;
 
         // Extract original filename from the URL (preserves -00001-of-N suffix)
-        let part_filename: String = url
-            .rsplit('/')
-            .next()
-            .unwrap_or("unknown.gguf")
-            .to_string();
+        let part_filename: String = url.rsplit('/').next().unwrap_or("unknown.gguf").to_string();
         let part_path = dest_dir.join(&part_filename);
         let expected = part_expected_sizes[i];
 
@@ -605,7 +615,10 @@ pub fn list_llm_models(app: AppHandle) -> Vec<serde_json::Value> {
 
         // For split models, check that ALL parts are present
         let all_parts_present = if catalog.is_split() {
-            catalog.all_part_filenames().iter().all(|pf| on_disk.contains(pf.as_str()))
+            catalog
+                .all_part_filenames()
+                .iter()
+                .all(|pf| on_disk.contains(pf.as_str()))
         } else {
             true
         };
@@ -614,9 +627,7 @@ pub fn list_llm_models(app: AppHandle) -> Vec<serde_json::Value> {
         let total_size_bytes: u64 = catalog
             .all_part_filenames()
             .iter()
-            .filter_map(|pf| {
-                std::fs::metadata(models_dir.join(pf)).ok().map(|m| m.len())
-            })
+            .filter_map(|pf| std::fs::metadata(models_dir.join(pf)).ok().map(|m| m.len()))
             .sum();
 
         let size_gb = total_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -903,7 +914,11 @@ async fn is_xet_url(url: &str, hf_token: &Option<String>) -> bool {
 }
 
 /// Probe the content-length of a URL without downloading it.
-async fn probe_content_length(client: &reqwest::Client, url: &str, hf_token: Option<&str>) -> Option<u64> {
+async fn probe_content_length(
+    client: &reqwest::Client,
+    url: &str,
+    hf_token: Option<&str>,
+) -> Option<u64> {
     let mut req = client.head(url).header("User-Agent", "matrx-local/1.0");
     if let Some(token) = hf_token {
         req = req.header("Authorization", format!("Bearer {}", token));
@@ -1059,7 +1074,10 @@ fn list_downloaded_model_filenames(app: &AppHandle) -> Vec<String> {
 
     for catalog in model_selector::LLM_MODELS {
         if on_disk.contains(catalog.filename)
-            && is_valid_gguf(&models_dir.join(catalog.filename), Some(catalog.expected_size_bytes))
+            && is_valid_gguf(
+                &models_dir.join(catalog.filename),
+                Some(catalog.expected_size_bytes),
+            )
         {
             result.push(catalog.filename.to_string());
         }

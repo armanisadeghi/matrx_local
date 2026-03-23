@@ -10,11 +10,7 @@ const HF_VAD_BASE: &str = "https://huggingface.co/ggml-org/whisper-vad/resolve/m
 /// - "ggml" (0x67 0x67 0x6D 0x6C) — classic GGML format
 /// - "GGUF" (0x47 0x47 0x55 0x46) — GGUF format (whisper.cpp ≥ 1.5.x)
 /// - LE ggml (0x6C 0x6D 0x67 0x67) — little-endian GGML magic in some builds
-const VALID_WHISPER_MAGIC: &[[u8; 4]] = &[
-    *b"ggml",
-    *b"GGUF",
-    [0x6c, 0x6d, 0x67, 0x67],
-];
+const VALID_WHISPER_MAGIC: &[[u8; 4]] = &[*b"ggml", *b"GGUF", [0x6c, 0x6d, 0x67, 0x67]];
 
 /// VAD model required for streaming transcription.
 pub const VAD_MODEL_FILENAME: &str = "ggml-silero-v6.2.0.bin";
@@ -94,7 +90,10 @@ pub async fn download_model(
         }
     }
 
-    Err(format!("Download failed after 3 attempts. Last error: {}", last_error))
+    Err(format!(
+        "Download failed after 3 attempts. Last error: {}",
+        last_error
+    ))
 }
 
 async fn try_download(
@@ -155,7 +154,10 @@ pub fn is_valid_model(path: &Path) -> bool {
     let meta = match std::fs::metadata(path) {
         Ok(m) => m,
         Err(e) => {
-            eprintln!("[downloader] is_valid_model: metadata error for {:?}: {}", path, e);
+            eprintln!(
+                "[downloader] is_valid_model: metadata error for {:?}: {}",
+                path, e
+            );
             return false;
         }
     };
@@ -187,20 +189,26 @@ pub fn is_valid_model(path: &Path) -> bool {
     let mut file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("[downloader] is_valid_model: open error for {:?}: {}", path, e);
+            eprintln!(
+                "[downloader] is_valid_model: open error for {:?}: {}",
+                path, e
+            );
             return false;
         }
     };
     let mut magic = [0u8; 4];
     use std::io::Read;
     if let Err(e) = file.read_exact(&mut magic) {
-        eprintln!("[downloader] is_valid_model: read error for {:?}: {}", path, e);
+        eprintln!(
+            "[downloader] is_valid_model: read error for {:?}: {}",
+            path, e
+        );
         return false;
     }
 
     // Accept any known whisper.cpp magic — exact 4-byte matches or "gg" prefix
-    let is_valid_magic = VALID_WHISPER_MAGIC.iter().any(|m| &magic == m)
-        || magic[0..2] == [0x67, 0x67];
+    let is_valid_magic =
+        VALID_WHISPER_MAGIC.iter().any(|m| &magic == m) || magic[0..2] == [0x67, 0x67];
 
     if !is_valid_magic {
         eprintln!(

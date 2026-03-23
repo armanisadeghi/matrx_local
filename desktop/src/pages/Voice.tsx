@@ -1325,7 +1325,7 @@ function TranscribeTab({
                     state.isRecording
                       ? "Listening… transcript will appear here as you speak"
                       : state.isProcessingTail
-                      ? "Processing last audio chunk…"
+                      ? "Processing remaining audio…"
                       : "No transcript yet. Start recording to begin.\n\nYou can also type or paste text here directly."
                   }
                   spellCheck

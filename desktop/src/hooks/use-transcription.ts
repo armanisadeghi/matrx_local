@@ -40,9 +40,9 @@ export interface TranscriptionState {
   // Recording
   isRecording: boolean;
   /**
-   * True while the mic has been stopped but Rust is still flushing the last
-   * audio chunk through Whisper. Listeners are kept alive until whisper-stopped
-   * fires, so no transcription is lost.
+   * True while the mic has been stopped but Rust is still flushing remaining
+   * buffered audio through Whisper (may be multiple chunks). Listeners are kept
+   * alive until whisper-stopped fires, so no transcription is ever lost.
    */
   isProcessingTail: boolean;
   segments: WhisperSegment[];
@@ -390,9 +390,9 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
       }
     );
 
-    // whisper-stopped fires after the Rust thread has flushed the final
-    // audio chunk through Whisper. Only at this point do we tear down the
-    // listeners — ensuring no segments are lost.
+    // whisper-stopped fires after the Rust thread has flushed ALL remaining
+    // buffered audio through Whisper and accumulated is empty. Only at this
+    // point do we tear down the listeners — ensuring no segments are lost.
     const stoppedUnlisten = await tauriListen<null>("whisper-stopped", () => {
       setIsProcessingTail(false);
       setLiveRms(0);
@@ -429,10 +429,11 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   }, [selectedDevice]);
 
   const stopRecording = useCallback(async () => {
-    // Tell Rust to stop capturing audio. The recording thread will flush any
-    // buffered audio through Whisper and then emit "whisper-stopped". We stay
-    // in isProcessingTail state until that event arrives so the UI can show
-    // "Processing…" and the segment listener stays alive.
+    // Tell Rust to stop accepting new mic input. The recording thread continues
+    // flushing ALL remaining buffered audio through Whisper (completely decoupled
+    // from mic state) until empty, then emits "whisper-stopped". We stay in
+    // isProcessingTail until that event so the UI shows "Processing…" and the
+    // segment listener stays alive — no audio is ever lost.
     setIsRecording(false);
     setIsCalibrating(false);
     // Keep liveRms until whisper-stopped so the meter fades naturally

@@ -222,8 +222,7 @@ fn build_resampling_stream(
 
                     // rubato 1.x uses audioadapter buffer types.
                     // InterleavedSlice wraps a flat slice as (channels, frames) interleaved.
-                    let input_adapter =
-                        InterleavedSlice::new(&input_chunk, 1, chunk_size).unwrap();
+                    let input_adapter = InterleavedSlice::new(&input_chunk, 1, chunk_size).unwrap();
                     let mut output_adapter =
                         InterleavedSlice::new_mut(&mut output_scratch, 1, out_frames).unwrap();
 

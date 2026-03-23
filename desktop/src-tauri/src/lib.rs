@@ -30,7 +30,7 @@ use floating_overlay::*;
 struct FetchResponse {
     status: u16,
     content_type: String,
-    body_b64: String,  // base64-encoded body
+    body_b64: String, // base64-encoded body
     final_url: String,
 }
 
@@ -53,19 +53,28 @@ fn kill_orphaned_sidecars() {
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/IM", "aimatrx-engine-x86_64-pc-windows-msvc.exe"])
+            .args([
+                "/F",
+                "/T",
+                "/IM",
+                "aimatrx-engine-x86_64-pc-windows-msvc.exe",
+            ])
             .output();
     }
 
     // Also remove stale discovery file
     #[cfg(unix)]
     if let Ok(home) = std::env::var("HOME") {
-        let discovery = std::path::PathBuf::from(home).join(".matrx").join("local.json");
+        let discovery = std::path::PathBuf::from(home)
+            .join(".matrx")
+            .join("local.json");
         let _ = std::fs::remove_file(&discovery);
     }
     #[cfg(windows)]
     if let Ok(home) = std::env::var("USERPROFILE") {
-        let discovery = std::path::PathBuf::from(home).join(".matrx").join("local.json");
+        let discovery = std::path::PathBuf::from(home)
+            .join(".matrx")
+            .join("local.json");
         let _ = std::fs::remove_file(&discovery);
     }
 }
@@ -532,7 +541,7 @@ async fn get_close_to_tray(state: tauri::State<'_, CloseToTray>) -> Result<bool,
 /// below the normal 900 × 600 minimum. Restoring re-applies the original min size.
 #[tauri::command]
 async fn set_compact_mode(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    use tauri::{LogicalSize, LogicalPosition};
+    use tauri::{LogicalPosition, LogicalSize};
 
     let window = app
         .get_webview_window("main")
@@ -562,29 +571,19 @@ async fn set_compact_mode(app: tauri::AppHandle, enabled: bool) -> Result<(), St
         }
         // Keep decorations OFF (we draw our own title bar with data-tauri-drag-region).
         // always_on_top ensures it floats above other apps.
-        window
-            .set_decorations(false)
-            .map_err(|e| e.to_string())?;
-        window
-            .set_always_on_top(true)
-            .map_err(|e| e.to_string())?;
+        window.set_decorations(false).map_err(|e| e.to_string())?;
+        window.set_always_on_top(true).map_err(|e| e.to_string())?;
     } else {
         // Re-apply the normal minimum before resizing up.
-        window
-            .set_decorations(true)
-            .map_err(|e| e.to_string())?;
-        window
-            .set_always_on_top(false)
-            .map_err(|e| e.to_string())?;
+        window.set_decorations(true).map_err(|e| e.to_string())?;
+        window.set_always_on_top(false).map_err(|e| e.to_string())?;
         window
             .set_min_size(Some(LogicalSize::new(900u32, 600u32)))
             .map_err(|e| e.to_string())?;
         window
             .set_size(LogicalSize::new(1400u32, 900u32))
             .map_err(|e| e.to_string())?;
-        window
-            .center()
-            .map_err(|e| e.to_string())?;
+        window.center().map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -643,7 +642,9 @@ struct UpdateProgress {
 /// can render an accurate progress bar.
 #[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle, install: bool) -> Result<UpdateProgress, String> {
-    let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
+    let updater = app
+        .updater()
+        .map_err(|e| format!("Updater not available: {}", e))?;
 
     let update = updater
         .check()
@@ -684,8 +685,7 @@ async fn check_for_updates(app: tauri::AppHandle, install: bool) -> Result<Updat
                     .await
                     .map_err(|e| format!("Update install failed: {}", e))?;
 
-                let final_downloaded =
-                    total_downloaded.load(std::sync::atomic::Ordering::Relaxed);
+                let final_downloaded = total_downloaded.load(std::sync::atomic::Ordering::Relaxed);
 
                 let result = UpdateProgress {
                     status: "installed".to_string(),
@@ -745,8 +745,9 @@ fn show_main_window(app: &tauri::AppHandle) {
 /// has been removed to prevent a second blank icon from appearing.
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItemBuilder::with_id("show", "Show AI Matrx").build(app)?;
-    let status =
-        MenuItemBuilder::with_id("status", "Status: Starting...").enabled(false).build(app)?;
+    let status = MenuItemBuilder::with_id("status", "Status: Starting...")
+        .enabled(false)
+        .build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Quit AI Matrx").build(app)?;
 
     let menu = MenuBuilder::new(app)
@@ -853,11 +854,17 @@ pub fn run() {
         .manage(TranscriptionState(Mutex::new(None)))
         .manage(RecordingState::new())
         .manage(WakeWordAppState(Arc::new(WakeWordState::new())))
-        .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
-            llm::server::LlmServer::new(),
-        )) as llm::commands::LlmServerState)
-        .manage(std::sync::Arc::new(std::sync::Mutex::new(None::<tauri_plugin_shell::process::CommandChild>)) as llm::commands::LlmProcessHandle)
-        .manage(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)) as llm::commands::LlmDownloadCancelState)
+        .manage(
+            std::sync::Arc::new(tokio::sync::Mutex::new(llm::server::LlmServer::new()))
+                as llm::commands::LlmServerState,
+        )
+        .manage(std::sync::Arc::new(std::sync::Mutex::new(
+            None::<tauri_plugin_shell::process::CommandChild>,
+        )) as llm::commands::LlmProcessHandle)
+        .manage(
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+                as llm::commands::LlmDownloadCancelState,
+        )
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
@@ -924,7 +931,9 @@ pub fn run() {
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    use transcription::{config::TranscriptionConfig, downloader, manager::TranscriptionManager};
+                    use transcription::{
+                        config::TranscriptionConfig, downloader, manager::TranscriptionManager,
+                    };
                     let config_dir = match handle.path().app_data_dir() {
                         Ok(d) => d,
                         Err(_) => return,
@@ -933,12 +942,17 @@ pub fn run() {
                     if !config.setup_complete {
                         return;
                     }
-                    let Some(filename) = config.selected_model else { return };
+                    let Some(filename) = config.selected_model else {
+                        return;
+                    };
                     let model_path = config_dir.join("models").join(&filename);
                     if !downloader::is_valid_model(&model_path) {
                         // Config says ready but file is gone — reset the flag so
                         // the UI prompts setup again instead of being stuck.
-                        let reset = TranscriptionConfig { setup_complete: false, selected_model: None };
+                        let reset = TranscriptionConfig {
+                            setup_complete: false,
+                            selected_model: None,
+                        };
                         let _ = reset.save(&config_dir);
                         return;
                     }
@@ -947,7 +961,11 @@ pub fn run() {
                     if state.0.lock().unwrap().is_some() {
                         return;
                     }
-                    match tokio::task::spawn_blocking(move || TranscriptionManager::load(model_path)).await {
+                    match tokio::task::spawn_blocking(move || {
+                        TranscriptionManager::load(model_path)
+                    })
+                    .await
+                    {
                         Ok(Ok(manager)) => {
                             *state.0.lock().unwrap() = Some(manager);
                             println!("[transcription] Auto-loaded model: {}", filename);
@@ -968,10 +986,10 @@ pub fn run() {
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    use llm::config::LlmConfig;
-                    use llm::server::find_free_port;
                     use crate::transcription::hardware::HardwareProfile;
+                    use llm::config::LlmConfig;
                     use llm::model_selector::compute_gpu_layers_for_hw;
+                    use llm::server::find_free_port;
 
                     let config_dir = match handle.path().app_data_dir() {
                         Ok(d) => d,
@@ -981,7 +999,9 @@ pub fn run() {
                     if !config.setup_complete {
                         return;
                     }
-                    let Some(filename) = config.selected_model else { return };
+                    let Some(filename) = config.selected_model else {
+                        return;
+                    };
                     let model_path = config_dir.join("models").join(&filename);
                     if !model_path.exists() {
                         return;
@@ -1019,7 +1039,10 @@ pub fn run() {
 
                     let model_path_str = model_path.to_string_lossy().to_string();
                     let mut server = llm_state.lock().await;
-                    match server.start(&handle, &model_path_str, gpu_layers, ctx, port).await {
+                    match server
+                        .start(&handle, &model_path_str, gpu_layers, ctx, port)
+                        .await
+                    {
                         Ok(()) => {
                             // Persist last_port update — reload config to preserve hf_token and
                             // any other fields added in the future, then update only last_port.
@@ -1092,9 +1115,13 @@ pub fn run() {
                     if let (Some(sidecar), Some(transcription), Some(llm_proc)) = (
                         window.app_handle().try_state::<SidecarState>(),
                         window.app_handle().try_state::<TranscriptionState>(),
-                        window.app_handle().try_state::<llm::commands::LlmProcessHandle>(),
+                        window
+                            .app_handle()
+                            .try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
-                        let llm_srv = window.app_handle().try_state::<llm::commands::LlmServerState>();
+                        let llm_srv = window
+                            .app_handle()
+                            .try_state::<llm::commands::LlmServerState>();
                         let ww = window.app_handle().try_state::<WakeWordAppState>();
                         let rec = window.app_handle().try_state::<RecordingState>();
                         graceful_shutdown_sync(
@@ -1119,7 +1146,10 @@ pub fn run() {
                 // app stays invisible. We re-show the main window here so the standard
                 // Mac UX (click Dock icon → app comes back) works as expected.
                 #[cfg(target_os = "macos")]
-                tauri::RunEvent::Reopen { has_visible_windows, .. } => {
+                tauri::RunEvent::Reopen {
+                    has_visible_windows,
+                    ..
+                } => {
                     if !has_visible_windows {
                         show_main_window(app);
                     }

@@ -119,11 +119,7 @@ pub fn spawn_wake_word_thread(
     *state.thread_handle.lock().unwrap() = Some(handle);
 }
 
-fn wake_word_loop(
-    app: tauri::AppHandle,
-    state: Arc<WakeWordState>,
-    device_name: Option<String>,
-) {
+fn wake_word_loop(app: tauri::AppHandle, state: Arc<WakeWordState>, device_name: Option<String>) {
     use super::manager::TranscriptionManager;
     use tauri::Emitter;
 
@@ -134,7 +130,10 @@ fn wake_word_loop(
         match dir {
             Some(d) => (d, fname),
             None => {
-                let _ = app.emit("wake-word-error", "models_dir not set — call start_wake_word first");
+                let _ = app.emit(
+                    "wake-word-error",
+                    "models_dir not set — call start_wake_word first",
+                );
                 *state.running.lock().unwrap() = false;
                 return;
             }
@@ -159,7 +158,10 @@ fn wake_word_loop(
     let manager = match TranscriptionManager::load(model_path) {
         Ok(m) => m,
         Err(e) => {
-            let _ = app.emit("wake-word-error", format!("Failed to load wake word model: {}", e));
+            let _ = app.emit(
+                "wake-word-error",
+                format!("Failed to load wake word model: {}", e),
+            );
             *state.running.lock().unwrap() = false;
             return;
         }
@@ -168,14 +170,15 @@ fn wake_word_loop(
     let ctx = manager.context().clone();
 
     // ── Open audio capture ───────────────────────────────────────────────
-    let capture = match super::audio_capture::AudioCapture::start_with_device(device_name.as_deref()) {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = app.emit("wake-word-error", format!("Audio capture failed: {}", e));
-            *state.running.lock().unwrap() = false;
-            return;
-        }
-    };
+    let capture =
+        match super::audio_capture::AudioCapture::start_with_device(device_name.as_deref()) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = app.emit("wake-word-error", format!("Audio capture failed: {}", e));
+                *state.running.lock().unwrap() = false;
+                return;
+            }
+        };
 
     let sample_rate = capture.sample_rate(); // always 16_000
     let window_samples = sample_rate as usize * 2; // 2-second window
@@ -227,9 +230,7 @@ fn wake_word_loop(
                         false
                     }
                 }
-                WakeWordMode::Listening => {
-                    last_trigger.elapsed().as_secs() >= COOLDOWN_S
-                }
+                WakeWordMode::Listening => last_trigger.elapsed().as_secs() >= COOLDOWN_S,
             };
 
             if should_detect {
