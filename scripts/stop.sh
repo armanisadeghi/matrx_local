@@ -119,9 +119,11 @@ proc_detail() {
     echo -e "${indent}${BOLD}CWD${RESET}           : $cwd"
     echo -e "${indent}${BOLD}Full cmdline${RESET}  : $cmdline"
 
-    # Show any open network connections for this PID
+    # Show network connections OWNED BY this PID (not all system connections).
+    # lsof -p filters by PID but -i shows all TCP/UDP — combine with awk to
+    # only show lines where the PID column matches the target PID.
     local net_lines
-    net_lines=$(lsof -p "$pid" -i -n -P 2>/dev/null | grep -E "TCP|UDP" | head -10 || true)
+    net_lines=$(lsof -p "$pid" -i -n -P 2>/dev/null | awk -v pid="$pid" '$2 == pid && /TCP|UDP/' | head -10 || true)
     if [[ -n "$net_lines" ]]; then
       echo -e "${indent}${BOLD}Network${RESET}       :"
       while IFS= read -r line; do
@@ -453,10 +455,12 @@ if $IS_LINUX || $IS_WSL; then
 elif $IS_MAC; then
   while IFS= read -r pid; do
     [[ -n "$pid" ]] || continue
+    # Skip our own stop.sh process if pgrep matched it
+    [[ "$pid" == "$$" ]] && continue
     echo -e "  ${YELLOW}aimatrx-engine sidecar found:${RESET}"
     proc_detail "$pid" "  "
     echo ""
-    do_kill "$pid" "aimatrx-engine sidecar (PID $pid)"
+    do_kill "$pid" "aimatrx-engine sidecar"
     sidecar_killed=true
     killed_any=true
   done < <(pgrep -f "aimatrx-engine" 2>/dev/null || true)
@@ -525,8 +529,42 @@ elif $IS_LINUX || $IS_WSL; then
 fi
 $oww_killed || ok "No orphaned wake-word processes found"
 
-# ── 8. Zombie (defunct) children ─────────────────────────────────────────────
-step "8 / 9  Zombie (defunct) processes related to Matrx"
+# ── 8. Orphaned cloudflared tunnel processes ──────────────────────────────
+step "8 / 10  Orphaned cloudflared tunnel"
+cloudflared_killed=false
+if $IS_MAC; then
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    cmdline=$(proc_cmdline "$pid")
+    if [[ "$cmdline" == *"22140"* ]] || [[ "$cmdline" == *"matrx"* ]] || [[ "$cmdline" == *"trycloudflare"* ]]; then
+      echo -e "  ${YELLOW}Orphaned cloudflared tunnel found:${RESET}"
+      proc_detail "$pid" "  "
+      echo ""
+      do_kill "$pid" "cloudflared tunnel"
+      cloudflared_killed=true
+      killed_any=true
+    fi
+  done < <(pgrep -f "cloudflared" 2>/dev/null || true)
+elif $IS_LINUX || $IS_WSL; then
+  while IFS= read -r pid_dir; do
+    pid="${pid_dir##*/}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    [[ -r "$pid_dir/cmdline" ]] || continue
+    cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null) || continue
+    if [[ "$cmdline" == *"cloudflared"* ]] && { [[ "$cmdline" == *"22140"* ]] || [[ "$cmdline" == *"matrx"* ]]; }; then
+      echo -e "  ${YELLOW}Orphaned cloudflared tunnel found:${RESET}"
+      proc_detail "$pid" "  "
+      echo ""
+      do_kill "$pid" "cloudflared tunnel"
+      cloudflared_killed=true
+      killed_any=true
+    fi
+  done < <(ls -d /proc/[0-9]* 2>/dev/null)
+fi
+$cloudflared_killed || ok "No orphaned cloudflared tunnel processes found"
+
+# ── 9. Zombie (defunct) children ─────────────────────────────────────────────
+step "9 / 10  Zombie (defunct) processes related to Matrx"
 echo "  Scanning for zombie processes from any Matrx parent..."
 zombie_found=false
 
@@ -577,8 +615,8 @@ elif $IS_LINUX || $IS_WSL; then
 fi
 $zombie_found || ok "No zombie processes found related to Matrx"
 
-# ── 9. Post-kill: check TCP connections still active ─────────────────────────
-step "9 / 9  TCP connection audit on all Matrx ports"
+# ── 10. Post-kill: check TCP connections still active ────────────────────────
+step "10 / 10  TCP connection audit on all Matrx ports"
 echo "  Checking for lingering TCP connections after cleanup..."
 echo ""
 
@@ -618,8 +656,8 @@ done
 
 # Check for any remaining connections to the engine port range
 echo ""
-echo -e "  ${CYAN}Full port range 22140-22159 quick scan:${RESET}"
-for port in $(seq 22143 22159); do
+echo -e "  ${CYAN}Full port range 22146-22159 quick scan:${RESET}"
+for port in $(seq 22146 22159); do
   pid=$(pid_on_port "$port")
   if [[ -n "$pid" ]]; then
     cmdline=$(proc_cmdline "$pid" | cut -c1-80)
@@ -627,7 +665,7 @@ for port in $(seq 22143 22159); do
     all_ports_clean=false
   fi
 done
-$all_ports_clean && echo -e "  ${GREEN}Ports 22143–22159 all free${RESET}"
+$all_ports_clean && echo -e "  ${GREEN}Ports 22146–22159 all free${RESET}"
 
 # ── Final Summary ─────────────────────────────────────────────────────────────
 echo ""

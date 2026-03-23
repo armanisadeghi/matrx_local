@@ -463,6 +463,7 @@ def _build_log_config() -> dict:
 
 _uvicorn_server: uvicorn.Server | None = None
 _server_thread: threading.Thread | None = None
+_shutdown_event = threading.Event()
 
 
 def start_server(port: int) -> None:
@@ -477,6 +478,7 @@ def start_server(port: int) -> None:
     server = uvicorn.Server(config)
     _uvicorn_server = server
     server.run()
+    _shutdown_event.set()
 
 
 def on_quit(icon: Icon, item: MenuItem) -> None:
@@ -484,6 +486,7 @@ def on_quit(icon: Icon, item: MenuItem) -> None:
     icon.stop()
     if _uvicorn_server is not None:
         _uvicorn_server.should_exit = True
+        _shutdown_event.set()
     else:
         os._exit(0)
 
@@ -498,6 +501,54 @@ def _is_tauri_sidecar() -> bool:
     return os.environ.get("TAURI_SIDECAR", "") == "1"
 
 
+def _start_parent_watchdog() -> None:
+    """Monitor the parent process and self-terminate if it dies.
+
+    When running as a Tauri sidecar, if the Tauri app crashes or is force-killed
+    (SIGKILL, Activity Monitor, Task Manager), the sidecar is orphaned — adopted
+    by PID 1 (launchd/init/System) and keeps running forever with ports bound.
+    This is the primary cause of orphaned `aimatrx-engine` processes.
+
+    This watchdog thread checks os.getppid() every 2 seconds. On macOS/Linux,
+    when the parent dies the OS reparents us to PID 1. On Windows, PPID doesn't
+    change but the parent PID becomes invalid (not running).
+    """
+    import time
+
+    parent_pid = os.getppid()
+    if parent_pid <= 1:
+        return
+
+    def _watch() -> None:
+        while not _shutdown_event.is_set():
+            time.sleep(2)
+            current_ppid = os.getppid()
+            parent_gone = False
+
+            if sys.platform == "win32":
+                try:
+                    os.kill(parent_pid, 0)
+                except (ProcessLookupError, PermissionError, OSError):
+                    parent_gone = True
+            else:
+                parent_gone = (current_ppid == 1 or current_ppid != parent_pid)
+
+            if parent_gone:
+                logger.warning(
+                    "Parent process (PID %d) is gone — self-terminating to avoid orphan",
+                    parent_pid,
+                )
+                remove_discovery_file()
+                if _uvicorn_server is not None:
+                    _uvicorn_server.should_exit = True
+                _shutdown_event.set()
+                _schedule_force_exit(10)
+                return
+
+    watchdog = threading.Thread(target=_watch, daemon=True, name="parent-watchdog")
+    watchdog.start()
+
+
 def _has_system_tray() -> bool:
     """Check if a system tray is available (not available in WSL/headless)."""
     if PLATFORM["is_windows"] or PLATFORM["is_mac"]:
@@ -510,27 +561,28 @@ def _has_system_tray() -> bool:
 
 
 def _wait_forever() -> None:
-    """Block the main thread until Ctrl-C or SIGTERM.
+    """Block the main thread until SIGTERM, SIGINT, or the server exits.
 
-    In Tauri sidecar mode this is the main thread — we just park here.
-    The signal handler (_handle_exit) will set _uvicorn_server.should_exit
-    which wakes up the server thread; we wait for it to finish so lifespan
-    teardown completes before the process exits.
+    Uses _shutdown_event (set by the signal handler or when the server thread
+    finishes) instead of time.sleep(), so the thread wakes up immediately on
+    SIGTERM rather than sleeping for up to 1 second before checking.
+
+    After receiving the shutdown signal, waits up to 10 seconds for the uvicorn
+    server thread to complete its lifespan teardown (proxy stop, Playwright
+    close, SQLite close, etc.) before forcing exit.
     """
-    import time
-
     try:
-        while True:
-            time.sleep(1)
+        _shutdown_event.wait()
     except (KeyboardInterrupt, SystemExit):
-        remove_discovery_file()
-        if _uvicorn_server is not None:
-            _uvicorn_server.should_exit = True
-            # Give uvicorn up to 5 seconds to finish lifespan teardown.
-            server_thread_ref = _server_thread
-            if server_thread_ref is not None:
-                server_thread_ref.join(timeout=5)
-        os._exit(0)
+        pass
+
+    remove_discovery_file()
+    if _uvicorn_server is not None:
+        _uvicorn_server.should_exit = True
+        server_thread_ref = _server_thread
+        if server_thread_ref is not None:
+            server_thread_ref.join(timeout=10)
+    os._exit(0)
 
 
 def setup_tray(port: int) -> None:
@@ -569,17 +621,42 @@ def _handle_exit(signum: int, frame: object) -> None:  # noqa: ARG001
 
     Telling uvicorn to shut down via server.should_exit lets the FastAPI
     lifespan teardown run (stops proxy on 22180, tunnel, scraper, SQLite, etc.)
-    before the process terminates. We fall back to os._exit() only if the
-    server reference is not available yet (e.g. signal arrived before startup).
+    before the process terminates.  Setting _shutdown_event wakes the main
+    thread from _wait_forever() so it can join the server thread and exit.
+
+    As a safety net, a background timer forces os._exit() after 15 seconds
+    even if the lifespan teardown hangs — this guarantees the process WILL
+    die and prevents orphaned sidecar processes on user machines.
     """
     remove_discovery_file()
+
     if _uvicorn_server is not None:
-        # Set the flag that uvicorn's main loop checks — it will call the
-        # ASGI lifespan shutdown and exit cleanly within its event loop.
         _uvicorn_server.should_exit = True
+        _shutdown_event.set()
+        _schedule_force_exit(15)
     else:
-        # Server not started yet (signal arrived very early) — hard exit.
         os._exit(0)
+
+
+def _schedule_force_exit(timeout_seconds: int) -> None:
+    """Spawn a daemon thread that force-kills the process after a timeout.
+
+    This is the last-resort guarantee that the engine process WILL exit even
+    if the lifespan teardown hangs (stuck Playwright browser, blocked I/O,
+    etc.).  Without this, a hung teardown leaves the process alive with
+    ports bound and resources locked — the exact orphan sidecar problem.
+    """
+    def _force_exit() -> None:
+        import time
+        time.sleep(timeout_seconds)
+        logger.warning(
+            "Shutdown watchdog: lifespan teardown did not complete within %ds — forcing exit",
+            timeout_seconds,
+        )
+        os._exit(1)
+
+    watchdog = threading.Thread(target=_force_exit, daemon=True)
+    watchdog.start()
 
 
 def main() -> None:
@@ -589,6 +666,9 @@ def main() -> None:
         signal.signal(signal.SIGTERM, _handle_exit)
     if hasattr(signal, "SIGINT"):
         signal.signal(signal.SIGINT, _handle_exit)
+
+    if _is_tauri_sidecar():
+        _start_parent_watchdog()
 
     print("[phase:port] Finding available port...", flush=True)
     port = find_available_port()

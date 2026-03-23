@@ -34,6 +34,42 @@ struct FetchResponse {
     final_url: String,
 }
 
+/// Kill any orphaned aimatrx-engine processes from a previous session.
+///
+/// Called before spawning a new sidecar and during graceful shutdown.
+/// Uses OS-specific process killing to ensure stale sidecars from
+/// crashes or unclean shutdowns don't hold ports or leak resources.
+fn kill_orphaned_sidecars() {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("pkill")
+            .args(["-TERM", "-f", "aimatrx-engine"])
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = std::process::Command::new("pkill")
+            .args(["-KILL", "-f", "aimatrx-engine"])
+            .output();
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/IM", "aimatrx-engine-x86_64-pc-windows-msvc.exe"])
+            .output();
+    }
+
+    // Also remove stale discovery file
+    #[cfg(unix)]
+    if let Ok(home) = std::env::var("HOME") {
+        let discovery = std::path::PathBuf::from(home).join(".matrx").join("local.json");
+        let _ = std::fs::remove_file(&discovery);
+    }
+    #[cfg(windows)]
+    if let Ok(home) = std::env::var("USERPROFILE") {
+        let discovery = std::path::PathBuf::from(home).join(".matrx").join("local.json");
+        let _ = std::fs::remove_file(&discovery);
+    }
+}
+
 /// Holds the sidecar child process handle for lifecycle management.
 struct SidecarState {
     child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
@@ -65,6 +101,10 @@ struct SidecarStatus {
 /// The sidecar listens on the configured port (default 22140).
 /// We set TAURI_SIDECAR=1 so that run.py skips the pystray tray icon —
 /// Tauri already owns the single system-tray icon for the whole app.
+///
+/// Before spawning, kills any orphaned aimatrx-engine processes left over
+/// from a previous crash or unclean shutdown.  This prevents the new
+/// sidecar from failing with "address already in use" on port 22140.
 #[tauri::command]
 async fn start_sidecar(
     app: tauri::AppHandle,
@@ -74,6 +114,11 @@ async fn start_sidecar(
     if state.child.lock().unwrap().is_some() {
         return Ok(());
     }
+
+    // Kill any orphaned sidecar processes from a previous session before
+    // spawning a new one.  Without this, port 22140 may still be held by
+    // a zombie from a crash/force-quit, and the new sidecar will fail.
+    kill_orphaned_sidecars();
 
     let sidecar = app
         .shell()
@@ -141,13 +186,14 @@ async fn start_sidecar(
     Ok(())
 }
 
-/// Stop the Python/FastAPI engine sidecar.
+/// Stop the Python/FastAPI engine sidecar gracefully.
+///
+/// Uses sigterm_then_kill() which sends SIGTERM first (giving Python's signal
+/// handler time to run lifespan teardown) and falls back to SIGKILL after 8s.
 #[tauri::command]
 async fn stop_sidecar(state: tauri::State<'_, SidecarState>) -> Result<(), String> {
     if let Some(child) = state.child.lock().unwrap().take() {
-        child
-            .kill()
-            .map_err(|e| format!("Failed to kill sidecar: {}", e))?;
+        sigterm_then_kill(child);
     }
     Ok(())
 }
@@ -345,6 +391,9 @@ fn graceful_shutdown_sync(
     if let Some(child) = sidecar_state.child.lock().unwrap().take() {
         sigterm_then_kill(child);
     }
+
+    // 4. Kill any remaining orphaned sidecars + clean up discovery file.
+    kill_orphaned_sidecars();
 }
 
 /// Restart the app after an update with a clean shutdown sequence.
