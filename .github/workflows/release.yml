@@ -261,39 +261,39 @@ jobs:
             case "$ASSET" in
               # ── macOS Apple Silicon ──
               *_aarch64.app.tar.gz)
-                rename_asset "$ASSET" "${PREFIX}_macOS-Apple-Silicon.app.tar.gz" ;;
+                rename_asset "$ASSET" "ai-matrx-mac-silicon-${VERSION}.app.tar.gz" ;;
               *_aarch64.app.tar.gz.sig)
-                rename_asset "$ASSET" "${PREFIX}_macOS-Apple-Silicon.app.tar.gz.sig" ;;
+                rename_asset "$ASSET" "ai-matrx-mac-silicon-${VERSION}.app.tar.gz.sig" ;;
 
               # ── macOS Intel ──
               *_x64.app.tar.gz)
-                rename_asset "$ASSET" "${PREFIX}_macOS-Intel.app.tar.gz" ;;
+                rename_asset "$ASSET" "ai-matrx-mac-intel-${VERSION}.app.tar.gz" ;;
               *_x64.app.tar.gz.sig)
-                rename_asset "$ASSET" "${PREFIX}_macOS-Intel.app.tar.gz.sig" ;;
+                rename_asset "$ASSET" "ai-matrx-mac-intel-${VERSION}.app.tar.gz.sig" ;;
 
               # ── Linux ──
               *_amd64.deb)
-                rename_asset "$ASSET" "${PREFIX}_Linux.deb" ;;
+                rename_asset "$ASSET" "ai-matrx-linux-${VERSION}.deb" ;;
               *_amd64.deb.sig)
-                rename_asset "$ASSET" "${PREFIX}_Linux.deb.sig" ;;
+                rename_asset "$ASSET" "ai-matrx-linux-${VERSION}.deb.sig" ;;
 
-              # ── Windows Setup (.exe) ──
+              # ── Windows installer (.exe / NSIS) ──
               *_x64-setup.exe)
-                rename_asset "$ASSET" "${PREFIX}_Windows-Setup.exe" ;;
+                rename_asset "$ASSET" "ai-matrx-windows-installer-${VERSION}.exe" ;;
               *_x64-setup.exe.sig)
-                rename_asset "$ASSET" "${PREFIX}_Windows-Setup.exe.sig" ;;
+                rename_asset "$ASSET" "ai-matrx-windows-installer-${VERSION}.exe.sig" ;;
 
-              # ── Windows Installer (.msi) ──
+              # ── Windows MSI ──
               *_x64_en-US.msi)
-                rename_asset "$ASSET" "${PREFIX}_Windows.msi" ;;
+                rename_asset "$ASSET" "ai-matrx-windows-${VERSION}.msi" ;;
               *_x64_en-US.msi.sig)
-                rename_asset "$ASSET" "${PREFIX}_Windows.msi.sig" ;;
+                rename_asset "$ASSET" "ai-matrx-windows-${VERSION}.msi.sig" ;;
 
-              # ── NSIS (.nsis.zip) if present ──
+              # ── NSIS zip bundle (if present) ──
               *_x64-setup.nsis.zip)
-                rename_asset "$ASSET" "${PREFIX}_Windows-Setup.nsis.zip" ;;
+                rename_asset "$ASSET" "ai-matrx-windows-installer-${VERSION}.nsis.zip" ;;
               *_x64-setup.nsis.zip.sig)
-                rename_asset "$ASSET" "${PREFIX}_Windows-Setup.nsis.zip.sig" ;;
+                rename_asset "$ASSET" "ai-matrx-windows-installer-${VERSION}.nsis.zip.sig" ;;
 
               # ── Skip latest.json / source archives ──
               latest.json|*.zip|*.tar.gz)
@@ -335,15 +335,15 @@ jobs:
 
           # Map: latest.json platform key -> renamed asset filename
           PLATFORM_ASSETS = {
-              "darwin-aarch64":      f"{prefix}_macOS-Apple-Silicon.app.tar.gz",
-              "darwin-aarch64-app":  f"{prefix}_macOS-Apple-Silicon.app.tar.gz",
-              "darwin-x86_64":       f"{prefix}_macOS-Intel.app.tar.gz",
-              "darwin-x86_64-app":   f"{prefix}_macOS-Intel.app.tar.gz",
-              "linux-x86_64":        f"{prefix}_Linux.deb",
-              "linux-x86_64-deb":    f"{prefix}_Linux.deb",
-              "windows-x86_64":      f"{prefix}_Windows.msi",
-              "windows-x86_64-msi":  f"{prefix}_Windows.msi",
-              "windows-x86_64-nsis": f"{prefix}_Windows-Setup.exe",
+              "darwin-aarch64":      f"ai-matrx-mac-silicon-{version}.app.tar.gz",
+              "darwin-aarch64-app":  f"ai-matrx-mac-silicon-{version}.app.tar.gz",
+              "darwin-x86_64":       f"ai-matrx-mac-intel-{version}.app.tar.gz",
+              "darwin-x86_64-app":   f"ai-matrx-mac-intel-{version}.app.tar.gz",
+              "linux-x86_64":        f"ai-matrx-linux-{version}.deb",
+              "linux-x86_64-deb":    f"ai-matrx-linux-{version}.deb",
+              "windows-x86_64":      f"ai-matrx-windows-{version}.msi",
+              "windows-x86_64-msi":  f"ai-matrx-windows-{version}.msi",
+              "windows-x86_64-nsis": f"ai-matrx-windows-installer-{version}.exe",
           }
 
           with open("/tmp/updater/latest.json") as f:
