@@ -60,7 +60,11 @@
 
 - [x] **WS URL missing from Supabase** — `app_instances` only stored `tunnel_url` (REST). Added `tunnel_ws_url` column (migration 006). `instance_manager.update_tunnel_url()` now auto-derives and stores both URLs. `settings_sync.heartbeat()` writes both every 5 minutes. `InstanceInfo` TypeScript type updated. Settings Connected Devices UI now shows and copies both REST + WS URLs.
 
-- [ ] **Quick tunnel URL is ephemeral** — `*.trycloudflare.com` URLs change on every engine restart. Remote clients (mobile app, browser) need to re-fetch from Supabase's `app_instances.tunnel_url` + `tunnel_ws_url` after each restart. This is expected behavior for quick tunnels but should be documented clearly in the UI. Named tunnel (stable URL) requires a `CLOUDFLARE_TUNNEL_TOKEN` in `.env`.
+- [x] **Duplicate RLS policies** — All 3 tables (`app_instances`, `app_settings`, `app_sync_status`) had two identical policies from two migration runs. Duplicate `*_owner` policies removed (migration 007). One policy per table remains.
+
+- [x] **Stale tunnel auto-expiry** — If an engine crashes (SIGKILL/power loss) without running cleanup, `tunnel_active=true` rows would stay live forever and mislead remote clients. Added `expire_stale_tunnels()` DB function + pg_cron job (every 5 min) that clears `tunnel_active`, `tunnel_url`, `tunnel_ws_url` for any instance whose `last_seen` is older than 15 minutes (migration 007).
+
+- [ ] **Quick tunnel URL is ephemeral** — `*.trycloudflare.com` URLs change on every engine restart. Remote clients (mobile app, browser) re-fetch from Supabase's `app_instances.tunnel_url` + `tunnel_ws_url` after each restart. Named tunnel (stable URL) requires a `CLOUDFLARE_TUNNEL_TOKEN` in `.env`.
 
 ### AI Provider Keys & Cloud Relay (added 2026-03-22)
 
