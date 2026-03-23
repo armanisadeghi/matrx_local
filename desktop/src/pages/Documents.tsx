@@ -170,32 +170,30 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
           {docs.activeNote && (
             <>
               {userId && (
-                <>
-                  <button
-                    onClick={() => {
-                      docs.loadShares();
-                      setShowShareDialog(true);
-                    }}
-                    className="rounded-md p-1.5 hover:bg-accent text-muted-foreground hover:text-foreground"
-                    title="Share"
-                  >
-                    <Share2 className="h-4 w-4" />
-                  </button>
-
-                  <button
-                    onClick={() => setShowRightPanel(!showRightPanel)}
-                    className={cn(
-                      "rounded-md p-1.5 hover:bg-accent transition-colors",
-                      showRightPanel
-                        ? "text-primary"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                    title="Version history"
-                  >
-                    <History className="h-4 w-4" />
-                  </button>
-                </>
+                <button
+                  onClick={() => {
+                    docs.loadShares();
+                    setShowShareDialog(true);
+                  }}
+                  className="rounded-md p-1.5 hover:bg-accent text-muted-foreground hover:text-foreground"
+                  title="Share"
+                >
+                  <Share2 className="h-4 w-4" />
+                </button>
               )}
+
+              <button
+                onClick={() => setShowRightPanel(!showRightPanel)}
+                className={cn(
+                  "rounded-md p-1.5 hover:bg-accent transition-colors",
+                  showRightPanel
+                    ? "text-primary"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                title="Version history & details"
+              >
+                <History className="h-4 w-4" />
+              </button>
 
               <button
                 onClick={() => {

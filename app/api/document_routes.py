@@ -30,13 +30,14 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from app.services.documents.file_manager import file_manager, content_hash
 from app.services.documents.supabase_client import supabase_docs
 from app.services.documents.sync_engine import sync_engine
-from app.services.local_db.repositories import NotesRepo
+from app.services.local_db.repositories import NotesRepo, NoteVersionsRepo
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["notes"])
 
 _notes_repo: NotesRepo | None = None
+_versions_repo: NoteVersionsRepo | None = None
 
 
 def _get_notes_repo() -> NotesRepo:
@@ -44,6 +45,13 @@ def _get_notes_repo() -> NotesRepo:
     if _notes_repo is None:
         _notes_repo = NotesRepo()
     return _notes_repo
+
+
+def _get_versions_repo() -> NoteVersionsRepo:
+    global _versions_repo
+    if _versions_repo is None:
+        _versions_repo = NoteVersionsRepo()
+    return _versions_repo
 
 
 def _now() -> str:
@@ -169,7 +177,7 @@ class MappingRequest(BaseModel):
 
 
 class ConflictResolveRequest(BaseModel):
-    resolution: str = "keep_remote"
+    resolution: str = "keep_remote"  # keep_local | keep_remote | merge | append | split | exclude
     merged_content: str | None = None
 
 
@@ -280,12 +288,32 @@ async def _sync_note_to_sqlite(
     metadata: dict[str, Any] | None = None,
     is_new: bool = False,
 ) -> None:
-    """Persist note metadata to SQLite for sync tracking."""
+    """Persist note metadata to SQLite for sync tracking.
+
+    Also creates a local version snapshot when content changes, so version
+    history works fully offline without Supabase.
+    """
     repo = _get_notes_repo()
     c_hash = content_hash(content)
 
     existing = await repo.get(note_id)
     now = _now()
+
+    # Create a local version snapshot if content actually changed
+    if existing and existing.get("content") and existing.get("content_hash") != c_hash:
+        try:
+            versions_repo = _get_versions_repo()
+            await versions_repo.create_snapshot(
+                note_id=note_id,
+                content=existing["content"],
+                label=existing.get("label", existing.get("title", "")),
+                user_id=existing.get("user_id", ""),
+                change_source="local",
+            )
+            # Keep version history manageable
+            await versions_repo.prune(note_id, keep=100)
+        except Exception:
+            logger.debug("Local version snapshot failed (non-critical)", exc_info=True)
 
     note_data: dict[str, Any] = {
         "id": note_id,
@@ -480,6 +508,7 @@ async def list_notes(
 async def get_note(note_id: str, request: Request) -> dict[str, Any]:
     _configure_sync(request)
 
+    # Primary: local filesystem lookup
     for f in file_manager.scan_all():
         if _note_id_for_path(f["file_path"]) == note_id:
             record = _build_note_record(f["file_path"])
@@ -494,13 +523,26 @@ async def get_note(note_id: str, request: Request) -> dict[str, Any]:
                     record["created_at"] = sqlite_note.get("created_at", record.get("created_at", ""))
                 return record
 
+    # Secondary: check SQLite (note might have been soft-deleted from FS but still in DB)
+    repo = _get_notes_repo()
+    sqlite_note = await repo.get(note_id)
+    if sqlite_note and sqlite_note.get("file_path"):
+        record = _build_note_record(sqlite_note["file_path"])
+        if record:
+            record["tags"] = sqlite_note.get("tags", [])
+            record["metadata"] = sqlite_note.get("metadata", {})
+            record["sync_status"] = sqlite_note.get("sync_status", "never_synced")
+            record["sync_enabled"] = sqlite_note.get("sync_enabled", True)
+            return record
+
+    # Tertiary: non-blocking cloud fallback with short timeout
     if sync_engine.is_configured:
         try:
-            remote = await supabase_docs.get_note(note_id)
+            remote = await asyncio.wait_for(supabase_docs.get_note(note_id), timeout=5.0)
             if remote:
                 _fire_and_forget(sync_engine.pull_note(note_id))
                 return remote
-        except Exception:
+        except (asyncio.TimeoutError, Exception):
             pass
 
     raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
@@ -587,10 +629,13 @@ async def update_note(
             existing_record = _build_note_record(sqlite_note["file_path"])
 
     if existing_record is None:
+        # Non-blocking cloud fallback with short timeout — never blocks local
         if sync_engine.is_configured:
             try:
-                existing_record = await supabase_docs.get_note(note_id)
-            except Exception:
+                existing_record = await asyncio.wait_for(
+                    supabase_docs.get_note(note_id), timeout=5.0
+                )
+            except (asyncio.TimeoutError, Exception):
                 pass
         if existing_record is None:
             raise HTTPException(status_code=404, detail=f"Note not found: {note_id}")
@@ -701,40 +746,77 @@ async def get_note_sync_status(note_id: str, request: Request) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Version endpoints (Supabase-only — version history lives in the cloud)
+# Version endpoints — local first, cloud as optional enrichment
 # ---------------------------------------------------------------------------
 
 @router.get("/notes/{note_id}/versions")
 async def list_versions(note_id: str, request: Request) -> list[dict[str, Any]]:
+    """List version history for a note. Local versions always available;
+    cloud versions merged in when connected."""
     _configure_sync(request)
-    if not sync_engine.is_configured:
-        return []
-    try:
-        return await supabase_docs.list_versions(note_id)
-    except Exception:
-        return []
+
+    # Always return local versions — works fully offline
+    versions_repo = _get_versions_repo()
+    local_versions = await versions_repo.list_for_note(note_id)
+
+    # Optionally merge cloud versions if available
+    if sync_engine.is_configured:
+        try:
+            cloud_versions = await supabase_docs.list_versions(note_id)
+            # Merge: add cloud versions not already in local by version_number
+            local_numbers = {v.get("version_number") for v in local_versions}
+            for cv in cloud_versions:
+                if cv.get("version_number") not in local_numbers:
+                    local_versions.append({**cv, "_source": "cloud"})
+            local_versions.sort(key=lambda v: v.get("version_number", 0), reverse=True)
+        except Exception:
+            pass  # Cloud unavailable — local versions are sufficient
+
+    return local_versions
 
 
 @router.post("/notes/{note_id}/revert")
 async def revert_note(note_id: str, req: RevertRequest, request: Request) -> dict[str, Any]:
+    """Revert a note to a previous version. Works locally; no cloud required."""
     _configure_sync(request)
-    user_id = _get_user_id(request)
 
-    if not sync_engine.is_configured:
-        raise HTTPException(status_code=503, detail="Cloud sync not configured — cannot revert to version")
+    # Try local version first
+    versions_repo = _get_versions_repo()
+    version = await versions_repo.get_version(note_id, req.version_number)
 
-    version = await supabase_docs.get_version(note_id, req.version_number)
+    # Fallback to cloud if local version not found
+    if not version and sync_engine.is_configured:
+        try:
+            version = await supabase_docs.get_version(note_id, req.version_number)
+        except Exception:
+            pass
+
     if not version:
         raise HTTPException(status_code=404, detail=f"Version {req.version_number} not found")
 
-    existing = await supabase_docs.get_note(note_id)
-    folder_name = existing.get("folder_name", "General") if existing else "General"
+    # Get current note metadata from SQLite
+    repo = _get_notes_repo()
+    existing = await repo.get(note_id)
+    folder_name = (existing.get("folder_name") or "General") if existing else "General"
     folder_id = existing.get("folder_id") if existing else None
+    label = version.get("label") or (existing.get("label", "Untitled") if existing else "Untitled")
 
-    file_path = file_manager.write_note(folder_name, version["label"], version["content"])
+    # Write the reverted content locally
+    file_path = file_manager.write_note(folder_name, label, version["content"])
+
+    # Update SQLite (this also creates a version snapshot of the current content)
+    await _sync_note_to_sqlite(
+        note_id=note_id,
+        label=label,
+        content=version["content"],
+        folder_name=folder_name,
+        folder_id=folder_id,
+        file_path=file_path,
+    )
+
     result: dict[str, Any] = {
         "id": note_id,
-        "label": version["label"],
+        "label": label,
         "content": version["content"],
         "folder_name": folder_name,
         "folder_id": folder_id,
@@ -742,13 +824,15 @@ async def revert_note(note_id: str, req: RevertRequest, request: Request) -> dic
         "_source": "local",
     }
 
-    _fire_and_forget(sync_engine.push_note(
-        note_id=note_id,
-        label=version["label"],
-        content=version["content"],
-        folder_name=folder_name,
-        folder_id=folder_id,
-    ))
+    # Fire-and-forget push to cloud if configured
+    if sync_engine.is_configured:
+        _fire_and_forget(sync_engine.push_note(
+            note_id=note_id,
+            label=label,
+            content=version["content"],
+            folder_name=folder_name,
+            folder_id=folder_id,
+        ))
 
     return result
 

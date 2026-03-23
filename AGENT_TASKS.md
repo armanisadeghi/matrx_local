@@ -113,6 +113,15 @@
 - [x] **Sync bar claims "Connected" but does nothing** — Fixed 2026-03-02: `SyncStatusBar` always renders now (with "Not configured" placeholder). Sync button triggers real sync.
 - [x] **Notes not saving (all updates returning 404)** — Fixed 2026-03-18: UUID mismatch between create and update. See 3a above.
 
+- [x] **Notes system hardened for local-first architecture** — Fixed 2026-03-23: Comprehensive overhaul:
+  1. **Local version history** — Added SQLite migration V7 (`note_versions` table gets `label`, `version_number`, `change_source` columns). New `NoteVersionsRepo` class. Version snapshots auto-created on every content edit. Version history and revert now work fully offline.
+  2. **Cloud decoupled** — Supabase `httpx` timeout reduced from 30s to 15s (5s connect). `get_note` and `update_note` cloud fallbacks wrapped in `asyncio.wait_for(timeout=5.0)`. Cloud operations never block local CRUD.
+  3. **Append conflict resolution** — New `append` resolution strategy: combines local + cloud content with separator. Available in both backend (`sync_engine.py`) and frontend (`ConflictResolver.tsx`).
+  4. **Version history available offline** — `list_versions` endpoint returns local versions first, merges cloud versions when available. Version history button now visible in local-only mode (removed `userId` gate).
+  5. **Revert works offline** — `revert_note` checks local SQLite first, falls back to cloud only if needed. No longer requires cloud sync to be configured.
+  6. **Voice push-to-note hardened** — Added empty transcript guard and better logging. Pipeline uses local-only `engine.createNote("local", ...)` which was verified working through the local-first route.
+  7. **Frontend types updated** — `DocVersion` fields made optional for local version compatibility. Conflict resolution types include `append`.
+
 ---
 
 ### Scraping

@@ -353,6 +353,20 @@ CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path);
 """
 
 # ------------------------------------------------------------------
+# Migration 7: Local note versions — offline version history support
+# ------------------------------------------------------------------
+
+_V7_LOCAL_NOTE_VERSIONS = """
+-- Add label and version_number to note_versions for local version history.
+-- This makes version history work fully offline without Supabase.
+ALTER TABLE note_versions ADD COLUMN label TEXT NOT NULL DEFAULT '';
+ALTER TABLE note_versions ADD COLUMN version_number INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE note_versions ADD COLUMN change_source TEXT NOT NULL DEFAULT 'local';
+
+CREATE INDEX IF NOT EXISTS idx_note_versions_number ON note_versions(note_id, version_number DESC);
+"""
+
+# ------------------------------------------------------------------
 # All migrations in order
 # ------------------------------------------------------------------
 
@@ -363,4 +377,5 @@ MIGRATIONS: list[tuple[int, str]] = [
     (4, _V4_AGENTS_USER_ID),
     (5, _V5_AGENTS_METADATA),
     (6, _V6_NOTES_SYNC_METADATA),
+    (7, _V7_LOCAL_NOTE_VERSIONS),
 ]

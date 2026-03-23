@@ -15,6 +15,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ConflictDetail } from "@/lib/api";
@@ -23,7 +24,7 @@ interface ConflictResolverProps {
   conflicts: ConflictDetail[];
   onResolve: (
     noteId: string,
-    resolution: "keep_local" | "keep_remote" | "merge" | "split" | "exclude",
+    resolution: "keep_local" | "keep_remote" | "merge" | "append" | "split" | "exclude",
     mergedContent?: string,
   ) => void;
   onClose: () => void;
@@ -191,7 +192,7 @@ export function ConflictResolver({ conflicts, onResolve, onClose }: ConflictReso
   if (!conflict) return null;
 
   const handleResolve = async (
-    resolution: "keep_local" | "keep_remote" | "merge" | "split" | "exclude",
+    resolution: "keep_local" | "keep_remote" | "merge" | "append" | "split" | "exclude",
   ) => {
     setResolving(true);
     try {
@@ -375,6 +376,15 @@ export function ConflictResolver({ conflicts, onResolve, onClose }: ConflictReso
                 >
                   <GitMerge className="h-3.5 w-3.5" />
                   Merge
+                </button>
+                <button
+                  onClick={() => handleResolve("append")}
+                  disabled={resolving}
+                  className="flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-500 hover:bg-amber-500/20 disabled:opacity-60"
+                  title="Combine both versions into one note (local first, then cloud)"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Append
                 </button>
                 <button
                   onClick={() => handleResolve("split")}

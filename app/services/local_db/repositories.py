@@ -947,6 +947,90 @@ class NotesRepo:
 
 
 # ==================================================================
+# NoteVersionsRepo — note_versions table (local version history)
+# ==================================================================
+
+class NoteVersionsRepo:
+    """Local version history for notes — works fully offline."""
+
+    def __init__(self, db: LocalDatabase | None = None):
+        self._db = db or get_db()
+
+    async def list_for_note(self, note_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        rows = await self._db.fetchall(
+            "SELECT * FROM note_versions WHERE note_id = ? ORDER BY version_number DESC LIMIT ?",
+            (note_id, limit),
+        )
+        return [_row_to_dict(r) for r in rows]
+
+    async def get_version(self, note_id: str, version_number: int) -> dict[str, Any] | None:
+        row = await self._db.fetchone(
+            "SELECT * FROM note_versions WHERE note_id = ? AND version_number = ?",
+            (note_id, version_number),
+        )
+        return _row_to_dict(row) if row else None
+
+    async def next_version_number(self, note_id: str) -> int:
+        row = await self._db.fetchone(
+            "SELECT MAX(version_number) as max_v FROM note_versions WHERE note_id = ?",
+            (note_id,),
+        )
+        return (row["max_v"] or 0) + 1 if row else 1
+
+    async def create_snapshot(
+        self,
+        note_id: str,
+        content: str,
+        label: str = "",
+        user_id: str = "",
+        change_source: str = "local",
+    ) -> dict[str, Any]:
+        import hashlib
+        from uuid import uuid4
+
+        version_number = await self.next_version_number(note_id)
+        c_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        version_id = str(uuid4())
+        now = _now()
+
+        await self._db.execute(
+            """INSERT INTO note_versions
+               (id, note_id, user_id, content, content_hash, label,
+                version_number, change_source, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (version_id, note_id, user_id, content, c_hash, label,
+             version_number, change_source, now),
+        )
+        await self._db.commit()
+
+        return {
+            "id": version_id,
+            "note_id": note_id,
+            "version_number": version_number,
+            "label": label,
+            "content": content,
+            "content_hash": c_hash,
+            "change_source": change_source,
+            "created_at": now,
+        }
+
+    async def delete_for_note(self, note_id: str) -> None:
+        await self._db.execute("DELETE FROM note_versions WHERE note_id = ?", (note_id,))
+        await self._db.commit()
+
+    async def prune(self, note_id: str, keep: int = 100) -> None:
+        """Keep only the most recent `keep` versions for a note."""
+        await self._db.execute(
+            """DELETE FROM note_versions WHERE note_id = ? AND id NOT IN (
+                SELECT id FROM note_versions WHERE note_id = ?
+                ORDER BY version_number DESC LIMIT ?
+            )""",
+            (note_id, note_id, keep),
+        )
+        await self._db.commit()
+
+
+# ==================================================================
 # NoteFoldersRepo — note_folders table
 # ==================================================================
 

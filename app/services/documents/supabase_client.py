@@ -67,7 +67,9 @@ class SupabaseDocClient:
             headers.update(extra_headers)
 
         url = f"{_REST_BASE}/{table}"
-        async with httpx.AsyncClient(timeout=30) as client:
+        # Short timeout: cloud operations must never block the local-first UX.
+        # Connect timeout 5s, read timeout 10s, total 15s.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as client:
             resp = await client.request(
                 method, url, params=params, json=json_body, headers=headers
             )

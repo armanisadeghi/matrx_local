@@ -139,11 +139,12 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
         const note = await engine.getNote(noteId, userId ?? "local");
         update({ activeNote: note });
 
-        if (userId) {
-          engine.listVersions(noteId, userId).then((versions) => {
-            if (mountedRef.current) update({ versions });
-          }).catch(() => {});
-        }
+        // Load version history — works locally now, no userId required
+        engine.listVersions(noteId, userId ?? "local").then((versions) => {
+          if (mountedRef.current) update({ versions });
+        }).catch(() => {
+          if (mountedRef.current) update({ versions: [] });
+        });
       } catch (err) {
         update({
           error: err instanceof Error ? err.message : "Failed to load note",
@@ -291,11 +292,11 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
 
   const revertNote = useCallback(
     async (noteId: string, versionNumber: number) => {
-      if (!engineReady || !userId) return;
+      if (!engineReady) return;
       try {
-        const note = await engine.revertNote(noteId, userId, versionNumber);
+        const note = await engine.revertNote(noteId, userId ?? "local", versionNumber);
         update({ activeNote: note });
-        const versions = await engine.listVersions(noteId, userId);
+        const versions = await engine.listVersions(noteId, userId ?? "local");
         update({ versions });
       } catch (err) {
         update({
@@ -350,7 +351,7 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
   const resolveConflict = useCallback(
     async (
       noteId: string,
-      resolution: "keep_local" | "keep_remote" | "merge" | "split" | "exclude",
+      resolution: "keep_local" | "keep_remote" | "merge" | "append" | "split" | "exclude",
       mergedContent?: string,
     ) => {
       if (!engineReady) return;

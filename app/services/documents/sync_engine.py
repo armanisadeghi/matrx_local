@@ -707,6 +707,7 @@ class SyncEngine:
           keep_local  — Use the local version, push to cloud.
           keep_remote — Use the cloud version, overwrite local.
           merge       — Use the provided merged_content.
+          append      — Combine both versions into one (local first, then cloud).
           split       — Keep both as separate notes.
           exclude     — Mark this note as excluded from sync.
         """
@@ -767,6 +768,24 @@ class SyncEngine:
                 except Exception:
                     pass
             result["content"] = merged_content
+
+        elif resolution == "append":
+            # Combine both versions: local first, then cloud, with separator
+            separator = "\n\n---\n\n*— Appended from cloud sync —*\n\n"
+            combined = local_content.rstrip() + separator + remote_content.lstrip()
+            self.fm.write_note(folder_name, label, combined)
+            if self.is_configured and self._user_id:
+                try:
+                    await self.push_note(
+                        note_id=note_id,
+                        label=label,
+                        content=combined,
+                        folder_name=folder_name,
+                        folder_id=folder_id,
+                    )
+                except Exception:
+                    pass
+            result["content"] = combined
 
         elif resolution == "split":
             self.fm.write_note(folder_name, label, local_content)

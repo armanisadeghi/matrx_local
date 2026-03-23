@@ -735,7 +735,14 @@ function TranscribeTab({
   }, []);
 
   const handlePushToNote = useCallback(async (session: TranscriptionSession, currentText: string) => {
-    if (!engine.engineUrl) return;
+    if (!engine.engineUrl) {
+      console.warn("[voice] push to note skipped — engine not discovered yet");
+      return;
+    }
+    if (!currentText.trim()) {
+      console.warn("[voice] push to note skipped — empty transcript");
+      return;
+    }
     setPushingToNote(session.id);
     try {
       const date = new Date(session.createdAt);

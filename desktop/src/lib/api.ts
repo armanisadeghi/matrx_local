@@ -1388,7 +1388,7 @@ class EngineAPI {
   async resolveConflict(
     noteId: string,
     userId: string,
-    resolution: "keep_local" | "keep_remote" | "merge" | "split" | "exclude",
+    resolution: "keep_local" | "keep_remote" | "merge" | "append" | "split" | "exclude",
     mergedContent?: string,
   ): Promise<void> {
     await this.docRequest(
@@ -1975,14 +1975,16 @@ export interface CreateNoteData {
 export interface DocVersion {
   id: string;
   note_id: string;
-  user_id: string;
+  user_id?: string;
   content: string;
-  label: string;
+  label?: string;
   version_number: number;
-  change_source: string;
-  change_type: string | null;
-  diff_metadata: Record<string, unknown>;
+  change_source?: string;
+  change_type?: string | null;
+  content_hash?: string;
+  diff_metadata?: Record<string, unknown>;
   created_at: string;
+  _source?: "local" | "cloud";
 }
 
 export interface DocShare {
