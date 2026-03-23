@@ -48,6 +48,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { streamCompletion, callWithTools, ContextSizeError } from "@/lib/llm/api";
 import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
+import { PromptPickerIcon } from "@/components/PromptPicker";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
 
@@ -1633,7 +1634,16 @@ function InferenceTab() {
             <div className="p-3 space-y-5">
               {/* System prompt */}
               <div className="space-y-2">
-                <Label className="text-xs font-medium">System Prompt</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium">System Prompt</Label>
+                  <PromptPickerIcon
+                    onSelect={(content) => {
+                      setSystemPrompt(content);
+                      if (activeConvId) updateMessages(activeConvId, messages, content);
+                    }}
+                    currentContent={systemPrompt}
+                  />
+                </div>
                 <Textarea
                   value={systemPrompt}
                   onChange={(e) => {

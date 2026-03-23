@@ -35,6 +35,7 @@ _PUBLIC_PATHS = frozenset(
         "/chat/agents",         # read-only agent/prompt list, no user data — frontend calls this before auth
         "/chat/sync/status",    # read-only sync status — useful for diagnostics before auth
         "/chat/sync/trigger",   # force sync — public so it can be called from setup/diagnostics
+        "/chat/ai-status",      # read-only provider availability — needed before auth to show warnings
         "/remote-scraper/queue/poller-stats",
         "/docs",
         "/openapi.json",

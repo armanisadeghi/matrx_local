@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { AlertTriangle, X } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { useAgents } from "@/hooks/use-agents";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
@@ -7,6 +8,7 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatWelcome } from "@/components/chat/ChatWelcome";
 import { GuidedVariableInputs } from "@/components/chat/GuidedVariableInputs";
 import { cn } from "@/lib/utils";
+import { engine as engineAPI } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { ActiveAgent, AgentInfo, PromptVariable } from "@/types/agents";
 
@@ -16,8 +18,42 @@ interface ChatPageProps {
   tools: string[];
 }
 
+interface AiStatusWarning {
+  message: string;
+  detail: string;
+}
+
 export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [aiWarning, setAiWarning] = useState<AiStatusWarning | null>(null);
+  const [aiWarningDismissed, setAiWarningDismissed] = useState(false);
+
+  // Check AI provider status once the engine is connected
+  useEffect(() => {
+    if (engineStatus !== "connected" || !engineUrl) return;
+    engineAPI.getAiStatus()
+      .then((status) => {
+        const warnings: string[] = [];
+        if (!status.providers.any_available) {
+          warnings.push("No AI provider API keys are configured on the engine.");
+        }
+        if (!status.jwt_validation.configured) {
+          warnings.push("SUPABASE_JWT_SECRET is not set — user tokens cannot be validated.");
+        }
+        if (warnings.length > 0) {
+          const missing = status.providers.missing;
+          setAiWarning({
+            message: warnings[0],
+            detail: !status.providers.any_available
+              ? `Add at least one key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.) to the engine .env file and restart. Missing: ${missing.join(", ")}.`
+              : warnings[1] ?? "",
+          });
+        }
+      })
+      .catch(() => {
+        // Non-critical — engine might not support this endpoint yet
+      });
+  }, [engineStatus, engineUrl]);
 
   // ---- Agent state ----
   const { builtins, userAgents, sharedAgents, isLoading: agentsLoading } = useAgents({ engineUrl });
@@ -160,6 +196,26 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
             </div>
           </div>
         </header>
+
+        {/* AI provider warning banner */}
+        {aiWarning && !aiWarningDismissed && (
+          <div className="flex items-start gap-3 border-b border-amber-500/30 bg-amber-500/5 px-4 py-2.5">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-amber-500">{aiWarning.message}</p>
+              {aiWarning.detail && (
+                <p className="mt-0.5 text-xs text-muted-foreground">{aiWarning.detail}</p>
+              )}
+            </div>
+            <button
+              onClick={() => setAiWarningDismissed(true)}
+              className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Messages or Welcome */}
         <div className="flex-1 min-h-0 overflow-hidden">

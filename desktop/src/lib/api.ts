@@ -249,6 +249,20 @@ class EngineAPI {
     return resp.json();
   }
 
+  // ── AI provider status ─────────────────────────────────────────────────
+
+  /** Check which AI providers are configured (have API keys) on the engine. */
+  async getAiStatus(): Promise<{
+    providers: { available: string[]; missing: string[]; any_available: boolean };
+    jwt_validation: { configured: boolean; warning: string | null };
+    engine: { initialized: boolean; client_mode: boolean };
+  }> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/chat/ai-status`);
+    if (!resp.ok) throw new Error(`Failed to get AI status: ${resp.status}`);
+    return resp.json();
+  }
+
   // ── Wake word settings (SQLite-persisted) ──────────────────────────────
 
   /** Fetch the user's wake word engine preference from the sidecar SQLite store. */

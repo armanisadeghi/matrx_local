@@ -9,10 +9,10 @@
  *   5. Training guide   — step-by-step instructions for custom model
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Mic, MicOff, Volume2, Zap, Download, CheckCircle2,
-  AlertCircle, Loader2, RefreshCw, Trash2, Info, ChevronRight,
+  AlertCircle, Loader2, RefreshCw, Info, ChevronRight,
   Radio, Settings2, BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -141,7 +141,6 @@ export function WakeWordPage({ wwState, wwActions }: WakeWordPageProps) {
             onSave={saveSettings}
             saving={settingsSaving}
             engine={settings.engine}
-            wwActions={wwActions}
           />
         )}
         {innerTab === "models" && (
@@ -434,13 +433,11 @@ function ConfigTab({
   onSave,
   saving,
   engine,
-  wwActions,
 }: {
   settings: WakeWordSettings;
   onSave: (s: WakeWordSettings) => Promise<void>;
   saving: boolean;
   engine: WakeWordEngine;
-  wwActions: WakeWordHookActions;
 }) {
   const [local, setLocal] = useState(settings);
   const [dirty, setDirty] = useState(false);

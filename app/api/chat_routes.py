@@ -382,6 +382,68 @@ async def trigger_chat_sync() -> dict[str, Any]:
 # The actual route handlers live in matrx_ai.app.routers — we import them
 # directly here so we don't duplicate any logic.
 
+@router.get("/ai-status")
+async def ai_provider_status() -> dict[str, Any]:
+    """Return which AI providers are configured (have API keys set).
+
+    Used by the UI to show a warning when no providers are available instead
+    of letting requests crash silently with 'No API key was provided' errors.
+
+    This endpoint is public (listed in _PUBLIC_PATHS in auth.py) so it can be
+    called before auth is established.
+    """
+    import os
+
+    PROVIDER_ENV_VARS: dict[str, list[str]] = {
+        "anthropic": ["ANTHROPIC_API_KEY"],
+        "openai":    ["OPENAI_API_KEY"],
+        "google":    ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "groq":      ["GROQ_API_KEY"],
+        "together":  ["TOGETHER_API_KEY"],
+        "xai":       ["XAI_API_KEY"],
+        "cerebras":  ["CEREBRAS_API_KEY"],
+    }
+
+    available: list[str] = []
+    missing: list[str] = []
+
+    for provider, env_vars in PROVIDER_ENV_VARS.items():
+        configured = any(os.getenv(var, "").strip() for var in env_vars)
+        if configured:
+            available.append(provider)
+        else:
+            missing.append(provider)
+
+    jwt_secret_set = bool(os.getenv("SUPABASE_JWT_SECRET", "").strip())
+    ai_initialized = False
+    client_mode = False
+    try:
+        from app.services.ai.engine import is_initialized, is_client_mode
+        ai_initialized = is_initialized()
+        client_mode = is_client_mode()
+    except Exception:
+        pass
+
+    return {
+        "providers": {
+            "available": available,
+            "missing": missing,
+            "any_available": len(available) > 0,
+        },
+        "jwt_validation": {
+            "configured": jwt_secret_set,
+            "warning": None if jwt_secret_set else (
+                "SUPABASE_JWT_SECRET is not set — user JWTs cannot be validated. "
+                "Set it in .env to enable authenticated AI calls."
+            ),
+        },
+        "engine": {
+            "initialized": ai_initialized,
+            "client_mode": client_mode,
+        },
+    }
+
+
 def build_ai_sub_app() -> "FastAPI":  # noqa: F821  (imported inside to avoid circular at module level)
     """Build a self-contained FastAPI sub-application for AI routes.
 
