@@ -3,6 +3,10 @@
  *
  * Shows when a new version is available, with release notes,
  * download progress bar, and install/restart buttons.
+ *
+ * When the update was pre-downloaded in the background (status === "installed"
+ * before the user clicked anything), the dialog opens directly to the
+ * "Ready to Install" state — no download step is required.
  */
 
 import {
@@ -16,7 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Download, RefreshCw, Loader2, ArrowUpCircle, X } from "lucide-react";
+import { Download, RefreshCw, Loader2, ArrowUpCircle, X, CheckCircle2 } from "lucide-react";
 import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update";
 
 declare const __APP_VERSION__: string;
@@ -33,26 +37,36 @@ function formatBytes(bytes: number): string {
 }
 
 export function UpdateDialog({ state, actions }: UpdateDialogProps) {
-  const { status, busy, progress, dialogOpen } = state;
-  const isDownloading = status?.status === "downloading";
+  const { status, busy, preDownloading, progress, dialogOpen } = state;
+  const isDownloading = status?.status === "downloading" || preDownloading;
   const isInstalled = status?.status === "installed";
   const isAvailable = status?.status === "available";
+
+  const titleText = isInstalled
+    ? "Ready to Install"
+    : isDownloading
+      ? "Downloading Update"
+      : "Update Available";
+
+  const descriptionText = isInstalled
+    ? "The update has been downloaded. Restart to apply the new version."
+    : isDownloading
+      ? "Downloading update in the background…"
+      : "A new version of AI Matrx is available.";
 
   return (
     <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) actions.dismiss(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ArrowUpCircle className="h-5 w-5 text-primary" />
-            {isInstalled ? "Update Ready" : "Update Available"}
+            {isInstalled ? (
+              <CheckCircle2 className="h-5 w-5 text-green-500" />
+            ) : (
+              <ArrowUpCircle className="h-5 w-5 text-primary" />
+            )}
+            {titleText}
           </DialogTitle>
-          <DialogDescription>
-            {isInstalled
-              ? "The update has been downloaded and installed. Restart to apply."
-              : isDownloading
-                ? "Downloading update..."
-                : `A new version of AI Matrx is available.`}
-          </DialogDescription>
+          <DialogDescription>{descriptionText}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -71,8 +85,8 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
             </div>
           )}
 
-          {/* Release notes */}
-          {status?.body && isAvailable && (
+          {/* Release notes — show for available and while downloading */}
+          {status?.body && (isAvailable || isDownloading) && (
             <div className="rounded-lg bg-muted/50 p-3 max-h-40 overflow-y-auto">
               <p className="text-xs font-medium text-muted-foreground mb-1">Release Notes</p>
               <p className="text-sm whitespace-pre-wrap">{status.body}</p>
@@ -80,7 +94,7 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
           )}
 
           {/* Download progress */}
-          {(isDownloading || (busy && !isAvailable && !isInstalled)) && (
+          {isDownloading && (
             <div className="space-y-2">
               <Progress value={progress} />
               <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -101,11 +115,17 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
               <RefreshCw className="h-4 w-4" />
               Restart Now
             </Button>
-          ) : isDownloading || (busy && !isAvailable) ? (
-            <Button disabled className="gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Downloading...
-            </Button>
+          ) : isDownloading ? (
+            <>
+              <Button variant="ghost" onClick={actions.dismiss} className="gap-2">
+                <X className="h-4 w-4" />
+                Later
+              </Button>
+              <Button disabled className="gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Downloading…
+              </Button>
+            </>
           ) : (
             <>
               <Button variant="ghost" onClick={actions.dismiss} className="gap-2">

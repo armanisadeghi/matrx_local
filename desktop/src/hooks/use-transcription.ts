@@ -20,6 +20,10 @@ async function tauriListen<T>(event: string, handler: (e: { payload: T }) => voi
   return listen<T>(event, handler);
 }
 
+export interface TranscriptionDownloadQueueEntry {
+  filename: string;
+}
+
 export interface TranscriptionState {
   // Setup
   setupStatus: VoiceSetupStatus | null;
@@ -27,6 +31,10 @@ export interface TranscriptionState {
   downloadProgress: DownloadProgress | null;
   isDetecting: boolean;
   isDownloading: boolean;
+  /** Filename of the model actively being downloaded right now */
+  downloadingFilename: string | null;
+  /** Models queued to download after the current one finishes */
+  downloadQueue: TranscriptionDownloadQueueEntry[];
   isInitializing: boolean;
 
   // Recording
@@ -57,6 +65,18 @@ export interface TranscriptionState {
 export interface TranscriptionActions {
   detectHardware: () => Promise<HardwareDetectionResult>;
   downloadModel: (filename: string) => Promise<void>;
+  /**
+   * Add a Whisper model to the download queue. If nothing is currently
+   * downloading, the download starts immediately. Otherwise it runs after
+   * the current one finishes (or fails). Already-downloaded or already-queued
+   * models are ignored.
+   */
+  queueDownload: (filename: string) => void;
+  /**
+   * Queue all provided model filenames for download, skipping any already
+   * downloaded. Downloads happen sequentially via the queue.
+   */
+  downloadAll: (filenames: string[]) => void;
   downloadVadModel: () => Promise<void>;
   initTranscription: (filename: string) => Promise<void>;
   startRecording: (deviceName?: string) => Promise<void>;
@@ -97,6 +117,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     useState<DownloadProgress | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadingFilename, setDownloadingFilename] = useState<string | null>(null);
+  const [downloadQueue, setDownloadQueue] = useState<TranscriptionDownloadQueueEntry[]>([]);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingTail, setIsProcessingTail] = useState(false);
@@ -107,6 +129,12 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const [error, setError] = useState<string | null>(null);
 
   const unlistenersRef = useRef<UnlistenFn[]>([]);
+  // Ref-based queue so the processor callback always sees latest value
+  const downloadQueueRef = useRef<TranscriptionDownloadQueueEntry[]>([]);
+  const isDownloadingRef = useRef(false);
+  const downloadingFilenameRef = useRef<string | null>(null);
+  // Track downloaded filenames for queue dedup (subset of setupStatus.downloaded_models)
+  const downloadedFilenamesRef = useRef<Set<string>>(new Set());
 
   // Full transcript derived from segments
   const fullTranscript = segments
@@ -167,6 +195,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
       if (status.selected_model) {
         setActiveModel(status.selected_model);
       }
+      // Keep downloaded filenames ref in sync for queue dedup
+      downloadedFilenamesRef.current = new Set(status.downloaded_models ?? []);
     } catch {
       // Not critical — app may work without voice features
     }
@@ -188,8 +218,15 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     }
   }, []);
 
+  /**
+   * Execute a single Whisper model download. Does NOT manage queue state —
+   * that's done by processQueue. Direct callers (quickSetup) can call this directly.
+   */
   const downloadModel = useCallback(async (filename: string) => {
     setIsDownloading(true);
+    isDownloadingRef.current = true;
+    setDownloadingFilename(filename);
+    downloadingFilenameRef.current = filename;
     setDownloadProgress(null);
     setError(null);
 
@@ -203,6 +240,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     try {
       await tauriInvoke("download_whisper_model", { filename });
       setDownloadProgress(null);
+      downloadedFilenamesRef.current.add(filename);
+      await refreshSetupStatus();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -210,11 +249,74 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     } finally {
       unlisten();
       setIsDownloading(false);
+      isDownloadingRef.current = false;
+      setDownloadingFilename(null);
+      downloadingFilenameRef.current = null;
     }
-  }, []);
+  }, [refreshSetupStatus]);
+
+  /**
+   * Sequential queue processor. Pops the next entry and downloads it.
+   * Calls itself recursively until the queue is empty. Continues on failure
+   * so one bad download doesn't block the rest of the queue.
+   */
+  const processQueue = useCallback(async () => {
+    if (isDownloadingRef.current) return;
+    const next = downloadQueueRef.current.shift();
+    if (!next) return;
+    setDownloadQueue([...downloadQueueRef.current]);
+    try {
+      await downloadModel(next.filename);
+    } catch {
+      // Error already set by downloadModel — continue to next item
+    }
+    void processQueue();
+  }, [downloadModel]);
+
+  const queueDownload = useCallback(
+    (filename: string) => {
+      // Skip if already downloaded
+      if (downloadedFilenamesRef.current.has(filename)) return;
+      // Skip if already queued
+      if (downloadQueueRef.current.some((e) => e.filename === filename)) return;
+      // Skip if currently downloading this exact file
+      if (isDownloadingRef.current && downloadingFilenameRef.current === filename) return;
+
+      if (!isDownloadingRef.current) {
+        // Nothing active — start immediately
+        void downloadModel(filename).then(() => void processQueue()).catch(() => void processQueue());
+      } else {
+        // Something is active — push to queue
+        downloadQueueRef.current.push({ filename });
+        setDownloadQueue([...downloadQueueRef.current]);
+      }
+    },
+    [downloadModel, processQueue]
+  );
+
+  const downloadAll = useCallback(
+    (filenames: string[]) => {
+      const queuedSet = new Set(downloadQueueRef.current.map((e) => e.filename));
+
+      for (const filename of filenames) {
+        if (downloadedFilenamesRef.current.has(filename)) continue;
+        if (queuedSet.has(filename)) continue;
+        if (isDownloadingRef.current && downloadingFilenameRef.current === filename) continue;
+        downloadQueueRef.current.push({ filename });
+        queuedSet.add(filename);
+      }
+      setDownloadQueue([...downloadQueueRef.current]);
+
+      if (!isDownloadingRef.current) {
+        void processQueue();
+      }
+    },
+    [processQueue]
+  );
 
   const downloadVadModel = useCallback(async () => {
     setIsDownloading(true);
+    isDownloadingRef.current = true;
     setDownloadProgress(null);
     setError(null);
 
@@ -235,6 +337,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     } finally {
       unlisten();
       setIsDownloading(false);
+      isDownloadingRef.current = false;
     }
   }, []);
 
@@ -355,6 +458,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
 
   const deleteModel = useCallback(async (filename: string) => {
     await tauriInvoke("delete_model", { filename });
+    downloadedFilenamesRef.current.delete(filename);
     await refreshSetupStatus();
   }, [refreshSetupStatus]);
 
@@ -450,6 +554,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     downloadProgress,
     isDetecting,
     isDownloading,
+    downloadingFilename,
+    downloadQueue,
     isInitializing,
     isRecording,
     isProcessingTail,
@@ -466,6 +572,8 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const actions: TranscriptionActions = {
     detectHardware,
     downloadModel,
+    queueDownload,
+    downloadAll,
     downloadVadModel,
     initTranscription,
     startRecording,

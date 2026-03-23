@@ -28,6 +28,7 @@ import {
   Plus,
   PackagePlus,
   ExternalLink,
+  Loader2,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,7 @@ import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
 import { useNavigate } from "react-router-dom";
 import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
 import type { SystemPrompt } from "@/lib/system-prompts";
+import { ModelRepoAnalyzer } from "@/components/llm/ModelRepoAnalyzer";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
 
@@ -599,6 +601,153 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
   );
 }
 
+// ── HuggingFace Token Panel ───────────────────────────────────────────────
+//
+// Some HuggingFace repos store files in their XET content-addressed storage
+// system. A plain HTTP download cannot reconstruct XET files — it requires
+// an access token so HF can serve a direct CDN URL instead.
+//
+// This panel lets users add their (free) HF token once. It shows:
+//   • When xetTokenRequired is set (download just failed needing a token)
+//   • Always as a collapsible section at the bottom of the Models tab
+
+function HfTokenPanel({ forcedOpen = false }: { forcedOpen?: boolean }) {
+  const [state, actions] = useLlmContext();
+  const { hfToken, xetTokenRequired } = state;
+  const { saveHfToken, clearError } = actions;
+
+  const [open, setOpen] = useState(forcedOpen || xetTokenRequired);
+  const [inputValue, setInputValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  // Auto-expand if a download just failed with XET error
+  useEffect(() => {
+    if (xetTokenRequired) setOpen(true);
+  }, [xetTokenRequired]);
+
+  const handleSave = async () => {
+    const trimmed = inputValue.trim();
+    if (!trimmed.startsWith("hf_") && trimmed !== "") {
+      setLocalError('HuggingFace tokens start with "hf_". Please check and try again.');
+      return;
+    }
+    setSaving(true);
+    setLocalError(null);
+    try {
+      await saveHfToken(trimmed);
+      setSavedMsg(true);
+      setInputValue("");
+      clearError();
+      setTimeout(() => setSavedMsg(false), 3000);
+    } catch (e) {
+      setLocalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClear = async () => {
+    setSaving(true);
+    try {
+      await saveHfToken("");
+      setSavedMsg(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className={`rounded-lg border ${xetTokenRequired ? "border-amber-500/60 bg-amber-500/5" : "border-border bg-muted/10"} p-4 space-y-3`}>
+      <button
+        className="flex items-center gap-2 w-full text-left"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="text-sm font-medium flex items-center gap-2">
+          <svg className="h-4 w-4 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          HuggingFace Access Token
+          {hfToken ? (
+            <span className="ml-1 text-xs text-green-500 font-normal">✓ configured</span>
+          ) : (
+            <span className="ml-1 text-xs text-muted-foreground font-normal">optional — required for some models</span>
+          )}
+        </span>
+        {open ? <ChevronUp className="h-3 w-3 ml-auto text-muted-foreground" /> : <ChevronDown className="h-3 w-3 ml-auto text-muted-foreground" />}
+      </button>
+
+      {open && (
+        <div className="space-y-3 pt-1">
+          {xetTokenRequired && (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-600 dark:text-amber-400 space-y-1">
+              <p className="font-medium">This model requires a HuggingFace token to download.</p>
+              <p>The model is hosted on HuggingFace's new XET storage system, which requires authentication. A <strong>free</strong> account and read-only token is all you need.</p>
+            </div>
+          )}
+
+          <div className="space-y-1.5 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground text-sm">How to get your token (free):</p>
+            <ol className="space-y-1 list-decimal list-inside">
+              <li>
+                Go to{" "}
+                <a
+                  href="https://huggingface.co/settings/tokens"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-500 hover:underline inline-flex items-center gap-0.5"
+                >
+                  huggingface.co/settings/tokens <ExternalLink className="h-3 w-3" />
+                </a>
+                {" "}(create a free account if you don't have one)
+              </li>
+              <li>Click <strong>New token</strong>, choose <strong>Read</strong> access, give it any name</li>
+              <li>Copy the token (starts with <code className="bg-muted px-1 rounded">hf_</code>) and paste it below</li>
+            </ol>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Input
+              type="password"
+              placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxx"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              className="text-xs h-8 font-mono flex-1"
+              onKeyDown={(e) => e.key === "Enter" && handleSave()}
+            />
+            <Button size="sm" className="h-8 px-3" disabled={!inputValue.trim() || saving} onClick={handleSave}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
+            {hfToken && (
+              <Button size="sm" variant="ghost" className="h-8 px-2 text-destructive hover:text-destructive" disabled={saving} onClick={handleClear}>
+                Remove
+              </Button>
+            )}
+          </div>
+
+          {localError && (
+            <p className="text-xs text-destructive flex items-center gap-1">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              {localError}
+            </p>
+          )}
+          {savedMsg && (
+            <p className="text-xs text-green-500 flex items-center gap-1">
+              <CheckCircle2 className="h-3 w-3 shrink-0" />
+              Token saved. Downloads will now work for XET-storage repos.
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Your token is stored locally on this machine only. It is never sent anywhere except to huggingface.co when downloading models.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Models Tab ────────────────────────────────────────────────────────────
 
 function ModelsTab() {
@@ -607,6 +756,8 @@ function ModelsTab() {
     hardwareResult,
     downloadProgress,
     isDownloading,
+    downloadingFilename,
+    downloadQueue,
     isStarting,
     isDetecting,
     startingModelName,
@@ -615,10 +766,10 @@ function ModelsTab() {
     downloadedModels,
     serverStatus,
     error,
+    xetTokenRequired,
   } = state;
-  const { detectHardware, downloadModel, startServer, deleteModel, cancelDownload, listModels } = actions;
+  const { detectHardware, startServer, deleteModel, cancelDownload, queueDownload, downloadAll, listModels } = actions;
 
-  const [downloadingFilename, setDownloadingFilename] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
@@ -634,21 +785,41 @@ function ModelsTab() {
     return hardwareResult;
   }, [hardwareResult, detectHardware]);
 
-  const handleDownload = async (model: LlmModelInfo, andRun: boolean) => {
+  const handleDownload = (model: LlmModelInfo, andRun: boolean) => {
     setLocalError(null);
-    setDownloadingFilename(model.filename);
-    try {
-      await downloadModel(model.filename, model.all_part_urls);
-      if (andRun) {
-        const hw = await ensureHardware();
-        await startServer(model.filename, hw.recommended_gpu_layers, model.context_length);
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.toLowerCase().includes("cancel")) setLocalError(msg);
-    } finally {
-      setDownloadingFilename(null);
+    if (andRun) {
+      // For "download and run" we still need the sequential async flow
+      const run = async () => {
+        try {
+          const hw = await ensureHardware();
+          queueDownload(model.filename, model.all_part_urls);
+          // Wait for download to complete then start server
+          const checkAndStart = async () => {
+            const isNowDownloaded = downloadedModels.some((m) => m.filename === model.filename);
+            if (isNowDownloaded) {
+              await startServer(model.filename, hw.recommended_gpu_layers, model.context_length);
+            } else {
+              setTimeout(checkAndStart, 500);
+            }
+          };
+          setTimeout(checkAndStart, 1000);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!msg.toLowerCase().includes("cancel")) setLocalError(msg);
+        }
+      };
+      void run();
+    } else {
+      queueDownload(model.filename, model.all_part_urls);
     }
+  };
+
+  const handleDownloadAll = () => {
+    const allModels = hardwareResult?.all_models ?? [];
+    const entries = allModels
+      .filter((m) => !downloadedModels.some((d) => d.filename === m.filename))
+      .map((m) => ({ filename: m.filename, urls: m.all_part_urls }));
+    downloadAll(entries);
   };
 
   const handleLoad = async (model: LlmModelInfo) => {
@@ -734,13 +905,33 @@ function ModelsTab() {
             <span className="text-right">Size</span>
             <span className="text-right">RAM</span>
             <span className="text-center">Tools</span>
-            <span className="text-right">Action</span>
+            <div className="flex items-center justify-end gap-2">
+              <span>Action</span>
+              {allModels.some((m) => !downloadedModels.some((d) => d.filename === m.filename)) && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 px-2 text-[10px] gap-1"
+                  onClick={handleDownloadAll}
+                  disabled={isDownloading && downloadQueue.length === allModels.filter((m) => !downloadedModels.some((d) => d.filename === m.filename)).length}
+                >
+                  <Download className="h-3 w-3" />
+                  All
+                </Button>
+              )}
+              {downloadQueue.length > 0 && (
+                <span className="text-[10px] bg-primary/15 text-primary rounded-full px-1.5 py-0.5 tabular-nums">
+                  {downloadQueue.length}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Model rows */}
           {allModels.map((model) => {
             const isDownloaded = downloadedModels.some((m) => m.filename === model.filename);
             const isDownloadingThis = isDownloading && downloadingFilename === model.filename;
+            const isQueued = !isDownloadingThis && downloadQueue.some((e) => e.filename === model.filename);
             const isThisRunning = isRunning && runningModelPath.includes(model.filename);
             const isExpanded = expandedRow === model.filename;
 
@@ -802,6 +993,11 @@ function ModelsTab() {
                         <X className="h-3 w-3 mr-1" />
                         Cancel
                       </Button>
+                    ) : isQueued ? (
+                      <span className="text-xs text-muted-foreground flex items-center gap-1 px-2">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Queued
+                      </span>
                     ) : isDownloaded ? (
                       <div className="flex gap-1">
                         {!isThisRunning && (
@@ -832,7 +1028,6 @@ function ModelsTab() {
                         variant="ghost"
                         className="h-7 px-2 text-xs gap-1"
                         onClick={() => handleDownload(model, false)}
-                        disabled={isDownloading}
                       >
                         <Download className="h-3 w-3" />
                         Get
@@ -904,6 +1099,25 @@ function ModelsTab() {
 
       {/* Always-visible custom model input */}
       <CustomModelRow onAdded={listModels} />
+
+      {/* Intelligent repository analyzer */}
+      <ModelRepoAnalyzer
+        hardwareResult={hardwareResult}
+        isDownloading={isDownloading}
+        downloadProgress={downloadProgress}
+        onDownload={async (filename, urls) => {
+          setDownloadingFilename(filename);
+          try {
+            await downloadModel(filename, urls);
+          } finally {
+            setDownloadingFilename(null);
+          }
+        }}
+        onDownloadComplete={listModels}
+      />
+
+      {/* HuggingFace token — shown expanded when a XET download failed, collapsed otherwise */}
+      <HfTokenPanel forcedOpen={xetTokenRequired} />
     </div>
   );
 }

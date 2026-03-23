@@ -1886,12 +1886,18 @@ export function Settings({
                               <RefreshCw className="h-4 w-4" /> Restart
                             </Button>
                           ) : updateStatus?.status === "available" ? (
-                            <Button size="sm" onClick={() => updateActions?.openDialog()} disabled={checking}>
-                              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                              Install Update
-                            </Button>
+                            <>
+                              <Button variant="outline" size="sm" onClick={() => updateActions?.check({ showResult: true })} disabled={checking}>
+                                {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                Check Again
+                              </Button>
+                              <Button size="sm" onClick={() => updateActions?.openDialog()} disabled={checking}>
+                                {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                                Install Update
+                              </Button>
+                            </>
                           ) : (
-                            <Button variant="outline" size="sm" onClick={() => updateActions?.check()} disabled={checking}>
+                            <Button variant="outline" size="sm" onClick={() => updateActions?.check({ showResult: true })} disabled={checking}>
                               {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : updateStatus?.status === "up_to_date" ? <CheckCircle2 className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
                               Check for Updates
                             </Button>

@@ -339,3 +339,108 @@ jobs:
 
           echo ""
           echo "✅ latest.json updated"
+
+      - name: Fill missing platforms from previous releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          REPO="${{ github.repository }}"
+
+          # All platform keys Tauri expects. If any are absent from the current
+          # latest.json (because a platform build failed), we backfill them from
+          # the most recent previous release that has those entries.
+          # This ensures macOS users always get offered the last good macOS build
+          # even when only Windows/Linux built successfully for the newest version.
+          python3 << 'PYEOF'
+          import json, os, subprocess, sys, urllib.request
+
+          tag  = os.environ["TAG"]
+          repo = os.environ["REPO"]
+          gh_token = os.environ["GH_TOKEN"]
+
+          EXPECTED_PLATFORMS = {
+              "darwin-aarch64", "darwin-aarch64-app",
+              "darwin-x86_64",  "darwin-x86_64-app",
+              "linux-x86_64",   "linux-x86_64-deb",
+              "windows-x86_64", "windows-x86_64-msi", "windows-x86_64-nsis",
+          }
+
+          def gh_get(path):
+              url = f"https://api.github.com/repos/{repo}/{path}"
+              req = urllib.request.Request(url, headers={
+                  "Authorization": f"Bearer {gh_token}",
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "release-workflow",
+              })
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read())
+
+          def fetch_latest_json(release_tag):
+              url = f"https://github.com/{repo}/releases/download/{release_tag}/latest.json"
+              req = urllib.request.Request(url, headers={
+                  "Authorization": f"Bearer {gh_token}",
+                  "User-Agent": "release-workflow",
+              })
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return json.loads(r.read())
+              except Exception as e:
+                  print(f"  Could not fetch latest.json for {release_tag}: {e}")
+                  return None
+
+          # Load the current release's latest.json (already patched by previous step)
+          subprocess.run(
+              ["gh", "release", "download", tag, "--repo", repo,
+               "--pattern", "latest.json", "--dir", "/tmp/fill", "--clobber"],
+              check=True
+          )
+          with open("/tmp/fill/latest.json") as f:
+              current = json.load(f)
+
+          missing = EXPECTED_PLATFORMS - set(current["platforms"].keys())
+          if not missing:
+              print(f"✅ All {len(EXPECTED_PLATFORMS)} platforms present — nothing to backfill.")
+              sys.exit(0)
+
+          print(f"⚠️  Missing platforms in {tag}: {missing}")
+          print("Scanning previous releases for backfill candidates...")
+
+          releases = gh_get("releases?per_page=30")
+          # Skip the current release (first in list)
+          for rel in releases:
+              if rel["tag_name"] == tag:
+                  continue
+              if not missing:
+                  break
+              prev_json = fetch_latest_json(rel["tag_name"])
+              if not prev_json:
+                  continue
+              covered = missing & set(prev_json["platforms"].keys())
+              if not covered:
+                  continue
+              print(f"  📦 Backfilling from {rel['tag_name']}: {covered}")
+              for key in covered:
+                  current["platforms"][key] = prev_json["platforms"][key]
+                  print(f"     {key} -> {prev_json['platforms'][key]['url']}")
+              missing -= covered
+
+          if missing:
+              print(f"⚠️  Could not find backfill for: {missing} (no prior release has them)")
+          else:
+              print("✅ All missing platforms backfilled.")
+
+          with open("/tmp/fill/latest.json", "w") as f:
+              json.dump(current, f, indent=2)
+
+          print("\n📝 Final latest.json:")
+          print(json.dumps(current, indent=2))
+          PYEOF
+
+          # Re-upload the backfilled latest.json
+          gh release delete-asset "$TAG" --repo "$REPO" --yes "latest.json" || true
+          gh release upload "$TAG" --repo "$REPO" /tmp/fill/latest.json
+
+          echo ""
+          echo "✅ Backfilled latest.json uploaded"

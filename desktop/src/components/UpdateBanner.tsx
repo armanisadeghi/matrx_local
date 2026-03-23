@@ -23,22 +23,23 @@ interface UpdateBannerProps {
 }
 
 export function UpdateBanner({ state, actions }: UpdateBannerProps) {
-  const { status, busy, progress } = state;
+  const { status, busy, preDownloading, progress } = state;
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const dismissedVersionRef = useRef<string | null>(null);
 
   const isAvailable = status?.status === "available";
-  const isDownloading = status?.status === "downloading";
+  // Pre-downloading counts as "downloading" for the banner
+  const isDownloading = status?.status === "downloading" || preDownloading;
   const isInstalled = status?.status === "installed";
 
   // Show banner when update is available, downloading, or installed —
   // but not if the user already dismissed this exact version.
   useEffect(() => {
-    if (!status) return;
+    if (!status && !preDownloading) return;
 
-    if (isAvailable) {
-      if (dismissedVersionRef.current === status.version) return;
+    if (isAvailable || preDownloading) {
+      if (status?.version && dismissedVersionRef.current === status.version) return;
       setVisible(true);
       setDismissed(false);
     } else if (isDownloading || isInstalled) {
@@ -46,7 +47,7 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
       setVisible(true);
       setDismissed(false);
     }
-  }, [status?.status, status?.version, isAvailable, isDownloading, isInstalled]);
+  }, [status?.status, status?.version, isAvailable, isDownloading, isInstalled, preDownloading]);
 
   const handleDismiss = () => {
     setVisible(false);
@@ -181,6 +182,15 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
             >
               Details
             </Button>
+            <button
+              onClick={() => actions.check({ showResult: true })}
+              disabled={busy}
+              className="shrink-0 rounded-sm p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+              aria-label="Check for newer version"
+              title="Check for newer version"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
           </>
         )}
       </div>

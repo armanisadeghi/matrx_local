@@ -843,6 +843,8 @@ pub fn run() {
             delete_llm_model,
             detect_llm_hardware,
             get_llm_setup_status,
+            save_hf_token,
+            get_hf_token,
             // Floating overlay commands
             show_transcript_overlay,
             hide_transcript_overlay,
@@ -886,6 +888,84 @@ pub fn run() {
                         }
                         Ok(Err(e)) => eprintln!("[transcription] Auto-load failed: {}", e),
                         Err(e) => eprintln!("[transcription] Auto-load task panicked: {}", e),
+                    }
+                });
+            }
+
+            // ── Auto-start LLM server on startup ───────────────────────────
+            // If a model was previously set up and its file exists on disk,
+            // spawn llama-server in the background so the Local Models page
+            // is ready without user intervention. This runs after Whisper init
+            // and is fully fire-and-forget — failures are logged but do not
+            // affect app startup. The frontend hook handles `llm-server-ready`
+            // and `get_llm_setup_status` to reflect the running state.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use llm::config::LlmConfig;
+                    use llm::server::find_free_port;
+                    use crate::transcription::hardware::HardwareProfile;
+                    use llm::model_selector::compute_gpu_layers_for_hw;
+
+                    let config_dir = match handle.path().app_data_dir() {
+                        Ok(d) => d,
+                        Err(_) => return,
+                    };
+                    let config = LlmConfig::load(&config_dir);
+                    if !config.setup_complete {
+                        return;
+                    }
+                    let Some(filename) = config.selected_model else { return };
+                    let model_path = config_dir.join("models").join(&filename);
+                    if !model_path.exists() {
+                        return;
+                    }
+
+                    let llm_state = handle.state::<llm::commands::LlmServerState>();
+                    {
+                        let server = llm_state.lock().await;
+                        if server.status.running {
+                            return; // already running, nothing to do
+                        }
+                    }
+
+                    // Detect hardware to pick the right gpu_layers value
+                    let hw = HardwareProfile::detect();
+                    let gpu_vram_gb = hw.gpu_vram_mb.map(|v| v as f32 / 1024.0).unwrap_or(0.0);
+                    let gpu_layers = compute_gpu_layers_for_hw(&hw, gpu_vram_gb);
+                    let ctx = 8192u32;
+
+                    let port = match find_free_port(11434) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            eprintln!("[llm] Auto-start: could not find free port: {}", e);
+                            return;
+                        }
+                    };
+
+                    let _ = handle.emit(
+                        "llm-server-starting",
+                        serde_json::json!({
+                            "model_filename": &filename,
+                            "port": port,
+                        }),
+                    );
+
+                    let model_path_str = model_path.to_string_lossy().to_string();
+                    let mut server = llm_state.lock().await;
+                    match server.start(&handle, &model_path_str, gpu_layers, ctx, port).await {
+                        Ok(()) => {
+                            // Persist last_port update
+                            let updated = LlmConfig {
+                                selected_model: Some(filename.clone()),
+                                setup_complete: true,
+                                last_port: Some(port),
+                            };
+                            let _ = updated.save(&config_dir);
+                            let _ = handle.emit("llm-server-ready", &server.status);
+                            println!("[llm] Auto-started model: {}", filename);
+                        }
+                        Err(e) => eprintln!("[llm] Auto-start failed: {}", e),
                     }
                 });
             }

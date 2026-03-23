@@ -33,6 +33,11 @@ export interface ServerLogLine {
   kind: "loading" | "progress" | "ready" | "error" | "noise";
 }
 
+export interface LlmDownloadQueueEntry {
+  filename: string;
+  urls: string[];
+}
+
 export interface LlmState {
   // Setup
   setupStatus: LlmSetupStatus | null;
@@ -40,6 +45,10 @@ export interface LlmState {
   downloadProgress: LlmDownloadProgress | null;
   isDetecting: boolean;
   isDownloading: boolean;
+  /** Filename of the model actively being downloaded right now */
+  downloadingFilename: string | null;
+  /** Models queued to download after the current one finishes */
+  downloadQueue: LlmDownloadQueueEntry[];
   isStarting: boolean;
   startingModelName: string | null;
   serverStartProgress: ServerStartProgress | null;
@@ -50,6 +59,11 @@ export interface LlmState {
   serverStatus: LlmServerStatus | null;
   downloadedModels: DownloadedLlmModel[];
 
+  // HuggingFace token
+  hfToken: string | null;
+  /** True when the last download failed because the repo uses XET storage and no token is set. */
+  xetTokenRequired: boolean;
+
   // Errors
   error: string | null;
 }
@@ -58,6 +72,18 @@ export interface LlmActions {
   detectHardware: () => Promise<LlmHardwareResult>;
   /** Pass all part URLs in order. Single-file models have one URL; split models have multiple. */
   downloadModel: (filename: string, urls: string[]) => Promise<void>;
+  /**
+   * Add a model to the download queue. If nothing is currently downloading,
+   * the download starts immediately. Otherwise it runs after the current one
+   * finishes (or fails). Safe to call multiple times — already-queued or
+   * already-downloaded models are ignored.
+   */
+  queueDownload: (filename: string, urls: string[]) => void;
+  /**
+   * Queue all provided models for download, skipping any already downloaded.
+   * Downloads happen sequentially via the queue.
+   */
+  downloadAll: (models: LlmDownloadQueueEntry[]) => void;
   /** Request cancellation of an in-flight download. */
   cancelDownload: () => Promise<void>;
   /**
@@ -65,6 +91,10 @@ export interface LlmActions {
    * Returns the final filename it was saved as.
    */
   importLocalModel: (sourcePath: string, destFilename?: string) => Promise<string>;
+  /** Save a HuggingFace access token. Pass empty string to clear. */
+  saveHfToken: (token: string) => Promise<void>;
+  /** Get the stored HuggingFace token, or null if not set. */
+  getHfToken: () => Promise<string | null>;
   startServer: (
     modelFilename: string,
     gpuLayers: number,
@@ -89,6 +119,8 @@ export function useLlm(): [LlmState, LlmActions] {
     useState<LlmDownloadProgress | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadingFilename, setDownloadingFilename] = useState<string | null>(null);
+  const [downloadQueue, setDownloadQueue] = useState<LlmDownloadQueueEntry[]>([]);
   const [isStarting, setIsStarting] = useState(false);
   const [startingModelName, setStartingModelName] = useState<string | null>(null);
   const [serverStartProgress, setServerStartProgress] = useState<ServerStartProgress | null>(null);
@@ -101,8 +133,13 @@ export function useLlm(): [LlmState, LlmActions] {
     DownloadedLlmModel[]
   >([]);
   const [error, setError] = useState<string | null>(null);
+  const [hfToken, setHfToken] = useState<string | null>(null);
+  const [xetTokenRequired, setXetTokenRequired] = useState(false);
 
   const unlistenRef = useRef<UnlistenFn[]>([]);
+  // Ref-based queue so the processor callback always sees latest value
+  const downloadQueueRef = useRef<LlmDownloadQueueEntry[]>([]);
+  const isDownloadingRef = useRef(false);
 
   // Clean up event listeners on unmount
   useEffect(() => {
@@ -117,6 +154,8 @@ export function useLlm(): [LlmState, LlmActions] {
     if (!isTauri()) return;
 
     refreshSetupStatus();
+    // Load saved HF token so the UI can show "token configured" state
+    tauriInvoke<string | null>("get_hf_token").then((t) => setHfToken(t ?? null)).catch(() => {});
 
     let mounted = true;
     const setupListeners = async () => {
@@ -184,7 +223,12 @@ export function useLlm(): [LlmState, LlmActions] {
           if (mounted) {
             setDownloadCancelled(true);
             setIsDownloading(false);
+            isDownloadingRef.current = false;
+            setDownloadingFilename(null);
             setDownloadProgress(null);
+            // Clear queue on cancellation so the user starts fresh
+            downloadQueueRef.current = [];
+            setDownloadQueue([]);
           }
         }
       );
@@ -238,11 +282,18 @@ export function useLlm(): [LlmState, LlmActions] {
     }
   }, []);
 
+  /**
+   * Execute a single download. Does NOT manage queue state — that's done
+   * by processQueue. Direct callers (quickSetup) can call this directly.
+   */
   const downloadModel = useCallback(
     async (filename: string, urls: string[]) => {
       setIsDownloading(true);
+      isDownloadingRef.current = true;
+      setDownloadingFilename(filename);
       setDownloadProgress(null);
       setDownloadCancelled(false);
+      setXetTokenRequired(false);
       setError(null);
 
       const unlisten = await tauriListen<LlmDownloadProgress>(
@@ -259,19 +310,92 @@ export function useLlm(): [LlmState, LlmActions] {
         setDownloadedModels(models);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (!msg.toLowerCase().includes("cancel")) {
+        if (msg.startsWith("XET_TOKEN_REQUIRED") || msg.startsWith("XET_TOKEN_INVALID")) {
+          setXetTokenRequired(true);
+          setError(msg.replace(/^XET_TOKEN_(REQUIRED|INVALID): /, ""));
+        } else if (!msg.toLowerCase().includes("cancel")) {
           setError(msg);
         }
         throw e;
       } finally {
         unlisten();
         setIsDownloading(false);
+        isDownloadingRef.current = false;
+        setDownloadingFilename(null);
       }
     },
     []
   );
 
+  /**
+   * Sequential queue processor. Pops the next entry from downloadQueueRef and
+   * downloads it. Calls itself recursively until the queue is empty.
+   * Continues to the next item even if the current one fails (so a bad download
+   * doesn't block the rest of the queue).
+   */
+  const processQueue = useCallback(async () => {
+    if (isDownloadingRef.current) return;
+    const next = downloadQueueRef.current.shift();
+    if (!next) return;
+    setDownloadQueue([...downloadQueueRef.current]);
+    try {
+      await downloadModel(next.filename, next.urls);
+    } catch {
+      // Error already set by downloadModel — continue to next item
+    }
+    // Recurse: process the next item in the queue
+    void processQueue();
+  }, [downloadModel]);
+
+  const queueDownload = useCallback(
+    (filename: string, urls: string[]) => {
+      // Skip if already downloaded
+      const alreadyDownloaded = downloadedModels.some((m) => m.filename === filename);
+      if (alreadyDownloaded) return;
+      // Skip if already queued
+      const alreadyQueued = downloadQueueRef.current.some((e) => e.filename === filename);
+      if (alreadyQueued) return;
+      // Skip if currently downloading this exact file
+      if (isDownloadingRef.current && downloadingFilename === filename) return;
+
+      if (!isDownloadingRef.current) {
+        // Nothing active — start immediately
+        void downloadModel(filename, urls).then(() => void processQueue()).catch(() => void processQueue());
+      } else {
+        // Something is active — push to queue
+        downloadQueueRef.current.push({ filename, urls });
+        setDownloadQueue([...downloadQueueRef.current]);
+      }
+    },
+    [downloadModel, downloadedModels, downloadingFilename, processQueue]
+  );
+
+  const downloadAll = useCallback(
+    (models: LlmDownloadQueueEntry[]) => {
+      const downloadedSet = new Set(downloadedModels.map((m) => m.filename));
+      const queuedSet = new Set(downloadQueueRef.current.map((e) => e.filename));
+      const activeFilename = isDownloadingRef.current ? downloadingFilename : null;
+
+      for (const m of models) {
+        if (downloadedSet.has(m.filename)) continue;
+        if (queuedSet.has(m.filename)) continue;
+        if (activeFilename === m.filename) continue;
+        downloadQueueRef.current.push({ filename: m.filename, urls: m.urls });
+        queuedSet.add(m.filename);
+      }
+      setDownloadQueue([...downloadQueueRef.current]);
+
+      if (!isDownloadingRef.current) {
+        void processQueue();
+      }
+    },
+    [downloadedModels, downloadingFilename, processQueue]
+  );
+
   const cancelDownload = useCallback(async () => {
+    // Clear the queue too so cancelled state is clean
+    downloadQueueRef.current = [];
+    setDownloadQueue([]);
     try {
       await tauriInvoke("cancel_llm_download");
     } catch {
@@ -383,9 +507,22 @@ export function useLlm(): [LlmState, LlmActions] {
     [refreshSetupStatus]
   );
 
+  const saveHfToken = useCallback(async (token: string) => {
+    await tauriInvoke("save_hf_token", { token });
+    setHfToken(token.trim() || null);
+    if (token.trim()) setXetTokenRequired(false);
+  }, []);
+
+  const getHfToken = useCallback(async () => {
+    const t = await tauriInvoke<string | null>("get_hf_token");
+    setHfToken(t ?? null);
+    return t ?? null;
+  }, []);
+
   const clearError = useCallback(() => {
     setError(null);
     setDownloadCancelled(false);
+    setXetTokenRequired(false);
   }, []);
 
   // One-click setup: detect hardware, download recommended model, start server
@@ -429,6 +566,8 @@ export function useLlm(): [LlmState, LlmActions] {
     downloadProgress,
     isDetecting,
     isDownloading,
+    downloadingFilename,
+    downloadQueue,
     isStarting,
     startingModelName,
     serverStartProgress,
@@ -436,14 +575,20 @@ export function useLlm(): [LlmState, LlmActions] {
     downloadCancelled,
     serverStatus,
     downloadedModels,
+    hfToken,
+    xetTokenRequired,
     error,
   };
 
   const actions: LlmActions = {
     detectHardware,
     downloadModel,
+    queueDownload,
+    downloadAll,
     cancelDownload,
     importLocalModel,
+    saveHfToken,
+    getHfToken,
     startServer,
     stopServer,
     getServerStatus,

@@ -1365,9 +1365,9 @@ function ModelsTab({
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1];
 }) {
-  const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
   const hw = state.hardwareResult;
   const downloaded = state.setupStatus?.downloaded_models ?? [];
+  const { isDownloading, downloadingFilename, downloadQueue } = state;
 
   useEffect(() => {
     if (!hw) {
@@ -1376,17 +1376,35 @@ function ModelsTab({
   }, [hw, actions]);
 
   const handleDownloadAndActivate = async (model: ModelInfo) => {
-    setDownloadingFile(model.filename);
     try {
       const exists = await actions.checkModelExists(model.filename);
       if (!exists) {
-        await actions.downloadModel(model.filename);
+        // Use queueDownload so multiple clicks work correctly
+        actions.queueDownload(model.filename);
+        // Wait for download to complete then activate
+        const waitAndActivate = async () => {
+          const nowExists = await actions.checkModelExists(model.filename);
+          if (nowExists) {
+            await actions.initTranscription(model.filename);
+          } else if (isDownloading || downloadQueue.length > 0) {
+            setTimeout(waitAndActivate, 500);
+          }
+        };
+        setTimeout(waitAndActivate, 1000);
+      } else {
+        await actions.initTranscription(model.filename);
       }
-      await actions.initTranscription(model.filename);
     } catch {
       // Error displayed in terminal + state.error
     }
-    setDownloadingFile(null);
+  };
+
+  const handleDownloadAll = () => {
+    const allM = hw?.all_models ?? [];
+    const toDownload = allM
+      .filter((m) => !downloaded.includes(m.filename))
+      .map((m) => m.filename);
+    actions.downloadAll(toDownload);
   };
 
   const allModels = hw?.all_models ?? [];
@@ -1399,11 +1417,37 @@ function ModelsTab({
           All models use the same API — switching models only changes accuracy and speed.
         </p>
 
+        {/* Header row with Download All */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">
+            {downloaded.length}/{allModels.length} downloaded
+          </span>
+          <div className="flex items-center gap-2">
+            {downloadQueue.length > 0 && (
+              <span className="text-xs bg-primary/15 text-primary rounded-full px-2 py-0.5 tabular-nums">
+                {downloadQueue.length} queued
+              </span>
+            )}
+            {allModels.some((m) => !downloaded.includes(m.filename)) && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs gap-1"
+                onClick={handleDownloadAll}
+              >
+                <Download className="h-3 w-3" />
+                Download All
+              </Button>
+            )}
+          </div>
+        </div>
+
         <div className="space-y-3">
           {allModels.map((model) => {
             const isDownloaded = downloaded.includes(model.filename);
             const isActive = state.activeModel === model.filename;
-            const isDownloading = downloadingFile === model.filename;
+            const isDownloadingThis = isDownloading && downloadingFilename === model.filename;
+            const isQueued = !isDownloadingThis && downloadQueue.some((e) => e.filename === model.filename);
             const isRecommended = hw?.recommended_filename === model.filename;
 
             return (
@@ -1446,13 +1490,18 @@ function ModelsTab({
                       <CheckCircle2 className="h-3 w-3" />
                       Currently active
                     </span>
-                  ) : isDownloading ? (
+                  ) : isDownloadingThis ? (
                     <Button size="sm" disabled>
                       <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                       {state.downloadProgress
                         ? `${Math.round(state.downloadProgress.percent)}%`
                         : "Downloading..."}
                     </Button>
+                  ) : isQueued ? (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Queued
+                    </span>
                   ) : isDownloaded ? (
                     <div className="flex items-center gap-2">
                       <Button
@@ -1480,7 +1529,7 @@ function ModelsTab({
                   )}
                 </div>
 
-                {isDownloading && (
+                {isDownloadingThis && (
                   <DownloadProgress
                     progress={state.downloadProgress}
                     isDownloading={state.isDownloading}

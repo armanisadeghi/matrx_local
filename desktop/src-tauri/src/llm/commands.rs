@@ -221,6 +221,32 @@ pub fn cancel_llm_download(
     Ok(())
 }
 
+// ── HuggingFace Token Management ─────────────────────────────────────────
+
+/// Save a HuggingFace access token (hf_…) to llm.json.
+/// Pass an empty string to clear the token.
+#[tauri::command]
+pub async fn save_hf_token(app: AppHandle, token: String) -> Result<(), String> {
+    let config_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut config = LlmConfig::load(&config_dir);
+    config.hf_token = if token.trim().is_empty() {
+        None
+    } else {
+        Some(token.trim().to_string())
+    };
+    config.save(&config_dir)
+}
+
+/// Return the stored HuggingFace token, or null if not set.
+#[tauri::command]
+pub async fn get_hf_token(app: AppHandle) -> Result<Option<String>, String> {
+    let config_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let config = LlmConfig::load(&config_dir);
+    Ok(config.hf_token)
+}
+
+// ── Download ──────────────────────────────────────────────────────────────
+
 /// Download an LLM model from HuggingFace with progress events.
 ///
 /// For single-file models, pass `urls` with a single entry and `filename` as the
@@ -231,7 +257,15 @@ pub fn cancel_llm_download(
 /// load multi-part GGUF natively when given the first part's path — we do NOT
 /// concatenate parts. `filename` is the first-part filename in this case.
 ///
+/// If a HuggingFace token is saved (llm.json), it is injected as
+/// `Authorization: Bearer <token>` on every request. This is required for:
+///   - Repos using XET storage (newer HF repos) — plain GET returns binary chunks,
+///     not the file, without authentication.
+///   - Gated / private models.
+///
 /// Features:
+///   - XET storage detection: if HF redirects to cas-bridge.xethub.hf.co without
+///     a token, a clear actionable error is returned instead of a corrupt file.
 ///   - Per-chunk 60-second idle timeout to detect stalled connections
 ///   - Cancellation via the `LlmDownloadCancelState` atomic flag
 ///   - Expected-size validation to reject partial/corrupted files
@@ -262,6 +296,37 @@ pub async fn download_llm_model(
 
     std::fs::create_dir_all(&dest_dir)
         .map_err(|e| format!("Failed to create models dir: {}", e))?;
+
+    // Load HF token (may be None — that's fine for public non-XET repos)
+    let hf_token: Option<String> = {
+        let config_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        LlmConfig::load(&config_dir).hf_token
+    };
+
+    // Probe the first URL to detect XET storage before starting any download.
+    // XET repos redirect to cas-bridge.xethub.hf.co — a plain download client
+    // cannot reconstruct the file from that endpoint without the hf_xet SDK.
+    // We catch this early and return a clear error instead of writing garbage.
+    if let Some(first_url) = urls.first() {
+        if is_xet_url(first_url, &hf_token).await {
+            if hf_token.is_none() {
+                return Err(
+                    "XET_TOKEN_REQUIRED: This model is hosted on HuggingFace's XET storage system. \
+                     A free HuggingFace access token is required to download it. \
+                     Create one at huggingface.co/settings/tokens (read-only scope is enough), \
+                     then enter it in the token field above."
+                        .to_string(),
+                );
+            } else {
+                return Err(
+                    "XET_TOKEN_INVALID: This model uses HuggingFace XET storage. \
+                     Your token was rejected or does not have read access to this repo. \
+                     Check your token at huggingface.co/settings/tokens."
+                        .to_string(),
+                );
+            }
+        }
+    }
 
     // Look up catalog entry so we can get per-part expected sizes
     let catalog_entry = model_selector::LLM_MODELS
@@ -325,6 +390,7 @@ pub async fn download_llm_model(
                 0,
                 &app,
                 &cancel_ref,
+                hf_token.as_deref(),
             )
             .await
             {
@@ -375,7 +441,7 @@ pub async fn download_llm_model(
         let size = if let Some(known) = part_expected_sizes[i] {
             known
         } else {
-            probe_content_length(&client, url).await.unwrap_or(0)
+            probe_content_length(&client, url, hf_token.as_deref()).await.unwrap_or(0)
         };
         part_sizes.push(size);
     }
@@ -455,6 +521,7 @@ pub async fn download_llm_model(
                 grand_total,
                 &app,
                 &cancel_ref,
+                hf_token.as_deref(),
             )
             .await
             {
@@ -799,14 +866,49 @@ fn extract_stem(filename: &str) -> String {
         .to_string()
 }
 
+/// Detect whether a HuggingFace URL serves via XET storage by issuing a HEAD
+/// request and checking whether the redirect destination is cas-bridge.xethub.hf.co.
+///
+/// XET storage requires the hf_xet SDK to reconstruct files from content-addressed
+/// chunks. A plain HTTP client cannot download XET files and will either receive
+/// garbage or fail. We detect this early and surface a clear error.
+async fn is_xet_url(url: &str, hf_token: &Option<String>) -> bool {
+    // Only applies to huggingface.co URLs
+    if !url.contains("huggingface.co") {
+        return false;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_default();
+
+    let mut req = client.head(url).header("User-Agent", "matrx-local/1.0");
+    if let Some(token) = hf_token {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    match req.send().await {
+        Ok(resp) => {
+            // HF returns 302 redirect; check where it points
+            if let Some(location) = resp.headers().get("location") {
+                if let Ok(loc) = location.to_str() {
+                    return loc.contains("xethub.hf.co") || loc.contains("xet-bridge");
+                }
+            }
+            false
+        }
+        Err(_) => false,
+    }
+}
+
 /// Probe the content-length of a URL without downloading it.
-async fn probe_content_length(client: &reqwest::Client, url: &str) -> Option<u64> {
-    let resp = client
-        .head(url)
-        .header("User-Agent", "matrx-local/1.0")
-        .send()
-        .await
-        .ok()?;
+async fn probe_content_length(client: &reqwest::Client, url: &str, hf_token: Option<&str>) -> Option<u64> {
+    let mut req = client.head(url).header("User-Agent", "matrx-local/1.0");
+    if let Some(token) = hf_token {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+    let resp = req.send().await.ok()?;
     if let Some(len) = resp.content_length() {
         if len > 0 {
             return Some(len);
@@ -823,6 +925,7 @@ async fn probe_content_length(client: &reqwest::Client, url: &str) -> Option<u64
 ///   - A 60-second per-chunk idle timeout (stall detection)
 ///   - Cancellation checks on every progress event
 ///   - Accurate overall-progress reporting for multi-part downloads
+///   - Optional HF token injected as Authorization: Bearer header
 #[allow(clippy::too_many_arguments)]
 async fn try_download_part(
     client: &reqwest::Client,
@@ -835,16 +938,16 @@ async fn try_download_part(
     grand_total: u64,
     app: &AppHandle,
     cancel: &Arc<AtomicBool>,
+    hf_token: Option<&str>,
 ) -> Result<(), String> {
     use futures_util::StreamExt;
     use tokio::io::AsyncWriteExt;
 
-    let response = client
-        .get(url)
-        .header("User-Agent", "matrx-local/1.0")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut req = client.get(url).header("User-Agent", "matrx-local/1.0");
+    if let Some(token) = hf_token {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+    let response = req.send().await.map_err(|e| e.to_string())?;
 
     if !response.status().is_success() {
         return Err(format!("HTTP {} for {}", response.status(), url));

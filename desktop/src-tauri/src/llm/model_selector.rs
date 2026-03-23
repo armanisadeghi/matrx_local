@@ -276,6 +276,12 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
 }
 
 fn compute_gpu_layers(hw: &HardwareProfile, gpu_vram_gb: f32) -> i32 {
+    compute_gpu_layers_for_hw(hw, gpu_vram_gb)
+}
+
+/// Public wrapper so `lib.rs` auto-start can call it without going through
+/// the full `select_llm_model` flow.
+pub fn compute_gpu_layers_for_hw(hw: &HardwareProfile, gpu_vram_gb: f32) -> i32 {
     if hw.is_apple_silicon {
         return 99; // Metal — offload all layers
     }

@@ -1,6 +1,6 @@
 [package]
 name = "aimatrx-desktop"
-version = "1.2.96"
+version = "1.2.97"
 description = "AI Matrx Desktop — Local companion for the AI Matrx platform"
 authors = ["AI Matrx"]
 edition = "2021"
@@ -13,7 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+# macos-private-api enables .transparent() on WebviewWindowBuilder for macOS.
+# Required for the floating transcript overlay window. The feature is a no-op
+# on Windows and Linux — safe to declare unconditionally.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-shell = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-store = "2"

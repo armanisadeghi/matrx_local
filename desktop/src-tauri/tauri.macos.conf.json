@@ -1,4 +1,7 @@
 {
+  "app": {
+    "macOSPrivateApi": true
+  },
   "bundle": {
     "resources": {
       "binaries/*.dylib": "binaries/"
