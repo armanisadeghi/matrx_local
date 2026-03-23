@@ -1103,3 +1103,74 @@ class AppSettingsRepo:
         all_settings = await self.get_all()
         all_settings.update(updates)
         await self.save_all(all_settings)
+
+
+# ==================================================================
+# ApiKeysRepo — stores user-supplied AI provider API keys
+#
+# Keys live inside the app_settings blob under the "api_keys" entry:
+#   {"api_keys": {"openai": "<base64>", "anthropic": "<base64>", ...}}
+#
+# Values are base64-encoded before write and decoded on read to reduce
+# accidental exposure in log output and screenshots.  This is not
+# encryption — the local SQLite file (~/.matrx/matrx.db) is user-owned.
+# ==================================================================
+
+import base64 as _base64
+
+_API_KEYS_SETTINGS_KEY = "api_keys"
+
+VALID_PROVIDERS: frozenset[str] = frozenset({
+    "openai",
+    "anthropic",
+    "google",
+    "groq",
+    "together",
+    "xai",
+    "cerebras",
+})
+
+
+def _encode_key(value: str) -> str:
+    return _base64.b64encode(value.encode()).decode()
+
+
+def _decode_key(encoded: str) -> str:
+    try:
+        return _base64.b64decode(encoded.encode()).decode()
+    except Exception:
+        return encoded  # graceful fallback if value was stored plain
+
+
+class ApiKeysRepo:
+    """Read/write per-provider API keys from the app_settings SQLite blob."""
+
+    def __init__(self, db: LocalDatabase | None = None):
+        self._settings = AppSettingsRepo(db)
+
+    async def get_all(self) -> dict[str, str]:
+        """Return {provider: plaintext_key} for all stored providers."""
+        raw: dict[str, str] = await self._settings.get(_API_KEYS_SETTINGS_KEY, {})
+        return {k: _decode_key(v) for k, v in raw.items() if isinstance(v, str)}
+
+    async def get(self, provider: str) -> str | None:
+        """Return plaintext key for one provider, or None if not set."""
+        all_keys = await self.get_all()
+        return all_keys.get(provider)
+
+    async def set(self, provider: str, key: str) -> None:
+        """Store a key for one provider (base64-encoded)."""
+        raw: dict[str, str] = await self._settings.get(_API_KEYS_SETTINGS_KEY, {})
+        raw[provider] = _encode_key(key)
+        await self._settings.set(_API_KEYS_SETTINGS_KEY, raw)
+
+    async def delete(self, provider: str) -> None:
+        """Remove a stored key for one provider."""
+        raw: dict[str, str] = await self._settings.get(_API_KEYS_SETTINGS_KEY, {})
+        raw.pop(provider, None)
+        await self._settings.set(_API_KEYS_SETTINGS_KEY, raw)
+
+    async def is_configured(self, provider: str) -> bool:
+        """Return True if a non-empty key is stored for this provider."""
+        key = await self.get(provider)
+        return bool(key and key.strip())

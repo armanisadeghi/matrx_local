@@ -34,6 +34,7 @@ from app.services.proxy.server import get_proxy_server
 from app.services.tunnel.manager import get_tunnel_manager
 from app.services.cloud_sync.settings_sync import get_settings_sync
 from app.services.ai.engine import initialize_matrx_ai, load_tools_and_register, warm_jwt_cache
+from app.services.ai.key_manager import load_user_keys_into_env
 from app.services.local_db.database import get_db
 from app.services.local_db.sync_engine import get_sync_engine
 from app.tools.tools.scheduler import restore_scheduled_tasks
@@ -226,6 +227,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await warm_jwt_cache()
     except Exception:
         logger.warning("[app/main.py] Phase 0a: JWT cache warm failed (non-fatal)", exc_info=True)
+
+    # Phase 0a (post2): Load user-stored AI provider API keys from SQLite into
+    # os.environ so matrx_ai picks them up on every request.  This runs before
+    # initialize_matrx_ai() so the keys are available during AI engine setup.
+    try:
+        loaded = await load_user_keys_into_env()
+        logger.info("[app/main.py] Phase 0a: Loaded %d user API key(s) into env ✓", loaded)
+    except Exception:
+        logger.warning("[app/main.py] Phase 0a: User API key load failed (non-fatal)", exc_info=True)
 
     # Phase 0b: Ensure Playwright browsers are installed (auto-installs if missing).
     # Browsers are NOT bundled in the PyInstaller binary (bundling causes macOS

@@ -205,3 +205,106 @@ async def reset_path_to_default(name: str) -> dict[str, Any]:
     if not entry:
         raise HTTPException(status_code=404, detail=f"Path '{name}' not found")
     return entry
+
+
+# ── AI provider API keys ───────────────────────────────────────────────────────
+#
+# Keys are stored (base64-obfuscated) in the local SQLite app_settings blob and
+# injected into os.environ at runtime so matrx_ai picks them up on every request.
+#
+# The GET endpoint never returns actual key values — only whether a key is set.
+# This prevents keys from being accidentally logged or sent over the network.
+
+from app.services.local_db.repositories import ApiKeysRepo, VALID_PROVIDERS  # noqa: E402
+
+
+# Human-readable labels shown in the UI
+_PROVIDER_LABELS: dict[str, dict[str, str]] = {
+    "openai":    {"label": "OpenAI",    "description": "GPT-4o, GPT-4o Mini, o3, o4-mini"},
+    "anthropic": {"label": "Anthropic", "description": "Claude Sonnet, Claude Haiku, Claude Opus"},
+    "google":    {"label": "Google",    "description": "Gemini 2.5 Pro, Gemini 2.0 Flash"},
+    "groq":      {"label": "Groq",      "description": "Llama 3.3 70B, Mixtral (fast inference)"},
+    "together":  {"label": "Together AI","description": "Llama, Qwen, Mistral and 100+ open models"},
+    "xai":       {"label": "xAI",       "description": "Grok-2, Grok-3"},
+    "cerebras":  {"label": "Cerebras",  "description": "Llama 3.3 70B (wafer-scale inference)"},
+}
+
+
+class ApiKeyStatus(BaseModel):
+    provider: str
+    label: str
+    description: str
+    configured: bool
+
+
+class ApiKeyStatusList(BaseModel):
+    providers: list[ApiKeyStatus]
+
+
+class ApiKeySetRequest(BaseModel):
+    key: str = Field(min_length=1)
+
+
+@router.get("/api-keys", response_model=ApiKeyStatusList)
+async def list_api_key_status() -> ApiKeyStatusList:
+    """Return configuration status for every AI provider.
+
+    Never returns actual key values — only whether a key is set.
+    """
+    repo = ApiKeysRepo()
+    statuses = []
+    for provider in sorted(VALID_PROVIDERS):
+        meta = _PROVIDER_LABELS.get(provider, {"label": provider.title(), "description": ""})
+        configured = await repo.is_configured(provider)
+        statuses.append(ApiKeyStatus(
+            provider=provider,
+            label=meta["label"],
+            description=meta["description"],
+            configured=configured,
+        ))
+    return ApiKeyStatusList(providers=statuses)
+
+
+@router.put("/api-keys/{provider}", response_model=ApiKeyStatus)
+async def set_api_key(provider: str, req: ApiKeySetRequest) -> ApiKeyStatus:
+    """Store an API key for one provider and inject it into os.environ immediately.
+
+    The next AI request will use the new key without any restart required.
+    """
+    if provider not in VALID_PROVIDERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown provider '{provider}'. Valid: {sorted(VALID_PROVIDERS)}",
+        )
+    from app.services.ai.key_manager import set_user_key
+    await set_user_key(provider, req.key)
+    meta = _PROVIDER_LABELS.get(provider, {"label": provider.title(), "description": ""})
+    return ApiKeyStatus(
+        provider=provider,
+        label=meta["label"],
+        description=meta["description"],
+        configured=True,
+    )
+
+
+@router.delete("/api-keys/{provider}", response_model=ApiKeyStatus)
+async def delete_api_key(provider: str) -> ApiKeyStatus:
+    """Remove a stored API key for one provider.
+
+    The os.environ entry from .env / shell is NOT removed — only the
+    user-saved SQLite entry is deleted.
+    """
+    if provider not in VALID_PROVIDERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown provider '{provider}'. Valid: {sorted(VALID_PROVIDERS)}",
+        )
+    from app.services.ai.key_manager import delete_user_key
+    await delete_user_key(provider)
+    meta = _PROVIDER_LABELS.get(provider, {"label": provider.title(), "description": ""})
+    return ApiKeyStatus(
+        provider=provider,
+        label=meta["label"],
+        description=meta["description"],
+        configured=False,
+    )

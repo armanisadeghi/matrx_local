@@ -13,7 +13,7 @@
  *   <PromptPicker showManage onSelect={(content) => setSystemPrompt(content)} />
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
 import type { SystemPrompt } from "@/lib/system-prompts";
 import { Button } from "@/components/ui/button";
@@ -36,10 +36,8 @@ import {
   Trash2,
   Copy,
   Check,
-  Pin,
   Search,
   ChevronRight,
-  X,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -49,8 +47,6 @@ interface PromptPickerProps {
   onSelect: (content: string, name: string) => void;
   /** Current system prompt content (to highlight which prompt is active). */
   currentContent?: string;
-  /** Show the Manage button that opens the full management dialog. */
-  showManage?: boolean;
   /** Label for the trigger button. Defaults to "System Prompt". */
   triggerLabel?: string;
   className?: string;
@@ -404,7 +400,6 @@ function PromptManageDialog({
 export function PromptPicker({
   onSelect,
   currentContent,
-  showManage = true,
   triggerLabel = "System Prompt",
   className,
 }: PromptPickerProps) {
