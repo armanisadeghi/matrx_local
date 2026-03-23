@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { engine } from "@/lib/api";
 
 interface ExecutionEntry {
@@ -161,6 +161,14 @@ export function useToolExecution(): UseToolExecutionReturn {
   const clearHistory = useCallback(() => {
     setHistory([]);
   }, []);
+
+  // Clear the elapsed timer on unmount to prevent state updates on an
+  // unmounted component (e.g. user navigates away during a long tool invocation).
+  useEffect(() => {
+    return () => {
+      stopTimer();
+    };
+  }, [stopTimer]);
 
   return {
     loading,

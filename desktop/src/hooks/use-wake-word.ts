@@ -120,6 +120,8 @@ export function useWakeWord(
   const sseRef = useRef<EventSource | null>(null);
 
   const activeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks the engine-switch restart delay so it can be cancelled on unmount.
+  const engineSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deviceNameRef = useRef<string | undefined>(undefined);
   // Prevent duplicate active→sleep transitions
   const isActiveRef = useRef(false);
@@ -149,10 +151,57 @@ export function useWakeWord(
     teardownTauriListeners();
     teardownSse();
     clearActiveTimeout();
+    if (engineSwitchTimerRef.current) {
+      clearTimeout(engineSwitchTimerRef.current);
+      engineSwitchTimerRef.current = null;
+    }
     isActiveRef.current = false;
   }, [teardownTauriListeners, teardownSse, clearActiveTimeout]);
 
   useEffect(() => () => teardownAll(), [teardownAll]);
+
+  // ── OS-level notification helper ──────────────────────────────────────
+
+  const fireOsNotification = useCallback(async () => {
+    if (!isTauri()) return;
+    try {
+      const { isPermissionGranted, requestPermission, sendNotification } =
+        await import("@tauri-apps/plugin-notification");
+      let granted = await isPermissionGranted();
+      if (!granted) {
+        const perm = await requestPermission();
+        granted = perm === "granted";
+      }
+      if (granted) {
+        sendNotification({
+          title: "AI Matrx — Listening",
+          body: "Wake word detected. Speak your command.",
+        });
+      }
+    } catch {
+      // Notification permission denied or plugin unavailable — non-critical
+    }
+  }, []);
+
+  // ── Floating transcript overlay helpers ────────────────────────────────
+
+  const showFloatingOverlay = useCallback(async () => {
+    if (!isTauri()) return;
+    try {
+      const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+      await tauriInvoke("show_transcript_overlay");
+    } catch {
+      // Overlay window not yet implemented on this build — safe to ignore
+    }
+  }, []);
+
+  const hideFloatingOverlay = useCallback(async () => {
+    if (!isTauri()) return;
+    try {
+      const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+      await tauriInvoke("hide_transcript_overlay");
+    } catch { /* ok */ }
+  }, []);
 
   // ── Shared wake / sleep logic (same for both engines) ─────────────────
 
@@ -161,6 +210,13 @@ export function useWakeWord(
     isActiveRef.current = true;
     setUiMode("active");
     clearActiveTimeout();
+
+    // Fire OS notification and show floating overlay immediately — before
+    // waiting on transcription startup, so the user gets instant feedback
+    // regardless of which app they're currently using.
+    void fireOsNotification();
+    void showFloatingOverlay();
+
     try {
       await onWake();
     } catch {
@@ -171,10 +227,11 @@ export function useWakeWord(
       try {
         await onSleep();
       } finally {
+        void hideFloatingOverlay();
         setUiMode("listening");
       }
     }, ACTIVE_TIMEOUT_MS);
-  }, [onWake, onSleep, clearActiveTimeout]);
+  }, [onWake, onSleep, clearActiveTimeout, fireOsNotification, showFloatingOverlay, hideFloatingOverlay]);
 
   // ── Load settings + check whisper model on mount ───────────────────────
 
@@ -331,9 +388,10 @@ export function useWakeWord(
     } catch { /* already stopped */ }
 
     teardownAll();
+    void hideFloatingOverlay();
     setUiMode("idle");
     setListenRms(0);
-  }, [activeEngine, clearActiveTimeout, onSleep, teardownAll]);
+  }, [activeEngine, clearActiveTimeout, onSleep, teardownAll, hideFloatingOverlay]);
 
   const mute = useCallback(async () => {
     if (!isTauri()) return;
@@ -368,6 +426,7 @@ export function useWakeWord(
     clearActiveTimeout();
     isActiveRef.current = false;
     try { await onSleep(); } catch { /* ok */ }
+    void hideFloatingOverlay();
     try {
       if (activeEngine === "whisper") {
         await invoke("dismiss_wake_word");
@@ -378,7 +437,7 @@ export function useWakeWord(
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [activeEngine, clearActiveTimeout, onSleep]);
+  }, [activeEngine, clearActiveTimeout, onSleep, hideFloatingOverlay]);
 
   const manualTrigger = useCallback(async () => {
     if (!isTauri()) return;
@@ -418,10 +477,14 @@ export function useWakeWord(
       await engineAPI.saveWakeWordSettings({ ...current, engine: newEngine });
     } catch { /* non-critical — preference just won't survive restart */ }
 
-    // Auto-start the new engine if we were previously listening
+    // Auto-start the new engine if we were previously listening.
+    // Track the timer so teardownAll can cancel it if the component unmounts
+    // in the 200ms window (prevents startListening on an unmounted hook).
     if (wasListening) {
-      // Small delay to let state settle
-      setTimeout(() => void startListening(deviceNameRef.current), 200);
+      engineSwitchTimerRef.current = setTimeout(() => {
+        engineSwitchTimerRef.current = null;
+        void startListening(deviceNameRef.current);
+      }, 200);
     }
   }, [activeEngine, uiMode, teardownAll, startListening]);
 

@@ -399,6 +399,9 @@ export function useEngine(authenticated = true) {
       authSub.unsubscribe();
       clearInterval(healthInterval);
       clearInterval(heartbeatInterval);
+      // Close the WebSocket and clear the reconnect timer so they don't
+      // keep running after the Tauri WebView starts tearing down.
+      engine.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

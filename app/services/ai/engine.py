@@ -223,6 +223,15 @@ async def load_tools_and_register() -> None:
             exc_info=True,
         )
 
+    # --- Phase C: probe for local LLM (GenericOpenAIChat) support ---
+    # This check is non-blocking — it only logs status.  Actual local LLM
+    # registration happens later when the frontend calls POST /chat/local-llm/connect.
+    try:
+        from app.services.ai.local_llm_registry import _check_matrx_ai_support
+        _check_matrx_ai_support()
+    except Exception:
+        logger.warning("[engine] Could not probe local LLM registry", exc_info=True)
+
     _tools_loaded = True
 
 

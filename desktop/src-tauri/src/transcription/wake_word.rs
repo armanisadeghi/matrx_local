@@ -34,6 +34,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use whisper_cpp_plus::TranscriptionParams;
 
@@ -59,6 +60,11 @@ pub struct WakeWordState {
     pub model_filename: Mutex<String>,
     /// Keyword phrase to match (case-insensitive substring check on decoded text).
     pub keyword: Mutex<String>,
+    /// Handle to the background thread so shutdown can join it and guarantee the
+    /// GGML context on the thread stack is fully dropped before the process exits.
+    /// Without joining, GGML's C atexit handler calls ggml_abort() → SIGABRT →
+    /// macOS crash report even on intentional quit.
+    pub thread_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl WakeWordState {
@@ -72,6 +78,7 @@ impl WakeWordState {
             // so the substring match actually fires. Will be replaced by trained
             // phonemes when sherpa-onnx KWS bindings land.
             keyword: Mutex::new("hey matrix".to_string()),
+            thread_handle: Mutex::new(None),
         }
     }
 }
@@ -88,9 +95,13 @@ fn rms(samples: &[f32]) -> f32 {
 
 // ── Thread entry point ────────────────────────────────────────────────────────
 
-/// Spawn the wake-word background thread.
+/// Spawn the wake-word background thread and store the JoinHandle in state.
 ///
 /// The thread runs until `state.running` is set to false.
+/// The JoinHandle is stored in `state.thread_handle` so `graceful_shutdown_sync`
+/// can `.join()` it, guaranteeing the GGML context is fully dropped before the
+/// process exits (prevents SIGABRT / macOS crash reports on quit).
+///
 /// It emits the following Tauri events:
 ///   "wake-word-detected" — `{ keyword: String }` when the phrase is heard
 ///   "wake-word-rms"      — `f32` live microphone level (0–1), ~5 Hz
@@ -101,9 +112,11 @@ pub fn spawn_wake_word_thread(
     state: Arc<WakeWordState>,
     device_name: Option<String>,
 ) {
-    std::thread::spawn(move || {
-        wake_word_loop(app, state, device_name);
+    let state_for_thread = state.clone();
+    let handle = std::thread::spawn(move || {
+        wake_word_loop(app, state_for_thread, device_name);
     });
+    *state.thread_handle.lock().unwrap() = Some(handle);
 }
 
 fn wake_word_loop(

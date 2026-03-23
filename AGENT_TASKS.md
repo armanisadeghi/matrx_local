@@ -404,4 +404,85 @@
 
 ---
 
+---
+
+## Wake Word Developer Training Guide (2026-03-18)
+
+> **For Arman only** — end users receive the pre-trained model bundled in the app.
+> This section documents how to train or retrain the "Hey Matrix" openWakeWord model
+> so it can be bundled into releases.
+
+### One-time environment setup
+
+```bash
+# Create a dedicated training venv (do NOT activate it in the sidecar env)
+python3.13 -m venv ~/wakeword-train
+source ~/wakeword-train/bin/activate
+pip install "openwakeword[train]"   # pulls PyTorch (CPU), piper-tts, ~1GB total
+```
+
+### Step 1: Generate synthetic positive samples
+
+openWakeWord includes a TTS pipeline that synthesises thousands of voice variants
+automatically. You don't need to record any samples yourself.
+
+```bash
+python -m openwakeword.train generate_samples \
+  --phrase "hey matrix" \
+  --n_samples 5000 \
+  --output_dir ~/wakeword-training/positive
+```
+
+Runtime: ~10–20 min on CPU. Produces 5000 audio clips in various voices, accents,
+speeds, and room simulations.
+
+### Step 2: Download negative samples (once per machine)
+
+```bash
+python -m openwakeword.train download_background_data \
+  --output_dir ~/wakeword-training/negative
+```
+
+~2 GB of speech/noise/music background data. Required once.
+
+### Step 3: Train
+
+```bash
+python -m openwakeword.train train \
+  --positive_dir ~/wakeword-training/positive \
+  --negative_dir ~/wakeword-training/negative \
+  --model_name hey_matrix \
+  --output_dir ~/.matrx/oww_models/
+```
+
+Runtime: ~3–20 min CPU, ~3 min GPU. Produces `hey_matrix.onnx` (~3 MB).
+
+### Step 4: Evaluate and tune threshold
+
+```bash
+python -m openwakeword.train evaluate \
+  --model_path ~/.matrx/oww_models/hey_matrix.onnx \
+  --test_dir ~/my_test_recordings/
+```
+
+Recommended thresholds:
+- `0.3–0.4` — sensitive, more false positives
+- `0.5` — balanced (default)
+- `0.7–0.8` — strict, very few false positives
+
+### Step 5: Bundle for release
+
+For pre-release testing: drop `hey_matrix.onnx` into `~/.matrx/oww_models/` and
+select it in Voice → Wake Word → OWW Models.
+
+For shipping with the app binary: copy to `desktop/src-tauri/resources/oww_models/hey_matrix.onnx`
+and add a `resources` entry in `tauri.conf.json` so it gets bundled:
+```json
+"bundle": {
+  "resources": ["resources/oww_models/**"]
+}
+```
+Then update `app/services/wake_word/models.py` to check the bundled resources path
+before `~/.matrx/oww_models/` as a fallback.
+
 _Last updated: 2026-03-18_

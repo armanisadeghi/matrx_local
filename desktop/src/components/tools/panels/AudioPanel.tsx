@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Mic, Play, Square, Volume2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AiBadge } from "@/components/tools/panels/AiBadge";
@@ -38,6 +38,14 @@ export function AudioPanel({ onInvoke, loading, result }: AudioPanelProps) {
   const stopRecording = useCallback(() => {
     setIsRecording(false);
     if (timerRef.current) clearInterval(timerRef.current);
+  }, []);
+
+  // Clear the recording interval on unmount to prevent state updates on an
+  // unmounted component if the user navigates away while recording.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, []);
 
   const playback = useCallback(() => {

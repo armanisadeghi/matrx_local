@@ -256,10 +256,64 @@ class EngineAPI {
     providers: { available: string[]; missing: string[]; any_available: boolean };
     jwt_validation: { configured: boolean; warning: string | null };
     engine: { initialized: boolean; client_mode: boolean };
+    local_llm: {
+      available: boolean;
+      port: number | null;
+      model_name: string | null;
+      canonical_model_name: string | null;
+      matrx_ai_support: boolean;
+      instructions: string | null;
+    };
   }> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const resp = await fetch(`${this.baseUrl}/chat/ai-status`);
     if (!resp.ok) throw new Error(`Failed to get AI status: ${resp.status}`);
+    return resp.json();
+  }
+
+  // ── Local LLM (llama-server) bridge ────────────────────────────────────
+
+  /**
+   * Notify the Python engine that a local llama-server is running.
+   * Called from use-llm.ts when the llm-server-ready Tauri event fires.
+   * Non-fatal — errors are caught and logged by the caller.
+   */
+  async connectLocalLlm(port: number, modelName: string): Promise<void> {
+    if (!this.baseUrl) return;
+    const resp = await fetch(`${this.baseUrl}/chat/local-llm/connect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port, model_name: modelName }),
+    });
+    if (!resp.ok) throw new Error(`Failed to connect local LLM: ${resp.status}`);
+  }
+
+  /**
+   * Notify the Python engine that the local llama-server has stopped.
+   * Called from use-llm.ts when the llm-server-stopped Tauri event fires.
+   * Non-fatal — errors are caught and logged by the caller.
+   */
+  async disconnectLocalLlm(): Promise<void> {
+    if (!this.baseUrl) return;
+    const resp = await fetch(`${this.baseUrl}/chat/local-llm/disconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!resp.ok) throw new Error(`Failed to disconnect local LLM: ${resp.status}`);
+  }
+
+  /** Get the current local LLM registration status from the engine. */
+  async getLocalLlmStatus(): Promise<{
+    available: boolean;
+    port: number | null;
+    model_name: string | null;
+    canonical_model_name: string | null;
+    matrx_ai_support: boolean;
+    instructions: string | null;
+  }> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const resp = await fetch(`${this.baseUrl}/chat/local-llm/status`);
+    if (!resp.ok) throw new Error(`Failed to get local LLM status: ${resp.status}`);
     return resp.json();
   }
 

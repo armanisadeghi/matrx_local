@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Mic, MicOff, Volume2, Zap, Download, CheckCircle2,
   AlertCircle, Loader2, RefreshCw, Info, ChevronRight,
-  Radio, Settings2, BookOpen,
+  Radio, Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -32,7 +32,6 @@ const INNER_TABS = [
   { value: "controls", label: "Controls", icon: Radio },
   { value: "config", label: "Configuration", icon: Settings2 },
   { value: "models", label: "OWW Models", icon: Download },
-  { value: "training", label: "Training Guide", icon: BookOpen },
 ] as const;
 
 type InnerTab = (typeof INNER_TABS)[number]["value"];
@@ -146,7 +145,6 @@ export function WakeWordPage({ wwState, wwActions }: WakeWordPageProps) {
         {innerTab === "models" && (
           <ModelsTab engine={settings.engine} currentModel={settings.owwModel} />
         )}
-        {innerTab === "training" && <TrainingGuide />}
       </div>
     </div>
   );
@@ -764,165 +762,6 @@ function ModelCard({
   );
 }
 
-// ── Training guide tab ────────────────────────────────────────────────────────
-
-function TrainingGuide() {
-  const [expanded, setExpanded] = useState<number | null>(0);
-
-  const steps = [
-    {
-      title: "Install training extras",
-      content: (
-        <div className="space-y-3 text-sm text-muted-foreground">
-          <p>
-            Training requires <code>torch</code> and <code>piper-tts</code> for synthetic data
-            generation.  These are only needed at training time — the deployed app uses ONNX Runtime.
-          </p>
-          <CodeBlock code={`pip install openwakeword[train]`} />
-          <p className="text-xs">
-            This installs PyTorch (CPU-only by default, ~700 MB) and Piper TTS.
-            Use a virtual environment so it does not affect the sidecar dependencies.
-          </p>
-        </div>
-      ),
-    },
-    {
-      title: "Generate synthetic positive samples",
-      content: (
-        <div className="space-y-3 text-sm text-muted-foreground">
-          <p>
-            openWakeWord includes a TTS pipeline that synthesises thousands of voice variants
-            of your wake phrase automatically.  You do not need to record samples yourself.
-          </p>
-          <CodeBlock
-            code={`python -m openwakeword.train generate_samples \\
-  --phrase "hey matrix" \\
-  --n_samples 5000 \\
-  --output_dir ./training_data/positive`}
-          />
-          <p className="text-xs">
-            This takes ~10–20 minutes (CPU).  Generates 5000 synthetic audio clips covering
-            different voices, accents, speeds, and simulated room acoustics.
-          </p>
-        </div>
-      ),
-    },
-    {
-      title: "Obtain negative samples",
-      content: (
-        <div className="space-y-3 text-sm text-muted-foreground">
-          <p>
-            openWakeWord ships a 500-hour curated background corpus (speech, noise, music).
-            Download it once — it is shared across all your custom models.
-          </p>
-          <CodeBlock
-            code={`python -m openwakeword.train download_background_data \\
-  --output_dir ./training_data/negative`}
-          />
-          <p className="text-xs">~2 GB download.  Required only once per machine.</p>
-        </div>
-      ),
-    },
-    {
-      title: "Train the model",
-      content: (
-        <div className="space-y-3 text-sm text-muted-foreground">
-          <p>
-            Train the binary classifier on your positive / negative data.  The output is a
-            small <code>.onnx</code> file (~3 MB).
-          </p>
-          <CodeBlock
-            code={`python -m openwakeword.train train \\
-  --positive_dir ./training_data/positive \\
-  --negative_dir ./training_data/negative \\
-  --model_name hey_matrix \\
-  --output_dir ~/.matrx/oww_models/`}
-          />
-          <p className="text-xs">
-            ~3–20 minutes on CPU; ~3 minutes with a GPU.  Once complete,
-            <strong> hey_matrix.onnx</strong> will appear in the OWW Models tab automatically
-            after refreshing.
-          </p>
-        </div>
-      ),
-    },
-    {
-      title: "Evaluate and tune threshold",
-      content: (
-        <div className="space-y-3 text-sm text-muted-foreground">
-          <p>
-            After training, test accuracy with a fresh set of recordings:
-          </p>
-          <CodeBlock
-            code={`python -m openwakeword.train evaluate \\
-  --model_path ~/.matrx/oww_models/hey_matrix.onnx \\
-  --test_dir ./my_test_recordings/`}
-          />
-          <p>
-            Use the <strong>Configuration</strong> tab to adjust the detection threshold (default 0.5).
-            Higher threshold = fewer false positives but may miss soft speech.
-          </p>
-          <ul className="mt-2 space-y-1 text-xs">
-            <li><strong>0.3–0.4</strong> — sensitive, more false positives</li>
-            <li><strong>0.5</strong> — balanced (recommended starting point)</li>
-            <li><strong>0.7–0.8</strong> — strict, almost no false positives</li>
-          </ul>
-        </div>
-      ),
-    },
-    {
-      title: "Use the model",
-      content: (
-        <div className="space-y-3 text-sm text-muted-foreground">
-          <p>
-            Once <code>hey_matrix.onnx</code> appears in the <strong>OWW Models</strong> tab:
-          </p>
-          <ol className="list-decimal space-y-1 pl-4 text-xs">
-            <li>Switch to the <strong>openWakeWord</strong> engine (button at the top of this page).</li>
-            <li>Go to <strong>Configuration</strong> → select <code>hey_matrix</code> as the active model.</li>
-            <li>Click <strong>Save</strong>, then go to <strong>Controls</strong> and click <strong>Listen</strong>.</li>
-            <li>Say "hey matrix" — the overlay should appear.</li>
-          </ol>
-        </div>
-      ),
-    },
-  ];
-
-  return (
-    <div className="space-y-3 p-6">
-      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
-        <strong className="text-blue-400">Note:</strong>&ensp;Training happens outside the app in a
-        Python environment with PyTorch.  The trained <code>.onnx</code> model is then used by the
-        app's built-in ONNX Runtime — no PyTorch required at runtime.
-      </div>
-
-      {steps.map((step, i) => (
-        <div key={i} className="overflow-hidden rounded-lg border border-border">
-          <button
-            onClick={() => setExpanded(expanded === i ? null : i)}
-            className="flex w-full items-center justify-between p-4 text-left text-sm font-medium hover:bg-muted/20 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/20 text-xs font-semibold text-primary">
-                {i + 1}
-              </span>
-              {step.title}
-            </div>
-            <ChevronRight
-              className={cn("h-4 w-4 text-muted-foreground transition-transform", expanded === i && "rotate-90")}
-            />
-          </button>
-          {expanded === i && (
-            <div className="border-t border-border bg-muted/10 p-4">
-              {step.content}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ── How it works info box ─────────────────────────────────────────────────────
 
 function HowItWorks({ engine }: { engine: WakeWordEngine }) {
@@ -1043,26 +882,6 @@ function Field({
       <label className="text-xs font-medium">{label}</label>
       {description && <p className="text-xs text-muted-foreground">{description}</p>}
       {children}
-    </div>
-  );
-}
-
-function CodeBlock({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <div className="relative rounded-lg border border-border bg-muted/30">
-      <pre className="overflow-x-auto p-3 text-xs leading-relaxed text-foreground">{code}</pre>
-      <button
-        onClick={handleCopy}
-        className="absolute right-2 top-2 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors"
-      >
-        {copied ? "Copied!" : "Copy"}
-      </button>
     </div>
   );
 }

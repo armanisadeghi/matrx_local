@@ -467,6 +467,23 @@ export function stopEngineStreams(): void {
 }
 
 /**
+ * Stop the Tauri sidecar log listener. Call on app unmount to remove the
+ * Tauri IPC event listener and prevent it from leaking after the WebView tears down.
+ */
+export function stopTauriStream(): void {
+  _state.stopTauri?.();
+  _state.stopTauri = null;
+}
+
+/**
+ * Stop all streams (both engine and Tauri). Call on full app teardown.
+ */
+export function stopAllStreams(): void {
+  stopEngineStreams();
+  stopTauriStream();
+}
+
+/**
  * Get / set the global pause state. When paused, live incoming SSE events are
  * dropped (historical buffer is unaffected).
  */

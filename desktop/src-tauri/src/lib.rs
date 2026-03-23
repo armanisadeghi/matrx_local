@@ -22,6 +22,9 @@ use transcription::wake_word::WakeWordState; // needed for WakeWordState::new() 
 mod llm;
 use llm::commands::*;
 
+mod floating_overlay;
+use floating_overlay::*;
+
 // ── proxy_fetch types ────────────────────────────────────────────────────────
 #[derive(Serialize)]
 struct FetchResponse {
@@ -231,6 +234,7 @@ fn graceful_shutdown_sync(
     transcription_state: &TranscriptionState,
     llm_process: &llm::commands::LlmProcessHandle,
     wake_word_state: Option<&WakeWordAppState>,
+    recording_state: Option<&RecordingState>,
 ) {
     // Idempotent guard: if already called (e.g. tray quit fires ExitRequested too),
     // skip the second run to avoid double-kill and spurious lock contention.
@@ -238,19 +242,68 @@ fn graceful_shutdown_sync(
         return;
     }
 
-    // 0. Signal the wake-word thread to stop and wait a brief moment for it to exit.
+    // 0. Signal the wake-word thread to stop, then join it with a timeout.
     //
-    //    The wake-word thread holds its own WhisperContext (loaded from ggml-tiny.en.bin).
-    //    If the process exits while that context is still alive, GGML's C atexit handlers
-    //    call ggml_abort() → SIGABRT → macOS crash report, same as the main transcription
-    //    context.  We set running=false here so the 50ms-tick loop exits cleanly and Rust
-    //    drops the TranscriptionManager before the process terminates.
+    //    The wake-word thread holds its own WhisperContext (loaded from ggml-tiny.en.bin)
+    //    as a local variable on the thread stack.  If the process exits while that context
+    //    is still alive, GGML's C atexit handlers call ggml_abort() → SIGABRT → macOS
+    //    crash report, even on an intentional quit.
     //
-    //    We sleep at most 120ms (just over 2 tick cycles) — enough time for the thread to
-    //    see the flag and exit its loop without making quit feel sluggish.
+    //    We must JOIN the thread (not just sleep) to guarantee the GGML context is fully
+    //    dropped before we proceed.  The thread's loop ticks every 50ms and checks
+    //    `running` on each tick, so it will exit within one tick (≤50ms) under normal
+    //    conditions.  We allow up to 2 seconds total — enough for a Whisper inference in
+    //    progress to finish its current 2-second window and then exit.
+    //
+    //    A fixed 120ms sleep was the previous approach but is a race condition: if Whisper
+    //    is mid-inference (which can take >300ms on CPU-only machines), the thread outlives
+    //    the sleep and GGML state is dropped from underneath it → SIGABRT.
     if let Some(ww) = wake_word_state {
         *ww.0.running.lock().unwrap() = false;
-        std::thread::sleep(std::time::Duration::from_millis(120));
+
+        // Take the JoinHandle out of state so we own it for joining.
+        let handle = ww.0.thread_handle.lock().unwrap().take();
+        if let Some(handle) = handle {
+            // Spawn a helper thread to join with a 2-second deadline.
+            // std::thread::JoinHandle has no built-in timeout, so we use a channel.
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                let _ = handle.join();
+                let _ = tx.send(());
+            });
+            // Wait up to 2 seconds for the wake-word thread to finish.
+            // If it times out, we proceed anyway — the GGML context will be
+            // dropped when the OS reclaims the thread stack on process exit,
+            // which is still safer than the fixed-sleep approach.
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
+        } else {
+            // No handle stored (thread never started or already exited) — nothing to join.
+        }
+    }
+
+    // 0b. Stop the active transcription recording thread and join it.
+    //
+    //     The audio capture + Whisper inference thread also holds a reference to the
+    //     WhisperContext (cloned Arc from TranscriptionState).  If we drop TranscriptionState
+    //     in step 2 while the thread is mid-inference, the last Arc reference disappears
+    //     and GGML's destructor fires while the inference C function is still running →
+    //     use-after-free → SIGABRT crash report.
+    //
+    //     We signal the thread to stop (set flag=false) and join it with a 5-second
+    //     timeout.  The thread's loop exits after draining the final audio tail (at most
+    //     one 5-second Whisper chunk), so this should complete well within the timeout
+    //     under normal conditions.
+    if let Some(rec) = recording_state {
+        *rec.flag.lock().unwrap() = false;
+        let handle = rec.thread_handle.lock().unwrap().take();
+        if let Some(handle) = handle {
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            std::thread::spawn(move || {
+                let _ = handle.join();
+                let _ = tx.send(());
+            });
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
+        }
     }
 
     // 1. Kill llama-server child process FIRST — it holds GGML Metal GPU state.
@@ -311,8 +364,15 @@ async fn restart_for_update(
     transcription_state: tauri::State<'_, TranscriptionState>,
     llm_process: tauri::State<'_, llm::commands::LlmProcessHandle>,
     wake_word_state: tauri::State<'_, WakeWordAppState>,
+    recording_state: tauri::State<'_, RecordingState>,
 ) -> Result<(), String> {
-    graceful_shutdown_sync(&sidecar_state, &transcription_state, &llm_process, Some(&wake_word_state));
+    graceful_shutdown_sync(
+        &sidecar_state,
+        &transcription_state,
+        &llm_process,
+        Some(&wake_word_state),
+        Some(&recording_state),
+    );
 
     // Give child processes a moment to exit cleanly before we restart.
     // This avoids orphaned port bindings on the new instance's startup.
@@ -651,11 +711,13 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let transcription_state = app.state::<TranscriptionState>();
                 let llm_process = app.state::<llm::commands::LlmProcessHandle>();
                 let wake_word_state = app.try_state::<WakeWordAppState>();
+                let recording_state = app.try_state::<RecordingState>();
                 graceful_shutdown_sync(
                     &sidecar_state,
                     &transcription_state,
                     &llm_process,
                     wake_word_state.as_deref(),
+                    recording_state.as_deref(),
                 );
                 app.exit(0);
             }
@@ -723,7 +785,7 @@ pub fn run() {
         .manage(CloseToTray(AtomicBool::new(true)))
         .manage(PendingOAuthUrl(Mutex::new(None)))
         .manage(TranscriptionState(Mutex::new(None)))
-        .manage(RecordingState(Arc::new(Mutex::new(false))))
+        .manage(RecordingState::new())
         .manage(WakeWordAppState(Arc::new(WakeWordState::new())))
         .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
             llm::server::LlmServer::new(),
@@ -781,6 +843,9 @@ pub fn run() {
             delete_llm_model,
             detect_llm_hardware,
             get_llm_setup_status,
+            // Floating overlay commands
+            show_transcript_overlay,
+            hide_transcript_overlay,
         ])
         .setup(|app| {
             // ── Auto-initialize transcription model on startup ──────────────
@@ -886,7 +951,14 @@ pub fn run() {
                         window.app_handle().try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
                         let ww = window.app_handle().try_state::<WakeWordAppState>();
-                        graceful_shutdown_sync(&sidecar, &transcription, &llm_proc, ww.as_deref());
+                        let rec = window.app_handle().try_state::<RecordingState>();
+                        graceful_shutdown_sync(
+                            &sidecar,
+                            &transcription,
+                            &llm_proc,
+                            ww.as_deref(),
+                            rec.as_deref(),
+                        );
                     }
                     // Fall through: window closes normally, app exits when last window closes.
                 }
@@ -934,7 +1006,14 @@ pub fn run() {
                         app.try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
                         let ww = app.try_state::<WakeWordAppState>();
-                        graceful_shutdown_sync(&sidecar, &transcription, &llm_proc, ww.as_deref());
+                        let rec = app.try_state::<RecordingState>();
+                        graceful_shutdown_sync(
+                            &sidecar,
+                            &transcription,
+                            &llm_proc,
+                            ww.as_deref(),
+                            rec.as_deref(),
+                        );
                     }
                 }
 

@@ -72,6 +72,13 @@ export interface TranscriptionActions {
 
   /** One-click setup: detect hardware, download recommended model + VAD, init */
   quickSetup: () => Promise<void>;
+
+  /**
+   * Emergency reset: forcibly clears all in-flight state (isRecording,
+   * isProcessingTail, isCalibrating) and tears down all Tauri event listeners.
+   * Sends a best-effort stop_transcription to Rust. Use when the UI gets stuck.
+   */
+  forceReset: () => void;
 }
 
 export function useTranscription(): [TranscriptionState, TranscriptionActions] {
@@ -367,6 +374,44 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const clearSegments = useCallback(() => setSegments([]), []);
   const clearError = useCallback(() => setError(null), []);
 
+  const forceReset = useCallback(() => {
+    // Best-effort — don't await, don't throw
+    tauriInvoke("stop_transcription").catch(() => {});
+    // Tear down all Tauri event listeners to prevent ghost events
+    unlistenersRef.current.forEach((fn) => fn());
+    unlistenersRef.current = [];
+    // Clear all stuck flags unconditionally
+    setIsRecording(false);
+    setIsProcessingTail(false);
+    setIsCalibrating(false);
+    setLiveRms(0);
+    setError(null);
+  }, []);
+
+  // Auto-reset if isProcessingTail stays true for more than 15 seconds.
+  // This fires if the Rust whisper-stopped event never arrives (thread panic,
+  // CPAL device dropped, etc.) and the UI would otherwise be frozen forever.
+  const processingTailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (isProcessingTail) {
+      processingTailTimerRef.current = setTimeout(() => {
+        console.warn("[transcription] isProcessingTail timeout — forcing reset");
+        forceReset();
+      }, 15_000);
+    } else {
+      if (processingTailTimerRef.current) {
+        clearTimeout(processingTailTimerRef.current);
+        processingTailTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (processingTailTimerRef.current) {
+        clearTimeout(processingTailTimerRef.current);
+        processingTailTimerRef.current = null;
+      }
+    };
+  }, [isProcessingTail, forceReset]);
+
   // One-click setup
   const quickSetup = useCallback(async () => {
     setError(null);
@@ -434,6 +479,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     clearSegments,
     clearError,
     quickSetup,
+    forceReset,
   };
 
   return [state, actions];

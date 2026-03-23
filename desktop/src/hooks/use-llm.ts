@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { isTauri } from "@/lib/sidecar";
+import { engine } from "@/lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   LlmHardwareResult,
@@ -127,6 +128,13 @@ export function useLlm(): [LlmState, LlmActions] {
             setStartingModelName(null);
             setServerStartProgress(null);
             setServerLogs([]);
+            // Notify Python engine so agents can route to the local model.
+            engine.connectLocalLlm(
+              event.payload.port,
+              event.payload.model_name ?? "",
+            ).catch((err) => {
+              console.warn("[use-llm] Failed to notify engine of local LLM start:", err);
+            });
           }
         }
       );
@@ -164,6 +172,10 @@ export function useLlm(): [LlmState, LlmActions] {
           );
           setStartingModelName(null);
           setServerStartProgress(null);
+          // Notify Python engine so it deregisters the local model.
+          engine.disconnectLocalLlm().catch((err) => {
+            console.warn("[use-llm] Failed to notify engine of local LLM stop:", err);
+          });
         }
       });
       const unlistenCancelled = await tauriListen<LlmDownloadCancelledEvent>(

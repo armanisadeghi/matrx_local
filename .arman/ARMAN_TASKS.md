@@ -9,6 +9,15 @@ _Last updated: 2026-03-18_
 
 ## 🔴 ACTIVE — Do These Now
 
+### Wake Word Model Training
+- [ ] **Train "Hey Matrix" OWW model** — See `AGENT_TASKS.md` → "Wake Word Developer Training Guide" for full step-by-step. Summary:
+  1. `pip install "openwakeword[train]"` in a fresh venv
+  2. Run `generate_samples --phrase "hey matrix" --n_samples 5000`
+  3. Download negative data once
+  4. Run `train` → produces `hey_matrix.onnx`
+  5. Test threshold; target ~0.5 with `evaluate`
+  6. Copy to `desktop/src-tauri/resources/oww_models/hey_matrix.onnx` and update bundle config
+
 ### Certificates & Signing
 - [ ] **Windows EV Cert** — Purchase from DigiCert or Sectigo ($200–500/yr). Without it, SmartScreen shows a warning. Skip for beta; required before public launch.
 

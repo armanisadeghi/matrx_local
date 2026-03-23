@@ -7,6 +7,9 @@ Provides:
   GET  /chat/models                  — AI models from local SQLite cache
   GET  /chat/agents                  — agents/prompts from local SQLite cache
   GET  /chat/local-tools             — local OS tools registered in matrx-ai registry
+  POST /chat/local-llm/connect       — register running llama-server with the agent pipeline
+  POST /chat/local-llm/disconnect    — deregister local LLM (server stopped)
+  GET  /chat/local-llm/status        — current local LLM registration status
 
   POST /chat/ai/chat                 — streaming chat completions (matrx-ai)
   POST /chat/ai/agents/{agent_id}    — start agent conversation (matrx-ai)
@@ -32,6 +35,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.common.system_logger import get_logger
 from app.tools.tool_schemas import (
@@ -424,6 +428,18 @@ async def ai_provider_status() -> dict[str, Any]:
     except Exception:
         pass
 
+    local_llm: dict[str, Any] = {
+        "available": False,
+        "port": None,
+        "model_name": None,
+        "matrx_ai_support": False,
+    }
+    try:
+        from app.services.ai.local_llm_registry import get_local_llm_status
+        local_llm = get_local_llm_status()
+    except Exception:
+        pass
+
     return {
         "providers": {
             "available": available,
@@ -441,7 +457,67 @@ async def ai_provider_status() -> dict[str, Any]:
             "initialized": ai_initialized,
             "client_mode": client_mode,
         },
+        "local_llm": local_llm,
     }
+
+
+# ---------------------------------------------------------------------------
+# Local LLM endpoints — bridge between llama-server sidecar and matrx-ai
+# ---------------------------------------------------------------------------
+
+
+class LocalLlmConnectRequest(BaseModel):
+    port: int
+    model_name: str
+
+
+@router.post("/local-llm/connect")
+async def local_llm_connect(req: LocalLlmConnectRequest) -> dict[str, Any]:
+    """Register a running local llama-server with the matrx-ai agent pipeline.
+
+    Called by the Tauri frontend when llama-server emits llm-server-ready.
+    """
+    from app.services.ai.local_llm_registry import set_local_llm, get_local_llm_status
+
+    logger.info(
+        "[chat_routes /local-llm/connect] Connecting local LLM: port=%d, model=%s",
+        req.port,
+        req.model_name,
+    )
+
+    success = set_local_llm(req.port, req.model_name)
+    status = get_local_llm_status()
+
+    if not success and not status["matrx_ai_support"]:
+        return {
+            "status": "disabled",
+            "message": (
+                "matrx-ai does not yet support GenericOpenAIChat. "
+                "Local LLM routing is disabled. "
+                f"See developer instructions: {status['instructions']}"
+            ),
+            **status,
+        }
+
+    return {"status": "ok" if success else "error", **status}
+
+
+@router.post("/local-llm/disconnect")
+async def local_llm_disconnect() -> dict[str, Any]:
+    """Deregister the local LLM — called when llama-server stops."""
+    from app.services.ai.local_llm_registry import clear_local_llm, get_local_llm_status
+
+    logger.info("[chat_routes /local-llm/disconnect] Disconnecting local LLM")
+    clear_local_llm()
+    return {"status": "ok", **get_local_llm_status()}
+
+
+@router.get("/local-llm/status")
+async def local_llm_status() -> dict[str, Any]:
+    """Return current local LLM registration status."""
+    from app.services.ai.local_llm_registry import get_local_llm_status
+
+    return get_local_llm_status()
 
 
 def build_ai_sub_app() -> "FastAPI":  # noqa: F821  (imported inside to avoid circular at module level)

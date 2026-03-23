@@ -13,9 +13,7 @@ import { Button } from "@/components/ui/button";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import { TranscriptionMiniMode } from "@/components/TranscriptionMiniMode";
 import { engine } from "@/lib/api";
-import { useLlmApp } from "@/contexts/LlmContext";
-import { useLlmPipeline } from "@/hooks/use-llm-pipeline";
-import type { TranscriptPolishOutput } from "@/hooks/use-llm-pipeline";
+import { isTauri } from "@/lib/sidecar";
 import {
   Mic,
   MicOff,
@@ -40,7 +38,7 @@ import {
   FileText,
   Minimize2,
   ChevronLeft,
-  Sparkles,
+  RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emitClientLog } from "@/hooks/use-client-log";
@@ -65,8 +63,6 @@ const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const [state, actions] = useTranscription();
-  const [llmState] = useLlmApp();
-  const llmPort = llmState.serverStatus?.port ?? null;
   const [sessionsState, sessionsActions] = useTranscriptionSessions();
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -96,20 +92,21 @@ export function Voice() {
     state.fullTranscript,
   );
 
-  // ── Auto-start listen mode on mount if setting is enabled ────────────────
+  // ── Auto-start listen mode — only after transcription model is loaded ────
+  // This prevents a CPAL race where the wake word thread and the transcription
+  // thread both try to open the mic before the model is ready. We wait until
+  // state.activeModel is non-null (model fully loaded in Rust) before starting.
   const didAutoStartRef = useRef(false);
   useEffect(() => {
     if (didAutoStartRef.current) return;
+    if (!state.activeModel) return; // wait for model to be ready
     didAutoStartRef.current = true;
     loadSettings().then((s) => {
       if (s.wakeWordEnabled && s.wakeWordListenOnStartup) {
-        // Defer slightly so transcription init can settle first
-        setTimeout(() => void wwActions.setup(), 800);
+        void wwActions.setup();
       }
     }).catch(() => {});
-  // Intentionally empty deps — run once on mount only
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [state.activeModel]); // re-runs when model finishes loading
 
   // ── Publish transcript from the overlay directly to a note ───────────────
   const handleOverlayPublishToNote = useCallback(async (text: string) => {
@@ -121,6 +118,36 @@ export function Voice() {
       folder_name: "Voice Notes",
     });
   }, []);
+
+  // ── Stream live transcript to the floating overlay window ─────────────────
+  // Emits whenever the wake word session is active and transcript changes.
+  useEffect(() => {
+    if (wwState.uiMode !== "active") return;
+    if (!isTauri()) return;
+    if (!state.fullTranscript) return;
+    import("@tauri-apps/api/event").then(({ emit }) => {
+      void emit("overlay-transcript", state.fullTranscript);
+    }).catch(() => {});
+  }, [state.fullTranscript, wwState.uiMode]);
+
+  // ── Auto-persist transcript every 5 s during active wake-word session ─────
+  // Ensures we never lose transcribed text even on a crash.
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (wwState.uiMode !== "active" || !activeSessionId || !state.fullTranscript) {
+      return;
+    }
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => {
+      sessionsActions.updateText(activeSessionId, state.fullTranscript);
+    }, 5_000);
+    return () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+    };
+  }, [state.fullTranscript, wwState.uiMode, activeSessionId, sessionsActions]);
 
   // Wire state changes to the unified log bus
   useEffect(() => {
@@ -292,6 +319,19 @@ export function Voice() {
       >
         {/* Wake word controls strip — lives in the header action area */}
         <div className="flex items-center gap-2">
+          {/* Emergency reset — visible whenever voice subsystem is stuck */}
+          {(state.isProcessingTail || state.isCalibrating || state.isRecording) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={actions.forceReset}
+              className="gap-1.5 text-red-500 hover:text-red-400 hover:bg-red-500/10"
+              title="Force-reset the voice subsystem if it's stuck"
+            >
+              <RotateCcw className="h-4 w-4" />
+              Reset Voice
+            </Button>
+          )}
           <WakeWordControls
             uiMode={wwState.uiMode}
             listenRms={wwState.listenRms}
@@ -335,7 +375,6 @@ export function Voice() {
             sessionsActions={sessionsActions}
             activeSessionId={activeSessionId}
             onContinueSession={handleContinueRecording}
-            llmPort={llmPort}
           />
         )}
         {tab === "models" && (
@@ -604,7 +643,6 @@ function TranscribeTab({
   sessionsActions,
   activeSessionId,
   onContinueSession,
-  llmPort,
 }: {
   state: ReturnType<typeof useTranscription>[0];
   actions: ReturnType<typeof useTranscription>[1] & {
@@ -615,7 +653,6 @@ function TranscribeTab({
   sessionsActions: ReturnType<typeof useTranscriptionSessions>[1];
   activeSessionId: string | null;
   onContinueSession: (sessionId: string) => Promise<void>;
-  llmPort: number | null;
 }) {
   const { permissions, check, request, openSettings } = usePermissionsContext();
   const [permError, setPermError] = useState<string | null>(null);
@@ -629,13 +666,6 @@ function TranscribeTab({
   const [textDraft, setTextDraft] = useState<string>("");
   const textDraftSessionRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // LLM pipeline for AI-powered transcript polish
-  const getPort = useCallback(() => llmPort, [llmPort]);
-  const { run: runPipeline } = useLlmPipeline(getPort);
-  const [polishingSessionId, setPolishingSessionId] = useState<string | null>(null);
-  const [polishSuccessId, setPolishSuccessId] = useState<string | null>(null);
-  const [polishErrorMsg, setPolishErrorMsg] = useState<string | null>(null);
 
   // Sync textDraft when the viewed session changes or gets new segments
   const viewingSession = sessionsState.viewingSession;
@@ -668,6 +698,13 @@ function TranscribeTab({
       sessionsActions.updateText(sid, newText);
     }, 600);
   }, [sessionsActions]);
+
+  // Clear the debounce timer on unmount so it doesn't fire on stale state.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, []);
 
   // Load device list if not yet populated
   useEffect(() => {
@@ -762,59 +799,6 @@ function TranscribeTab({
       setPushingToNote(null);
     }
   }, []);
-
-  /**
-   * Polish transcript with local LLM:
-   * 1. Runs polish_transcript pipeline → returns { title, cleaned }
-   * 2. Formats the note with structured content + original transcript section
-   * 3. Saves the note via engine.createNote
-   * 4. Updates the session title and text draft to the cleaned version
-   */
-  const handlePolishWithAI = useCallback(async (session: TranscriptionSession, rawText: string) => {
-    if (!llmPort) return;
-    if (!rawText.trim()) return;
-    setPolishingSessionId(session.id);
-    setPolishErrorMsg(null);
-
-    try {
-      const result = await runPipeline<TranscriptPolishOutput>(
-        "polish_transcript",
-        { transcript: rawText }
-      );
-
-      const { title, cleaned } = result;
-
-      // Build the structured note content
-      const noteContent = `${cleaned}
-
----
-# Original Transcript:
-${rawText}`;
-
-      // Update the session in state (title + cleaned text)
-      sessionsActions.rename(session.id, title);
-      sessionsActions.updateText(session.id, cleaned);
-      setTextDraft(cleaned);
-
-      // Push to notes if engine is available
-      if (engine.engineUrl) {
-        await engine.createNote("local", {
-          label: title,
-          content: noteContent,
-          folder_name: "Voice Notes",
-        });
-      }
-
-      setPolishSuccessId(session.id);
-      setTimeout(() => setPolishSuccessId(null), 3000);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setPolishErrorMsg(msg);
-      setTimeout(() => setPolishErrorMsg(null), 5000);
-    } finally {
-      setPolishingSessionId(null);
-    }
-  }, [llmPort, runPipeline, sessionsActions]);
 
   const handleStartTitleEdit = useCallback((session: TranscriptionSession) => {
     setEditingTitleId(session.id);
@@ -1127,9 +1111,17 @@ ${rawText}`;
               </button>
 
               {state.isProcessingTail && (
-                <p className="text-xs text-amber-500 text-center">
-                  Finishing transcription of last audio chunk…
-                </p>
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <p className="text-xs text-amber-500">
+                    Finishing transcription of last audio chunk…
+                  </p>
+                  <button
+                    onClick={actions.forceReset}
+                    className="text-xs text-muted-foreground underline underline-offset-2 hover:text-red-400 transition-colors"
+                  >
+                    Taking too long? Click to reset
+                  </button>
+                </div>
               )}
 
               {/* Live audio level meter */}
@@ -1225,35 +1217,6 @@ ${rawText}`;
                       </Button>
                     )}
 
-                    {/* Polish with AI — only visible when LLM server is running */}
-                    {textDraft.length > 0 && llmPort && !isViewingActive && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={cn(
-                          "h-7 px-2 text-xs gap-1",
-                          polishSuccessId === viewingSession.id && "text-emerald-500",
-                          polishErrorMsg && polishingSessionId === viewingSession.id && "text-red-500"
-                        )}
-                        onClick={() => handlePolishWithAI(viewingSession, textDraft)}
-                        disabled={polishingSessionId === viewingSession.id}
-                        title="Clean up transcript with AI, generate a title, and save as a structured note"
-                      >
-                        {polishingSessionId === viewingSession.id ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : polishSuccessId === viewingSession.id ? (
-                          <Check className="h-3 w-3" />
-                        ) : (
-                          <Sparkles className="h-3 w-3" />
-                        )}
-                        {polishingSessionId === viewingSession.id
-                          ? "Polishing…"
-                          : polishSuccessId === viewingSession.id
-                          ? "Polished!"
-                          : "Polish with AI"}
-                      </Button>
-                    )}
-
                     {/* Push to note */}
                     {textDraft.length > 0 && (
                       <Button
@@ -1345,17 +1308,6 @@ ${rawText}`;
                   <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-amber-500/5">
                     <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin shrink-0" />
                     <span className="text-xs text-amber-500 font-medium">Finishing final audio chunk…</span>
-                  </div>
-                )}
-                {polishingSessionId === viewingSession?.id && (
-                  <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-violet-500/5">
-                    <Sparkles className="h-3.5 w-3.5 text-violet-400 animate-pulse shrink-0" />
-                    <span className="text-xs text-violet-400 font-medium">Polishing transcript with AI…</span>
-                  </div>
-                )}
-                {polishErrorMsg && polishingSessionId === null && (
-                  <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-red-500/5">
-                    <span className="text-xs text-red-500">AI polish failed: {polishErrorMsg}</span>
                   </div>
                 )}
 

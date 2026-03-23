@@ -18,6 +18,7 @@ import { AiMatrx } from "@/pages/AiMatrx";
 import { BrowserLab } from "@/pages/BrowserLab";
 import { Voice } from "@/pages/Voice";
 import { LocalModels } from "@/pages/LocalModels";
+import { TranscriptOverlay } from "@/components/TranscriptOverlay";
 import { SystemPrompts } from "@/pages/SystemPrompts";
 import { TauriFetchBrowser } from "@/pages/TauriFetchBrowser";
 import { useEngine } from "@/hooks/use-engine";
@@ -40,7 +41,7 @@ import { AudioDevicesProvider } from "@/contexts/AudioDevicesContext";
 import { LlmProvider } from "@/contexts/LlmContext";
 import { engine } from "@/lib/api";
 import { isTauri } from "@/lib/sidecar";
-import { initUnifiedLog, initTauriLogStream, stopEngineStreams } from "@/hooks/use-unified-log";
+import { initUnifiedLog, initTauriLogStream, stopEngineStreams, stopTauriStream } from "@/hooks/use-unified-log";
 import supabase from "@/lib/supabase";
 import { Mic } from "lucide-react";
 
@@ -138,12 +139,19 @@ export default function App() {
   // Unified log streams — self-initiating, independent of which page is open
   // ---------------------------------------------------------------------------
 
-  // Tauri sidecar listener starts immediately on mount (no engine needed)
+  // Tauri sidecar listener starts immediately on mount (no engine needed).
+  // The cleanup return removes the Tauri IPC event listener on unmount so it
+  // doesn't leak after the WebView tears down.
   useEffect(() => {
     initTauriLogStream();
+    return () => {
+      stopTauriStream();
+    };
   }, []);
 
-  // Engine streams start/stop with engine connection state
+  // Engine streams start/stop with engine connection state.
+  // Cleanup closes any open SSE EventSource connections on unmount so they
+  // don't persist after the Tauri WebView is destroyed.
   useEffect(() => {
     if (status === "connected" && url) {
       const getToken = async () => {
@@ -154,6 +162,9 @@ export default function App() {
     } else if (status !== "connected") {
       stopEngineStreams();
     }
+    return () => {
+      stopEngineStreams();
+    };
   }, [status, url]);
 
   // Keep only the 3 most recent for the toast stack
@@ -383,6 +394,8 @@ export default function App() {
       <TooltipProvider>
         <HashRouter>
           <Routes>
+            {/* Transcript overlay window — renders without auth, no chrome */}
+            <Route path="/overlay" element={<TranscriptOverlay />} />
             {/* AuthCallback must be unconditional — renders before auth loads */}
             <Route path="/auth/callback" element={<AuthCallback />} />
 

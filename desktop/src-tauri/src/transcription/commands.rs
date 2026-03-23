@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
 use whisper_cpp_plus::TranscriptionParams;
 
@@ -15,7 +16,24 @@ const WAKE_WORD_DEFAULT_MODEL: &str = "ggml-tiny.en.bin";
 pub struct TranscriptionState(pub Mutex<Option<TranscriptionManager>>);
 
 /// Tauri-managed state for active recording session.
-pub struct RecordingState(pub Arc<Mutex<bool>>);
+///
+/// The `Arc<Mutex<bool>>` is the stop flag shared with the audio thread.
+/// The `Mutex<Option<JoinHandle<()>>>` stores the thread handle so
+/// `graceful_shutdown_sync` can join it on quit, guaranteeing the GGML
+/// WhisperContext on the thread stack is fully dropped before process exit.
+pub struct RecordingState {
+    pub flag: Arc<Mutex<bool>>,
+    pub thread_handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl RecordingState {
+    pub fn new() -> Self {
+        RecordingState {
+            flag: Arc::new(Mutex::new(false)),
+            thread_handle: Mutex::new(None),
+        }
+    }
+}
 
 /// Tauri-managed state for the wake-word subsystem.
 pub struct WakeWordAppState(pub Arc<WakeWordState>);
@@ -220,7 +238,7 @@ pub async fn start_transcription(
 ) -> Result<(), String> {
     // Check if already recording
     {
-        let is_recording = recording.0.lock().unwrap();
+        let is_recording = recording.flag.lock().unwrap();
         if *is_recording {
             return Err("Already recording".to_string());
         }
@@ -252,14 +270,16 @@ pub async fn start_transcription(
     let ctx = manager.context().clone();
 
     // Mark as recording before spawning so the flag is set synchronously
-    *recording.0.lock().unwrap() = true;
+    *recording.flag.lock().unwrap() = true;
 
     let app_events = app.clone();
-    let recording_flag = app.state::<RecordingState>().0.clone();
+    let recording_flag = app.state::<RecordingState>().flag.clone();
 
     // AudioCapture holds a cpal::Stream which is !Send, so we run the entire
     // capture + inference loop on a dedicated OS thread.
-    std::thread::spawn(move || {
+    // The JoinHandle is stored in RecordingState so graceful_shutdown_sync can
+    // join it on quit, guaranteeing the GGML WhisperContext is fully dropped.
+    let handle = std::thread::spawn(move || {
         // Start audio capture — always returns 16kHz mono after internal resampling
         let capture = match audio_capture::AudioCapture::start_with_device(
             device_name.as_deref()
@@ -391,6 +411,9 @@ pub async fn start_transcription(
         *recording_flag.lock().unwrap() = false;
     });
 
+    // Store the JoinHandle so graceful_shutdown_sync can join it on quit.
+    *recording.thread_handle.lock().unwrap() = Some(handle);
+
     Ok(())
 }
 
@@ -424,7 +447,7 @@ fn is_hallucination(text: &str) -> bool {
 /// Stop the active transcription session.
 #[tauri::command]
 pub async fn stop_transcription(recording: State<'_, RecordingState>) -> Result<(), String> {
-    *recording.0.lock().unwrap() = false;
+    *recording.flag.lock().unwrap() = false;
     Ok(())
 }
 
