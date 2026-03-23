@@ -20,6 +20,20 @@ _watches: dict[str, FileWatch] = {}
 _watch_counter = 0
 
 
+def shutdown_file_watches() -> None:
+    """Cancel all active file watches. Called during app shutdown."""
+    cancelled = 0
+    for watch in list(_watches.values()):
+        if watch._task and not watch._task.done():
+            watch._task.cancel()
+            cancelled += 1
+        watch.is_active = False
+        watch._stop_event.set()
+    _watches.clear()
+    if cancelled:
+        logger.info("Cancelled %d file watch(es) during shutdown", cancelled)
+
+
 @dataclass
 class FileEvent:
     timestamp: float

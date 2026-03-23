@@ -442,9 +442,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(
         "[app/main.py] ── Matrx Local shutdown ────────────────────────────────────"
     )
-    # Stop background sync
+
+    # ── Phase S1: Cancel background asyncio tasks (fast, non-blocking) ────
     try:
-        get_sync_engine().stop()
+        sync_eng = get_sync_engine()
+        sync_eng.stop()
+        if hasattr(sync_eng, '_task') and sync_eng._task and not sync_eng._task.done():
+            try:
+                await asyncio.wait_for(sync_eng._task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
     except Exception:
         pass
 
@@ -455,6 +462,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except asyncio.CancelledError:
         pass
 
+    # ── Phase S2: Stop Python wake word service (release microphone) ──────
+    try:
+        from app.services.wake_word.service import get_wake_word_service
+        oww_svc = get_wake_word_service()
+        if oww_svc._running:
+            await asyncio.wait_for(oww_svc.stop(), timeout=3.0)
+            logger.info("[app/main.py] Wake word service stopped ✓")
+    except (asyncio.TimeoutError, Exception):
+        logger.debug("[app/main.py] Wake word service cleanup skipped or timed out")
+
+    # ── Phase S3: Cancel all scheduled tasks + kill prevent-sleep process ─
+    try:
+        from app.tools.tools.scheduler import shutdown_scheduler
+        await asyncio.wait_for(shutdown_scheduler(), timeout=3.0)
+        logger.info("[app/main.py] Scheduler shut down ✓")
+    except (asyncio.TimeoutError, Exception):
+        logger.debug("[app/main.py] Scheduler cleanup skipped or timed out")
+
+    # ── Phase S4: Stop file watches + document watcher ─────────────────
+    try:
+        from app.tools.tools.file_watch import shutdown_file_watches
+        shutdown_file_watches()
+        logger.info("[app/main.py] File watches stopped ✓")
+    except Exception:
+        logger.debug("[app/main.py] File watch cleanup skipped")
+
+    try:
+        from app.services.documents.sync_engine import sync_engine as _doc_sync
+        if _doc_sync._watch_task and not _doc_sync._watch_task.done():
+            await asyncio.wait_for(_doc_sync.stop_watcher(), timeout=3.0)
+            logger.info("[app/main.py] Document file watcher stopped ✓")
+    except (asyncio.TimeoutError, Exception):
+        logger.debug("[app/main.py] Document watcher cleanup skipped or timed out")
+
+    # ── Phase S5: Stop network services (proxy, tunnel, scraper) ─────────
     try:
         proxy = get_proxy_server()
         await proxy.stop()
@@ -467,7 +509,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if tm.running:
             await tm.stop()
             logger.info("[app/main.py] Tunnel stopped ✓")
-            # Clear tunnel_active in Supabase so remote devices don't try a dead URL
             try:
                 from app.services.cloud_sync.instance_manager import get_instance_manager as _get_im
                 await _get_im().update_tunnel_url(None, active=False)
@@ -484,20 +525,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "[app/main.py] Scraper engine failed to stop cleanly", exc_info=True
         )
 
-    # Close any open Playwright browser instances from browser_automation tools.
-    # Without this, the chromium child processes stay alive after SIGTERM and
-    # hold open port bindings / file handles — especially problematic on Windows.
+    # ── Phase S6: Close Playwright browser instances from tool usage ──────
     try:
         from app.tools.tools.browser_automation import (
             _browser_instances,
             _browser_contexts,
             _playwright_instance,
         )
-        import asyncio as _asyncio
 
         for bt, browser in list(_browser_instances.items()):
             try:
-                await _asyncio.wait_for(browser.close(), timeout=3.0)
+                await asyncio.wait_for(browser.close(), timeout=3.0)
             except Exception:
                 pass
         _browser_instances.clear()
@@ -505,7 +543,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         if _playwright_instance is not None:
             try:
-                await _asyncio.wait_for(_playwright_instance.stop(), timeout=3.0)
+                await asyncio.wait_for(_playwright_instance.stop(), timeout=3.0)
             except Exception:
                 pass
 
@@ -513,11 +551,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.debug("[app/main.py] Browser automation cleanup skipped (no active contexts)")
 
-    # Close local SQLite database
+    # ── Phase S7: Close local SQLite database (must be last) ─────────────
     try:
         await get_db().close()
     except Exception:
         pass
+
+    logger.info("[app/main.py] ── Shutdown complete ────────────────────────────────")
 
 
 app = FastAPI(

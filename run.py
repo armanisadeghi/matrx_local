@@ -624,16 +624,18 @@ def _handle_exit(signum: int, frame: object) -> None:  # noqa: ARG001
     before the process terminates.  Setting _shutdown_event wakes the main
     thread from _wait_forever() so it can join the server thread and exit.
 
-    As a safety net, a background timer forces os._exit() after 15 seconds
+    As a safety net, a background timer forces os._exit() after 25 seconds
     even if the lifespan teardown hangs — this guarantees the process WILL
     die and prevents orphaned sidecar processes on user machines.
+    The 25s budget covers: wake-word 3s + scheduler 3s + doc-watcher 3s +
+    proxy 4s + tunnel 5s + scraper 5s + browsers 3s, with margin.
     """
     remove_discovery_file()
 
     if _uvicorn_server is not None:
         _uvicorn_server.should_exit = True
         _shutdown_event.set()
-        _schedule_force_exit(15)
+        _schedule_force_exit(25)
     else:
         os._exit(0)
 

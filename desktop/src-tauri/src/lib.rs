@@ -279,6 +279,7 @@ fn graceful_shutdown_sync(
     sidecar_state: &SidecarState,
     transcription_state: &TranscriptionState,
     llm_process: &llm::commands::LlmProcessHandle,
+    llm_server_state: Option<&llm::commands::LlmServerState>,
     wake_word_state: Option<&WakeWordAppState>,
     recording_state: Option<&RecordingState>,
 ) {
@@ -356,16 +357,25 @@ fn graceful_shutdown_sync(
     //    Killing it before exit() ensures the Metal device is freed by the child
     //    process (its own GGML cleanup) rather than our atexit handlers.
     //
-    //    Two-pronged approach:
-    //    a) Via LlmProcessHandle (std::sync::Mutex — always lockable from sync context).
-    //    b) Via OS kill-by-name as a fallback in case the handle was never stored
-    //       (e.g. llama-server was started before this version shipped the handle tracking).
-    if let Ok(mut guard) = llm_process.lock() {
-        if let Some(child) = guard.take() {
-            let _ = child.kill();
+    //    Three-pronged approach:
+    //    a) Via LlmServerState (tokio::sync::Mutex — try_lock from sync context).
+    //       This is the primary path since LlmServer.process is always populated.
+    //    b) Via LlmProcessHandle (std::sync::Mutex — legacy/backup).
+    //    c) Via OS kill-by-name as a final fallback.
+    let mut llm_killed = false;
+    if let Some(server_state) = llm_server_state {
+        if let Ok(mut server) = server_state.try_lock() {
+            server.stop_blocking();
+            llm_killed = true;
         }
     }
-    // Fallback: kill any remaining llama-server processes by name.
+    if !llm_killed {
+        if let Ok(mut guard) = llm_process.lock() {
+            if let Some(child) = guard.take() {
+                let _ = child.kill();
+            }
+        }
+    }
     #[cfg(unix)]
     {
         let _ = std::process::Command::new("pkill")
@@ -412,6 +422,7 @@ async fn restart_for_update(
     sidecar_state: tauri::State<'_, SidecarState>,
     transcription_state: tauri::State<'_, TranscriptionState>,
     llm_process: tauri::State<'_, llm::commands::LlmProcessHandle>,
+    llm_server_state: tauri::State<'_, llm::commands::LlmServerState>,
     wake_word_state: tauri::State<'_, WakeWordAppState>,
     recording_state: tauri::State<'_, RecordingState>,
 ) -> Result<(), String> {
@@ -419,6 +430,7 @@ async fn restart_for_update(
         &sidecar_state,
         &transcription_state,
         &llm_process,
+        Some(&*llm_server_state),
         Some(&wake_word_state),
         Some(&recording_state),
     );
@@ -759,12 +771,14 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 let sidecar_state = app.state::<SidecarState>();
                 let transcription_state = app.state::<TranscriptionState>();
                 let llm_process = app.state::<llm::commands::LlmProcessHandle>();
+                let llm_server = app.try_state::<llm::commands::LlmServerState>();
                 let wake_word_state = app.try_state::<WakeWordAppState>();
                 let recording_state = app.try_state::<RecordingState>();
                 graceful_shutdown_sync(
                     &sidecar_state,
                     &transcription_state,
                     &llm_process,
+                    llm_server.as_deref(),
                     wake_word_state.as_deref(),
                     recording_state.as_deref(),
                 );
@@ -1077,12 +1091,14 @@ pub fn run() {
                         window.app_handle().try_state::<TranscriptionState>(),
                         window.app_handle().try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
+                        let llm_srv = window.app_handle().try_state::<llm::commands::LlmServerState>();
                         let ww = window.app_handle().try_state::<WakeWordAppState>();
                         let rec = window.app_handle().try_state::<RecordingState>();
                         graceful_shutdown_sync(
                             &sidecar,
                             &transcription,
                             &llm_proc,
+                            llm_srv.as_deref(),
                             ww.as_deref(),
                             rec.as_deref(),
                         );
@@ -1132,12 +1148,14 @@ pub fn run() {
                         app.try_state::<TranscriptionState>(),
                         app.try_state::<llm::commands::LlmProcessHandle>(),
                     ) {
+                        let llm_srv = app.try_state::<llm::commands::LlmServerState>();
                         let ww = app.try_state::<WakeWordAppState>();
                         let rec = app.try_state::<RecordingState>();
                         graceful_shutdown_sync(
                             &sidecar,
                             &transcription,
                             &llm_proc,
+                            llm_srv.as_deref(),
                             ww.as_deref(),
                             rec.as_deref(),
                         );

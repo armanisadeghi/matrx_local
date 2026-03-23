@@ -51,6 +51,38 @@ def _save_tasks() -> None:
         logger.warning("Failed to persist scheduled tasks: %s", e)
 
 
+async def shutdown_scheduler() -> None:
+    """Cancel all active scheduled tasks and kill the prevent-sleep subprocess.
+
+    Called once from app lifespan teardown to ensure no orphaned asyncio tasks
+    or subprocesses survive engine shutdown.
+    """
+    global _prevent_sleep_process, _heartbeat_active, _heartbeat_task
+
+    cancelled = 0
+    for task in _scheduled_tasks.values():
+        if task.is_active and task._task and not task._task.done():
+            task._task.cancel()
+            cancelled += 1
+            task.is_active = False
+    if cancelled:
+        logger.info("Cancelled %d scheduled task(s) during shutdown", cancelled)
+
+    if _heartbeat_task and not _heartbeat_task.done():
+        _heartbeat_task.cancel()
+    _heartbeat_active = False
+    _heartbeat_task = None
+
+    if _prevent_sleep_process is not None and _prevent_sleep_process.returncode is None:
+        try:
+            _prevent_sleep_process.kill()
+            await _prevent_sleep_process.wait()
+        except Exception:
+            pass
+        _prevent_sleep_process = None
+        logger.info("Killed prevent-sleep subprocess during shutdown")
+
+
 async def restore_scheduled_tasks() -> int:
     """Load and re-schedule tasks saved from a previous session.
 
