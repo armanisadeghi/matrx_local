@@ -843,6 +843,8 @@ pub fn run() {
             delete_llm_model,
             detect_llm_hardware,
             get_llm_setup_status,
+            save_hf_token,
+            get_hf_token,
             // Floating overlay commands
             show_transcript_overlay,
             hide_transcript_overlay,

@@ -234,9 +234,18 @@ fn build_server_args(
 ) -> Vec<String> {
     let thread_count = optimal_thread_count();
 
-    vec![
+    // On Windows, normalize backslashes to forward slashes so llama.cpp's
+    // split-file sibling discovery (which uses string operations on the path)
+    // works correctly. Mixed separators cause it to mis-derive the directory
+    // when searching for parts 2 and 3 of a split GGUF.
+    #[cfg(target_os = "windows")]
+    let model_path_str = model_path.replace('\\', "/");
+    #[cfg(not(target_os = "windows"))]
+    let model_path_str = model_path.to_string();
+
+    let mut args = vec![
         "-m".to_string(),
-        model_path.to_string(),
+        model_path_str,
         "-ngl".to_string(),
         gpu_layers.to_string(),
         "-c".to_string(),
@@ -252,7 +261,16 @@ fn build_server_args(
         // Flash attention — requires explicit value in llama.cpp b8281+
         "-fa".to_string(),
         "on".to_string(),
-    ]
+    ];
+
+    // Windows: disable memory-mapped file I/O for model loading.
+    // mmap on Windows uses CreateFileMapping which can fail for large files
+    // (>2GB) across split GGUF parts, causing "failed to load model" errors.
+    // CPU performance impact is negligible for interactive use.
+    #[cfg(target_os = "windows")]
+    args.push("--no-mmap".to_string());
+
+    args
 }
 
 /// Wait up to 120 s for llama-server to report healthy (HTTP 200 on /health).

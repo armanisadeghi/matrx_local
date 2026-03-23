@@ -50,6 +50,11 @@ export interface LlmState {
   serverStatus: LlmServerStatus | null;
   downloadedModels: DownloadedLlmModel[];
 
+  // HuggingFace token
+  hfToken: string | null;
+  /** True when the last download failed because the repo uses XET storage and no token is set. */
+  xetTokenRequired: boolean;
+
   // Errors
   error: string | null;
 }
@@ -65,6 +70,10 @@ export interface LlmActions {
    * Returns the final filename it was saved as.
    */
   importLocalModel: (sourcePath: string, destFilename?: string) => Promise<string>;
+  /** Save a HuggingFace access token. Pass empty string to clear. */
+  saveHfToken: (token: string) => Promise<void>;
+  /** Get the stored HuggingFace token, or null if not set. */
+  getHfToken: () => Promise<string | null>;
   startServer: (
     modelFilename: string,
     gpuLayers: number,
@@ -101,6 +110,8 @@ export function useLlm(): [LlmState, LlmActions] {
     DownloadedLlmModel[]
   >([]);
   const [error, setError] = useState<string | null>(null);
+  const [hfToken, setHfToken] = useState<string | null>(null);
+  const [xetTokenRequired, setXetTokenRequired] = useState(false);
 
   const unlistenRef = useRef<UnlistenFn[]>([]);
 
@@ -117,6 +128,8 @@ export function useLlm(): [LlmState, LlmActions] {
     if (!isTauri()) return;
 
     refreshSetupStatus();
+    // Load saved HF token so the UI can show "token configured" state
+    tauriInvoke<string | null>("get_hf_token").then((t) => setHfToken(t ?? null)).catch(() => {});
 
     let mounted = true;
     const setupListeners = async () => {
@@ -243,6 +256,7 @@ export function useLlm(): [LlmState, LlmActions] {
       setIsDownloading(true);
       setDownloadProgress(null);
       setDownloadCancelled(false);
+      setXetTokenRequired(false);
       setError(null);
 
       const unlisten = await tauriListen<LlmDownloadProgress>(
@@ -259,7 +273,10 @@ export function useLlm(): [LlmState, LlmActions] {
         setDownloadedModels(models);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (!msg.toLowerCase().includes("cancel")) {
+        if (msg.startsWith("XET_TOKEN_REQUIRED") || msg.startsWith("XET_TOKEN_INVALID")) {
+          setXetTokenRequired(true);
+          setError(msg.replace(/^XET_TOKEN_(REQUIRED|INVALID): /, ""));
+        } else if (!msg.toLowerCase().includes("cancel")) {
           setError(msg);
         }
         throw e;
@@ -383,9 +400,22 @@ export function useLlm(): [LlmState, LlmActions] {
     [refreshSetupStatus]
   );
 
+  const saveHfToken = useCallback(async (token: string) => {
+    await tauriInvoke("save_hf_token", { token });
+    setHfToken(token.trim() || null);
+    if (token.trim()) setXetTokenRequired(false);
+  }, []);
+
+  const getHfToken = useCallback(async () => {
+    const t = await tauriInvoke<string | null>("get_hf_token");
+    setHfToken(t ?? null);
+    return t ?? null;
+  }, []);
+
   const clearError = useCallback(() => {
     setError(null);
     setDownloadCancelled(false);
+    setXetTokenRequired(false);
   }, []);
 
   // One-click setup: detect hardware, download recommended model, start server
@@ -436,6 +466,8 @@ export function useLlm(): [LlmState, LlmActions] {
     downloadCancelled,
     serverStatus,
     downloadedModels,
+    hfToken,
+    xetTokenRequired,
     error,
   };
 
@@ -444,6 +476,8 @@ export function useLlm(): [LlmState, LlmActions] {
     downloadModel,
     cancelDownload,
     importLocalModel,
+    saveHfToken,
+    getHfToken,
     startServer,
     stopServer,
     getServerStatus,
