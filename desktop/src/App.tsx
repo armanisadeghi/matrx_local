@@ -18,6 +18,7 @@ import { AiMatrx } from "@/pages/AiMatrx";
 import { BrowserLab } from "@/pages/BrowserLab";
 import { Voice } from "@/pages/Voice";
 import { LocalModels } from "@/pages/LocalModels";
+import { SystemPrompts } from "@/pages/SystemPrompts";
 import { TauriFetchBrowser } from "@/pages/TauriFetchBrowser";
 import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
@@ -277,6 +278,7 @@ export default function App() {
     },
     { path: "/voice", element: <Voice /> },
     { path: "/local-models", element: <LocalModels /> },
+    { path: "/system-prompts", element: <SystemPrompts /> },
     { path: "/aimatrx", element: <AiMatrx /> },
     { path: "/browser", element: <BrowserLab /> },
     { path: "/browser/tauri", element: <TauriFetchBrowser /> },

@@ -18,6 +18,7 @@ import {
   MonitorSmartphone,
   Mic,
   BrainCircuit,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -47,6 +48,7 @@ const navItems = [
   { to: "/devices", icon: Cpu, label: "Devices" },
   { to: "/voice", icon: Mic, label: "Voice" },
   { to: "/local-models", icon: BrainCircuit, label: "Local Models" },
+  { to: "/system-prompts", icon: BookOpen, label: "Prompts" },
   { to: "/aimatrx", icon: Sparkles, label: "AiMatrx" },
   { to: "/browser", icon: MonitorSmartphone, label: "Browser" },
   { to: "/settings", icon: Settings, label: "Settings" },

@@ -27,6 +27,8 @@ import {
   FolderOpen,
   Plus,
   PackagePlus,
+  BookOpen,
+  ExternalLink,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
 import { Button } from "@/components/ui/button";
@@ -48,7 +50,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { streamCompletion, callWithTools, ContextSizeError } from "@/lib/llm/api";
 import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
-import { PromptPickerIcon } from "@/components/PromptPicker";
+import { useNavigate } from "react-router-dom";
+import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
+import type { SystemPrompt } from "@/lib/system-prompts";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
 
@@ -1010,6 +1014,87 @@ function ModelSwitcher() {
   );
 }
 
+// ── System Prompt Selector ────────────────────────────────────────────────
+// A proper full-width selector for the settings panel.
+// Shows a dropdown of all saved + builtin prompts, a textarea for the
+// current content, and a link to the full System Prompts management page.
+
+function SystemPromptSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (content: string) => void;
+}) {
+  const navigate = useNavigate();
+  const [userPrompts, setUserPrompts] = useState<SystemPrompt[]>(() => systemPrompts.list());
+  const allPrompts = [...BUILTIN_PROMPTS, ...userPrompts];
+  const activePrompt = allPrompts.find((p) => p.content === value);
+
+  // Reload when the user returns from the prompts page
+  useEffect(() => {
+    setUserPrompts(systemPrompts.list());
+  }, []);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs font-medium">System Prompt</Label>
+        <button
+          className="flex items-center gap-1 text-xs text-primary hover:underline"
+          onClick={() => navigate("/system-prompts")}
+          title="Open System Prompts library"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Manage
+        </button>
+      </div>
+
+      {/* Prompt picker dropdown */}
+      <div className="space-y-1.5">
+        <select
+          className="w-full h-8 rounded-md border border-input bg-background px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          value={activePrompt?.id ?? "__custom__"}
+          onChange={(e) => {
+            if (e.target.value === "__custom__") return;
+            if (e.target.value === "__manage__") {
+              navigate("/system-prompts");
+              return;
+            }
+            const found = allPrompts.find((p) => p.id === e.target.value);
+            if (found) onChange(found.content);
+          }}
+        >
+          <option value="__custom__">
+            {activePrompt ? activePrompt.name : "— custom / paste below —"}
+          </option>
+          {userPrompts.length > 0 && (
+            <optgroup label="My Prompts">
+              {userPrompts.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </optgroup>
+          )}
+          <optgroup label="Built-in">
+            {BUILTIN_PROMPTS.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </optgroup>
+          <option value="__manage__">→ Open Prompts Library…</option>
+        </select>
+
+        <Textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="You are a helpful assistant… (or select from the library above)"
+          className="text-xs resize-none h-32"
+        />
+        <p className="text-[10px] text-muted-foreground text-right">{value.length} chars</p>
+      </div>
+    </div>
+  );
+}
+
 function InferenceTab() {
   const [state, actions] = useLlmContext();
   const { serverStatus, isStarting, hardwareResult, downloadedModels } = state;
@@ -1633,27 +1718,13 @@ function InferenceTab() {
           <ScrollArea className="flex-1">
             <div className="p-3 space-y-5">
               {/* System prompt */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-medium">System Prompt</Label>
-                  <PromptPickerIcon
-                    onSelect={(content) => {
-                      setSystemPrompt(content);
-                      if (activeConvId) updateMessages(activeConvId, messages, content);
-                    }}
-                    currentContent={systemPrompt}
-                  />
-                </div>
-                <Textarea
-                  value={systemPrompt}
-                  onChange={(e) => {
-                    setSystemPrompt(e.target.value);
-                    if (activeConvId) updateMessages(activeConvId, messages, e.target.value);
-                  }}
-                  placeholder="You are a helpful assistant…"
-                  className="text-xs resize-none h-28"
-                />
-              </div>
+              <SystemPromptSelector
+                value={systemPrompt}
+                onChange={(content) => {
+                  setSystemPrompt(content);
+                  if (activeConvId) updateMessages(activeConvId, messages, content);
+                }}
+              />
 
               <Separator />
 
