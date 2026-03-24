@@ -220,7 +220,7 @@ export function useEngine(authenticated = true) {
       try {
         const systemInfo = await engine.getSystemInfo();
         update({ systemInfo });
-        emitClientLog("info", `System: ${systemInfo?.os ?? "?"} / ${systemInfo?.hostname ?? "?"}`, "engine");
+        emitClientLog("info", `System: ${systemInfo?.platform ?? "?"} / ${systemInfo?.hostname ?? "?"}`, "engine");
       } catch {
         emitClientLog("warn", "Could not load system info (non-critical)", "engine");
       }
@@ -229,7 +229,7 @@ export function useEngine(authenticated = true) {
       try {
         const browserStatus = await engine.getBrowserStatus();
         update({ browserStatus });
-        emitClientLog("info", `Browser: ${browserStatus?.installed ? "available" : "not installed"}`, "engine");
+        emitClientLog("info", `Browser: ${browserStatus?.chrome_found ? "available" : "not found"}`, "engine");
       } catch {
         emitClientLog("warn", "Could not load browser status (non-critical)", "engine");
       }
