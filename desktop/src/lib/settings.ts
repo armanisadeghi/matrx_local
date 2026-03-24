@@ -4,29 +4,73 @@ import { engine } from "@/lib/api";
 const STORAGE_KEY = "matrx-settings";
 
 export interface AppSettings {
-  // Application
+  // ── Application ─────────────────────────────────────────────────────
   launchOnStartup: boolean;
   minimizeToTray: boolean;
   theme: "dark" | "light" | "system";
-  // Updates
+
+  // ── Updates ─────────────────────────────────────────────────────────
   autoCheckUpdates: boolean;
   updateCheckInterval: number; // minutes between automatic checks (minimum 60)
-  // Scraping
+
+  // ── Scraping ────────────────────────────────────────────────────────
   headlessScraping: boolean;
   scrapeDelay: string;
-  // Proxy
+
+  // ── Proxy ───────────────────────────────────────────────────────────
   proxyEnabled: boolean;
   proxyPort: number;
-  // Remote access
-  tunnelEnabled: boolean; // persisted preference — engine auto-starts tunnel on boot when true
-  // Instance
+
+  // ── Remote access ───────────────────────────────────────────────────
+  tunnelEnabled: boolean;
+
+  // ── Instance ────────────────────────────────────────────────────────
   instanceName: string;
-  // Notifications
+
+  // ── Notifications ───────────────────────────────────────────────────
   notificationSound: boolean;
   notificationSoundStyle: "chime" | "alert" | "success" | "error";
-  // Wake word / listen mode
-  wakeWordEnabled: boolean;       // master switch — if false, never start listening
-  wakeWordListenOnStartup: boolean; // auto-start listen mode when app launches
+
+  // ── Wake word / listen mode ─────────────────────────────────────────
+  wakeWordEnabled: boolean;
+  wakeWordListenOnStartup: boolean;
+  wakeWordEngine: "whisper" | "oww";
+  wakeWordOwwModel: string;
+  wakeWordOwwThreshold: number;
+  wakeWordCustomKeyword: string;
+
+  // ── Chat & AI defaults ──────────────────────────────────────────────
+  chatDefaultModel: string;
+  chatDefaultMode: "chat" | "co-work" | "code";
+  chatMaxConversations: number;
+  chatDefaultSystemPromptId: string; // "" = use builtin assistant
+
+  // ── Local LLM inference ─────────────────────────────────────────────
+  llmDefaultModel: string;           // filename of preferred local model ("" = auto)
+  llmDefaultGpuLayers: number;       // -1 = auto-detect
+  llmDefaultContextLength: number;
+  llmAutoStartServer: boolean;       // start llama-server on app launch
+  llmChatTemperature: number;
+  llmChatTopP: number;
+  llmChatTopK: number;
+  llmChatMaxTokens: number;
+  llmReasoningTemperature: number;
+  llmReasoningTopP: number;
+  llmEnableThinking: boolean;        // default thinking mode for reasoning
+  llmToolCallTemperature: number;
+  llmToolCallTopP: number;
+  llmToolCallTopK: number;
+  llmStructuredOutputTemperature: number;
+  llmStreamMaxTokens: number;
+
+  // ── Transcription / Voice ───────────────────────────────────────────
+  transcriptionDefaultModel: string;    // "" = auto (hardware-recommended)
+  transcriptionAutoInit: boolean;       // auto-initialize on app start
+  transcriptionAudioDevice: string;     // "" = system default
+  transcriptionProcessingTimeout: number; // ms before force-reset
+
+  // ── UI / Layout ─────────────────────────────────────────────────────
+  sidebarCollapsed: boolean;
 }
 
 /** One storage path entry as returned by GET /settings/paths */
@@ -40,21 +84,62 @@ export interface StoragePath {
 }
 
 const DEFAULTS: AppSettings = {
+  // Application
   launchOnStartup: false,
   minimizeToTray: true,
   theme: "dark",
+  // Updates
   autoCheckUpdates: true,
-  updateCheckInterval: 240, // 4 hours
+  updateCheckInterval: 240,
+  // Scraping
   headlessScraping: true,
   scrapeDelay: "1.0",
+  // Proxy
   proxyEnabled: true,
   proxyPort: 22180,
+  // Remote access
   tunnelEnabled: false,
+  // Instance
   instanceName: "My Computer",
+  // Notifications
   notificationSound: true,
   notificationSoundStyle: "chime",
+  // Wake word
   wakeWordEnabled: true,
   wakeWordListenOnStartup: true,
+  wakeWordEngine: "whisper",
+  wakeWordOwwModel: "hey_jarvis",
+  wakeWordOwwThreshold: 0.5,
+  wakeWordCustomKeyword: "hey matrix",
+  // Chat & AI
+  chatDefaultModel: "claude-sonnet-4-6",
+  chatDefaultMode: "chat",
+  chatMaxConversations: 100,
+  chatDefaultSystemPromptId: "",
+  // Local LLM
+  llmDefaultModel: "",
+  llmDefaultGpuLayers: -1,
+  llmDefaultContextLength: 8192,
+  llmAutoStartServer: false,
+  llmChatTemperature: 0.7,
+  llmChatTopP: 0.8,
+  llmChatTopK: 20,
+  llmChatMaxTokens: 1024,
+  llmReasoningTemperature: 0.6,
+  llmReasoningTopP: 0.95,
+  llmEnableThinking: false,
+  llmToolCallTemperature: 0.7,
+  llmToolCallTopP: 0.8,
+  llmToolCallTopK: 20,
+  llmStructuredOutputTemperature: 0.1,
+  llmStreamMaxTokens: 1024,
+  // Transcription
+  transcriptionDefaultModel: "",
+  transcriptionAutoInit: true,
+  transcriptionAudioDevice: "",
+  transcriptionProcessingTimeout: 15000,
+  // UI
+  sidebarCollapsed: false,
 };
 
 export async function loadSettings(): Promise<AppSettings> {
@@ -186,6 +271,17 @@ export async function syncAllSettings(): Promise<void> {
   }
 }
 
+/** Helper: pick a cloud value or fall back to local. */
+function cloudBool(cloud: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  return cloud[key] !== undefined ? Boolean(cloud[key]) : fallback;
+}
+function cloudNum(cloud: Record<string, unknown>, key: string, fallback: number): number {
+  return cloud[key] !== undefined ? Number(cloud[key]) : fallback;
+}
+function cloudStr(cloud: Record<string, unknown>, key: string, fallback: string): string {
+  return cloud[key] !== undefined ? String(cloud[key]) : fallback;
+}
+
 /**
  * Merge cloud settings into local settings.
  * Cloud settings use snake_case keys; local uses camelCase.
@@ -196,19 +292,62 @@ export function mergeCloudSettings(
 ): AppSettings {
   return {
     ...local,
-    proxyEnabled: cloud.proxy_enabled !== undefined ? Boolean(cloud.proxy_enabled) : local.proxyEnabled,
-    proxyPort: cloud.proxy_port !== undefined ? Number(cloud.proxy_port) : local.proxyPort,
-    tunnelEnabled: cloud.tunnel_enabled !== undefined ? Boolean(cloud.tunnel_enabled) : local.tunnelEnabled,
-    headlessScraping: cloud.headless_scraping !== undefined ? Boolean(cloud.headless_scraping) : local.headlessScraping,
-    scrapeDelay: cloud.scrape_delay !== undefined ? String(cloud.scrape_delay) : local.scrapeDelay,
+    // Application
+    launchOnStartup: cloudBool(cloud, "launch_on_startup", local.launchOnStartup),
+    minimizeToTray: cloudBool(cloud, "minimize_to_tray", local.minimizeToTray),
     theme: (cloud.theme as AppSettings["theme"]) || local.theme,
-    launchOnStartup: cloud.launch_on_startup !== undefined ? Boolean(cloud.launch_on_startup) : local.launchOnStartup,
-    minimizeToTray: cloud.minimize_to_tray !== undefined ? Boolean(cloud.minimize_to_tray) : local.minimizeToTray,
-    autoCheckUpdates: cloud.auto_check_updates !== undefined ? Boolean(cloud.auto_check_updates) : local.autoCheckUpdates,
+    // Updates
+    autoCheckUpdates: cloudBool(cloud, "auto_check_updates", local.autoCheckUpdates),
     updateCheckInterval: cloud.update_check_interval !== undefined ? Math.max(60, Number(cloud.update_check_interval)) : local.updateCheckInterval,
-    instanceName: (cloud.instance_name as string) || local.instanceName,
-    notificationSound: cloud.notification_sound !== undefined ? Boolean(cloud.notification_sound) : local.notificationSound,
+    // Scraping
+    headlessScraping: cloudBool(cloud, "headless_scraping", local.headlessScraping),
+    scrapeDelay: cloudStr(cloud, "scrape_delay", local.scrapeDelay),
+    // Proxy
+    proxyEnabled: cloudBool(cloud, "proxy_enabled", local.proxyEnabled),
+    proxyPort: cloudNum(cloud, "proxy_port", local.proxyPort),
+    // Remote access
+    tunnelEnabled: cloudBool(cloud, "tunnel_enabled", local.tunnelEnabled),
+    // Instance
+    instanceName: cloudStr(cloud, "instance_name", local.instanceName),
+    // Notifications
+    notificationSound: cloudBool(cloud, "notification_sound", local.notificationSound),
     notificationSoundStyle: (cloud.notification_sound_style as AppSettings["notificationSoundStyle"]) || local.notificationSoundStyle,
+    // Wake word
+    wakeWordEnabled: cloudBool(cloud, "wake_word_enabled", local.wakeWordEnabled),
+    wakeWordListenOnStartup: cloudBool(cloud, "wake_word_listen_on_startup", local.wakeWordListenOnStartup),
+    wakeWordEngine: (cloud.wake_word_engine as AppSettings["wakeWordEngine"]) || local.wakeWordEngine,
+    wakeWordOwwModel: cloudStr(cloud, "wake_word_oww_model", local.wakeWordOwwModel),
+    wakeWordOwwThreshold: cloudNum(cloud, "wake_word_oww_threshold", local.wakeWordOwwThreshold),
+    wakeWordCustomKeyword: cloudStr(cloud, "wake_word_custom_keyword", local.wakeWordCustomKeyword),
+    // Chat & AI
+    chatDefaultModel: cloudStr(cloud, "chat_default_model", local.chatDefaultModel),
+    chatDefaultMode: (cloud.chat_default_mode as AppSettings["chatDefaultMode"]) || local.chatDefaultMode,
+    chatMaxConversations: cloudNum(cloud, "chat_max_conversations", local.chatMaxConversations),
+    chatDefaultSystemPromptId: cloudStr(cloud, "chat_default_system_prompt_id", local.chatDefaultSystemPromptId),
+    // Local LLM
+    llmDefaultModel: cloudStr(cloud, "llm_default_model", local.llmDefaultModel),
+    llmDefaultGpuLayers: cloudNum(cloud, "llm_default_gpu_layers", local.llmDefaultGpuLayers),
+    llmDefaultContextLength: cloudNum(cloud, "llm_default_context_length", local.llmDefaultContextLength),
+    llmAutoStartServer: cloudBool(cloud, "llm_auto_start_server", local.llmAutoStartServer),
+    llmChatTemperature: cloudNum(cloud, "llm_chat_temperature", local.llmChatTemperature),
+    llmChatTopP: cloudNum(cloud, "llm_chat_top_p", local.llmChatTopP),
+    llmChatTopK: cloudNum(cloud, "llm_chat_top_k", local.llmChatTopK),
+    llmChatMaxTokens: cloudNum(cloud, "llm_chat_max_tokens", local.llmChatMaxTokens),
+    llmReasoningTemperature: cloudNum(cloud, "llm_reasoning_temperature", local.llmReasoningTemperature),
+    llmReasoningTopP: cloudNum(cloud, "llm_reasoning_top_p", local.llmReasoningTopP),
+    llmEnableThinking: cloudBool(cloud, "llm_enable_thinking", local.llmEnableThinking),
+    llmToolCallTemperature: cloudNum(cloud, "llm_tool_call_temperature", local.llmToolCallTemperature),
+    llmToolCallTopP: cloudNum(cloud, "llm_tool_call_top_p", local.llmToolCallTopP),
+    llmToolCallTopK: cloudNum(cloud, "llm_tool_call_top_k", local.llmToolCallTopK),
+    llmStructuredOutputTemperature: cloudNum(cloud, "llm_structured_output_temperature", local.llmStructuredOutputTemperature),
+    llmStreamMaxTokens: cloudNum(cloud, "llm_stream_max_tokens", local.llmStreamMaxTokens),
+    // Transcription
+    transcriptionDefaultModel: cloudStr(cloud, "transcription_default_model", local.transcriptionDefaultModel),
+    transcriptionAutoInit: cloudBool(cloud, "transcription_auto_init", local.transcriptionAutoInit),
+    transcriptionAudioDevice: cloudStr(cloud, "transcription_audio_device", local.transcriptionAudioDevice),
+    transcriptionProcessingTimeout: cloudNum(cloud, "transcription_processing_timeout", local.transcriptionProcessingTimeout),
+    // UI
+    sidebarCollapsed: cloudBool(cloud, "sidebar_collapsed", local.sidebarCollapsed),
   };
 }
 
@@ -217,18 +356,61 @@ export function mergeCloudSettings(
  */
 export function settingsToCloud(settings: AppSettings): Record<string, unknown> {
   return {
-    proxy_enabled: settings.proxyEnabled,
-    proxy_port: settings.proxyPort,
-    tunnel_enabled: settings.tunnelEnabled,
-    headless_scraping: settings.headlessScraping,
-    scrape_delay: parseFloat(settings.scrapeDelay) || 1.0,
-    theme: settings.theme,
+    // Application
     launch_on_startup: settings.launchOnStartup,
     minimize_to_tray: settings.minimizeToTray,
+    theme: settings.theme,
+    // Updates
     auto_check_updates: settings.autoCheckUpdates,
     update_check_interval: settings.updateCheckInterval,
+    // Scraping
+    headless_scraping: settings.headlessScraping,
+    scrape_delay: parseFloat(settings.scrapeDelay) || 1.0,
+    // Proxy
+    proxy_enabled: settings.proxyEnabled,
+    proxy_port: settings.proxyPort,
+    // Remote access
+    tunnel_enabled: settings.tunnelEnabled,
+    // Instance
     instance_name: settings.instanceName,
+    // Notifications
     notification_sound: settings.notificationSound,
     notification_sound_style: settings.notificationSoundStyle,
+    // Wake word
+    wake_word_enabled: settings.wakeWordEnabled,
+    wake_word_listen_on_startup: settings.wakeWordListenOnStartup,
+    wake_word_engine: settings.wakeWordEngine,
+    wake_word_oww_model: settings.wakeWordOwwModel,
+    wake_word_oww_threshold: settings.wakeWordOwwThreshold,
+    wake_word_custom_keyword: settings.wakeWordCustomKeyword,
+    // Chat & AI
+    chat_default_model: settings.chatDefaultModel,
+    chat_default_mode: settings.chatDefaultMode,
+    chat_max_conversations: settings.chatMaxConversations,
+    chat_default_system_prompt_id: settings.chatDefaultSystemPromptId,
+    // Local LLM
+    llm_default_model: settings.llmDefaultModel,
+    llm_default_gpu_layers: settings.llmDefaultGpuLayers,
+    llm_default_context_length: settings.llmDefaultContextLength,
+    llm_auto_start_server: settings.llmAutoStartServer,
+    llm_chat_temperature: settings.llmChatTemperature,
+    llm_chat_top_p: settings.llmChatTopP,
+    llm_chat_top_k: settings.llmChatTopK,
+    llm_chat_max_tokens: settings.llmChatMaxTokens,
+    llm_reasoning_temperature: settings.llmReasoningTemperature,
+    llm_reasoning_top_p: settings.llmReasoningTopP,
+    llm_enable_thinking: settings.llmEnableThinking,
+    llm_tool_call_temperature: settings.llmToolCallTemperature,
+    llm_tool_call_top_p: settings.llmToolCallTopP,
+    llm_tool_call_top_k: settings.llmToolCallTopK,
+    llm_structured_output_temperature: settings.llmStructuredOutputTemperature,
+    llm_stream_max_tokens: settings.llmStreamMaxTokens,
+    // Transcription
+    transcription_default_model: settings.transcriptionDefaultModel,
+    transcription_auto_init: settings.transcriptionAutoInit,
+    transcription_audio_device: settings.transcriptionAudioDevice,
+    transcription_processing_timeout: settings.transcriptionProcessingTimeout,
+    // UI
+    sidebar_collapsed: settings.sidebarCollapsed,
   };
 }

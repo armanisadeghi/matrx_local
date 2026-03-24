@@ -5,6 +5,7 @@ import {
   Globe,
   Wrench,
   Settings,
+  SlidersHorizontal,
   FileText,
   MessageSquare,
   Zap,
@@ -51,6 +52,7 @@ const navItems = [
   { to: "/system-prompts", icon: BookOpen, label: "Prompts" },
   { to: "/aimatrx", icon: Sparkles, label: "AiMatrx" },
   { to: "/browser", icon: MonitorSmartphone, label: "Browser" },
+  { to: "/configurations", icon: SlidersHorizontal, label: "Configurations" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];
 
@@ -73,6 +75,14 @@ const statusLabels: Record<EngineStatus, string> = {
 export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(() => {
+    // Read from unified settings (also falls back to old localStorage key)
+    try {
+      const raw = localStorage.getItem("matrx-settings");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.sidebarCollapsed !== undefined) return Boolean(parsed.sidebarCollapsed);
+      }
+    } catch { /* ignore */ }
     const saved = localStorage.getItem("sidebar-collapsed");
     return saved === "true";
   });
@@ -82,6 +92,15 @@ export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
     const next = !collapsed;
     setCollapsed(next);
     localStorage.setItem("sidebar-collapsed", String(next));
+    // Also update in unified settings
+    try {
+      const raw = localStorage.getItem("matrx-settings");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        parsed.sidebarCollapsed = next;
+        localStorage.setItem("matrx-settings", JSON.stringify(parsed));
+      }
+    } catch { /* ignore */ }
   };
 
   const isActive = (to: string) =>

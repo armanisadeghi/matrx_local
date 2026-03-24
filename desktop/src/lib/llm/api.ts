@@ -4,6 +4,7 @@ import type {
   ToolDefinition,
   ToolCall,
 } from "./types";
+import { loadSettings, type AppSettings } from "@/lib/settings";
 
 // ── Typed Errors ──────────────────────────────────────────────────────────
 
@@ -35,32 +36,51 @@ function throwIfContextError(status: number, body: string): void {
     }
   } catch (e) {
     if (e instanceof ContextSizeError) throw e;
-    // Not JSON or unrecognised shape — fall through to generic error
   }
 }
 
-// ── Qwen3 Sampling Presets ────────────────────────────────────────────────
+// ── Sampling Presets (read from user config) ──────────────────────────────
 
-const TOOL_CALL_PARAMS = {
-  temperature: 0.7,
-  top_p: 0.8,
-  top_k: 20,
-  chat_template_kwargs: { enable_thinking: false },
-};
+/** Cached settings — refreshed on each top-level API call. */
+let _cached: AppSettings | null = null;
 
-const CHAT_PARAMS = {
-  temperature: 0.7,
-  top_p: 0.8,
-  top_k: 20,
-  chat_template_kwargs: { enable_thinking: false },
-};
+async function cfg(): Promise<AppSettings> {
+  // Load once per call tree — subsequent calls within the same tick reuse cache.
+  if (!_cached) _cached = await loadSettings();
+  return _cached;
+}
 
-const REASONING_PARAMS = {
-  temperature: 0.6,
-  top_p: 0.95,
-  top_k: 20,
-  chat_template_kwargs: { enable_thinking: true },
-};
+/** Invalidate cache so next API call picks up fresh settings. */
+export function invalidateLlmSettingsCache(): void {
+  _cached = null;
+}
+
+function chatParams(s: AppSettings) {
+  return {
+    temperature: s.llmChatTemperature,
+    top_p: s.llmChatTopP,
+    top_k: s.llmChatTopK,
+    chat_template_kwargs: { enable_thinking: false },
+  };
+}
+
+function reasoningParams(s: AppSettings) {
+  return {
+    temperature: s.llmReasoningTemperature,
+    top_p: s.llmReasoningTopP,
+    top_k: s.llmChatTopK,
+    chat_template_kwargs: { enable_thinking: s.llmEnableThinking },
+  };
+}
+
+function toolCallParams(s: AppSettings) {
+  return {
+    temperature: s.llmToolCallTemperature,
+    top_p: s.llmToolCallTopP,
+    top_k: s.llmToolCallTopK,
+    chat_template_kwargs: { enable_thinking: false },
+  };
+}
 
 // ── Core API Functions ────────────────────────────────────────────────────
 
@@ -74,7 +94,8 @@ export async function chatCompletion(
     thinking?: boolean;
   }
 ): Promise<string> {
-  const params = options?.thinking ? REASONING_PARAMS : CHAT_PARAMS;
+  const s = await cfg();
+  const params = options?.thinking ? reasoningParams(s) : chatParams(s);
 
   const response = await fetch(
     `http://127.0.0.1:${port}/v1/chat/completions`,
@@ -85,7 +106,7 @@ export async function chatCompletion(
         model: "local",
         messages,
         temperature: options?.temperature ?? params.temperature,
-        max_tokens: options?.maxTokens ?? 1024,
+        max_tokens: options?.maxTokens ?? s.llmChatMaxTokens,
         stream: false,
         top_p: params.top_p,
         top_k: params.top_k,
@@ -103,7 +124,6 @@ export async function chatCompletion(
   const data: ChatCompletionResponse = await response.json();
   const content = data.choices[0]?.message?.content ?? "";
 
-  // Strip thinking blocks if present
   return stripThinking(content);
 }
 
@@ -116,6 +136,9 @@ export async function* streamCompletion(
     maxTokens?: number;
   }
 ): AsyncGenerator<string> {
+  const s = await cfg();
+  const params = chatParams(s);
+
   const response = await fetch(
     `http://127.0.0.1:${port}/v1/chat/completions`,
     {
@@ -124,12 +147,12 @@ export async function* streamCompletion(
       body: JSON.stringify({
         model: "local",
         messages,
-        temperature: options?.temperature ?? CHAT_PARAMS.temperature,
-        max_tokens: options?.maxTokens ?? 1024,
+        temperature: options?.temperature ?? params.temperature,
+        max_tokens: options?.maxTokens ?? s.llmStreamMaxTokens,
         stream: true,
-        top_p: CHAT_PARAMS.top_p,
-        top_k: CHAT_PARAMS.top_k,
-        chat_template_kwargs: CHAT_PARAMS.chat_template_kwargs,
+        top_p: params.top_p,
+        top_k: params.top_k,
+        chat_template_kwargs: params.chat_template_kwargs,
       }),
     }
   );
@@ -178,7 +201,9 @@ export async function callWithTools(
     arguments: Record<string, unknown>;
   }>;
 }> {
-  // No streaming when tools are provided (llama-server limitation)
+  const s = await cfg();
+  const params = toolCallParams(s);
+
   const response = await fetch(
     `http://127.0.0.1:${port}/v1/chat/completions`,
     {
@@ -189,12 +214,12 @@ export async function callWithTools(
         messages,
         tools,
         tool_choice: "auto",
-        temperature: TOOL_CALL_PARAMS.temperature,
-        max_tokens: 1024,
+        temperature: params.temperature,
+        max_tokens: s.llmChatMaxTokens,
         stream: false,
-        top_p: TOOL_CALL_PARAMS.top_p,
-        top_k: TOOL_CALL_PARAMS.top_k,
-        chat_template_kwargs: TOOL_CALL_PARAMS.chat_template_kwargs,
+        top_p: params.top_p,
+        top_k: params.top_k,
+        chat_template_kwargs: params.chat_template_kwargs,
       }),
     }
   );
@@ -226,6 +251,8 @@ export async function structuredOutput<T>(
   messages: ChatMessage[],
   schema: object
 ): Promise<T> {
+  const s = await cfg();
+
   const response = await fetch(
     `http://127.0.0.1:${port}/v1/chat/completions`,
     {
@@ -234,7 +261,7 @@ export async function structuredOutput<T>(
       body: JSON.stringify({
         model: "local",
         messages,
-        temperature: 0.1,
+        temperature: s.llmStructuredOutputTemperature,
         max_tokens: 2048,
         stream: false,
         response_format: {

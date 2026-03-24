@@ -42,22 +42,65 @@ logger = logging.getLogger(__name__)
 from app.config import MATRX_HOME_DIR
 LOCAL_SETTINGS_FILE = MATRX_HOME_DIR / "settings.json"
 
-# Default settings — every possible setting with its default value
+# Default settings — every possible setting with its default value.
+# This MUST stay in sync with DEFAULTS in desktop/src/lib/settings.ts.
 DEFAULT_SETTINGS: dict[str, Any] = {
-    # Proxy
-    "proxy_enabled": True,
-    "proxy_port": 22180,
+    # Application
+    "launch_on_startup": False,
+    "minimize_to_tray": True,
+    "theme": "dark",
+    # Updates
+    "auto_check_updates": True,
+    "update_check_interval": 240,
     # Scraping
     "headless_scraping": True,
     "scrape_delay": 1.0,
-    # Application
-    "theme": "dark",
-    "launch_on_startup": False,
-    "minimize_to_tray": True,
+    # Proxy
+    "proxy_enabled": True,
+    "proxy_port": 22180,
+    # Remote access
+    "tunnel_enabled": False,
     # Instance
     "instance_name": "My Computer",
-    # Remote access — user's explicit preference persisted across restarts
-    "tunnel_enabled": False,
+    # Notifications
+    "notification_sound": True,
+    "notification_sound_style": "chime",
+    # Wake word
+    "wake_word_enabled": True,
+    "wake_word_listen_on_startup": True,
+    "wake_word_engine": "whisper",
+    "wake_word_oww_model": "hey_jarvis",
+    "wake_word_oww_threshold": 0.5,
+    "wake_word_custom_keyword": "hey matrix",
+    # Chat & AI
+    "chat_default_model": "claude-sonnet-4-6",
+    "chat_default_mode": "chat",
+    "chat_max_conversations": 100,
+    "chat_default_system_prompt_id": "",
+    # Local LLM
+    "llm_default_model": "",
+    "llm_default_gpu_layers": -1,
+    "llm_default_context_length": 8192,
+    "llm_auto_start_server": False,
+    "llm_chat_temperature": 0.7,
+    "llm_chat_top_p": 0.8,
+    "llm_chat_top_k": 20,
+    "llm_chat_max_tokens": 1024,
+    "llm_reasoning_temperature": 0.6,
+    "llm_reasoning_top_p": 0.95,
+    "llm_enable_thinking": False,
+    "llm_tool_call_temperature": 0.7,
+    "llm_tool_call_top_p": 0.8,
+    "llm_tool_call_top_k": 20,
+    "llm_structured_output_temperature": 0.1,
+    "llm_stream_max_tokens": 1024,
+    # Transcription
+    "transcription_default_model": "",
+    "transcription_auto_init": True,
+    "transcription_audio_device": "",
+    "transcription_processing_timeout": 15000,
+    # UI
+    "sidebar_collapsed": False,
 }
 
 

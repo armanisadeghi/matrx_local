@@ -22,6 +22,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { isTauri } from "@/lib/sidecar";
 import supabase from "@/lib/supabase";
 import { streamCompletion } from "@/lib/llm/api";
+import { loadSettings } from "@/lib/settings";
 
 // ---- Types ----
 
@@ -258,6 +259,14 @@ export function useChat({ engineUrl }: UseChatOptions) {
   const [toolSchemas, setToolSchemas] = useState<ToolSchema[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const cloudModelsRef = useRef<ModelOption[]>(FALLBACK_MODELS);
+
+  // Load default model and mode from user configuration on mount
+  useEffect(() => {
+    loadSettings().then((s) => {
+      if (s.chatDefaultModel) setModel(s.chatDefaultModel);
+      if (s.chatDefaultMode) setMode(s.chatDefaultMode);
+    });
+  }, []);
 
   /** Merge cloud models with any running local model. */
   const mergeLocalModel = useCallback(

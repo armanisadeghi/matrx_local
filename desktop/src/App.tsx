@@ -20,6 +20,7 @@ import { Voice } from "@/pages/Voice";
 import { LocalModels } from "@/pages/LocalModels";
 import { TranscriptOverlay } from "@/components/TranscriptOverlay";
 import { SystemPrompts } from "@/pages/SystemPrompts";
+import { Configurations } from "@/pages/Configurations";
 import { TauriFetchBrowser } from "@/pages/TauriFetchBrowser";
 import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
@@ -293,6 +294,7 @@ export default function App() {
     { path: "/aimatrx", element: <AiMatrx /> },
     { path: "/browser", element: <BrowserLab /> },
     { path: "/browser/tauri", element: <TauriFetchBrowser /> },
+    { path: "/configurations", element: <Configurations /> },
     {
       path: "/settings",
       element: (
