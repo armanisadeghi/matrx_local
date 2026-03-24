@@ -115,6 +115,30 @@ function _push(line: ClientLogLine): void {
   _bus.dispatchEvent(new CustomEvent(_EVENT, { detail: line }));
 }
 
+// ---------------------------------------------------------------------------
+// Client-side dedup — suppresses repeated identical INFO messages within 10s.
+// Warnings and errors are NEVER suppressed.
+// ---------------------------------------------------------------------------
+
+const _DEDUP_WINDOW_MS = 10_000;
+const _dedupMap = new Map<string, number>();
+
+function _isDuplicate(level: LogLevel, message: string): boolean {
+  if (level === "warn" || level === "error") return false;
+  const now = Date.now();
+  const key = `${level}|${message}`;
+  const prev = _dedupMap.get(key);
+  if (prev !== undefined && now - prev < _DEDUP_WINDOW_MS) return true;
+  _dedupMap.set(key, now);
+  if (_dedupMap.size > 500) {
+    const cutoff = now - _DEDUP_WINDOW_MS;
+    for (const [k, ts] of _dedupMap) {
+      if (ts < cutoff) _dedupMap.delete(k);
+    }
+  }
+  return false;
+}
+
 /** Emit into the bus. Exported so external callers (auth, engine, voice, setup) can use it. */
 export function emitClientLog(
   level: LogLevel,
@@ -122,6 +146,7 @@ export function emitClientLog(
   source?: string,
   accessEntry?: AccessEntry,
 ): void {
+  if (_isDuplicate(level, message)) return;
   const line: ClientLogLine = {
     id: ++_lineId,
     time: _makeTime(),

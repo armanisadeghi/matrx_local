@@ -635,149 +635,57 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
   );
 }
 
-// ── HuggingFace Token Panel ───────────────────────────────────────────────
+// ── Hugging Face token (managed in Settings → API Keys) ───────────────────
 //
-// Some HuggingFace repos store files in their XET content-addressed storage
-// system. A plain HTTP download cannot reconstruct XET files — it requires
-// an access token so HF can serve a direct CDN URL instead.
-//
-// This panel lets users add their (free) HF token once. It shows:
-//   • When xetTokenRequired is set (download just failed needing a token)
-//   • Always as a collapsible section at the bottom of the Models tab
+// XET-backed repos need a read token. We only show status + deep-link here.
 
-function HfTokenPanel({ forcedOpen = false }: { forcedOpen?: boolean }) {
+function HuggingFaceTokenSettingsHint() {
+  const navigate = useNavigate();
   const [state, actions] = useLlmContext();
-  const { hfToken, xetTokenRequired } = state;
-  const { saveHfToken, clearError } = actions;
+  const { hfTokenConfigured, xetTokenRequired } = state;
+  const { refreshHfTokenConfigured } = actions;
 
-  const [open, setOpen] = useState(forcedOpen || xetTokenRequired);
-  const [inputValue, setInputValue] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [savedMsg, setSavedMsg] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
-
-  // Auto-expand if a download just failed with XET error
   useEffect(() => {
-    if (xetTokenRequired) setOpen(true);
-  }, [xetTokenRequired]);
+    const onFocus = () => void refreshHfTokenConfigured();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshHfTokenConfigured]);
 
-  const handleSave = async () => {
-    const trimmed = inputValue.trim();
-    if (!trimmed.startsWith("hf_") && trimmed !== "") {
-      setLocalError('HuggingFace tokens start with "hf_". Please check and try again.');
-      return;
-    }
-    setSaving(true);
-    setLocalError(null);
-    try {
-      await saveHfToken(trimmed);
-      setSavedMsg(true);
-      setInputValue("");
-      clearError();
-      setTimeout(() => setSavedMsg(false), 3000);
-    } catch (e) {
-      setLocalError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleClear = async () => {
-    setSaving(true);
-    try {
-      await saveHfToken("");
-      setSavedMsg(false);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const openApiKeys = () => navigate("/settings?tab=api-keys");
 
   return (
-    <div className={`rounded-lg border ${xetTokenRequired ? "border-amber-500/60 bg-amber-500/5" : "border-border bg-muted/10"} p-4 space-y-3`}>
-      <button
-        className="flex items-center gap-2 w-full text-left"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className="text-sm font-medium flex items-center gap-2">
-          <svg className="h-4 w-4 shrink-0 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-          HuggingFace Access Token
-          {hfToken ? (
-            <span className="ml-1 text-xs text-green-500 font-normal">✓ configured</span>
-          ) : (
-            <span className="ml-1 text-xs text-muted-foreground font-normal">optional — required for some models</span>
-          )}
-        </span>
-        {open ? <ChevronUp className="h-3 w-3 ml-auto text-muted-foreground" /> : <ChevronDown className="h-3 w-3 ml-auto text-muted-foreground" />}
-      </button>
-
-      {open && (
-        <div className="space-y-3 pt-1">
-          {xetTokenRequired && (
-            <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-600 dark:text-amber-400 space-y-1">
-              <p className="font-medium">This model requires a HuggingFace token to download.</p>
-              <p>The model is hosted on HuggingFace's new XET storage system, which requires authentication. A <strong>free</strong> account and read-only token is all you need.</p>
-            </div>
-          )}
-
-          <div className="space-y-1.5 text-xs text-muted-foreground">
-            <p className="font-medium text-foreground text-sm">How to get your token (free):</p>
-            <ol className="space-y-1 list-decimal list-inside">
-              <li>
-                Go to{" "}
-                <a
-                  href="https://huggingface.co/settings/tokens"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-500 hover:underline inline-flex items-center gap-0.5"
-                >
-                  huggingface.co/settings/tokens <ExternalLink className="h-3 w-3" />
-                </a>
-                {" "}(create a free account if you don't have one)
-              </li>
-              <li>Click <strong>New token</strong>, choose <strong>Read</strong> access, give it any name</li>
-              <li>Copy the token (starts with <code className="bg-muted px-1 rounded">hf_</code>) and paste it below</li>
-            </ol>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Input
-              type="password"
-              placeholder="hf_xxxxxxxxxxxxxxxxxxxxxxxxxx"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              className="text-xs h-8 font-mono flex-1"
-              onKeyDown={(e) => { if (e.key === "Enter") void handleSave(); }}
-            />
-            <Button size="sm" className="h-8 px-3" disabled={!inputValue.trim() || saving} onClick={handleSave}>
-              {saving ? "Saving…" : "Save"}
-            </Button>
-            {hfToken && (
-              <Button size="sm" variant="ghost" className="h-8 px-2 text-destructive hover:text-destructive" disabled={saving} onClick={handleClear}>
-                Remove
-              </Button>
-            )}
-          </div>
-
-          {localError && (
-            <p className="text-xs text-destructive flex items-center gap-1">
-              <AlertCircle className="h-3 w-3 shrink-0" />
-              {localError}
-            </p>
-          )}
-          {savedMsg && (
-            <p className="text-xs text-green-500 flex items-center gap-1">
-              <CheckCircle2 className="h-3 w-3 shrink-0" />
-              Token saved. Downloads will now work for XET-storage repos.
-            </p>
-          )}
-          <p className="text-xs text-muted-foreground">
-            Your token is stored locally on this machine only. It is never sent anywhere except to huggingface.co when downloading models.
+    <div
+      className={`rounded-lg border p-4 space-y-3 ${
+        xetTokenRequired ? "border-amber-500/60 bg-amber-500/5" : "border-border bg-muted/10"
+      }`}
+    >
+      {xetTokenRequired && (
+        <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-600 dark:text-amber-400 space-y-2">
+          <p className="font-medium">This download needs a Hugging Face access token (XET storage).</p>
+          <p>
+            Add a free <strong>read</strong> token under{" "}
+            <button type="button" className="text-primary hover:underline font-medium" onClick={openApiKeys}>
+              Settings → API Keys → Hugging Face
+            </button>
+            , then retry the download.
           </p>
+          <Button size="sm" variant="secondary" className="h-7" onClick={openApiKeys}>
+            Open API Keys
+          </Button>
         </div>
       )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="font-medium text-foreground">Hugging Face token</span>
+        {hfTokenConfigured ? (
+          <span className="text-green-600 dark:text-green-500">Configured</span>
+        ) : (
+          <span className="text-muted-foreground">Not set</span>
+        )}
+        <span className="text-muted-foreground hidden sm:inline">—</span>
+        <button type="button" className="text-primary hover:underline font-medium" onClick={openApiKeys}>
+          Manage in Settings → API Keys
+        </button>
+      </div>
     </div>
   );
 }
@@ -800,7 +708,6 @@ function ModelsTab() {
     downloadedModels,
     serverStatus,
     error,
-    xetTokenRequired,
   } = state;
   const { detectHardware, startServer, deleteModel, cancelDownload, queueDownload, downloadAll, listModels } = actions;
 
@@ -1142,8 +1049,7 @@ function ModelsTab() {
         onDownload={queueDownload}
       />
 
-      {/* HuggingFace token — shown expanded when a XET download failed, collapsed otherwise */}
-      <HfTokenPanel forcedOpen={xetTokenRequired} />
+      <HuggingFaceTokenSettingsHint />
     </div>
   );
 }

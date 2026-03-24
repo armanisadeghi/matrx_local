@@ -110,6 +110,18 @@ export const PROVIDER_PATTERNS: ProviderPattern[] = [
     label: "Google",
   },
 
+  // ── Hugging Face (local GGUF / Hub token) ─────────────────────────────────
+  {
+    names: ["huggingface", "hf", "hf_hub", "hugging_face", "huggingface_hub"],
+    envVarNames: [
+      "HUGGING_FACE_HUB_TOKEN",
+      "HF_TOKEN",
+      "HUGGINGFACE_TOKEN",
+      "HUGGING_FACE_TOKEN",
+    ],
+    label: "Hugging Face",
+  },
+
   // ── Groq ──────────────────────────────────────────────────────────────────
   {
     names: ["groq", "groq_ai"],

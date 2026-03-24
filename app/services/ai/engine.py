@@ -115,8 +115,19 @@ def initialize_matrx_ai() -> None:
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     supabase_anon_key = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
+    from importlib.metadata import version as _pkg_version
+
+    def _safe_version(pkg: str) -> str:
+        try:
+            return _pkg_version(pkg)
+        except Exception:
+            return "NOT INSTALLED"
+
     logger.info("=" * 60)
     logger.info("[engine] matrx-ai STARTUP — client mode")
+    logger.info("[engine]   matrx-ai   = %s", _safe_version("matrx-ai"))
+    logger.info("[engine]   matrx-orm  = %s", _safe_version("matrx-orm"))
+    logger.info("[engine]   matrx-utils= %s", _safe_version("matrx-utils"))
     logger.info("[engine]   AIDREAM_SERVER_URL_LIVE  = %s", server_url or "(NOT SET ✗)")
     logger.info("[engine]   SUPABASE_URL             = %s", supabase_url or "(NOT SET ✗)")
     logger.info("[engine]   SUPABASE_PUBLISHABLE_KEY = %s", "SET ✓" if supabase_anon_key else "(NOT SET ✗)")

@@ -1249,6 +1249,27 @@ class EngineAPI {
     return this.request(path, { method: "DELETE" });
   }
 
+  /**
+   * Hugging Face token stored like other API keys (SQLite). Exposed only for
+   * the Tauri GGUF downloader; returns null if unset or engine unavailable.
+   */
+  async getHuggingfaceTokenForDownloads(): Promise<string | null> {
+    if (!this.baseUrl) return null;
+    try {
+      const authHdrs = await this.authHeaders();
+      const resp = await fetch(`${this.baseUrl}/settings/api-keys/huggingface/value`, {
+        headers: authHdrs,
+      });
+      if (resp.status === 404) return null;
+      if (!resp.ok) return null;
+      const data = (await resp.json()) as { key: string };
+      const k = data.key?.trim();
+      return k || null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Update instance display name. */
   async updateInstanceName(name: string): Promise<void> {
     if (!this.baseUrl) return;

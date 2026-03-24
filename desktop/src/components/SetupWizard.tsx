@@ -431,7 +431,8 @@ export function SetupWizard({ engineStatus, onSetupComplete }: SetupWizardProps)
 
     try {
       logLine("cmd", `invoke download_llm_model: ${filename}`);
-      await invoke("download_llm_model", { filename, urls });
+      const hfTok = await engine.getHuggingfaceTokenForDownloads();
+      await invoke("download_llm_model", { filename, urls, hfToken: hfTok });
       logLine("success", `LLM model downloaded: ${filename}`);
       setProgress((prev) => ({
         ...prev,

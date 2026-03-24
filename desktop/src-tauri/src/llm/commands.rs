@@ -233,8 +233,9 @@ pub fn cancel_llm_download(
 
 // ── HuggingFace Token Management ─────────────────────────────────────────
 
-/// Save a HuggingFace access token (hf_…) to llm.json.
-/// Pass an empty string to clear the token.
+/// Save a HuggingFace access token (hf_…) to llm.json (legacy fallback only).
+/// Canonical storage is the engine SQLite API key `huggingface`; the UI migrates
+/// tokens there. Pass an empty string to clear llm.json.
 #[tauri::command]
 pub async fn save_hf_token(app: AppHandle, token: String) -> Result<(), String> {
     let config_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -267,7 +268,8 @@ pub async fn get_hf_token(app: AppHandle) -> Result<Option<String>, String> {
 /// load multi-part GGUF natively when given the first part's path — we do NOT
 /// concatenate parts. `filename` is the first-part filename in this case.
 ///
-/// If a HuggingFace token is saved (llm.json), it is injected as
+/// The desktop passes `hf_token` from engine storage when available; otherwise
+/// llm.json is used as a legacy fallback. The token is injected as
 /// `Authorization: Bearer <token>` on every request. This is required for:
 ///   - Repos using XET storage (newer HF repos) — plain GET returns binary chunks,
 ///     not the file, without authentication.
@@ -289,6 +291,7 @@ pub async fn download_llm_model(
     app: AppHandle,
     filename: String,
     urls: Vec<String>,
+    hf_token: Option<String>,
     cancel: State<'_, LlmDownloadCancelState>,
 ) -> Result<String, String> {
     if urls.is_empty() {
@@ -307,11 +310,14 @@ pub async fn download_llm_model(
     std::fs::create_dir_all(&dest_dir)
         .map_err(|e| format!("Failed to create models dir: {}", e))?;
 
-    // Load HF token (may be None — that's fine for public non-XET repos)
-    let hf_token: Option<String> = {
-        let config_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        LlmConfig::load(&config_dir).hf_token
-    };
+    // Engine API key first, then legacy llm.json (may be None — fine for public non-XET repos)
+    let hf_token: Option<String> = hf_token
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            let config_dir = app.path().app_data_dir().ok()?;
+            LlmConfig::load(&config_dir).hf_token
+        });
 
     // Probe the first URL to detect XET storage before starting any download.
     // XET repos redirect to cas-bridge.xethub.hf.co — a plain download client
@@ -324,7 +330,7 @@ pub async fn download_llm_model(
                     "XET_TOKEN_REQUIRED: This model is hosted on HuggingFace's XET storage system. \
                      A free HuggingFace access token is required to download it. \
                      Create one at huggingface.co/settings/tokens (read-only scope is enough), \
-                     then enter it in the token field above."
+                     then add it in Settings → API Keys → Hugging Face."
                         .to_string(),
                 );
             } else {

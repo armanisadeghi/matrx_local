@@ -376,33 +376,85 @@ export function EngineMonitor({
   // ── Clipboard ──────────────────────────────────────────────────────
 
   const buildDiagnosticDump = (): string => {
-    const lines = [
+    const snap = getPlatformSnapshot();
+    const p = snap.platform;
+    const hasFailed = steps.some((s) => s.status === "fail");
+    const openPorts = ports.filter((pt) => pt.status === "open");
+
+    const dedup = (raw: string[]): string[] => {
+      const out: string[] = [];
+      let prev = "";
+      let count = 0;
+      for (const line of raw) {
+        if (line === prev) {
+          count++;
+        } else {
+          if (count > 0) out.push(`  ... repeated ${count} more time${count > 1 ? "s" : ""}`);
+          out.push(line);
+          prev = line;
+          count = 0;
+        }
+      }
+      if (count > 0) out.push(`  ... repeated ${count} more time${count > 1 ? "s" : ""}`);
+      return out;
+    };
+
+    const errorLines = logs.filter(
+      (l) =>
+        /\b(error|exception|traceback|nameerror|importerror|modulenot|syntaxerror|typeerror|attributeerror|crash|failed|fatal)\b/i.test(l) ||
+        /^\s*(File "|  )/.test(l)
+    );
+
+    const lines: string[] = [
       "=== AI Matrx Engine Diagnostic Report ===",
       `Timestamp: ${new Date().toISOString()}`,
       `Engine Status: ${engineStatus}`,
-      `Engine Error: ${engineError || "none"}`,
+      ...(engineError ? [`Engine Error: ${engineError}`] : []),
       `Environment: ${isTauri() ? "Tauri Desktop" : "Browser Dev Mode"}`,
-      `Platform: ${JSON.stringify(getPlatformSnapshot().platform)}`,
+      `OS: ${p.os} ${p.os_version !== "unknown" ? p.os_version : ""} (${p.machine !== "unknown" ? p.machine : "arch unknown"})`.trim(),
+      ...(p.python_version !== "unknown" ? [`Python: ${p.python_version}`] : []),
+      ...(p.hostname !== "unknown" ? [`Host: ${p.hostname}`] : []),
       "",
-      "=== Diagnostic Steps ===",
-      ...steps.map(
-        (s) =>
-          `  [${s.status.toUpperCase()}] ${s.label}${s.detail ? ` — ${s.detail}` : ""}`
-      ),
-      "",
-      "=== Port Scan ===",
-      ...ports
-        .filter((p) => p.status === "open")
-        .map((p) => `  ${p.port}: ${p.detail || "open"}`),
-      ports.filter((p) => p.status === "open").length === 0
-        ? "  No open ports found"
-        : "",
-      "",
-      "=== Recent Logs ===",
-      ...logs.slice(-100),
-      "",
-      "=== End Report ===",
     ];
+
+    lines.push("=== Diagnostics ===");
+    const failedSteps = steps.filter((s) => s.status === "fail");
+    const passedSteps = steps.filter((s) => s.status === "pass");
+    const skippedSteps = steps.filter((s) => s.status === "skip");
+    if (failedSteps.length > 0) {
+      for (const s of failedSteps)
+        lines.push(`  [FAIL] ${s.label}${s.detail ? ` — ${s.detail}` : ""}`);
+    }
+    if (passedSteps.length > 0) {
+      lines.push(`  [PASS] ${passedSteps.map((s) => s.label).join(", ")}`);
+    }
+    if (skippedSteps.length > 0) {
+      lines.push(`  [SKIP] ${skippedSteps.map((s) => s.label).join(", ")}`);
+    }
+    lines.push("");
+
+    if (openPorts.length > 0) {
+      lines.push("=== Open Ports ===");
+      for (const pt of openPorts) lines.push(`  ${pt.port}: ${pt.detail || "open"}`);
+      lines.push("");
+    } else if (hasFailed) {
+      lines.push("=== Port Scan === No engine found on 22140–22159", "");
+    }
+
+    if (hasFailed && errorLines.length > 0) {
+      lines.push("=== Errors (extracted) ===");
+      lines.push(...dedup(errorLines));
+      lines.push("");
+    }
+
+    if (hasFailed) {
+      const tail = logs.slice(-60);
+      lines.push("=== Recent Logs (last 60, deduplicated) ===");
+      lines.push(...dedup(tail));
+      lines.push("");
+    }
+
+    lines.push("=== End Report ===");
     return lines.join("\n");
   };
 

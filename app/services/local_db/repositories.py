@@ -1212,6 +1212,7 @@ VALID_PROVIDERS: frozenset[str] = frozenset({
     "together",
     "xai",
     "cerebras",
+    "huggingface",
 })
 
 

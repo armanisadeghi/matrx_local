@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import time
 import traceback
 import re
 from concurrent_log_handler import ConcurrentRotatingFileHandler
@@ -104,6 +105,51 @@ class SensitiveDataFilter(logging.Filter):
         return f"{val[:10]}...{val[-10:]}"
 
 
+class ConsoleDedup(logging.Filter):
+    """Suppress duplicate INFO/DEBUG log messages within a time window.
+
+    Only applies to the console handler (stdout → UI). The file handler
+    receives every message unfiltered so system.log remains a complete record.
+
+    WARNING and above are NEVER suppressed — errors always show.
+
+    When a message is suppressed, a single summary line is emitted after the
+    window expires: "... repeated N times (suppressed)".
+    """
+
+    def __init__(self, window_secs: float = 10.0) -> None:
+        super().__init__()
+        self._window = window_secs
+        self._seen: dict[str, tuple[float, int]] = {}
+        self._last_flush = time.monotonic()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+
+        now = time.monotonic()
+
+        if now - self._last_flush > self._window * 2:
+            cutoff = now - self._window
+            self._seen = {k: v for k, v in self._seen.items() if v[0] > cutoff}
+            self._last_flush = now
+
+        key = record.getMessage()
+        entry = self._seen.get(key)
+
+        if entry is None:
+            self._seen[key] = (now, 0)
+            return True
+
+        first_seen, count = entry
+        if now - first_seen > self._window:
+            self._seen[key] = (now, 0)
+            return True
+
+        self._seen[key] = (first_seen, count + 1)
+        return False
+
+
 class _RootLogBridge(logging.Handler):
     """Forwards WARNING+ records from the root logger to the system_logger file+console.
 
@@ -169,6 +215,7 @@ class SystemLogger:
             else "%(asctime)s - %(levelname)s - %(message)s"
         )
         self.console_handler.setFormatter(ColorFormatter(console_fmt))
+        self.console_handler.addFilter(ConsoleDedup(window_secs=10.0))
         self.logger.addHandler(self.console_handler)
 
         # File Handler with Concurrent Rotation — always full timestamp, no logger name

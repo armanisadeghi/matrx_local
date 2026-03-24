@@ -37,6 +37,8 @@ PROVIDER_ENV_MAP: dict[str, list[str]] = {
     "together":  ["TOGETHER_API_KEY"],
     "xai":       ["XAI_API_KEY"],
     "cerebras":  ["CEREBRAS_API_KEY"],
+    # Hugging Face Hub (local GGUF downloads via desktop + any Python hub usage)
+    "huggingface": ["HUGGING_FACE_HUB_TOKEN", "HF_TOKEN"],
 }
 
 

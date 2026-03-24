@@ -21,6 +21,8 @@ async function tauriListen<T>(event: string, handler: (e: { payload: T }) => voi
   return listen<T>(event, handler);
 }
 
+const HF_MIGRATION_SESSION_KEY = "matrx_hf_token_migrated_v1";
+
 export interface ServerStartProgress {
   elapsed_secs: number;
   max_secs: number;
@@ -59,8 +61,8 @@ export interface LlmState {
   serverStatus: LlmServerStatus | null;
   downloadedModels: DownloadedLlmModel[];
 
-  // HuggingFace token
-  hfToken: string | null;
+  /** Hugging Face token is set (engine API Keys or legacy llm.json). */
+  hfTokenConfigured: boolean;
   /** True when the last download failed because the repo uses XET storage and no token is set. */
   xetTokenRequired: boolean;
 
@@ -91,10 +93,8 @@ export interface LlmActions {
    * Returns the final filename it was saved as.
    */
   importLocalModel: (sourcePath: string, destFilename?: string) => Promise<string>;
-  /** Save a HuggingFace access token. Pass empty string to clear. */
-  saveHfToken: (token: string) => Promise<void>;
-  /** Get the stored HuggingFace token, or null if not set. */
-  getHfToken: () => Promise<string | null>;
+  /** Re-read whether a Hugging Face token is configured (after changing Settings). */
+  refreshHfTokenConfigured: () => Promise<void>;
   startServer: (
     modelFilename: string,
     gpuLayers: number,
@@ -133,13 +133,57 @@ export function useLlm(): [LlmState, LlmActions] {
     DownloadedLlmModel[]
   >([]);
   const [error, setError] = useState<string | null>(null);
-  const [hfToken, setHfToken] = useState<string | null>(null);
+  const [hfTokenConfigured, setHfTokenConfigured] = useState(false);
   const [xetTokenRequired, setXetTokenRequired] = useState(false);
 
   const unlistenRef = useRef<UnlistenFn[]>([]);
   // Ref-based queue so the processor callback always sees latest value
   const downloadQueueRef = useRef<LlmDownloadQueueEntry[]>([]);
   const isDownloadingRef = useRef(false);
+
+  const migrateLegacyHfTokenIfNeeded = useCallback(async () => {
+    if (!isTauri()) return;
+    if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(HF_MIGRATION_SESSION_KEY) === "1") {
+      return;
+    }
+    const legacy = await tauriInvoke<string | null>("get_hf_token").catch(() => null);
+    if (!legacy?.trim()) {
+      if (typeof sessionStorage !== "undefined") sessionStorage.setItem(HF_MIGRATION_SESSION_KEY, "1");
+      return;
+    }
+    if (!engine.engineUrl) return;
+    try {
+      await engine.put("/settings/api-keys/huggingface", { key: legacy.trim() });
+      await tauriInvoke("save_hf_token", { token: "" });
+      if (typeof sessionStorage !== "undefined") sessionStorage.setItem(HF_MIGRATION_SESSION_KEY, "1");
+    } catch {
+      /* engine offline or unauthenticated — retry later */
+    }
+  }, []);
+
+  const refreshHfTokenConfigured = useCallback(async () => {
+    if (!isTauri()) {
+      setHfTokenConfigured(false);
+      return;
+    }
+    await migrateLegacyHfTokenIfNeeded();
+    try {
+      if (engine.engineUrl) {
+        const data = (await engine.get("/settings/api-keys")) as {
+          providers: { provider: string; configured: boolean }[];
+        };
+        const hf = data.providers?.find((p) => p.provider === "huggingface");
+        if (hf?.configured) {
+          setHfTokenConfigured(true);
+          return;
+        }
+      }
+    } catch {
+      /* fall through to legacy */
+    }
+    const legacy = await tauriInvoke<string | null>("get_hf_token").catch(() => null);
+    setHfTokenConfigured(!!legacy?.trim());
+  }, [migrateLegacyHfTokenIfNeeded]);
 
   // Clean up event listeners on unmount
   useEffect(() => {
@@ -154,8 +198,7 @@ export function useLlm(): [LlmState, LlmActions] {
     if (!isTauri()) return;
 
     refreshSetupStatus();
-    // Load saved HF token so the UI can show "token configured" state
-    tauriInvoke<string | null>("get_hf_token").then((t) => setHfToken(t ?? null)).catch(() => {});
+    void refreshHfTokenConfigured();
 
     let mounted = true;
     const setupListeners = async () => {
@@ -242,7 +285,7 @@ export function useLlm(): [LlmState, LlmActions] {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshHfTokenConfigured]);
 
   const refreshSetupStatus = useCallback(async () => {
     if (!isTauri()) return;
@@ -304,7 +347,14 @@ export function useLlm(): [LlmState, LlmActions] {
       );
 
       try {
-        await tauriInvoke("download_llm_model", { filename, urls });
+        await migrateLegacyHfTokenIfNeeded();
+        const hfTok = await engine.getHuggingfaceTokenForDownloads();
+        await tauriInvoke("download_llm_model", {
+          filename,
+          urls,
+          hfToken: hfTok,
+        });
+        void refreshHfTokenConfigured();
         setDownloadProgress(null);
         const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
         setDownloadedModels(models);
@@ -324,7 +374,7 @@ export function useLlm(): [LlmState, LlmActions] {
         setDownloadingFilename(null);
       }
     },
-    []
+    [migrateLegacyHfTokenIfNeeded, refreshHfTokenConfigured]
   );
 
   /**
@@ -507,18 +557,6 @@ export function useLlm(): [LlmState, LlmActions] {
     [refreshSetupStatus]
   );
 
-  const saveHfToken = useCallback(async (token: string) => {
-    await tauriInvoke("save_hf_token", { token });
-    setHfToken(token.trim() || null);
-    if (token.trim()) setXetTokenRequired(false);
-  }, []);
-
-  const getHfToken = useCallback(async () => {
-    const t = await tauriInvoke<string | null>("get_hf_token");
-    setHfToken(t ?? null);
-    return t ?? null;
-  }, []);
-
   const clearError = useCallback(() => {
     setError(null);
     setDownloadCancelled(false);
@@ -575,7 +613,7 @@ export function useLlm(): [LlmState, LlmActions] {
     downloadCancelled,
     serverStatus,
     downloadedModels,
-    hfToken,
+    hfTokenConfigured,
     xetTokenRequired,
     error,
   };
@@ -587,8 +625,7 @@ export function useLlm(): [LlmState, LlmActions] {
     downloadAll,
     cancelDownload,
     importLocalModel,
-    saveHfToken,
-    getHfToken,
+    refreshHfTokenConfigured,
     startServer,
     stopServer,
     getServerStatus,

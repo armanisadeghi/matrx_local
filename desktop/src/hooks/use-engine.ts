@@ -220,16 +220,18 @@ export function useEngine(authenticated = true) {
       try {
         const systemInfo = await engine.getSystemInfo();
         update({ systemInfo });
+        emitClientLog("info", `System: ${systemInfo?.os ?? "?"} / ${systemInfo?.hostname ?? "?"}`, "engine");
       } catch {
-        // Non-critical
+        emitClientLog("warn", "Could not load system info (non-critical)", "engine");
       }
 
       // Load browser status
       try {
         const browserStatus = await engine.getBrowserStatus();
         update({ browserStatus });
+        emitClientLog("info", `Browser: ${browserStatus?.installed ? "available" : "not installed"}`, "engine");
       } catch {
-        // Non-critical
+        emitClientLog("warn", "Could not load browser status (non-critical)", "engine");
       }
 
       // Connect WebSocket — only when we have a token; the server rejects
@@ -249,6 +251,7 @@ export function useEngine(authenticated = true) {
       }
 
       // Sync persisted settings to Tauri + engine.
+      emitClientLog("info", "Syncing settings to engine...", "engine");
       syncAllSettings().catch(() => {});
 
       // Configure cloud sync + push JWT to Python if already authenticated at connect time.
@@ -267,9 +270,12 @@ export function useEngine(authenticated = true) {
           await engine.configureCloudSync(session.access_token, session.user.id);
           engine.cloudHeartbeat().catch(() => {});
         }
+        emitClientLog("info", "Cloud sync configured", "engine");
       } catch {
-        // Cloud sync configuration is non-critical
+        emitClientLog("warn", "Cloud sync configuration skipped (non-critical)", "engine");
       }
+
+      emitClientLog("success", "Engine initialization complete", "engine");
     } finally {
       // Always release the mutex so future retries are possible
       initializingRef.current = false;

@@ -48,7 +48,7 @@
   3. **GGUF magic regression in b8281** — llama.cpp PR #17786 introduced `std::regex_constants::nosubs|optimize` which causes MSVC's std::regex to stack-overflow with complex tokenizer patterns (e.g. Qwen3), producing `gguf_init_from_file_impl: failed to read magic`. Fixed in llama.cpp b8358 (MSVC regex workaround merged in PR #17831). Fix: updated fallback binary version from b8281 → b8358 in `download-llama-server.sh`.
   Prior fixes still in place: (a) backslash→forward-slash path normalization, (b) `--no-mmap` for Windows (CreateFileMapping fails for split GGUF parts >2GB). Files: `llm/server.rs`, `scripts/download-llama-server.sh`.
 
-- [x] **HuggingFace XET storage: downloads silently fail or produce corrupt files** — Fixed 2026-03-23: HuggingFace's new XET storage system (used by many newer repos) cannot be downloaded with a plain HTTP client — the file is stored as content-addressed chunks that require authentication + the hf_xet SDK to reconstruct. Before this fix, downloads would either fail silently or write garbage to disk. Fix: (1) Rust: `is_xet_url()` helper probes HF with a no-redirect HEAD request before downloading; if the redirect target is `xethub.hf.co`, returns a clear `XET_TOKEN_REQUIRED` / `XET_TOKEN_INVALID` error instead of attempting the download. (2) Rust: `hf_token` loaded from `llm.json` and injected as `Authorization: Bearer` on all HF requests (download + HEAD probes). With a valid token, HF returns a direct CDN URL instead of an XET endpoint. (3) Rust: `save_hf_token` / `get_hf_token` Tauri commands persist the token in `llm.json`. (4) TS: `use-llm.ts` exposes `hfToken`, `xetTokenRequired`, `saveHfToken`, `getHfToken`; XET error codes parsed to set `xetTokenRequired` flag. (5) UI: `HfTokenPanel` component in `LocalModels.tsx` — collapsible, auto-expands when a XET download fails, step-by-step instructions (go to hf.co/settings/tokens → create read token → paste here), validates `hf_` prefix, shows "token configured" state. Token is stored locally only, never transmitted except to huggingface.co.
+- [x] **HuggingFace XET storage: downloads silently fail or produce corrupt files** — Fixed 2026-03-23; **token storage centralized 2026-03-24**: XET still requires a read token and Rust still injects `Authorization: Bearer` on HF requests. **Canonical storage** is now engine SQLite via Settings → API Keys (`huggingface` provider), same as other keys; `GET /settings/api-keys/huggingface/value` supplies the desktop downloader. `llm.json` `hf_token` is legacy fallback only; one-time migration copies legacy → SQLite. Local Models shows configured/not + link to API Keys. UI: `HuggingFaceTokenSettingsHint` in `LocalModels.tsx`. Rust `download_llm_model` accepts `hfToken` from the shell.
 
 
 
@@ -558,4 +558,20 @@ and add a `resources` entry in `tauri.conf.json` so it gets bundled:
 Then update `app/services/wake_word/models.py` to check the bundled resources path
 before `~/.matrx/oww_models/` as a fallback.
 
-_Last updated: 2026-03-18_
+---
+
+### P3 — Refactor: Introduce Zustand for shared state
+
+- [ ] **Add a lightweight Zustand store for shared cross-page state**
+  - **Why:** The app currently uses top-level hooks in `App.tsx` with heavy prop drilling (Settings takes 10+ props). There is no central state library — state survives tab switches only because all pages are permanently mounted (`display:none` toggling in `AppLayout`). This works but is fragile and makes the code harder to maintain.
+  - **Scope:** Only the *shared* state slice — auth session, engine connection status/URL, tools list, settings, platform info. Page-local state (form inputs, recording state, scrape results) stays in local `useState` — it doesn't belong in a global store.
+  - **Approach:**
+    1. Install `zustand` (tiny, no providers needed, works with singletons).
+    2. Create `desktop/src/stores/app-store.ts` with slices: `auth`, `engine`, `settings`, `platform`.
+    3. Migrate the `engine` singleton's connection state into the store so React and the singleton stay in sync (currently the riskiest pattern — stale closures can read old engine state).
+    4. Replace prop drilling from `App.tsx` → pages with direct `useAppStore()` selectors in each page.
+    5. Keep the persistent page mounting — Zustand is additive, not a replacement for it.
+  - **Not in scope:** Auto-syncing with databases. The three persistence layers (localStorage, Python SQLite, Supabase cloud) have different sync semantics that can't be generalized into a single "auto-sync store."
+  - **When:** After all P0/P1/P2 bugs are resolved. This is a comfort/maintainability refactor, not a correctness fix.
+
+_Last updated: 2026-03-24_

@@ -481,6 +481,13 @@ export function Settings({
   const handleApiKeySave = useCallback(async (provider: string) => {
     const key = apiKeyInputs[provider]?.trim();
     if (!key) return;
+    if (provider === "huggingface" && !key.startsWith("hf_")) {
+      setApiKeyMessages(prev => ({
+        ...prev,
+        [provider]: { ok: false, text: 'Hugging Face tokens start with "hf_".' },
+      }));
+      return;
+    }
     setApiKeySaving(prev => ({ ...prev, [provider]: true }));
     setApiKeyMessages(prev => ({ ...prev, [provider]: undefined as never }));
     try {
@@ -1277,6 +1284,7 @@ export function Settings({
                 <CardContent className="space-y-2">
                   <p className="text-xs text-muted-foreground">
                     Enter your own API keys to use AI providers directly from this device.
+                    The Hugging Face entry is also used for local GGUF downloads (including XET-hosted models).
                     Keys are stored locally on this machine only and are never sent to AI Matrx servers.
                     Leave a key blank if you don't have one — that provider will be unavailable.
                   </p>
@@ -1331,7 +1339,7 @@ export function Settings({
                     <Textarea
                       value={bulkEnvText}
                       onChange={(e) => handleBulkEnvChange(e.target.value)}
-                      placeholder={`OPENAI_API_KEY=sk-...\nGEMINI_API_KEY=AIzaSy...\nANTHROPIC_API_KEY=sk-ant-...\n# Comments and unrecognised lines are ignored`}
+                      placeholder={`OPENAI_API_KEY=sk-...\nGEMINI_API_KEY=AIzaSy...\nHUGGING_FACE_HUB_TOKEN=hf_...\n# Comments and unrecognised lines are ignored`}
                       className="font-mono text-xs min-h-32 resize-y"
                       spellCheck={false}
                     />
@@ -1586,6 +1594,7 @@ export function Settings({
                     { label: "OpenAI", url: "https://platform.openai.com/api-keys" },
                     { label: "Anthropic", url: "https://console.anthropic.com/settings/keys" },
                     { label: "Google (Gemini)", url: "https://aistudio.google.com/app/apikey" },
+                    { label: "Hugging Face", url: "https://huggingface.co/settings/tokens" },
                     { label: "Groq", url: "https://console.groq.com/keys" },
                     { label: "Together AI", url: "https://api.together.ai/settings/api-keys" },
                     { label: "xAI (Grok)", url: "https://console.x.ai/" },

@@ -6,8 +6,7 @@ pub struct LlmConfig {
     pub selected_model: Option<String>,
     pub setup_complete: bool,
     pub last_port: Option<u16>,
-    /// HuggingFace access token (hf_…). Required for XET-storage repos and
-    /// gated models. Stored in llm.json — never transmitted except to hf.co.
+    /// Legacy HuggingFace token fallback only. Prefer engine Settings → API Keys.
     pub hf_token: Option<String>,
 }
 

@@ -227,6 +227,10 @@ _PROVIDER_LABELS: dict[str, dict[str, str]] = {
     "together":  {"label": "Together AI","description": "Llama, Qwen, Mistral and 100+ open models"},
     "xai":       {"label": "xAI",       "description": "Grok-2, Grok-3"},
     "cerebras":  {"label": "Cerebras",  "description": "Llama 3.3 70B (wafer-scale inference)"},
+    "huggingface": {
+        "label": "Hugging Face",
+        "description": "Read token for local GGUF downloads (XET / gated repos); sent only to huggingface.co",
+    },
 }
 
 
@@ -263,6 +267,26 @@ async def list_api_key_status() -> ApiKeyStatusList:
             configured=configured,
         ))
     return ApiKeyStatusList(providers=statuses)
+
+
+class ApiKeyValueResponse(BaseModel):
+    """Plaintext key — only exposed for the Hugging Face bridge (desktop downloads)."""
+
+    key: str
+
+
+@router.get("/api-keys/huggingface/value", response_model=ApiKeyValueResponse)
+async def get_huggingface_token_value() -> ApiKeyValueResponse:
+    """Return the stored Hugging Face token for the native download client.
+
+    Same auth as other /settings routes (Bearer). Used by the desktop app to
+    pass the token into Rust for GGUF downloads; not shown in the API Keys UI.
+    """
+    repo = ApiKeysRepo()
+    raw = await repo.get("huggingface")
+    if not raw or not raw.strip():
+        raise HTTPException(status_code=404, detail="Hugging Face token not configured")
+    return ApiKeyValueResponse(key=raw.strip())
 
 
 @router.put("/api-keys/{provider}", response_model=ApiKeyStatus)
