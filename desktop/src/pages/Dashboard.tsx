@@ -134,7 +134,14 @@ export function Dashboard({
         setBrowserInstallMessage(`Install failed: ${result.message}`);
       }
     } catch (err) {
-      setBrowserInstallMessage(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const engineCrashed = errMsg.includes("fetch") || errMsg.includes("network") ||
+        errMsg.includes("Failed to fetch") || errMsg.includes("Load failed");
+      setBrowserInstallMessage(
+        engineCrashed
+          ? "Engine became unreachable during install — the OS may have killed it. Restart the engine and try again."
+          : `Error: ${errMsg}`
+      );
     } finally {
       setInstallingBrowser(false);
     }

@@ -3,6 +3,8 @@
 import { useState, useRef, useCallback, createContext, useContext, useEffect } from "react";
 import type { LlmState, LlmActions, ServerStartProgress, ServerLogLine } from "@/hooks/use-llm";
 import { useLlmApp } from "@/contexts/LlmContext";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Download,
   Trash2,
@@ -18,6 +20,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Check,
   MessageSquare,
   Wrench,
   Code,
@@ -29,6 +32,10 @@ import {
   PackagePlus,
   ExternalLink,
   Loader2,
+  Pencil,
+  ThumbsUp,
+  ThumbsDown,
+  GitFork,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
 import { Button } from "@/components/ui/button";
@@ -101,6 +108,24 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
       <Copy className="h-3 w-3" />
       {copied ? "Copied!" : label ?? "Copy"}
     </Button>
+  );
+}
+
+function MsgCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={copy}
+      className={`rounded-md p-1.5 transition-colors ${copied ? "text-emerald-500" : "text-muted-foreground hover:text-foreground"}`}
+      title="Copy"
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
   );
 }
 
@@ -1328,6 +1353,17 @@ function InferenceTab() {
   const [error, setError] = useState<string | null>(null);
   const stopRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // ── Message actions state ─────────────────────────────────────────────
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState("");
+  const [reactions, setReactions] = useState<Record<string, "up" | "down" | null>>({});
+  const [switchingModel, setSwitchingModel] = useState(false);
+  const [showPromptPicker, setShowPromptPicker] = useState(false);
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const promptPickerRef = useRef<HTMLDivElement>(null);
+  const modelPickerRef = useRef<HTMLDivElement>(null);
 
   // ── Settings panel ─────────────────────────────────────────────────────
   const [showSettings, setShowSettings] = useState(false);
@@ -1425,10 +1461,163 @@ function InferenceTab() {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   };
 
+  // ── Auto-resize textarea ──────────────────────────────────────────────
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+  }, [input]);
+
+  // ── Close pickers on outside click ────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (promptPickerRef.current && !promptPickerRef.current.contains(e.target as Node)) {
+        setShowPromptPicker(false);
+      }
+      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
+        setShowModelPicker(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // ── Edit & resend a user message ──────────────────────────────────────
+  const handleEditAndResend = async (msgId: string, newContent: string) => {
+    if (!port || !newContent.trim() || isGenerating) return;
+    setEditingMsgId(null);
+    setEditingContent("");
+    const msgIndex = messages.findIndex((m) => m.id === msgId);
+    if (msgIndex === -1) return;
+
+    const truncated = messages.slice(0, msgIndex);
+    const editedUserMsg: ConversationMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: newContent.trim(),
+    };
+    const assistantId = crypto.randomUUID();
+    const newMessages = [
+      ...truncated,
+      editedUserMsg,
+      { id: assistantId, role: "assistant" as const, content: "", isStreaming: true },
+    ];
+
+    if (activeConvId) updateMessages(activeConvId, newMessages, systemPrompt);
+    setIsGenerating(true);
+    stopRef.current = false;
+    scrollToBottom();
+
+    const chatMessages: ChatMessage[] = [
+      ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
+      ...truncated.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      { role: "user" as const, content: newContent.trim() },
+    ];
+
+    let accumulated = "";
+    try {
+      const stream = streamCompletion(port, chatMessages, { temperature, maxTokens });
+      for await (const token of stream) {
+        if (stopRef.current) break;
+        accumulated += token;
+        setConversations((prev) => {
+          const updated = prev.map((c) =>
+            c.id === activeConvId
+              ? { ...c, messages: c.messages.map((m) => m.id === assistantId ? { ...m, content: accumulated } : m) }
+              : c
+          );
+          saveConversations(updated);
+          return updated;
+        });
+        scrollToBottom();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConversations((prev) => {
+        const updated = prev.map((c) =>
+          c.id === activeConvId
+            ? { ...c, messages: c.messages.map((m) => m.id === assistantId ? { ...m, isStreaming: false } : m) }
+            : c
+        );
+        saveConversations(updated);
+        return updated;
+      });
+      setIsGenerating(false);
+    }
+  };
+
+  // ── Edit assistant message (in-place correction) ──────────────────────
+  const handleEditAssistant = (msgId: string, newContent: string) => {
+    if (!activeConvId) return;
+    setEditingMsgId(null);
+    setEditingContent("");
+    const updatedMsgs = messages.map((m) =>
+      m.id === msgId ? { ...m, content: newContent } : m
+    );
+    updateMessages(activeConvId, updatedMsgs, systemPrompt);
+  };
+
+  // ── Fork conversation from a specific assistant message ───────────────
+  const forkFromMessage = (msgId: string) => {
+    if (!activeConv) return;
+    const msgIndex = messages.findIndex((m) => m.id === msgId);
+    if (msgIndex === -1) return;
+    const forkedMessages = messages.slice(0, msgIndex + 1).map((m) => ({
+      ...m,
+      id: crypto.randomUUID(),
+      isStreaming: false,
+    }));
+    const fork: SavedConversation = {
+      id: crypto.randomUUID(),
+      title: activeConv.title + " (fork)",
+      messages: forkedMessages,
+      systemPrompt: activeConv.systemPrompt,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      modelName: activeConv.modelName,
+    };
+    const updated = [fork, ...conversations];
+    persistConvs(updated);
+    setActiveConvId(fork.id);
+  };
+
+  // ── Toggle reaction ───────────────────────────────────────────────────
+  const toggleReaction = (msgId: string, type: "up" | "down") => {
+    setReactions((prev) => ({
+      ...prev,
+      [msgId]: prev[msgId] === type ? null : type,
+    }));
+  };
+
+  // ── Switch model from composer ────────────────────────────────────────
+  const handleModelSwitch = async (filename: string) => {
+    if (switchingModel || isStarting) return;
+    setShowModelPicker(false);
+    setSwitchingModel(true);
+    try {
+      const hw = hardwareResult ?? await detectHardware();
+      const ctx = 8192;
+      await stopServer();
+      await startServer(filename, hw.recommended_gpu_layers, ctx);
+    } catch {
+      // error surfaced elsewhere
+    } finally {
+      setSwitchingModel(false);
+    }
+  };
+
+  // Prompt/model display helpers
+  const allPrompts = [...BUILTIN_PROMPTS, ...systemPrompts.list()];
+  const activePromptName = allPrompts.find((p) => p.content === systemPrompt)?.name ?? null;
+  const currentModelName = serverStatus?.model_name ?? serverStatus?.model_path?.split("/").pop() ?? "Model";
+
   // ── Send message ───────────────────────────────────────────────────────
   const handleSend = async () => {
     if (!port || !input.trim() || isGenerating) return;
     const userMsg = input.trim();
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
     setInput("");
     setError(null);
     stopRef.current = false;
@@ -1684,7 +1873,7 @@ function InferenceTab() {
             {conversations.map((conv) => (
               <div
                 key={conv.id}
-                className={`group flex items-center gap-1 rounded-lg px-2 py-2 cursor-pointer text-sm transition-colors ${
+                className={`group flex items-center gap-1 min-w-0 rounded-lg px-2 py-2 cursor-pointer text-sm transition-colors ${
                   conv.id === activeConvId
                     ? "bg-primary/10 text-primary"
                     : "hover:bg-muted/60 text-foreground"
@@ -1692,7 +1881,7 @@ function InferenceTab() {
                 onClick={() => { setActiveConvId(conv.id); setError(null); }}
               >
                 <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-60" />
-                <span className="flex-1 truncate text-xs leading-tight">{conv.title}</span>
+                <span className="flex-1 min-w-0 truncate text-xs leading-tight">{conv.title}</span>
                 <button
                   className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-destructive transition-opacity"
                   onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }}
@@ -1789,70 +1978,282 @@ function InferenceTab() {
                   </div>
                 )}
                 {messages.map((msg) => (
-                  <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    {msg.role === "assistant" && (
-                      <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0 mt-0.5">
-                        <Cpu className="h-3.5 w-3.5 text-primary" />
+                  <div key={msg.id} className="group/msg">
+                    <div className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                      {msg.role === "assistant" && (
+                        <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0 mt-0.5">
+                          <Cpu className="h-3.5 w-3.5 text-primary" />
+                        </div>
+                      )}
+                      <div className="max-w-[78%] min-w-0">
+                        {editingMsgId === msg.id ? (
+                          <div className="space-y-2">
+                            <textarea
+                              className="w-full min-h-[60px] rounded-xl border bg-background px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                              value={editingContent}
+                              onChange={(e) => setEditingContent(e.target.value)}
+                              autoFocus
+                            />
+                            <div className="flex gap-2 justify-end">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs"
+                                onClick={() => { setEditingMsgId(null); setEditingContent(""); }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs"
+                                disabled={!editingContent.trim()}
+                                onClick={() => {
+                                  if (msg.role === "user") {
+                                    handleEditAndResend(msg.id, editingContent);
+                                  } else {
+                                    handleEditAssistant(msg.id, editingContent);
+                                  }
+                                }}
+                              >
+                                {msg.role === "user" ? "Save & Resend" : "Save"}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                              msg.role === "user"
+                                ? "bg-primary text-primary-foreground rounded-tr-sm"
+                                : "bg-muted/60 rounded-tl-sm"
+                            }`}
+                          >
+                            {msg.role === "assistant" ? (
+                              <div className="chat-prose text-sm leading-relaxed">
+                                <ReactMarkdown
+                                  remarkPlugins={[remarkGfm]}
+                                  components={{
+                                    pre: ({ children }) => (
+                                      <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[0.8125rem]">
+                                        {children}
+                                      </pre>
+                                    ),
+                                    code: ({ className, children, ...props }) => {
+                                      const isInline = !className;
+                                      if (isInline) {
+                                        return (
+                                          <code className="rounded bg-muted px-1.5 py-0.5 text-[0.8125rem] font-mono" {...props}>
+                                            {children}
+                                          </code>
+                                        );
+                                      }
+                                      return <code className={className} {...props}>{children}</code>;
+                                    },
+                                  }}
+                                >
+                                  {msg.content}
+                                </ReactMarkdown>
+                                {msg.isStreaming && (
+                                  <span className="inline-block h-4 w-0.5 bg-primary opacity-70 animate-pulse ml-0.5 align-middle" />
+                                )}
+                              </div>
+                            ) : (
+                              <>
+                                <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                                {msg.isStreaming && (
+                                  <span className="inline-block h-4 w-0.5 bg-current opacity-70 animate-pulse ml-0.5 align-middle" />
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Message action icons — hover row */}
+                        {!msg.isStreaming && editingMsgId !== msg.id && msg.content && (
+                          <div className={`flex items-center gap-0.5 mt-1 opacity-0 transition-opacity group-hover/msg:opacity-100 ${
+                            msg.role === "user" ? "justify-end" : "justify-start"
+                          }`}>
+                            <MsgCopyButton text={msg.content} />
+                            <button
+                              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                              title="Edit"
+                              onClick={() => { setEditingMsgId(msg.id); setEditingContent(msg.content); }}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            {msg.role === "assistant" && (
+                              <>
+                                <button
+                                  className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "up" ? "text-green-500" : "text-muted-foreground hover:text-foreground"}`}
+                                  title="Good response"
+                                  onClick={() => toggleReaction(msg.id, "up")}
+                                >
+                                  <ThumbsUp className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "down" ? "text-red-500" : "text-muted-foreground hover:text-foreground"}`}
+                                  title="Bad response"
+                                  onClick={() => toggleReaction(msg.id, "down")}
+                                >
+                                  <ThumbsDown className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                  title="Fork conversation from here"
+                                  onClick={() => forkFromMessage(msg.id)}
+                                >
+                                  <GitFork className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
-                    )}
-                    <div
-                      className={`max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-primary text-primary-foreground rounded-tr-sm"
-                          : "bg-muted/60 rounded-tl-sm"
-                      }`}
-                    >
-                      <pre className="whitespace-pre-wrap font-sans break-words">{msg.content}</pre>
-                      {msg.isStreaming && (
-                        <span className="inline-block h-4 w-0.5 bg-current opacity-70 animate-pulse ml-0.5 align-middle" />
+                      {msg.role === "user" && (
+                        <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
+                          <span className="text-xs font-semibold text-muted-foreground">U</span>
+                        </div>
                       )}
                     </div>
-                    {msg.role === "user" && (
-                      <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
-                        <span className="text-xs font-semibold text-muted-foreground">U</span>
-                      </div>
-                    )}
                   </div>
                 ))}
                 <div ref={bottomRef} />
               </div>
             </ScrollArea>
 
-            {/* Input area */}
+            {/* Input area — composer with prompt/model selectors */}
             <div className="border-t p-3 shrink-0 bg-background">
-              <div className="max-w-3xl mx-auto flex gap-2 items-end">
-                <Textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
-                  }}
-                  placeholder="Message the local model… (Enter to send, Shift+Enter for newline)"
-                  className="text-sm resize-none flex-1 min-h-[44px] max-h-[200px] rounded-xl border-muted-foreground/20"
-                  disabled={isGenerating}
-                  rows={1}
-                />
-                {isGenerating ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-10 w-10 shrink-0 rounded-xl"
-                    onClick={() => (stopRef.current = true)}
-                    title="Stop generation"
-                  >
-                    <Square className="h-4 w-4" />
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    className="h-10 w-10 shrink-0 rounded-xl"
-                    disabled={!input.trim()}
-                    onClick={handleSend}
-                    title="Send"
-                  >
-                    <Play className="h-4 w-4" />
-                  </Button>
+              <div className="max-w-3xl mx-auto">
+                {switchingModel && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2 px-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Switching model…
+                  </div>
                 )}
+                <div className="glass relative rounded-xl transition-shadow focus-within:shadow-md">
+                  <textarea
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+                    }}
+                    placeholder={switchingModel ? "Switching model…" : "Message the local model… (Enter to send, Shift+Enter for newline)"}
+                    className="min-h-[2.5rem] w-full resize-none bg-transparent px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
+                    disabled={isGenerating || switchingModel}
+                    rows={1}
+                  />
+                  <div className="flex items-center justify-between px-2 pb-1.5">
+                    <div className="flex items-center gap-1">
+                      {/* Prompt selector */}
+                      <div className="relative" ref={promptPickerRef}>
+                        <button
+                          onClick={() => { setShowPromptPicker(!showPromptPicker); setShowModelPicker(false); }}
+                          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                          title="Select system prompt"
+                        >
+                          <span className="max-w-[140px] truncate">
+                            {activePromptName ?? "No prompt"}
+                          </span>
+                          <ChevronDown className="h-3 w-3" />
+                        </button>
+                        {showPromptPicker && (
+                          <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[240px] max-h-64 overflow-y-auto rounded-lg p-1.5 z-50">
+                            <button
+                              className={`flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors ${
+                                !systemPrompt ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
+                              }`}
+                              onClick={() => {
+                                setSystemPrompt("");
+                                if (activeConvId) updateMessages(activeConvId, messages, "");
+                                setShowPromptPicker(false);
+                              }}
+                            >
+                              <span className="text-muted-foreground">No prompt</span>
+                            </button>
+                            {allPrompts.map((p) => (
+                              <button
+                                key={p.id}
+                                className={`flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors ${
+                                  p.content === systemPrompt ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
+                                }`}
+                                onClick={() => {
+                                  setSystemPrompt(p.content);
+                                  if (activeConvId) updateMessages(activeConvId, messages, p.content);
+                                  setShowPromptPicker(false);
+                                }}
+                              >
+                                <span className="font-medium">{p.name}</span>
+                                <span className="ml-auto text-[10px] text-muted-foreground">{p.category}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Model selector */}
+                      <div className="relative" ref={modelPickerRef}>
+                        <button
+                          onClick={() => { setShowModelPicker(!showModelPicker); setShowPromptPicker(false); }}
+                          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                          title="Select model"
+                        >
+                          <Cpu className="h-3 w-3 text-blue-500 shrink-0" />
+                          <span className="max-w-[140px] truncate">{currentModelName}</span>
+                          <ChevronDown className="h-3 w-3" />
+                        </button>
+                        {showModelPicker && (
+                          <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[240px] max-h-64 overflow-y-auto rounded-lg p-1.5 z-50">
+                            {downloadedModels.map((m) => {
+                              const isCurrent = serverStatus?.model_path?.includes(m.filename);
+                              return (
+                                <button
+                                  key={m.filename}
+                                  className={`flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors ${
+                                    isCurrent ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
+                                  }`}
+                                  onClick={() => {
+                                    if (!isCurrent) handleModelSwitch(m.filename);
+                                    setShowModelPicker(false);
+                                  }}
+                                >
+                                  <Cpu className="h-3 w-3 text-blue-500 mr-2 shrink-0" />
+                                  <span className="font-medium truncate">{m.name}</span>
+                                  <span className="ml-auto text-[10px] text-muted-foreground shrink-0">{m.size_gb} GB</span>
+                                  {isCurrent && <span className="ml-1.5 text-[10px] text-green-500 shrink-0">running</span>}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      {isGenerating ? (
+                        <button
+                          onClick={() => (stopRef.current = true)}
+                          className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors"
+                          title="Stop generation"
+                        >
+                          <Square className="h-3 w-3" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handleSend}
+                          disabled={!input.trim() || switchingModel}
+                          title="Send"
+                          className={`flex h-7 w-7 items-center justify-center rounded-full transition-all duration-200 ${
+                            !input.trim() || switchingModel
+                              ? "bg-muted-foreground/30 text-primary-foreground opacity-30 cursor-not-allowed"
+                              : "bg-primary text-primary-foreground active:scale-[0.96]"
+                          }`}
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </>
@@ -2526,6 +2927,15 @@ export function LocalModels() {
 function LocalModelsInner() {
   const [state] = useLlmContext();
   const { serverStatus } = state;
+  const [activeTab, setActiveTab] = useState(() =>
+    serverStatus?.running ? "inference" : "setup"
+  );
+
+  useEffect(() => {
+    if (serverStatus?.running && activeTab === "setup") {
+      setActiveTab("inference");
+    }
+  }, [serverStatus?.running]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -2549,8 +2959,12 @@ function LocalModelsInner() {
         </div>
       </div>
 
-      <Tabs defaultValue="setup" className="flex-1 flex flex-col min-h-0 px-6">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 px-6">
         <TabsList className="w-fit shrink-0">
+          <TabsTrigger value="inference" className="gap-1.5">
+            <MessageSquare className="h-3.5 w-3.5" />
+            Inference
+          </TabsTrigger>
           <TabsTrigger value="setup" className="gap-1.5">
             <Zap className="h-3.5 w-3.5" />
             Setup
@@ -2558,10 +2972,6 @@ function LocalModelsInner() {
           <TabsTrigger value="models" className="gap-1.5">
             <HardDrive className="h-3.5 w-3.5" />
             Models
-          </TabsTrigger>
-          <TabsTrigger value="inference" className="gap-1.5">
-            <MessageSquare className="h-3.5 w-3.5" />
-            Inference
           </TabsTrigger>
           <TabsTrigger value="server" className="gap-1.5">
             <Server className="h-3.5 w-3.5" />

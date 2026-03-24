@@ -5,7 +5,7 @@
 
 ---
 
-## 🔴 AGENT PRIORITY QUEUE (updated 2026-03-18)
+## 🔴 AGENT PRIORITY QUEUE (updated 2026-03-23)
 
 > Pick tasks from top to bottom. Each is self-contained. Do not start a task that depends on an unresolved one above it.
 
@@ -31,6 +31,8 @@
   5. **Force-exit timer too short**: 15s watchdog vs ~17s+ worst-case teardown. If all services hit their timeouts simultaneously, `os._exit(1)` would fire before clean shutdown completed. Fix: increased to 25s with detailed budget comment.
   6. **LlmProcessHandle was dead code**: The `LlmProcessHandle` (sync Mutex) was initialized as `None` and never written to — the "kill via handle" path in `graceful_shutdown_sync` was unreachable. Fix: added `LlmServerState` parameter to `graceful_shutdown_sync`, uses `tokio::sync::Mutex::try_lock()` to access `LlmServer.stop_blocking()` directly. All 4 call sites updated. Fallback `pkill -9`/`taskkill` still runs as belt-and-suspenders.
   7. **SyncEngine task not awaited**: `_task.cancel()` was called but never awaited — could leave httpx connections half-open. Fix: added `wait_for(task, timeout=2.0)` after cancel.
+  8. **cloudflared tunnel orphaned after app quit (CRITICAL)**: cloudflared is spawned by Python as a child subprocess. If Tauri exits and Python's lifespan teardown doesn't complete before SIGKILL, cloudflared becomes orphan (PPID 1) holding ports forever. Fix: Rust `graceful_shutdown_sync()` now explicitly kills cloudflared by name as step 4. Also added to `kill_orphaned_sidecars()` startup cleanup. Python `_kill_child_subprocesses()` runs before `os._exit()` in both force-exit watchdog and normal exit path.
+  9. **llama-server + cloudflared orphaned due to SIGTERM/SIGKILL timing**: Rust `sigterm_then_kill` waited only 8s before SIGKILL on Python, but Python teardown could take 17s+. Fix: increased Rust SIGTERM wait from 8s to 20s.
   Files: `app/main.py`, `app/tools/tools/scheduler.py`, `app/tools/tools/file_watch.py`, `run.py`, `desktop/src-tauri/src/lib.rs`.
 
 - [x] **Windows: GPU not detected / used; CPU-only binary shipped (CRITICAL)** — Fixed 2026-03-23: Four separate bugs found and fixed:
@@ -91,6 +93,23 @@
   - `desktop/src/lib/api.ts` — full TypeScript types (`HardwareProfile`, `HardwareCpu`, `HardwareGpu`, `HardwareRam`, `HardwareAudioDevice`, `HardwareVideoDevice`, `HardwareMonitor`, `HardwareNetworkAdapter`, `HardwareStorageDevice`, `HardwareResponse`) + `engine.getHardware()` and `engine.refreshHardware()` methods.
   - `desktop/src/pages/Settings.tsx` — "System" tab with sections: Processor, Graphics (with GPU warning for CPU-only), Memory, Audio Devices (inputs + outputs), Camera, Displays, Network Adapters, Storage. Refresh button re-detects and pushes to cloud.
   - **Bugs fixed during audit:** Vulkan merge logic mutated loop list (fixed); Linux DRM listed renderD* entries creating duplicates (fixed: filter to card* only); Windows wmic CSV column-sort bugs in RAM type/speed, monitor size, and GPU name/VRAM (fixed: use /value format); macOS GPU name extraction simplified to use `_name` key.
+
+### Engine Startup / Restart Overhaul (fixed 2026-03-23)
+
+- [x] **Startup screen steps never advance on restart** — `StartupScreen` now replays the Rust ring buffer on mount (`getSidecarLogs()`) and rebuilds phase state from history before subscribing to live events. The UI no longer misses phase signals fired before the component mounted. Live log panel added side-by-side for this build.
+- [x] **Logs tab empty / useless** — `initTauriLogStream()` already runs on app mount; added crash detection (`_isCrashSignal`) that emits a 50-line context burst when SIGKILL/termination is detected. `inferServerLevel` now demotes DEBUG lines to reduce noise in normal operation. SSE stream `AbortController` fixed to be per-reconnect (no stale abort poisoning reconnects).
+- [x] **Dead sidecar leaves stale state** — `start_sidecar` checks liveness with `kill(pid, 0)` on Unix before returning early; clears stale handles. `stop_sidecar` always clears the handle and runs `kill_orphaned_sidecars()`. `sidecar_status` returns false for dead PIDs and clears the stale handle.
+- [x] **macOS SIGKILL during pip install** — Capability install now uses `asyncio.create_subprocess_exec` with `start_new_session=True` (POSIX) / `CREATE_NEW_PROCESS_GROUP` (Windows), fully isolating the install subprocess from the engine's process group. macOS watchdog can no longer reach the engine via pip.
+- [x] **Windows completely broken (platform detection circular dependency)** — `sidecar.ts` and `EngineRecoveryModal.tsx` now use `navigator.platform`/`navigator.userAgent` for Windows detection instead of `PLATFORM.is_windows` which required engine data to be populated first (circular dependency during startup).
+- [x] **No feedback during Starting Engine (60s silence)** — Added 5-second heartbeat emitting progress logs while `waitForEngine` polls. On failure, fetches and dumps the last 30 sidecar log lines into the activity log.
+- [x] **Insufficient error reporting** — Crash logs now include the last 50 engine output lines in a formatted burst. Capability install errors distinguish "engine crashed" from other failures with clear user-visible messages.
+- [x] **SSE log stream drops** — `startSetupLogsStream` now creates a fresh `AbortController` per reconnect attempt. Error messages clarify "reconnecting" vs "fatal error".
+- [x] **matrx-ai missing GenericOpenAIChat** — `pyproject.toml` already had `matrx-ai>=0.1.23`; confirmed installed via `uv sync`.
+- [x] **SUPABASE_JWT_SECRET user-facing warning** — Removed from `Chat.tsx` entirely. Warning in `app/main.py` demoted to `DEBUG` and only shown in dev (non-frozen) mode.
+- [x] **Stale discovery file race condition** — `kill_orphaned_sidecars()` now reads `local.json`, parses the PID, checks liveness with `kill(pid, 0)`, and only deletes the file if that PID is dead. Prevents deleting a new engine's discovery record.
+- [x] **Windows process tree not fully killed** — `taskkill` already had `/F /T`; confirmed correct for all three processes (engine, cloudflared, llama-server). Discovery file deletion on Windows assumes dead after taskkill.
+- [x] **EngineMonitor port scan broken on Windows** — Port scanner in `EngineRecoveryModal.tsx` now uses `invoke("check_engine_health", { port })` on Windows instead of JS `fetch()` (which is blocked by WebView2 loopback isolation).
+- [x] **No feedback when capabilities install kills engine** — `Settings.tsx` and `Dashboard.tsx` now detect network/fetch errors during install and show a clear "engine became unreachable during install" message.
 
 ### P3 — Polish (nice to have)
 

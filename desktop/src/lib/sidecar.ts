@@ -5,8 +5,6 @@
  * In development, the engine is expected to be running separately.
  */
 
-import { PLATFORM } from "@/lib/platformCtx";
-
 let invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
 
 async function loadTauriInvoke() {
@@ -117,21 +115,44 @@ export async function getSidecarLogs(): Promise<string[]> {
 }
 
 /**
+ * Detect if we are running on Windows without depending on PLATFORM data
+ * from the engine (which isn't available during startup).
+ *
+ * Uses navigator.userAgent which is always available in the WebView.
+ * This is needed because PLATFORM.is_windows is populated from the engine
+ * response — a circular dependency during engine startup.
+ */
+function isWindowsPlatform(): boolean {
+  // navigator.platform is deprecated but still reliable for Win detection.
+  // navigator.userAgent is the fallback.
+  if (typeof navigator !== "undefined") {
+    if (navigator.platform) {
+      return navigator.platform.startsWith("Win");
+    }
+    return navigator.userAgent.includes("Windows");
+  }
+  return false;
+}
+
+/**
  * Wait for the engine health endpoint to respond.
  * Defaults tuned for PyInstaller sidecar cold boot (~10-30s).
  *
  * On Windows inside Tauri, delegates to the Rust `check_engine_health` command
  * because Windows WebView2 loopback network isolation blocks JS fetch() to
- * 127.0.0.1.  On macOS/Linux the original JS fetch() path is preserved — those
- * platforms have no loopback restriction and the fetch path was already working.
+ * 127.0.0.1.  On macOS/Linux the original JS fetch() path is preserved.
+ *
+ * Platform detection uses navigator.userAgent — NOT PLATFORM.is_windows —
+ * because PLATFORM is populated from the engine (circular dependency).
  */
 export async function waitForEngine(
   baseUrl: string,
   maxRetries = 60,
   intervalMs = 1000
 ): Promise<boolean> {
-  // Only use Rust IPC on Windows — macOS/Linux work fine with JS fetch()
-  const useRust = isTauri() && PLATFORM.is_windows;
+  // Use Rust IPC on Windows to bypass WebView2 loopback isolation.
+  // Always use Rust IPC in Tauri when available — it's strictly more reliable.
+  const useRust = isTauri() && isWindowsPlatform();
   const inv = useRust ? await loadTauriInvoke() : null;
 
   // Extract port from baseUrl for the Rust path
@@ -165,10 +186,12 @@ export async function waitForEngine(
  *
  * On Windows inside Tauri, delegates to the Rust `discover_engine_port` command
  * to bypass WebView2 loopback isolation.  macOS/Linux use JS fetch() unchanged.
+ *
+ * Uses isWindowsPlatform() (navigator.userAgent) — NOT PLATFORM.is_windows —
+ * to avoid the circular dependency on engine data during startup.
  */
 export async function discoverEnginePort(): Promise<string | null> {
-  // Only use Rust IPC on Windows — preserves existing macOS/Linux behaviour
-  if (isTauri() && PLATFORM.is_windows) {
+  if (isTauri() && isWindowsPlatform()) {
     const inv = await loadTauriInvoke();
     if (inv) {
       try {

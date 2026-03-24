@@ -113,28 +113,55 @@ export function useEngine(authenticated = true) {
           return;
         }
 
-        // ── KEY FIX: Wait for the sidecar to actually be ready ──────
+        // ── Wait for the sidecar to become reachable ─────────────────
         // startSidecar() returns as soon as the process is spawned.
         // The PyInstaller binary takes 5-30s to boot and bind a port.
-        // We poll via Rust IPC (check_engine_health) which is NOT subject to
-        // the Windows WebView2 loopback network isolation that blocks JS fetch()
-        // calls to 127.0.0.1 from within the WebView sandbox.
+        // We poll via Rust IPC (check_engine_health) which bypasses
+        // Windows WebView2 loopback isolation that blocks JS fetch().
+        //
+        // Every 5 seconds we emit a heartbeat log so the UI shows progress
+        // instead of 60 seconds of silence.
         emitClientLog("info", "Waiting for engine to become reachable (up to 60s)...", "engine");
-        const ready = await waitForEngine("http://127.0.0.1:22140", 60, 1000);
+
+        // Heartbeat ticker — fires every 5s while we wait
+        let heartbeatSeconds = 0;
+        const heartbeatInterval = setInterval(() => {
+          heartbeatSeconds += 5;
+          emitClientLog("info", `Still starting up... (${heartbeatSeconds}s elapsed)`, "engine");
+        }, 5000);
+
+        let ready = false;
+        try {
+          ready = await waitForEngine("http://127.0.0.1:22140", 60, 1000);
+        } finally {
+          clearInterval(heartbeatInterval);
+        }
+
         let confirmedUrl: string | null = ready ? "http://127.0.0.1:22140" : null;
         if (!ready) {
           emitClientLog("warn", "Default port not responding — scanning port range...", "engine");
-          // discoverEnginePort() uses Rust IPC when in Tauri — not blocked by WebView2
           confirmedUrl = await discoverEnginePort();
           if (!confirmedUrl) {
+            // ── Full diagnostic dump on failure ──────────────────────────────
             emitClientLog("error", "Engine never became reachable — sidecar may have crashed", "engine");
+            try {
+              // Fetch buffered sidecar logs to include in the error report
+              const { getSidecarLogs: getLogs } = await import("@/lib/sidecar");
+              const recentLogs = await getLogs();
+              const tail = recentLogs.slice(-30);
+              if (tail.length > 0) {
+                emitClientLog("error", "=== Last 30 engine output lines ===", "engine");
+                tail.forEach((line) => emitClientLog("error", `  ${line}`, "engine"));
+                emitClientLog("error", "=== End of engine output ===", "engine");
+              }
+            } catch { /* ignore — best effort */ }
             update({
               status: "error",
-              error: "Engine process started but never became reachable. The sidecar may have crashed during startup.",
+              error: "Engine process started but never became reachable. The sidecar may have crashed during startup. Open the Engine Monitor for detailed logs.",
             });
             return;
           }
-          emitClientLog("success", `Engine found at alternate URL: ${confirmedUrl}`, "engine");
+          emitClientLog("success", `Engine found at alternate port: ${confirmedUrl}`, "engine");
         } else {
           emitClientLog("success", "Engine is responding on port 22140", "engine");
         }

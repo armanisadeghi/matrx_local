@@ -431,9 +431,24 @@ export function Settings({
         await loadCapabilities();
       }
     } catch (err) {
+      const errMsg = String(err);
+      // Detect engine crash / network failure during install — previously
+      // the engine would get SIGKILL'd by macOS watchdog mid-install and
+      // the request would hang or fail with a generic network error.
+      const engineCrashed = errMsg.includes("fetch") ||
+        errMsg.includes("network") ||
+        errMsg.includes("Failed to fetch") ||
+        errMsg.includes("Load failed") ||
+        errMsg.includes("NetworkError");
+
       setInstallResult((prev) => ({
         ...prev,
-        [capabilityId]: { success: false, message: String(err) },
+        [capabilityId]: {
+          success: false,
+          message: engineCrashed
+            ? "The engine became unreachable during installation. It may have been killed by the OS. Open Engine Monitor for logs, then restart the engine."
+            : errMsg,
+        },
       }));
     } finally {
       setInstallingId(null);

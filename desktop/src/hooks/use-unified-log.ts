@@ -171,9 +171,23 @@ function stripAnsi(text: string): string {
 
 function inferServerLevel(text: string): LogLevel {
   const t = stripAnsi(text).toLowerCase();
-  if (t.includes("error") || t.includes("failed") || t.includes("traceback") || t.includes("exception") || t.includes("critical") || t.includes("fatal")) return "error";
+  // Hard error signals — always show
+  if (
+    t.includes("traceback") || t.includes("exception") || t.includes("critical") ||
+    t.includes("fatal") || t.includes("sigkill") || t.includes("signal: some(9)") ||
+    t.includes("terminated") || t.includes("process exited")
+  ) return "error";
+  if (t.includes("error") || t.includes("failed")) return "error";
   if (t.includes("warning") || t.includes("warn")) return "warn";
   if (t.includes("ready") || t.includes("✓") || t.includes("started") || t.includes("success")) return "success";
+  // Suppress DEBUG lines from the Python logger — they are high-volume and
+  // contain internal timing details not useful for end-user troubleshooting.
+  // They still go into the buffer (full history), just tagged as lowest priority.
+  if (t.includes("debug") || (t.includes("→") && !t.includes("error")) || (t.includes("←") && !t.includes("error"))) {
+    // HTTP access lines from the request logger (→ GET, ← 200) — keep as "data"
+    // level so the access tab can show them but the Server tab's "warn+" filter hides them.
+    return "info";
+  }
   return "info";
 }
 
@@ -222,11 +236,16 @@ const SETUP_LOG_LEVEL_MAP: Record<string, LogLevel> = {
 
 function startSetupLogsStream(engineUrl: string): () => void {
   let active = true;
-  let abortCtrl = new AbortController();
+  let currentAbort: AbortController | null = null;
   const backoff = makeBackoff();
 
   const run = async () => {
     while (active) {
+      // Create a fresh AbortController for each connection attempt so a
+      // previous abort does not poison the next reconnect attempt.
+      const abortCtrl = new AbortController();
+      currentAbort = abortCtrl;
+
       try {
         const url = `${engineUrl}/setup/logs?lines=300`;
         const resp = await fetch(url, { signal: abortCtrl.signal });
@@ -268,20 +287,24 @@ function startSetupLogsStream(engineUrl: string): () => void {
       } catch (err) {
         if (!active) break;
         const msg = err instanceof Error ? err.message : String(err);
-        if (!msg.includes("abort")) {
-          emitClientLog("error", `Server log stream error: ${msg}`, "server");
+        // Suppress intentional aborts (from stop()) and network interruptions
+        // that are expected when the engine restarts.
+        if (!msg.includes("abort") && !msg.includes("AbortError")) {
+          emitClientLog("warn", `Server log stream reconnecting: ${msg}`, "server");
         }
       }
+      currentAbort = null;
       if (!active) break;
       const delay = backoff.next();
-      await new Promise((r) => setTimeout(r, delay));
+      await new Promise<void>((r) => setTimeout(r, delay));
     }
   };
 
   run();
   return () => {
     active = false;
-    abortCtrl.abort();
+    currentAbort?.abort();
+    currentAbort = null;
   };
 }
 
@@ -444,6 +467,29 @@ async function startAccessStream(engineUrl: string, getToken: () => Promise<stri
 // Tauri sidecar-log IPC
 // ---------------------------------------------------------------------------
 
+// Recent tauri log lines for error context burst (last N lines before a crash)
+const _recentTauriLines: string[] = [];
+const RECENT_CONTEXT_SIZE = 50;
+
+function _trackRecentLine(text: string): void {
+  _recentTauriLines.push(text);
+  if (_recentTauriLines.length > RECENT_CONTEXT_SIZE) {
+    _recentTauriLines.shift();
+  }
+}
+
+function _isCrashSignal(text: string): boolean {
+  const t = stripAnsi(text).toLowerCase();
+  return (
+    t.includes("process exited") ||
+    t.includes("terminated") ||
+    t.includes("signal: some(9)") ||
+    t.includes("sigkill") ||
+    t.includes("panic!") ||
+    (t.includes("signal:") && t.includes("some("))
+  );
+}
+
 async function startTauriStream(): Promise<() => void> {
   let unlistenFn: (() => void) | null = null;
 
@@ -451,6 +497,7 @@ async function startTauriStream(): Promise<() => void> {
     const { invoke } = await import("@tauri-apps/api/core");
     const historical = await invoke<string[]>("get_sidecar_logs").catch(() => [] as string[]);
     historical.forEach((text) => {
+      _trackRecentLine(text);
       emitClientLog(inferServerLevel(text), text, "tauri");
     });
   } catch { /* not in Tauri */ }
@@ -460,7 +507,19 @@ async function startTauriStream(): Promise<() => void> {
     const unlisten = await listen<string>("sidecar-log", (event) => {
       if (_state.paused) return;
       const text = typeof event.payload === "string" ? event.payload : String(event.payload);
-      emitClientLog(inferServerLevel(text), text, "tauri");
+      _trackRecentLine(text);
+
+      // If this line is a crash signal, immediately dump recent context
+      if (_isCrashSignal(text)) {
+        emitClientLog("error", `[CRASH DETECTED] ${stripAnsi(text)}`, "tauri");
+        emitClientLog("error", `━━━ Last ${_recentTauriLines.length} engine lines before crash ━━━`, "tauri");
+        [..._recentTauriLines].forEach((line) => {
+          emitClientLog("error", `  ${stripAnsi(line)}`, "tauri");
+        });
+        emitClientLog("error", `━━━ End of crash context ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`, "tauri");
+      } else {
+        emitClientLog(inferServerLevel(text), text, "tauri");
+      }
     });
     unlistenFn = unlisten;
   } catch { /* not in Tauri */ }

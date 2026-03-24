@@ -2,6 +2,8 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
+#[cfg(unix)]
+use libc;
 
 /// Global flag: set to true once graceful_shutdown_sync has run.
 /// Prevents the cleanup from running twice (tray quit → ExitRequested both fire).
@@ -34,48 +36,85 @@ struct FetchResponse {
     final_url: String,
 }
 
-/// Kill any orphaned aimatrx-engine processes from a previous session.
+/// Kill any orphaned processes from a previous session.
 ///
 /// Called before spawning a new sidecar and during graceful shutdown.
-/// Uses OS-specific process killing to ensure stale sidecars from
-/// crashes or unclean shutdowns don't hold ports or leak resources.
+/// Targets: aimatrx-engine (Python sidecar), cloudflared (tunnel),
+/// llama-server (LLM inference).
+///
+/// Discovery file safety: only deletes local.json if the PID it contains
+/// is no longer alive.  This prevents a race where Rust cleanup runs AFTER
+/// the new engine has already written its own PID — we would otherwise
+/// delete the new engine's discovery record on startup.
 fn kill_orphaned_sidecars() {
     #[cfg(unix)]
     {
         let _ = std::process::Command::new("pkill")
             .args(["-TERM", "-f", "aimatrx-engine"])
             .output();
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = std::process::Command::new("pkill")
+            .args(["-TERM", "-f", "cloudflared tunnel"])
+            .output();
+        let _ = std::process::Command::new("pkill")
+            .args(["-9", "-f", "llama-server"])
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(500));
         let _ = std::process::Command::new("pkill")
             .args(["-KILL", "-f", "aimatrx-engine"])
+            .output();
+        let _ = std::process::Command::new("pkill")
+            .args(["-KILL", "-f", "cloudflared tunnel"])
             .output();
     }
     #[cfg(windows)]
     {
+        // /F = force, /T = kill entire process tree (children: uvicorn workers,
+        // Playwright Chromium, etc.) — without /T those children survive and
+        // continue to hold port 22140 and file system locks.
         let _ = std::process::Command::new("taskkill")
-            .args([
-                "/F",
-                "/T",
-                "/IM",
-                "aimatrx-engine-x86_64-pc-windows-msvc.exe",
-            ])
+            .args(["/F", "/T", "/IM", "aimatrx-engine-x86_64-pc-windows-msvc.exe"])
+            .output();
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/IM", "cloudflared.exe"])
+            .output();
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/IM", "llama-server.exe"])
             .output();
     }
 
-    // Also remove stale discovery file
-    #[cfg(unix)]
-    if let Ok(home) = std::env::var("HOME") {
-        let discovery = std::path::PathBuf::from(home)
-            .join(".matrx")
-            .join("local.json");
-        let _ = std::fs::remove_file(&discovery);
-    }
-    #[cfg(windows)]
-    if let Ok(home) = std::env::var("USERPROFILE") {
-        let discovery = std::path::PathBuf::from(home)
-            .join(".matrx")
-            .join("local.json");
-        let _ = std::fs::remove_file(&discovery);
+    // Remove the discovery file only if its recorded PID is no longer alive.
+    let discovery_path = {
+        #[cfg(unix)]
+        { std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".matrx").join("local.json")) }
+        #[cfg(windows)]
+        { std::env::var("USERPROFILE").ok().map(|h| std::path::PathBuf::from(h).join(".matrx").join("local.json")) }
+    };
+
+    if let Some(path) = discovery_path {
+        if path.exists() {
+            // Parse the "pid" value out of local.json without a JSON dependency.
+            let recorded_pid: Option<u32> = std::fs::read_to_string(&path).ok().and_then(|s| {
+                // Scan for: "pid": 12345
+                s.split('"')
+                    .skip_while(|tok| *tok != "pid")
+                    .nth(2)
+                    .and_then(|tok| {
+                        let digits: String = tok.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
+                        digits.parse().ok()
+                    })
+            });
+
+            let pid_is_alive = recorded_pid.map(|pid| {
+                #[cfg(unix)]
+                { let rc = unsafe { libc::kill(pid as libc::pid_t, 0) }; rc == 0 }
+                #[cfg(not(unix))]
+                { let _ = pid; false } // Windows: after taskkill above, assume dead
+            }).unwrap_or(false);
+
+            if !pid_is_alive {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
     }
 }
 
@@ -114,14 +153,43 @@ struct SidecarStatus {
 /// Before spawning, kills any orphaned aimatrx-engine processes left over
 /// from a previous crash or unclean shutdown.  This prevents the new
 /// sidecar from failing with "address already in use" on port 22140.
+///
+/// Self-healing: if we hold a child handle but the process has already
+/// exited (e.g. killed by macOS watchdog or SIGKILL), we clear the stale
+/// handle so we can respawn cleanly rather than returning early.
 #[tauri::command]
 async fn start_sidecar(
     app: tauri::AppHandle,
     state: tauri::State<'_, SidecarState>,
 ) -> Result<(), String> {
-    // Check if already running
-    if state.child.lock().unwrap().is_some() {
-        return Ok(());
+    // Check if already running — but also detect and clear stale handles
+    // where the process exited without going through stop_sidecar().
+    {
+        let mut guard = state.child.lock().unwrap();
+        if guard.is_some() {
+            // On Unix we can probe liveness with kill(pid, 0): if it returns
+            // ESRCH the process is gone and the handle is stale.
+            #[cfg(unix)]
+            {
+                let pid = guard.as_ref().unwrap().pid();
+                let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+                if !alive {
+                    eprintln!(
+                        "[sidecar] Stale child handle (pid={}) detected — process is gone. Clearing.",
+                        pid
+                    );
+                    *guard = None;
+                    // Fall through to respawn below.
+                } else {
+                    return Ok(()); // genuinely still running
+                }
+            }
+            // On Windows we have no cheap liveness check via the plugin API;
+            // treat a held handle as running. The watchdog / restart path
+            // always calls stop_sidecar() first on Windows, so this is fine.
+            #[cfg(not(unix))]
+            return Ok(());
+        }
     }
 
     // Kill any orphaned sidecar processes from a previous session before
@@ -199,11 +267,18 @@ async fn start_sidecar(
 ///
 /// Uses sigterm_then_kill() which sends SIGTERM first (giving Python's signal
 /// handler time to run lifespan teardown) and falls back to SIGKILL after 8s.
+/// Always clears the child handle regardless of whether a child was held —
+/// this ensures a subsequent start_sidecar() can always respawn cleanly.
 #[tauri::command]
 async fn stop_sidecar(state: tauri::State<'_, SidecarState>) -> Result<(), String> {
-    if let Some(child) = state.child.lock().unwrap().take() {
-        sigterm_then_kill(child);
+    let child = state.child.lock().unwrap().take();
+    if let Some(c) = child {
+        sigterm_then_kill(c);
     }
+    // Also nuke any orphaned processes by name — covers the case where the
+    // process was SIGKILLed by the OS (e.g. macOS watchdog) before we could
+    // clear the handle, leaving port 22140 still bound by a lingering child.
+    kill_orphaned_sidecars();
     Ok(())
 }
 
@@ -226,11 +301,11 @@ fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
     let term_sent = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } == 0;
 
     if term_sent {
-        // Wait up to 8 seconds for clean exit. This covers:
-        //   - proxy stop with 4 s wait_for timeout
-        //   - Playwright browser pool close (~1-2 s)
-        //   - SQLite close, sync engine stop, heartbeat cancel
-        let deadline = Instant::now() + Duration::from_secs(8);
+        // Wait up to 20 seconds for clean exit. The Python lifespan teardown
+        // budget is ~25s total (wake-word 3s + scheduler 3s + proxy 4s + tunnel 5s
+        // + scraper 5s + browsers 3s + margin). 20s lets most phases complete;
+        // if it's still alive, SIGKILL ensures we don't hang the Tauri exit.
+        let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             std::thread::sleep(Duration::from_millis(100));
             // kill(pid, 0) = existence check; ESRCH means the process exited.
@@ -409,12 +484,35 @@ fn graceful_shutdown_sync(
 
     // 3. Send SIGTERM to the Python sidecar so its signal handler can run
     //    the FastAPI lifespan teardown (proxy, tunnel, scraper, SQLite).
-    //    Falls back to SIGKILL after 8 s if Python doesn't exit on its own.
+    //    Falls back to SIGKILL after 20 s if Python doesn't exit on its own.
     if let Some(child) = sidecar_state.child.lock().unwrap().take() {
         sigterm_then_kill(child);
     }
 
-    // 4. Kill any remaining orphaned sidecars + clean up discovery file.
+    // 4. Kill orphaned cloudflared tunnel processes.
+    //    cloudflared is spawned by the Python sidecar (TunnelManager), not by Rust.
+    //    If the sidecar was SIGKILL'd before its lifespan teardown ran tm.stop(),
+    //    cloudflared survives as an orphan (PPID 1). We kill it here as a safety net.
+    //    The -f flag matches the full command line so "cloudflared tunnel" is targeted.
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("pkill")
+            .args(["-TERM", "-f", "cloudflared tunnel"])
+            .output();
+        // Brief wait for graceful exit, then force kill any survivors
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = std::process::Command::new("pkill")
+            .args(["-KILL", "-f", "cloudflared tunnel"])
+            .output();
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/IM", "cloudflared.exe"])
+            .output();
+    }
+
+    // 5. Kill any remaining orphaned sidecars + clean up discovery file.
     kill_orphaned_sidecars();
 }
 
@@ -461,9 +559,35 @@ async fn restart_for_update(
 }
 
 /// Get sidecar status.
+///
+/// On Unix, cross-checks the stored PID with the OS to detect stale handles
+/// (process died without going through stop_sidecar). On Windows we trust the
+/// handle — a held handle means the process is alive.
 #[tauri::command]
 async fn sidecar_status(state: tauri::State<'_, SidecarState>) -> Result<SidecarStatus, String> {
-    let running = state.child.lock().unwrap().is_some();
+    let mut guard = state.child.lock().unwrap();
+    let running = if let Some(ref child) = *guard {
+        #[cfg(unix)]
+        {
+            let pid = child.pid();
+            let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+            if !alive {
+                // Clear the stale handle so start_sidecar() can respawn.
+                eprintln!("[sidecar] sidecar_status: pid={} is gone, clearing stale handle", pid);
+                *guard = None;
+                false
+            } else {
+                true
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = child; // suppress unused warning
+            true
+        }
+    } else {
+        false
+    };
     Ok(SidecarStatus {
         running,
         port: 22140,

@@ -582,6 +582,7 @@ def _wait_forever() -> None:
         server_thread_ref = _server_thread
         if server_thread_ref is not None:
             server_thread_ref.join(timeout=10)
+    _kill_child_subprocesses()
     os._exit(0)
 
 
@@ -640,6 +641,28 @@ def _handle_exit(signum: int, frame: object) -> None:  # noqa: ARG001
         os._exit(0)
 
 
+def _kill_child_subprocesses() -> None:
+    """Kill known child subprocesses that we spawned (cloudflared, etc.).
+
+    Called just before os._exit() in the force-exit watchdog to prevent
+    orphaned subprocesses when the Python lifespan teardown didn't complete.
+    """
+    import subprocess as _sp
+    if sys.platform == "win32":
+        _sp.run(["taskkill", "/F", "/T", "/IM", "cloudflared.exe"],
+                capture_output=True, timeout=5)
+    else:
+        _sp.run(["pkill", "-TERM", "-f", "cloudflared tunnel"],
+                capture_output=True, timeout=5)
+        try:
+            import time
+            time.sleep(0.3)
+            _sp.run(["pkill", "-KILL", "-f", "cloudflared tunnel"],
+                    capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
 def _schedule_force_exit(timeout_seconds: int) -> None:
     """Spawn a daemon thread that force-kills the process after a timeout.
 
@@ -655,6 +678,7 @@ def _schedule_force_exit(timeout_seconds: int) -> None:
             "Shutdown watchdog: lifespan teardown did not complete within %ds — forcing exit",
             timeout_seconds,
         )
+        _kill_child_subprocesses()
         os._exit(1)
 
     watchdog = threading.Thread(target=_force_exit, daemon=True)

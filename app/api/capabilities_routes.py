@@ -7,9 +7,10 @@ requiring the user to touch a terminal.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.metadata
 import importlib.util
-import subprocess
+import os
 import sys
 from typing import Literal
 
@@ -179,9 +180,49 @@ async def get_capabilities() -> CapabilitiesResponse:
     return CapabilitiesResponse(capabilities=caps)
 
 
+async def _run_isolated(cmd: list[str], timeout: int) -> tuple[int, str, str]:
+    """Run a subprocess in a new process group so macOS watchdog cannot send
+    SIGKILL to the engine when a long-running child (e.g. pip install) exceeds
+    OS CPU/memory limits.  The subprocess runs fully detached from the engine's
+    process group; only the subprocess itself can be killed by the OS.
+
+    Returns (returncode, stdout, stderr).
+    """
+    kwargs: dict = {
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+    }
+    # On POSIX, start_new_session=True creates a new process group and session,
+    # fully isolating the child from macOS App Nap / watchdog signals.
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    # On Windows, CREATE_NEW_PROCESS_GROUP achieves equivalent isolation.
+    else:
+        import subprocess as _sp
+        kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
+
+    proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise
+    return proc.returncode or 0, stdout_b.decode("utf-8", errors="replace"), stderr_b.decode("utf-8", errors="replace")
+
+
 @router.post("/install", response_model=InstallResponse)
 async def install_capability(req: InstallRequest) -> InstallResponse:
-    """Install an optional capability by running pip in the current venv."""
+    """Install an optional capability by running pip in an isolated subprocess.
+
+    The subprocess runs in a new process group (start_new_session=True on POSIX,
+    CREATE_NEW_PROCESS_GROUP on Windows) so the macOS watchdog or Windows job
+    objects cannot kill the engine process when a long-running pip install
+    exceeds CPU/time limits. The engine's asyncio event loop stays alive and
+    responsive throughout the install.
+    """
     spec = CAPABILITY_SPECS.get(req.capability_id)
     if not spec:
         raise HTTPException(
@@ -192,39 +233,29 @@ async def install_capability(req: InstallRequest) -> InstallResponse:
     logger.info(f"Installing capability '{req.capability_id}': {packages}")
 
     try:
-        result = subprocess.run(
+        returncode, stdout, stderr = await _run_isolated(
             [sys.executable, "-m", "pip", "install", *packages],
-            capture_output=True,
-            text=True,
             timeout=300,
         )
-        if result.returncode != 0:
-            logger.error(f"pip install failed: {result.stderr}")
+        if returncode != 0:
+            logger.error(
+                "[capabilities] pip install failed (rc=%d): %s", returncode, stderr[:2000]
+            )
             return InstallResponse(
                 success=False,
-                message=result.stderr.strip() or "Installation failed.",
+                message=stderr.strip() or "Installation failed.",
             )
 
-        # For Playwright, also install all browsers
+        # For Playwright, also install all browsers in the same isolated manner.
         if req.capability_id == "browser_automation":
-            browser_result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "playwright",
-                    "install",
-                    "chromium",
-                    "firefox",
-                    "webkit",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=600,  # Larger timeout — 3 browsers to download
+            rc2, _, err2 = await _run_isolated(
+                [sys.executable, "-m", "playwright", "install", "chromium", "firefox", "webkit"],
+                timeout=600,
             )
-            if browser_result.returncode != 0:
+            if rc2 != 0:
                 return InstallResponse(
                     success=False,
-                    message=f"Playwright installed but browser download failed: {browser_result.stderr.strip()}",
+                    message=f"Playwright installed but browser download failed: {err2.strip()}",
                 )
 
         logger.info(f"Capability '{req.capability_id}' installed successfully")
@@ -232,9 +263,9 @@ async def install_capability(req: InstallRequest) -> InstallResponse:
             success=True, message=f"Installed: {', '.join(packages)}"
         )
 
-    except subprocess.TimeoutExpired:
+    except asyncio.TimeoutError:
         return InstallResponse(
-            success=False, message="Installation timed out after 5 minutes."
+            success=False, message="Installation timed out."
         )
     except Exception as exc:
         logger.exception(f"Unexpected error installing '{req.capability_id}'")

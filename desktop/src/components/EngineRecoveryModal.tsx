@@ -247,6 +247,20 @@ export function EngineMonitor({
   };
 
   // ── Port Scanner ───────────────────────────────────────────────────
+  // On Windows, JS fetch() to 127.0.0.1 is blocked by WebView2 loopback
+  // isolation. We delegate to the Rust check_engine_health command instead.
+
+  const checkPortRust = async (port: number): Promise<boolean> => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return (await invoke("check_engine_health", { port })) as boolean;
+    } catch {
+      return false;
+    }
+  };
+
+  const isWin = typeof navigator !== "undefined" &&
+    (navigator.platform?.startsWith("Win") || navigator.userAgent.includes("Windows"));
 
   const scanPorts = async () => {
     setPortScanning(true);
@@ -259,32 +273,39 @@ export function EngineMonitor({
     for (let i = 0; i < 20; i++) {
       const port = 22140 + i;
       try {
-        const resp = await fetch(`http://127.0.0.1:${port}/tools/list`, {
-          signal: AbortSignal.timeout(1000),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          const n = Array.isArray(data?.tools)
-            ? data.tools.length
-            : Array.isArray(data)
-            ? data.length
-            : 0;
-          setPorts((prev) =>
-            prev.map((p) =>
-              p.port === port
-                ? { ...p, status: "open", detail: `Engine (${n} tools)` }
-                : p
-            )
-          );
+        let open = false;
+        let detail = "";
+
+        if (isTauri() && isWin) {
+          // Windows: use Rust IPC to bypass WebView2 loopback isolation
+          open = await checkPortRust(port);
+          detail = open ? "Engine" : "";
         } else {
-          setPorts((prev) =>
-            prev.map((p) =>
-              p.port === port
-                ? { ...p, status: "open", detail: `HTTP ${resp.status} (not engine)` }
-                : p
-            )
-          );
+          const resp = await fetch(`http://127.0.0.1:${port}/tools/list`, {
+            signal: AbortSignal.timeout(1000),
+          });
+          if (resp.ok) {
+            open = true;
+            const data = await resp.json();
+            const n = Array.isArray(data?.tools)
+              ? data.tools.length
+              : Array.isArray(data)
+              ? data.length
+              : 0;
+            detail = `Engine (${n} tools)`;
+          } else {
+            open = true;
+            detail = `HTTP ${resp.status} (not engine)`;
+          }
         }
+
+        setPorts((prev) =>
+          prev.map((p) =>
+            p.port === port
+              ? { ...p, status: open ? "open" : "closed", detail }
+              : p
+          )
+        );
       } catch {
         setPorts((prev) =>
           prev.map((p) =>

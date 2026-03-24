@@ -30,25 +30,18 @@ export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
   const [aiWarning, setAiWarning] = useState<AiStatusWarning | null>(null);
   const [aiWarningDismissed, setAiWarningDismissed] = useState(false);
 
-  // Check AI provider status once the engine is connected
+  // Check AI provider status once the engine is connected.
+  // Only warn about missing AI provider keys — never show JWT/secret config
+  // issues to users. If they are logged in, the token flow is working.
   useEffect(() => {
     if (engineStatus !== "connected" || !engineUrl) return;
     engineAPI.getAiStatus()
       .then((status) => {
-        const warnings: string[] = [];
         if (!status.providers.any_available) {
-          warnings.push("No AI provider API keys are configured on the engine.");
-        }
-        if (!status.jwt_validation.configured) {
-          warnings.push("SUPABASE_JWT_SECRET is not set — user tokens cannot be validated.");
-        }
-        if (warnings.length > 0) {
           const missing = status.providers.missing;
           setAiWarning({
-            message: warnings[0],
-            detail: !status.providers.any_available
-              ? `Add at least one key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.) to the engine .env file and restart. Missing: ${missing.join(", ")}.`
-              : warnings[1] ?? "",
+            message: "No AI provider API keys are configured.",
+            detail: `Add at least one key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.) to the engine .env file and restart. Missing: ${missing.join(", ")}.`,
           });
         }
       })
