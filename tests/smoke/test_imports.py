@@ -1,0 +1,55 @@
+"""
+Import smoke tests — verify critical modules can be imported without errors.
+
+These tests catch missing imports (like `sys`, `os`, etc.) that would crash
+the engine at startup before any endpoint becomes reachable. They run
+without starting the engine, so they're fast and suitable for CI pre-checks.
+
+Cross-platform: runs identically on macOS, Windows, and Linux.
+"""
+
+from __future__ import annotations
+
+import importlib
+import sys
+
+import pytest
+
+
+CRITICAL_MODULES = [
+    "app.main",
+    "app.config",
+    "app.api.routes",
+    "app.api.tool_routes",
+    "app.api.settings_routes",
+    "app.api.auth",
+    "app.api.token_routes",
+    "app.tools.dispatcher",
+]
+
+
+@pytest.mark.parametrize("module_path", CRITICAL_MODULES)
+def test_critical_module_imports(module_path: str) -> None:
+    """Each critical module can be imported without NameError or ImportError."""
+    if module_path in sys.modules:
+        sys.modules.pop(module_path)
+    try:
+        importlib.import_module(module_path)
+    except Exception as exc:
+        pytest.fail(
+            f"Failed to import {module_path}: {type(exc).__name__}: {exc}\n"
+            "This would crash the engine at startup."
+        )
+
+
+def test_main_app_object_exists() -> None:
+    """app.main exposes a FastAPI `app` object (the ASGI entry point)."""
+    from app.main import app  # noqa: F401
+    assert app is not None, "app.main.app is None"
+    assert hasattr(app, "router"), "app.main.app has no router attribute"
+
+
+def test_main_lifespan_defined() -> None:
+    """The lifespan async context manager is defined in app.main."""
+    from app.main import lifespan  # noqa: F401
+    assert callable(lifespan), "app.main.lifespan is not callable"

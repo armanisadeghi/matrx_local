@@ -127,6 +127,53 @@ export function updateSessionText(
   return sessions[idx];
 }
 
+/**
+ * Apply AI-polish results to a session.
+ *
+ * - Saves the original rawText on first polish (preserves it on subsequent runs).
+ * - Overwrites fullText with the polished text.
+ * - Updates title, aiTitle, aiDescription, aiTags, aiProcessedAt.
+ */
+export function polishSession(
+  sessionId: string,
+  opts: {
+    polishedText: string;
+    aiTitle: string | null;
+    aiDescription: string | null;
+    aiTags: string[];
+  },
+): TranscriptionSession | null {
+  const sessions = loadSessions();
+  const idx = sessions.findIndex((s) => s.id === sessionId);
+  if (idx === -1) return null;
+
+  const session = sessions[idx];
+  const now = new Date().toISOString();
+
+  // Preserve the original raw transcript on the first AI-polish run only.
+  if (!session.rawText) {
+    session.rawText = session.fullText;
+  }
+
+  session.fullText = opts.polishedText;
+  session.charCount = opts.polishedText.length;
+
+  // Apply AI title — also update the display title if the user hasn't set one
+  session.aiTitle = opts.aiTitle;
+  if (opts.aiTitle && !session.title) {
+    session.title = opts.aiTitle;
+  }
+
+  session.aiDescription = opts.aiDescription;
+  session.aiTags = opts.aiTags;
+  session.aiProcessedAt = now;
+  session.updatedAt = now;
+
+  sessions[idx] = session;
+  saveSessions(sessions);
+  return session;
+}
+
 /** Delete a session by ID. */
 export function deleteSession(sessionId: string): void {
   const sessions = loadSessions();

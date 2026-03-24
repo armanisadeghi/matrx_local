@@ -136,6 +136,19 @@ export interface TranscriptionSession {
   deviceUsed: string | null;
   /** All transcribed segments */
   segments: WhisperSegment[];
-  /** Concatenated full transcript text */
+  /** Current (possibly AI-polished) transcript text */
   fullText: string;
+
+  // ── AI-polish fields (optional — absent on sessions that haven't been processed) ──
+
+  /** Original raw transcript, preserved when AI polishing is applied. */
+  rawText?: string;
+  /** AI-generated title (distinct from user-supplied title). Applied to title on success. */
+  aiTitle?: string | null;
+  /** AI-generated one-sentence description / summary of the recording. */
+  aiDescription?: string | null;
+  /** AI-generated topic tags (2–5 short strings). */
+  aiTags?: string[];
+  /** ISO timestamp of the last successful AI-polish run. */
+  aiProcessedAt?: string | null;
 }

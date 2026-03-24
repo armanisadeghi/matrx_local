@@ -1,5 +1,6 @@
 import asyncio
 import re
+import sys
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 

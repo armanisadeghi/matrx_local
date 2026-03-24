@@ -14,6 +14,9 @@ import { DownloadProgress } from "@/components/DownloadProgress";
 import { TranscriptionMiniMode } from "@/components/TranscriptionMiniMode";
 import { engine } from "@/lib/api";
 import { isTauri } from "@/lib/sidecar";
+import { useLlmApp } from "@/contexts/LlmContext";
+import { useLlmPipeline, parsePolishOutput } from "@/hooks/use-llm-pipeline";
+import type { TranscriptPolishOutput } from "@/hooks/use-llm-pipeline";
 import {
   Mic,
   MicOff,
@@ -39,6 +42,10 @@ import {
   Minimize2,
   ChevronLeft,
   RotateCcw,
+  Sparkles,
+  Tag,
+  RotateCcw as Undo2,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emitClientLog } from "@/hooks/use-client-log";
@@ -667,6 +674,18 @@ function TranscribeTab({
   const textDraftSessionRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── LLM Polish integration ─────────────────────────────────────────────
+  const [llmState] = useLlmApp();
+  const llmServerPort = llmState.serverStatus?.port ?? null;
+  const llmServerRunning = llmState.serverStatus?.running ?? false;
+  const { run: runPipeline, running: polishing } = useLlmPipeline(
+    () => llmServerPort
+  );
+  const [polishError, setPolishError] = useState<string | null>(null);
+  const [polishSuccess, setPolishSuccess] = useState<string | null>(null);
+  /** When true, show the "LLM not running" modal */
+  const [showLlmModal, setShowLlmModal] = useState(false);
+
   // Sync textDraft when the viewed session changes or gets new segments
   const viewingSession = sessionsState.viewingSession;
   const isViewingActive = viewingSession?.id === activeSessionId && state.isRecording;
@@ -810,6 +829,71 @@ function TranscribeTab({
     sessionsActions.rename(editingTitleId, titleDraft.trim() || null);
     setEditingTitleId(null);
   }, [editingTitleId, titleDraft, sessionsActions]);
+
+  const handlePolish = useCallback(async () => {
+    const session = sessionsState.viewingSession;
+    if (!session) return;
+
+    const transcriptText = textDraft.trim();
+    if (!transcriptText) return;
+
+    // If LLM is not running, show the modal instead
+    if (!llmServerRunning) {
+      setShowLlmModal(true);
+      return;
+    }
+
+    setPolishError(null);
+    setPolishSuccess(null);
+
+    try {
+      const raw = await runPipeline<TranscriptPolishOutput>(
+        "polish_transcript",
+        { transcript: transcriptText }
+      );
+
+      // Use the robust parser — never throws
+      const result = parsePolishOutput(raw, session.title ?? "", transcriptText);
+
+      // Flush any pending debounced text saves before applying polish
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        sessionsActions.updateText(session.id, textDraft);
+      }
+
+      sessionsActions.applyPolish(session.id, {
+        polishedText: result.cleaned,
+        aiTitle: result.title || null,
+        aiDescription: result.description || null,
+        aiTags: result.tags,
+      });
+
+      // Update local draft to show the polished text immediately
+      setTextDraft(result.cleaned);
+      textDraftSessionRef.current = session.id;
+
+      setPolishSuccess(session.id);
+      setTimeout(() => setPolishSuccess(null), 4000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setPolishError(msg);
+    }
+  }, [
+    sessionsState.viewingSession,
+    textDraft,
+    llmServerRunning,
+    runPipeline,
+    sessionsActions,
+  ]);
+
+  const handleRestoreRaw = useCallback(() => {
+    const session = sessionsState.viewingSession;
+    if (!session?.rawText) return;
+    sessionsActions.updateText(session.id, session.rawText);
+    setTextDraft(session.rawText);
+    textDraftSessionRef.current = session.id;
+  }, [sessionsState.viewingSession, sessionsActions]);
 
   const setupDoneInConfig = state.setupStatus?.setup_complete ?? false;
   const modelLoadedInMemory = state.activeModel !== null;
@@ -1262,6 +1346,48 @@ function TranscribeTab({
                       </Button>
                     )}
 
+                    {/* AI Polish */}
+                    {textDraft.length > 0 && !isViewingActive && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                          "h-7 px-2 text-xs gap-1",
+                          polishSuccess === viewingSession.id && "text-emerald-500",
+                          !llmServerRunning && "text-muted-foreground"
+                        )}
+                        onClick={handlePolish}
+                        disabled={polishing}
+                        title={llmServerRunning ? "Process with local AI — clean up transcript and generate title, description & tags" : "Local LLM not running — click to start it"}
+                      >
+                        {polishing ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : polishSuccess === viewingSession.id ? (
+                          <Check className="h-3 w-3" />
+                        ) : (
+                          <Sparkles className="h-3 w-3" />
+                        )}
+                        {polishSuccess === viewingSession.id ? "Polished!" : "AI Polish"}
+                        {!llmServerRunning && (
+                          <span className="text-[9px] text-amber-500 ml-0.5">●</span>
+                        )}
+                      </Button>
+                    )}
+
+                    {/* Restore original — only shown after AI polish */}
+                    {viewingSession.rawText && viewingSession.rawText !== viewingSession.fullText && !isViewingActive && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs gap-1 text-muted-foreground"
+                        onClick={handleRestoreRaw}
+                        title="Restore original unpolished transcript"
+                      >
+                        <Undo2 className="h-3 w-3" />
+                        Restore
+                      </Button>
+                    )}
+
                     {/* Delete */}
                     {!isViewingActive && (
                       <Button
@@ -1292,6 +1418,48 @@ function TranscribeTab({
                     {viewingSession.charCount > 0 && (
                       <span className="ml-auto">{viewingSession.charCount} chars</span>
                     )}
+                  </div>
+                )}
+
+                {/* AI polish result banner */}
+                {viewingSession?.aiProcessedAt && (
+                  <div className="px-5 py-2.5 border-b border-border/40 bg-primary/5 space-y-2">
+                    {viewingSession.aiDescription && (
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        <span className="font-medium text-foreground">Summary:</span>{" "}
+                        {viewingSession.aiDescription}
+                      </p>
+                    )}
+                    {viewingSession.aiTags && viewingSession.aiTags.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Tag className="h-3 w-3 text-muted-foreground shrink-0" />
+                        {viewingSession.aiTags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-muted-foreground/60">
+                      AI polished · {new Date(viewingSession.aiProcessedAt).toLocaleString()}
+                    </p>
+                  </div>
+                )}
+
+                {/* AI polish error */}
+                {polishError && (
+                  <div className="flex items-start gap-2 px-5 py-2 border-b border-destructive/20 bg-destructive/5">
+                    <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0 mt-0.5" />
+                    <span className="text-xs text-destructive flex-1">{polishError}</span>
+                    <button
+                      className="text-[10px] text-destructive/70 hover:text-destructive underline"
+                      onClick={() => setPolishError(null)}
+                    >
+                      Dismiss
+                    </button>
                   </div>
                 )}
 
@@ -1336,6 +1504,56 @@ function TranscribeTab({
                     Click to edit · auto-saved
                   </p>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* LLM not-running modal */}
+          {showLlmModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+              <div className="relative mx-4 w-full max-w-sm rounded-xl border bg-card p-6 shadow-2xl space-y-4">
+                <button
+                  className="absolute right-4 top-4 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowLlmModal(false)}
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 shrink-0">
+                    <Sparkles className="h-5 w-5 text-amber-500" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-sm">Local LLM Not Running</h3>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      AI Polish uses your local language model to clean up the transcript and
+                      generate a title, summary, and tags. The model isn't running right now.
+                    </p>
+                  </div>
+                </div>
+
+                {llmState.serverStatus?.model_name && (
+                  <div className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                    Last model: <span className="font-medium text-foreground">{llmState.serverStatus.model_name}</span>
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  Go to the <span className="font-medium text-foreground">Local Models</span> tab to
+                  start a model, then come back and click AI&nbsp;Polish.
+                </p>
+
+                <div className="flex gap-2 pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => setShowLlmModal(false)}
+                  >
+                    Dismiss
+                  </Button>
+                </div>
               </div>
             </div>
           )}

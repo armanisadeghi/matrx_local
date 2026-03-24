@@ -12,6 +12,7 @@ import {
   finalizeSession,
   renameSession,
   updateSessionText,
+  polishSession,
   deleteSession,
   getSession,
 } from "@/lib/transcription/sessions";
@@ -36,6 +37,16 @@ export interface SessionsActions {
   rename: (sessionId: string, title: string | null) => void;
   /** Overwrite the full text of a session (user edits) */
   updateText: (sessionId: string, text: string) => void;
+  /** Apply AI-polish results (polished text + metadata) to a session */
+  applyPolish: (
+    sessionId: string,
+    opts: {
+      polishedText: string;
+      aiTitle: string | null;
+      aiDescription: string | null;
+      aiTags: string[];
+    }
+  ) => void;
   /** Delete a session */
   remove: (sessionId: string) => void;
   /** Open a session for viewing in the main panel */
@@ -82,6 +93,22 @@ export function useTranscriptionSessions(): [SessionsState, SessionsActions] {
     setSessions(loadSessions());
   }, []);
 
+  const applyPolish = useCallback(
+    (
+      sessionId: string,
+      opts: {
+        polishedText: string;
+        aiTitle: string | null;
+        aiDescription: string | null;
+        aiTags: string[];
+      }
+    ) => {
+      polishSession(sessionId, opts);
+      setSessions(loadSessions());
+    },
+    []
+  );
+
   const remove = useCallback(
     (sessionId: string) => {
       deleteSession(sessionId);
@@ -114,6 +141,7 @@ export function useTranscriptionSessions(): [SessionsState, SessionsActions] {
     finalize,
     rename,
     updateText,
+    applyPolish,
     remove,
     open,
   };

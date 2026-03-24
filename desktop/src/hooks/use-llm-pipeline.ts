@@ -46,6 +46,91 @@ export interface PipelineTemplate {
 export interface TranscriptPolishOutput {
   title: string;
   cleaned: string;
+  description: string;
+  tags: string[];
+}
+
+/**
+ * Robustly parse the LLM response for a polish_transcript run.
+ *
+ * Small models often produce malformed JSON (missing fields, wrong types,
+ * markdown code fences, trailing commas, etc.). This parser:
+ *   1. Strips markdown fences (```json … ```) if present.
+ *   2. Attempts JSON.parse.
+ *   3. Extracts each field individually with safe fallbacks — a missing or
+ *      wrong-type field never throws; it just falls back to a sensible default.
+ *   4. Normalises tags to string[] regardless of what the model returned
+ *      (comma-separated string, array of non-strings, undefined, etc.).
+ *
+ * Returns a fully-typed TranscriptPolishOutput — never throws.
+ */
+export function parsePolishOutput(
+  raw: unknown,
+  fallbackTitle: string,
+  fallbackText: string,
+): TranscriptPolishOutput {
+  // Accept pre-parsed objects (structuredOutput path) or raw strings
+  let obj: Record<string, unknown> = {};
+
+  if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+    obj = raw as Record<string, unknown>;
+  } else if (typeof raw === "string") {
+    // Strip markdown code fences: ```json … ``` or ``` … ```
+    let s = raw.trim();
+    const fenceMatch = s.match(/^```(?:json)?\s*([\s\S]*?)```\s*$/i);
+    if (fenceMatch) s = fenceMatch[1].trim();
+
+    // Find the outermost JSON object even if there's surrounding prose
+    const objMatch = s.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      try {
+        obj = JSON.parse(objMatch[0]) as Record<string, unknown>;
+      } catch {
+        // If parse fails, try to extract individual fields via regex as last resort
+        const titleMatch = s.match(/"title"\s*:\s*"([^"]+)"/);
+        const cleanedMatch = s.match(/"cleaned"\s*:\s*"([\s\S]*?)(?=",\s*"|"\s*})/);
+        const descMatch = s.match(/"description"\s*:\s*"([^"]+)"/);
+        return {
+          title: titleMatch?.[1]?.trim() || fallbackTitle,
+          cleaned: cleanedMatch?.[1]?.trim() || fallbackText,
+          description: descMatch?.[1]?.trim() || "",
+          tags: [],
+        };
+      }
+    }
+  }
+
+  // Extract each field with safe type coercion
+  const title =
+    typeof obj.title === "string" && obj.title.trim()
+      ? obj.title.trim()
+      : fallbackTitle;
+
+  const cleaned =
+    typeof obj.cleaned === "string" && obj.cleaned.trim()
+      ? obj.cleaned.trim()
+      : fallbackText;
+
+  const description =
+    typeof obj.description === "string" ? obj.description.trim() : "";
+
+  // Normalise tags: handle string, string[], mixed arrays, comma-separated strings
+  let tags: string[] = [];
+  if (Array.isArray(obj.tags)) {
+    tags = obj.tags
+      .filter((t) => t != null)
+      .map((t) => String(t).trim())
+      .filter((t) => t.length > 0)
+      .slice(0, 8);
+  } else if (typeof obj.tags === "string" && obj.tags.trim()) {
+    tags = obj.tags
+      .split(/[,;]+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0)
+      .slice(0, 8);
+  }
+
+  return { title, cleaned, description, tags };
 }
 
 /**
@@ -55,23 +140,29 @@ export interface TranscriptPolishOutput {
 export const PIPELINE_TEMPLATES: Record<string, PipelineTemplate> = {
   // ── Voice / transcription ────────────────────────────────────────────────
   polish_transcript: {
-    description: "Clean up a voice transcript and generate a title",
+    description: "Clean up a voice transcript, generate a title, description and tags",
     system:
       "You are an expert editor specializing in spoken-word transcripts. " +
       "Your job is to produce clean, well-punctuated prose from raw speech. " +
       "Rules: fix punctuation and capitalization; remove filler words (um, uh, like, you know, sort of); " +
       "merge run-on sentences into clear, complete sentences; preserve the speaker's exact meaning and vocabulary; " +
       "do not add any content that was not spoken. " +
-      'Also generate a short, descriptive title (5–8 words) that captures the main topic. ' +
-      'Return a JSON object with two fields: "title" (string) and "cleaned" (string).',
+      "Also generate: " +
+      "(1) a short descriptive title of 5–8 words capturing the main topic; " +
+      "(2) a one-sentence description summarising what was said; " +
+      "(3) an array of 2–5 short topic tags (single words or short phrases, lowercase). " +
+      'Return ONLY a JSON object with exactly four fields: "title" (string), "description" (string), ' +
+      '"tags" (array of strings), and "cleaned" (string). No markdown, no extra text.',
     user: "Transcript:\n\n{{transcript}}",
     outputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
+        description: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
         cleaned: { type: "string" },
       },
-      required: ["title", "cleaned"],
+      required: ["title", "description", "tags", "cleaned"],
       additionalProperties: false,
     },
     maxTokens: 4096,
