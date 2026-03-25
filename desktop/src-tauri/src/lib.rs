@@ -202,7 +202,13 @@ async fn start_sidecar(
         .sidecar("aimatrx-engine")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?
         // Signal to run.py that it is running inside Tauri — suppress pystray tray icon.
-        .env("TAURI_SIDECAR", "1");
+        .env("TAURI_SIDECAR", "1")
+        // Pass the Tauri app's own PID so the Python watchdog can watch the
+        // correct process on Windows.  On Windows, Tauri spawns the sidecar
+        // via an intermediate shim/pipe helper whose PPID is NOT the Tauri
+        // process itself — so os.getppid() in Python points to a short-lived
+        // launcher that exits immediately, causing a false "parent gone" kill.
+        .env("TAURI_APP_PID", std::process::id().to_string());
 
     let (mut rx, child) = sidecar
         .spawn()
