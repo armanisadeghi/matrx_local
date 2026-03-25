@@ -235,3 +235,54 @@ def test_settings_to_cloud_covers_all_ts_keys() -> None:
         f"{len(missing)} AppSettings key(s) not referenced in settingsToCloud():\n  "
         + "\n  ".join(sorted(missing))
     )
+
+
+def test_settings_ts_exports_critical_functions() -> None:
+    """
+    settings.ts exports the functions that replaced direct localStorage access.
+
+    - saveSetting(): used by AppSidebar (and others) for single-key writes
+      that propagate through the engine + cloud sync pipeline.
+    - broadcastSettingsChanged(): fires the matrx-settings-changed CustomEvent
+      so reactive hooks (useNotifications, etc.) pick up changes.
+    - syncAllSettings(): called by the background task on engine connect.
+    - hydrateFromEngine(): called by the background task on first connect.
+    """
+    source = TS_SETTINGS_FILE.read_text(encoding="utf-8")
+
+    required_exports = [
+        "saveSetting",
+        "broadcastSettingsChanged",
+        "syncAllSettings",
+        "hydrateFromEngine",
+        "mergeCloudSettings",
+        "settingsToCloud",
+        "loadSettings",
+        "saveSettings",
+    ]
+    missing = [fn for fn in required_exports if f"export " not in source or f"export async function {fn}" not in source and f"export function {fn}" not in source]
+    # Fallback: check for arrow-style exports too
+    truly_missing = [
+        fn for fn in required_exports
+        if not any(
+            pattern in source
+            for pattern in [
+                f"export async function {fn}",
+                f"export function {fn}",
+                f"export const {fn}",
+            ]
+        )
+    ]
+    assert not truly_missing, (
+        f"settings.ts is missing critical function exports: {truly_missing}\n"
+        "These are used by AppSidebar, background tasks, and reactive hooks."
+    )
+
+
+def test_sync_result_type_exported() -> None:
+    """settings.ts exports the SyncResult interface (used by callers of syncAllSettings)."""
+    source = TS_SETTINGS_FILE.read_text(encoding="utf-8")
+    assert "export interface SyncResult" in source, (
+        "settings.ts is missing 'export interface SyncResult'. "
+        "syncAllSettings() now returns a structured SyncResult instead of void."
+    )

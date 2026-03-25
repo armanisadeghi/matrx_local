@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
-import { useTranscriptionSessions } from "@/hooks/use-transcription-sessions";
 import { useSessionsContext } from "@/contexts/TranscriptionSessionsContext";
 import type { SessionsState, SessionsActions } from "@/hooks/use-transcription-sessions";
 import { useWakeWord } from "@/hooks/use-wake-word";
@@ -674,8 +673,8 @@ function TranscribeTab({
     startRecording: () => Promise<void>;
     stopRecording: () => Promise<void>;
   };
-  sessionsState: ReturnType<typeof useTranscriptionSessions>[0];
-  sessionsActions: ReturnType<typeof useTranscriptionSessions>[1];
+  sessionsState: SessionsState;
+  sessionsActions: SessionsActions;
   activeSessionId: string | null;
   onContinueSession: (sessionId: string) => Promise<void>;
 }) {

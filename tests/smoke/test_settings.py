@@ -115,3 +115,54 @@ def test_settings_paths(http: httpx.Client) -> None:
     assert isinstance(data, (list, dict)), (
         f"Expected list or dict from /settings/paths, got {type(data).__name__}"
     )
+
+
+def test_settings_paths_has_known_entries(http: httpx.Client) -> None:
+    """GET /settings/paths includes core paths like notes, files, logs."""
+    r = http.get("/settings/paths")
+    assert r.status_code == 200, r.text
+    data = r.json()
+
+    # Can be a list of {name: ..., current: ..., default: ...} or a dict
+    if isinstance(data, list):
+        names = {entry.get("name") for entry in data}
+    else:
+        names = set(data.keys())
+
+    expected = {"notes", "files", "logs"}
+    missing = expected - names
+    assert not missing, (
+        f"GET /settings/paths missing expected path names: {missing}. Got: {sorted(names)}"
+    )
+
+
+def test_settings_path_stats_known_path(http: httpx.Client) -> None:
+    """GET /settings/paths/{name}/stats returns file count + size for a known path."""
+    r = http.get("/settings/paths/logs/stats")
+    assert r.status_code == 200, (
+        f"GET /settings/paths/logs/stats returned {r.status_code}: {r.text}"
+    )
+    data = r.json()
+    required = {"name", "file_count", "size_bytes", "exists"}
+    missing = required - set(data.keys())
+    assert not missing, (
+        f"/settings/paths/logs/stats missing fields: {missing}. Got: {data}"
+    )
+    assert data["name"] == "logs", f"name should be 'logs': {data}"
+    assert isinstance(data["file_count"], int), (
+        f"file_count should be int: {data}"
+    )
+    assert isinstance(data["size_bytes"], int), (
+        f"size_bytes should be int: {data}"
+    )
+    assert isinstance(data["exists"], bool), (
+        f"exists should be bool: {data}"
+    )
+
+
+def test_settings_path_stats_invalid_path(http: httpx.Client) -> None:
+    """GET /settings/paths/{name}/stats returns 404 for unknown path names."""
+    r = http.get("/settings/paths/not_a_real_path_name/stats")
+    assert r.status_code == 404, (
+        f"Expected 404 for unknown path name, got {r.status_code}: {r.text}"
+    )

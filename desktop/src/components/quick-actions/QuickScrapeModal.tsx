@@ -73,8 +73,8 @@ export function QuickScrapeModal({ open, onOpenChange, userId }: QuickScrapeModa
       let parsed: ScrapeResultData;
       if (Array.isArray(raw) && raw.length > 0) {
         parsed = raw[0] as ScrapeResultData;
-      } else if (typeof raw === "object" && raw !== null && "content" in (raw as Record<string, unknown>)) {
-        parsed = raw as ScrapeResultData;
+      } else if (typeof raw === "object" && raw !== null && "content" in (raw as unknown as Record<string, unknown>)) {
+        parsed = raw as unknown as ScrapeResultData;
       } else {
         parsed = {
           url: trimmed,
