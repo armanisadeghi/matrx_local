@@ -30,6 +30,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 from typing import Any
@@ -44,6 +45,57 @@ _IS_WIN = _SYS == "Windows"
 _IS_LIN = _SYS == "Linux"
 
 
+def _is_wsl() -> bool:
+    """Return True when running inside Windows Subsystem for Linux."""
+    if not _IS_LIN:
+        return False
+    try:
+        return "microsoft" in open("/proc/version").read().lower()
+    except Exception:
+        return False
+
+
+_IS_WSL = _is_wsl()
+
+
+def _nvidia_smi_candidates() -> list[list[str]]:
+    """Return candidate nvidia-smi invocations to try, in priority order.
+
+    On WSL the NVIDIA userspace bridge exposes nvidia-smi at several well-known
+    locations.  On a native Windows build the Python sidecar may inherit a PATH
+    that does not include System32, so we probe the canonical paths directly.
+    """
+    candidates: list[list[str]] = []
+
+    # Prefer whatever is on PATH first (works for native Linux / most WSL setups)
+    smi = shutil.which("nvidia-smi")
+    if smi:
+        candidates.append([smi])
+
+    if _IS_WSL:
+        # WSL NVIDIA bridge — provided by the Windows NVIDIA driver
+        for path in (
+            "/usr/lib/wsl/lib/nvidia-smi",
+            "/mnt/c/Windows/System32/nvidia-smi.exe",
+        ):
+            if os.path.isfile(path) and [path] not in candidates:
+                candidates.append([path])
+    elif _IS_WIN:
+        # Bundled app may have a stripped PATH; probe System32 directly
+        for path in (
+            r"C:\Windows\System32\nvidia-smi.exe",
+            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+        ):
+            if os.path.isfile(path) and [path] not in candidates:
+                candidates.append([path])
+
+    # Fallback: just try the bare name (subprocess will search PATH again)
+    if not candidates:
+        candidates.append(["nvidia-smi"])
+
+    return candidates
+
+
 def _run(cmd: list[str], timeout: int = 5) -> str:
     """Run a command and return its stdout, '' on any failure."""
     try:
@@ -56,6 +108,15 @@ def _run(cmd: list[str], timeout: int = 5) -> str:
         return result.stdout.strip() if result.returncode == 0 else ""
     except Exception:
         return ""
+
+
+def _run_nvidia_smi(args: list[str], timeout: int = 5) -> str:
+    """Try each nvidia-smi candidate and return first successful stdout."""
+    for base in _nvidia_smi_candidates():
+        out = _run(base + args, timeout=timeout)
+        if out:
+            return out
+    return ""
 
 
 # ── CPU detection ─────────────────────────────────────────────────────────────
@@ -190,16 +251,21 @@ def _detect_gpus() -> list[dict[str, Any]]:
             })
         return gpus
 
-    # ── NVIDIA via nvidia-smi ────────────────────────────────────────────────
+    # ── NVIDIA via nvidia-smi (also covers WSL passthrough) ─────────────────
+    logger.debug(
+        "[hardware/gpu] WSL=%s, WIN=%s, LIN=%s — nvidia-smi candidates: %s",
+        _IS_WSL, _IS_WIN, _IS_LIN,
+        [c[0] for c in _nvidia_smi_candidates()],
+    )
     try:
-        out = _run(
+        out = _run_nvidia_smi(
             [
-                "nvidia-smi",
                 "--query-gpu=name,memory.total,driver_version,index",
                 "--format=csv,noheader,nounits",
             ],
-            timeout=5,
+            timeout=8,
         )
+        logger.debug("[hardware/gpu] nvidia-smi output: %r", out[:200] if out else "(empty)")
         if out:
             for i, line in enumerate(out.splitlines()):
                 parts = [p.strip() for p in line.split(",")]
@@ -215,6 +281,7 @@ def _detect_gpus() -> list[dict[str, Any]]:
                         "driver_version": parts[2] if len(parts) > 2 else None,
                         "backend": "cuda",
                         "is_primary": i == 0,
+                        "wsl": _IS_WSL,
                     })
     except Exception:
         pass
@@ -269,50 +336,66 @@ def _detect_gpus() -> list[dict[str, Any]]:
             new_from_vulkan.append(vk_gpu)
     gpus.extend(new_from_vulkan)
 
-    # ── Windows fallback: wmic for GPU name/VRAM if nothing found ────────────
-    if _IS_WIN and not gpus:
-        try:
-            # Use /value to avoid wmic CSV alphabetical column-sort ambiguity.
-            out = _run(
-                ["wmic", "path", "win32_VideoController",
-                 "get", "Name,AdapterRAM", "/value"],
-                timeout=5,
-            )
-            current_gpu: dict[str, str] = {}
-            def _flush_gpu(d: dict) -> None:
-                name = d.get("Name", "").strip()
-                if not name:
-                    return
-                vram_bytes: int | None = None
-                try:
-                    vram_bytes = int(d.get("AdapterRAM", "0") or "0")
-                except ValueError:
-                    pass
-                gpus.append({
-                    "name": name,
-                    "vram_mb": vram_bytes // (1024 * 1024) if vram_bytes else None,
-                    "driver_version": None,
-                    "backend": "unknown",
-                    "is_primary": len(gpus) == 0,
-                })
-            for line in out.splitlines():
-                line = line.strip()
-                if not line:
-                    if current_gpu:
-                        _flush_gpu(current_gpu)
-                        current_gpu = {}
-                elif "=" in line:
-                    key, _, val = line.partition("=")
-                    current_gpu[key.strip()] = val.strip()
-            if current_gpu:
-                _flush_gpu(current_gpu)
-        except Exception:
-            pass
+    # ── Windows / WSL fallback: wmic for GPU name/VRAM if nothing found ─────
+    # On WSL the wmic.exe binary is accessible via /mnt/c/Windows/System32/wmic.exe
+    # or via the bare name if the Windows system path is in $PATH.
+    if ((_IS_WIN or _IS_WSL) and not gpus):
+        wmic_cmd: list[str] | None = None
+        if _IS_WIN:
+            wmic_cmd = ["wmic", "path", "win32_VideoController", "get", "Name,AdapterRAM", "/value"]
+        else:
+            # WSL: try native wmic.exe path
+            for wmic_path in (
+                "/mnt/c/Windows/System32/wmic.exe",
+                shutil.which("wmic.exe") or "",
+                shutil.which("wmic") or "",
+            ):
+                if wmic_path and os.path.isfile(wmic_path):
+                    wmic_cmd = [wmic_path, "path", "win32_VideoController", "get", "Name,AdapterRAM", "/value"]
+                    break
+
+        if wmic_cmd:
+            try:
+                out = _run(wmic_cmd, timeout=8)
+                current_gpu: dict[str, str] = {}
+
+                def _flush_gpu(d: dict) -> None:
+                    name = d.get("Name", "").strip()
+                    if not name:
+                        return
+                    vram_bytes: int | None = None
+                    try:
+                        vram_bytes = int(d.get("AdapterRAM", "0") or "0")
+                    except ValueError:
+                        pass
+                    gpus.append({
+                        "name": name,
+                        "vram_mb": vram_bytes // (1024 * 1024) if vram_bytes else None,
+                        "driver_version": None,
+                        "backend": "unknown",
+                        "is_primary": len(gpus) == 0,
+                    })
+
+                for line in out.splitlines():
+                    line = line.strip()
+                    if not line:
+                        if current_gpu:
+                            _flush_gpu(current_gpu)
+                            current_gpu = {}
+                    elif "=" in line:
+                        key, _, val = line.partition("=")
+                        current_gpu[key.strip()] = val.strip()
+                if current_gpu:
+                    _flush_gpu(current_gpu)
+            except Exception:
+                pass
 
     # ── Linux fallback: /sys/class/drm ───────────────────────────────────────
     # Only look at card* entries, not renderD* or other device nodes, to avoid
     # creating duplicate entries for the same physical GPU.
-    if _IS_LIN and not gpus:
+    # Skip on WSL — DRM sysfs is either absent or maps to a virtual device that
+    # does not represent the actual Windows GPU.
+    if _IS_LIN and not _IS_WSL and not gpus:
         import pathlib
         try:
             for drm_dir in sorted(pathlib.Path("/sys/class/drm").iterdir()):
@@ -341,8 +424,8 @@ def _detect_gpus() -> list[dict[str, Any]]:
         except Exception:
             pass
 
-    # ROCm / AMD on Linux
-    if _IS_LIN:
+    # ROCm / AMD on Linux (not WSL — ROCm is not supported in WSL)
+    if _IS_LIN and not _IS_WSL:
         try:
             out = _run(["rocm-smi", "--showproductname", "--csv"], timeout=5)
             if out:
@@ -831,6 +914,11 @@ def detect_all_sync() -> dict[str, Any]:
     try:
         profile["gpus"] = _detect_gpus()
         logger.debug("[hardware] GPUs: %d detected", len(profile["gpus"]))
+        for g in profile["gpus"]:
+            logger.info(
+                "[hardware/gpu] Detected: name=%r backend=%r vram_mb=%s wsl=%s",
+                g.get("name"), g.get("backend"), g.get("vram_mb"), g.get("wsl", False),
+            )
     except Exception as exc:
         logger.warning("[hardware] GPU detection error: %s", exc)
 

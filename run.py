@@ -67,14 +67,17 @@ from pathlib import Path
 # On Windows, when the Tauri sidecar pipe's read-end is closed (e.g. on app
 # exit or restart) while Python is still writing log output, asyncio raises
 # ConnectionResetError (WinError 10054) inside _ProactorBasePipeTransport.
-# These errors are caught by asyncio's exception handler and printed to stderr
-# as unhandled exceptions — flooding the Tauri sidecar log panel with noise.
-# They are harmless: the process is shutting down or the pipe is gone.
+# These errors surface in two separate paths:
 #
-# We install a custom asyncio exception handler that silently discards this
-# specific error and lets all others through to the default handler.
+#   1. asyncio's exception handler — receives unhandled task exceptions.
+#   2. asyncio's internal logger (logging.getLogger("asyncio")) — emits ERROR
+#      log records for "Exception in callback _ProactorBasePipeTransport.*".
+#
+# Both are harmless: the process is shutting down or the sidecar pipe is gone.
+# We suppress both paths below.
 if _sys.platform == "win32":
     import asyncio as _asyncio
+    import logging as _logging
 
     def _win_asyncio_exception_handler(loop: object, context: dict) -> None:
         exc = context.get("exception")
@@ -84,7 +87,6 @@ if _sys.platform == "win32":
         if "ConnectionResetError" in msg and "10054" in msg:
             return  # Same error surfaced as a string rather than exception object.
         # Delegate to asyncio's default handler for everything else.
-        _asyncio.get_event_loop_policy()
         loop.default_exception_handler(context)  # type: ignore[union-attr]
 
     # We can't call get_event_loop() at module level (no running loop yet),
@@ -98,6 +100,21 @@ if _sys.platform == "win32":
         return loop
 
     _asyncio.DefaultEventLoopPolicy.new_event_loop = _patched_new_event_loop  # type: ignore[method-assign]
+
+    # Path 2: asyncio logs "Exception in callback _ProactorBasePipeTransport.*"
+    # at ERROR level via logging.getLogger("asyncio"). Install a log filter to
+    # drop these specific records — they indicate the sidecar pipe closed, which
+    # is expected during normal app exit and restart cycles.
+    class _ProactorPipeFilter(_logging.Filter):
+        def filter(self, record: _logging.LogRecord) -> bool:
+            msg = record.getMessage()
+            if "_ProactorBasePipeTransport" in msg and "connection_lost" in msg:
+                return False
+            if "_ProactorBasePipeTransport" in msg and "ConnectionResetError" in msg:
+                return False
+            return True
+
+    _logging.getLogger("asyncio").addFilter(_ProactorPipeFilter())
 
 from app.common.platform_ctx import CAPABILITIES, PLATFORM
 

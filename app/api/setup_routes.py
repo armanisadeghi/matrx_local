@@ -196,28 +196,24 @@ def _check_core_packages() -> ComponentStatus:
 
 
 def _check_gpu() -> tuple[bool, str | None]:
-    """Detect GPU availability (for transcription model recommendations)."""
-    system = PLATFORM["system"]
-    gpu_name = None
-    gpu_available = False
+    """Detect GPU availability (for transcription model recommendations).
 
-    if system == "Darwin":
-        if PLATFORM["is_mac_silicon"]:
-            gpu_available = True
-            gpu_name = "Apple Silicon (Metal)"
-    else:
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                gpu_name = result.stdout.strip().split("\n")[0]
-                gpu_available = True
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+    Delegates to the hardware detector which handles NVIDIA (via nvidia-smi),
+    Apple Silicon (Metal), Vulkan, ROCm, and WSL passthrough.
+    """
+    from app.services.hardware.detector import _detect_gpus
 
-    return gpu_available, gpu_name
+    try:
+        gpus = _detect_gpus()
+        for gpu in gpus:
+            name = gpu.get("name", "")
+            backend = gpu.get("backend", "")
+            if name and name != "No GPU detected" and backend != "cpu":
+                return True, name
+    except Exception:
+        pass
+
+    return False, None
 
 
 def _check_transcription() -> ComponentStatus:
@@ -351,58 +347,49 @@ async def _check_permissions_macos(deep_link: str) -> ComponentStatus:
 
 
 async def _check_permissions_windows() -> ComponentStatus:
-    """Windows: check microphone and camera via PowerShell registry probes."""
+    """Windows: check microphone and camera via winreg (direct, no subprocess)."""
     import asyncio as _asyncio
 
-    async def _reg_query(key: str) -> str | None:
-        """Read a registry DWORD and return its string value, or None on error."""
-        try:
-            proc = await _asyncio.create_subprocess_exec(
-                "reg", "query", key, "/v", "Value",
-                stdout=_asyncio.subprocess.PIPE,
-                stderr=_asyncio.subprocess.PIPE,
-            )
-            out, _ = await _asyncio.wait_for(proc.communicate(), timeout=5)
-            text = out.decode(errors="replace")
-            for line in text.splitlines():
-                if "REG_DWORD" in line:
-                    return line.strip().split()[-1]
-        except Exception:
-            pass
-        return None
+    _WIN_CONSENT_HKCU = (
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore"
+    )
 
-    # Windows privacy registry paths for mic/camera
+    def _read_consent(capability_key: str) -> str:
+        """Read the Windows ConsentStore Value for a capability.
+
+        Returns "Allow", "Deny", or "unknown" (missing key = not yet configured,
+        treated as Allow on modern Windows which defaults to allowing user-level
+        apps).  Never raises.
+        """
+        try:
+            import winreg
+            full_path = f"{_WIN_CONSENT_HKCU}\\{capability_key}"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, full_path) as k:
+                val, _ = winreg.QueryValueEx(k, "Value")
+                return str(val)
+        except FileNotFoundError:
+            # Key absent = system has not written a consent decision yet → treat as Allow
+            return "Allow"
+        except OSError:
+            return "unknown"
+        except Exception:
+            return "unknown"
+
+    # Capability sub-keys for mic and camera in ConsentStore
     checks_def = {
-        "Microphone": r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone",
-        "Camera":     r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam",
+        "Microphone": "microphone",
+        "Camera": "webcam",
     }
 
+    loop = _asyncio.get_event_loop()
     results: dict[str, str] = {}
-    for label, reg_key in checks_def.items():
-        try:
-            proc = await _asyncio.create_subprocess_exec(
-                "reg", "query", reg_key, "/v", "Value",
-                stdout=_asyncio.subprocess.PIPE,
-                stderr=_asyncio.subprocess.PIPE,
-            )
-            out, err = await _asyncio.wait_for(proc.communicate(), timeout=5)
-            text = out.decode(errors="replace").strip()
-            # Value is "Allow" or "Deny" stored as a string value
-            val = "unknown"
-            for line in text.splitlines():
-                if "Value" in line and "REG_SZ" in line:
-                    val = line.strip().split()[-1]
-            results[label] = val
-            logger.info(
-                "[permissions] Windows registry check — key=%s label=%s → %r",
-                reg_key, label, val,
-            )
-        except Exception as exc:
-            results[label] = "error"
-            logger.warning(
-                "[permissions] Windows registry check FAILED — key=%s label=%s → %s",
-                reg_key, label, exc,
-            )
+    for label, cap_key in checks_def.items():
+        val = await loop.run_in_executor(None, _read_consent, cap_key)
+        results[label] = val
+        logger.debug(
+            "[permissions] Windows ConsentStore — %s (%s) → %r",
+            label, cap_key, val,
+        )
 
     # Screen recording: always available on Windows
     results["Screen Recording"] = "Allow"

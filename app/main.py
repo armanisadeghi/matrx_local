@@ -29,6 +29,7 @@ from app.api.wake_word_routes import router as wake_word_router
 from app.api.model_repo_routes import router as model_repo_router
 from app.api.hardware_routes import router as hardware_router, run_initial_detection as run_hardware_detection
 from app.api.image_gen_routes import router as image_gen_router
+from app.api.hf_token_routes import router as hf_token_router
 from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, MATRX_HOME_DIR, TUNNEL_ENABLED
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
@@ -43,6 +44,7 @@ from app.services.local_db.database import get_db
 from app.services.local_db.sync_engine import get_sync_engine
 from app.tools.tools.scheduler import restore_scheduled_tasks
 import app.services.scraper.retry_queue as retry_queue
+import app.services.scraper.scrape_store as scrape_store
 from app.websocket_manager import WebSocketManager
 
 logger = get_logger()
@@ -460,6 +462,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start retry queue poller (polls remote server for failed scrapes to retry locally)
     retry_queue.start()
 
+    # Start scrape store background sync (pushes pending local scrapes to cloud,
+    # retries failed ones, surfaces sync errors to the user via /scrapes/sync-status)
+    scrape_store.start_sync()
+
     elapsed = _startup_time.monotonic() - _t0
     logger.info(
         "[app/main.py] ── Startup complete in %.1fs — scraper=%s, proxy=%s ──────────────",
@@ -620,6 +626,7 @@ app.include_router(wake_word_router)
 app.include_router(model_repo_router)
 app.include_router(hardware_router)
 app.include_router(image_gen_router)
+app.include_router(hf_token_router)
 
 # NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler
 # (Phase 1b) AFTER initialize_matrx_ai() registers the DB config. Calling it here
@@ -804,9 +811,11 @@ async def websocket_endpoint(websocket: WebSocket):
         # Logging it as ERROR creates noise in every update/restart cycle.
         # Any other unexpected exception is a genuine error worth surfacing.
         from starlette.websockets import WebSocketDisconnect
-        if isinstance(e, WebSocketDisconnect) and e.code == 1012:
-            logger.info(
-                f"WebSocket closed for service restart (1012): {url}"
+        if isinstance(e, WebSocketDisconnect) and e.code in (1001, 1012):
+            # 1001 = Going Away (page unload / app close) — expected, not an error.
+            # 1012 = Service Restart — normal on engine restart/update.
+            logger.debug(
+                f"WebSocket closed normally ({e.code}): {url}"
             )
         else:
             logger.error(

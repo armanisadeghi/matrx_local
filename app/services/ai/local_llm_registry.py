@@ -59,12 +59,17 @@ def _check_matrx_ai_support() -> bool:
         logger.info(
             "[local_llm_registry] matrx-ai GenericOpenAIChat support: AVAILABLE ✓"
         )
-    except ImportError:
+    except ImportError as _import_err:
         _matrx_ai_support = False
         logger.error(
-            "[local_llm_registry] matrx-ai does NOT include GenericOpenAIChat. "
-            "Local LLM routing is DISABLED until matrx-ai is updated to >= 0.1.23. "
-            "Developer instructions: %s",
+            "[local_llm_registry] *** BROKEN IMPORT — LOCAL LLM DISABLED *** "
+            "Failed to import GenericOpenAIChat from matrx-ai. "
+            "Installed version: see `uv pip show matrx-ai`. Required: >= 0.1.23. "
+            "Root cause: %s. "
+            "This is likely a circular import bug in matrx_ai/providers/__init__.py "
+            "or GenericOpenAIChat has not been ported to this version yet. "
+            "Fix instructions: %s",
+            _import_err,
             _INSTRUCTIONS_PATH,
         )
 

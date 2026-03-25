@@ -104,31 +104,86 @@ fn detect_gpu_capabilities() -> (Option<u64>, bool, bool, Option<String>) {
     }
 }
 
-/// Try `nvidia-smi` for NVIDIA CUDA detection.
+/// Return a list of nvidia-smi binary paths to try, in priority order.
+///
+/// On Windows the Tauri sidecar may inherit a stripped PATH that omits
+/// C:\Windows\System32, so we probe the canonical locations directly.
+/// On WSL (Linux target compiled for WSL host) the NVIDIA userspace bridge
+/// exposes nvidia-smi at /usr/lib/wsl/lib/nvidia-smi.
 #[cfg(not(target_os = "macos"))]
-fn try_nvidia_smi() -> Option<(Option<u64>, bool, bool, Option<String>)> {
-    let output = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=memory.total,name",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()
-        .ok()?;
+fn nvidia_smi_candidates() -> Vec<String> {
+    let mut candidates: Vec<String> = vec!["nvidia-smi".to_string()];
 
-    if !output.status.success() {
-        return None;
+    #[cfg(target_os = "windows")]
+    {
+        for path in &[
+            r"C:\Windows\System32\nvidia-smi.exe",
+            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+        ] {
+            if std::path::Path::new(path).exists() {
+                candidates.push(path.to_string());
+            }
+        }
     }
 
-    let text = String::from_utf8_lossy(&output.stdout);
-    let line = text.lines().next()?.trim().to_string();
-    // Format: "VRAM_MiB, GPU Name"
-    let mut parts = line.splitn(2, ',');
-    let vram_str = parts.next()?.trim();
-    let name = parts.next().map(|s| s.trim().to_string());
-    let vram_mb = vram_str.parse::<u64>().ok()?;
+    #[cfg(target_os = "linux")]
+    {
+        // WSL bridge paths
+        for path in &["/usr/lib/wsl/lib/nvidia-smi"] {
+            if std::path::Path::new(path).exists() {
+                candidates.push(path.to_string());
+            }
+        }
+    }
 
-    // nvidia-smi success → CUDA present, Vulkan also present on any NVIDIA driver
-    Some((Some(vram_mb), true, true, name))
+    candidates
+}
+
+/// Try `nvidia-smi` for NVIDIA CUDA detection.
+/// Probes multiple candidate paths to handle PATH-restricted sidecar environments.
+#[cfg(not(target_os = "macos"))]
+fn try_nvidia_smi() -> Option<(Option<u64>, bool, bool, Option<String>)> {
+    let args = [
+        "--query-gpu=memory.total,name",
+        "--format=csv,noheader,nounits",
+    ];
+
+    for smi in nvidia_smi_candidates() {
+        let output = std::process::Command::new(&smi).args(args).output();
+
+        let output = match output {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+
+        if !output.status.success() {
+            continue;
+        }
+
+        let text = String::from_utf8_lossy(&output.stdout);
+        let line = match text.lines().next() {
+            Some(l) => l.trim().to_string(),
+            None => continue,
+        };
+
+        if line.is_empty() {
+            continue;
+        }
+
+        // Format: "VRAM_MiB, GPU Name"
+        let mut parts = line.splitn(2, ',');
+        let vram_str = parts.next()?.trim();
+        let name = parts.next().map(|s| s.trim().to_string());
+        let vram_mb = match vram_str.parse::<u64>() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // nvidia-smi success → CUDA present, Vulkan also present on any NVIDIA driver
+        return Some((Some(vram_mb), true, true, name));
+    }
+
+    None
 }
 
 /// Try `vulkaninfo --summary` to detect Vulkan-capable GPUs (AMD, Intel, NVIDIA).

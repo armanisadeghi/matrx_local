@@ -367,6 +367,47 @@ CREATE INDEX IF NOT EXISTS idx_note_versions_number ON note_versions(note_id, ve
 """
 
 # ------------------------------------------------------------------
+# Migration 8: Scrape pages — persistent local store for all scrapes
+#
+# Every scrape result is written here immediately (local-first).
+# cloud_sync_status tracks whether it has been pushed to the remote
+# scraper server:
+#   pending   — not yet pushed (includes cloud failure backlog)
+#   synced    — confirmed in server DB
+#   failed    — cloud push failed N times; will retry on next startup
+#
+# Soft-delete: is_deleted=1 hides the row from normal queries but keeps
+# it for history.  Hard delete is a separate explicit admin action.
+# ------------------------------------------------------------------
+
+_V8_SCRAPE_PAGES = """
+CREATE TABLE IF NOT EXISTS scrape_pages (
+    id                TEXT PRIMARY KEY,
+    url               TEXT NOT NULL,
+    page_name         TEXT NOT NULL,
+    domain            TEXT NOT NULL DEFAULT '',
+    content           TEXT NOT NULL DEFAULT '{}',
+    char_count        INTEGER NOT NULL DEFAULT 0,
+    content_type      TEXT NOT NULL DEFAULT 'html',
+    scraped_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    cloud_sync_status TEXT NOT NULL DEFAULT 'pending',
+    cloud_sync_at     TEXT,
+    cloud_sync_error  TEXT,
+    cloud_sync_attempts INTEGER NOT NULL DEFAULT 0,
+    is_deleted        INTEGER NOT NULL DEFAULT 0,
+    deleted_at        TEXT,
+    user_id           TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_scrape_pages_url ON scrape_pages(url);
+CREATE INDEX IF NOT EXISTS idx_scrape_pages_page_name ON scrape_pages(page_name);
+CREATE INDEX IF NOT EXISTS idx_scrape_pages_domain ON scrape_pages(domain);
+CREATE INDEX IF NOT EXISTS idx_scrape_pages_sync ON scrape_pages(cloud_sync_status, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_scrape_pages_scraped ON scrape_pages(scraped_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scrape_pages_user ON scrape_pages(user_id, is_deleted)
+"""
+
+# ------------------------------------------------------------------
 # All migrations in order
 # ------------------------------------------------------------------
 
@@ -378,4 +419,5 @@ MIGRATIONS: list[tuple[int, str]] = [
     (5, _V5_AGENTS_METADATA),
     (6, _V6_NOTES_SYNC_METADATA),
     (7, _V7_LOCAL_NOTE_VERSIONS),
+    (8, _V8_SCRAPE_PAGES),
 ]

@@ -9,6 +9,7 @@
 
 ### P0 — Ship / safety
 
+- [ ] **matrx-ai circular import bug — GenericOpenAIChat broken** — `matrx-ai` is at v0.1.26 but importing `GenericOpenAIChat` triggers a circular import: `providers/__init__.py` → `unified_client.py` → `orchestrator/executor.py` → `providers/__init__.py`. Local LLM routing is **completely disabled**. Full error: `ImportError: cannot import name 'UnifiedAIClient' from partially initialized module 'matrx_ai.providers'`. Fix: break the circular import in the `matrx-ai` package (move the `UnifiedAIClient` import in `orchestrator/executor.py` to a lazy/local import, or restructure `providers/__init__.py` to not import `unified_client` at module level). See `docs/matrx-ai-generic-openai-port.md`. Run `uv sync` after fix.
 - [ ] **matrx-ai server-side ORM** — Cloud engine still hits server DB in places; blocks “safe shipping” until client-only/local paths are verified (`matrx-ai` / chat stack).
 
 ### P1 — Product gaps
@@ -18,6 +19,8 @@
 - [ ] **Voice E2E on real devices** — Confirm setup → record → transcript with `transcription_auto_init` and current Rust pipeline; fix gaps if any.
 
 ### P2 — Features & polish
+
+- [x] **GPU not detected on Windows/WSL** — Fixed 2026-03-25. Three separate bugs: (1) `_detect_gpus()` in `detector.py` did not search WSL-specific nvidia-smi paths (`/usr/lib/wsl/lib/nvidia-smi`); (2) `_check_gpu()` in `setup_routes.py` duplicated detection logic instead of using the shared detector; (3) `_probe_gpu()` in `platform_ctx.py` same issue; (4) Rust `try_nvidia_smi()` in `hardware.rs` only tried bare `nvidia-smi` name which may not be on PATH in a compiled sidecar. All four fixed: unified detector used everywhere, WSL/Windows PATH fallbacks added to both Python and Rust.
 
 - [x] **Image generation engine** — Integrated Python `diffusers` library as optional feature (2026-03-25). Routes at `/image-gen/*`. Models: FLUX.1 Schnell, FLUX.1 Dev, HunyuanDiT v1.2, SDXL Turbo. 6 workflow presets. Full UI in LocalModels "Image & Video" tab. Install deps: `uv sync --extra image-gen`. See `app/services/image_gen/`, `app/api/image_gen_routes.py`.
 - [ ] **Image gen: VRAM detection gating** — Surface hardware VRAM from `/hardware` in the image gen model picker to mark models as "incompatible" for the user's GPU. Currently shows VRAM requirements but doesn't cross-reference detected hardware.

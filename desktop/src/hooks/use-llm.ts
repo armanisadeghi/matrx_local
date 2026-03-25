@@ -65,6 +65,9 @@ export interface LlmState {
   hfTokenConfigured: boolean;
   /** True when the last download failed because the repo uses XET storage and no token is set. */
   xetTokenRequired: boolean;
+  /** The model that triggered the XET token requirement (so the modal can retry it). */
+  xetPendingFilename: string | null;
+  xetPendingUrls: string[];
 
   // Errors
   error: string | null;
@@ -95,6 +98,10 @@ export interface LlmActions {
   importLocalModel: (sourcePath: string, destFilename?: string) => Promise<string>;
   /** Re-read whether a Hugging Face token is configured (after changing Settings). */
   refreshHfTokenConfigured: () => Promise<void>;
+  /** Save a new HF token and immediately retry the pending XET download. */
+  saveHfTokenAndRetry: (token: string) => Promise<void>;
+  /** Dismiss the XET token modal without retrying. */
+  dismissXetModal: () => void;
   startServer: (
     modelFilename: string,
     gpuLayers: number,
@@ -135,6 +142,8 @@ export function useLlm(): [LlmState, LlmActions] {
   const [error, setError] = useState<string | null>(null);
   const [hfTokenConfigured, setHfTokenConfigured] = useState(false);
   const [xetTokenRequired, setXetTokenRequired] = useState(false);
+  const [xetPendingFilename, setXetPendingFilename] = useState<string | null>(null);
+  const [xetPendingUrls, setXetPendingUrls] = useState<string[]>([]);
 
   const unlistenRef = useRef<UnlistenFn[]>([]);
   // Ref-based queue so the processor callback always sees latest value
@@ -337,6 +346,8 @@ export function useLlm(): [LlmState, LlmActions] {
       setDownloadProgress(null);
       setDownloadCancelled(false);
       setXetTokenRequired(false);
+      setXetPendingFilename(null);
+      setXetPendingUrls([]);
       setError(null);
 
       const unlisten = await tauriListen<LlmDownloadProgress>(
@@ -362,7 +373,9 @@ export function useLlm(): [LlmState, LlmActions] {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.startsWith("XET_TOKEN_REQUIRED") || msg.startsWith("XET_TOKEN_INVALID")) {
           setXetTokenRequired(true);
-          setError(msg.replace(/^XET_TOKEN_(REQUIRED|INVALID): /, ""));
+          setXetPendingFilename(filename);
+          setXetPendingUrls(urls);
+          // Don't set error — the modal handles this gracefully
         } else if (!msg.toLowerCase().includes("cancel")) {
           setError(msg);
         }
@@ -561,7 +574,38 @@ export function useLlm(): [LlmState, LlmActions] {
     setError(null);
     setDownloadCancelled(false);
     setXetTokenRequired(false);
+    setXetPendingFilename(null);
+    setXetPendingUrls([]);
   }, []);
+
+  const dismissXetModal = useCallback(() => {
+    setXetTokenRequired(false);
+    setXetPendingFilename(null);
+    setXetPendingUrls([]);
+  }, []);
+
+  const saveHfTokenAndRetry = useCallback(
+    async (token: string) => {
+      const trimmed = token.trim();
+      if (trimmed && engine.engineUrl) {
+        try {
+          await engine.put("/settings/api-keys/huggingface", { key: trimmed });
+        } catch {
+          /* best-effort — proceed even if persist fails */
+        }
+        await refreshHfTokenConfigured();
+      }
+      const pendingFilename = xetPendingFilename;
+      const pendingUrls = xetPendingUrls;
+      setXetTokenRequired(false);
+      setXetPendingFilename(null);
+      setXetPendingUrls([]);
+      if (pendingFilename && pendingUrls.length > 0) {
+        await downloadModel(pendingFilename, pendingUrls);
+      }
+    },
+    [xetPendingFilename, xetPendingUrls, refreshHfTokenConfigured, downloadModel]
+  );
 
   // One-click setup: detect hardware, download recommended model, start server
   const quickSetup = useCallback(async () => {
@@ -615,6 +659,8 @@ export function useLlm(): [LlmState, LlmActions] {
     downloadedModels,
     hfTokenConfigured,
     xetTokenRequired,
+    xetPendingFilename,
+    xetPendingUrls,
     error,
   };
 
@@ -626,6 +672,8 @@ export function useLlm(): [LlmState, LlmActions] {
     cancelDownload,
     importLocalModel,
     refreshHfTokenConfigured,
+    saveHfTokenAndRetry,
+    dismissXetModal,
     startServer,
     stopServer,
     getServerStatus,

@@ -1282,6 +1282,23 @@ class EngineAPI {
     }
   }
 
+  /**
+   * Ask the engine to open a browser and automate Hugging Face token acquisition.
+   * Always resolves (never throws). Returns:
+   *   { status: "token_ready", token: "hf_..." } — token extracted, auto-fill it
+   *   { status: "opened" }                        — browser opened, user may need to interact
+   *   { status: "manual" }                        — Playwright unavailable, show manual steps
+   */
+  async hfTokenAssist(hasAccount: boolean): Promise<{ status: "token_ready" | "opened" | "manual"; token?: string }> {
+    if (!this.baseUrl) return { status: "manual" };
+    try {
+      const resp = await this.post("/hf-token/assist", { has_account: hasAccount }) as { status: string; token?: string };
+      return { status: (resp.status as "token_ready" | "opened" | "manual") ?? "manual", token: resp.token ?? undefined };
+    } catch {
+      return { status: "manual" };
+    }
+  }
+
   /** Update instance display name. */
   async updateInstanceName(name: string): Promise<void> {
     if (!this.baseUrl) return;

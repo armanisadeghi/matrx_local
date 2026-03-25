@@ -242,7 +242,11 @@ async def refresh_capabilities() -> None:
 # ---------------------------------------------------------------------------
 
 def _probe_gpu() -> tuple[bool, str | None, str | None]:
-    """Return (available, name, type)."""
+    """Return (available, name, type).
+
+    Delegates to the hardware detector which handles NVIDIA (via nvidia-smi with
+    WSL/Windows path fallbacks), Apple Silicon, Vulkan, and ROCm.
+    """
     if PLATFORM["is_mac_silicon"]:
         return True, "Apple Silicon (Metal)", "apple_silicon"
 
@@ -258,27 +262,34 @@ def _probe_gpu() -> tuple[bool, str | None, str | None]:
             pass
         return False, None, None
 
-    # Windows / Linux — try nvidia-smi first, then fall back
+    # Windows / Linux / WSL — use the hardware detector which handles all cases
     try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            name = result.stdout.strip().split("\n")[0]
-            return True, name, "nvidia"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    # ROCm / AMD
-    try:
-        result = subprocess.run(
-            ["rocm-smi", "--showproductname"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return True, result.stdout.strip().split("\n")[0], "amd"
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        from app.services.hardware.detector import _detect_gpus
+        gpus = _detect_gpus()
+        for gpu in gpus:
+            name = gpu.get("name", "")
+            backend = gpu.get("backend", "cpu")
+            if not name or name == "No GPU detected" or backend == "cpu":
+                continue
+            if "cuda" in backend:
+                return True, name, "nvidia"
+            if backend == "rocm":
+                return True, name, "amd"
+            if backend in ("metal",):
+                return True, name, "apple_silicon"
+            if backend in ("vulkan", "cuda+vulkan"):
+                # Distinguish NVIDIA Vulkan from AMD Vulkan by name
+                name_lc = name.lower()
+                if any(x in name_lc for x in ("nvidia", "geforce", "quadro", "rtx", "gtx")):
+                    return True, name, "nvidia"
+                if any(x in name_lc for x in ("amd", "radeon", "rx ")):
+                    return True, name, "amd"
+                if any(x in name_lc for x in ("intel", "arc", "iris")):
+                    return True, name, "integrated"
+                return True, name, "vulkan"
+            # Unknown backend with a real GPU name
+            return True, name, "unknown"
+    except Exception:
         pass
 
     return False, None, None

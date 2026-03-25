@@ -213,6 +213,62 @@ def _get_engine() -> Any:
     return get_scraper_engine()
 
 
+async def _persist_research_pages(events: list[Any], user_id: str = "") -> None:
+    """Persist pages collected during a research run."""
+    try:
+        from app.services.scraper.scrape_store import save_scrape
+        for event in events:
+            url: str = getattr(event, "url", "") or ""
+            if not url:
+                continue
+            scraped = getattr(event, "scraped_content", None)
+            if not scraped:
+                continue
+            content: dict[str, Any] = {
+                "text_data": getattr(scraped, "text_data", "") or "",
+                "ai_research_content": getattr(scraped, "ai_research_content", "") or "",
+                "overview": getattr(scraped, "overview", None),
+                "links": getattr(scraped, "links", None),
+            }
+            try:
+                await save_scrape(url=url, content=content, content_type="html", user_id=user_id)
+            except Exception as inner_exc:
+                logger.error("[network] Failed to persist research page %s: %s", url, inner_exc)
+    except Exception as exc:
+        logger.error("[network] _persist_research_pages raised: %s", exc, exc_info=True)
+
+
+async def _persist_scrape_results(results: list[Any], user_id: str = "") -> None:
+    """Dual-write successful scrape results to local SQLite + cloud.
+
+    Called after every scrape regardless of batch size.  Failures here are
+    logged but never raise — the caller already has the results it needs.
+    """
+    try:
+        from app.services.scraper.scrape_store import save_scrape
+        for r in results:
+            if getattr(r, "status", None) != "success":
+                continue
+            url: str = getattr(r, "url", "") or ""
+            if not url:
+                continue
+            content: dict[str, Any] = {
+                "text_data": getattr(r, "text_data", "") or "",
+                "ai_research_content": getattr(r, "ai_research_content", "") or "",
+                "overview": getattr(r, "overview", None),
+                "links": getattr(r, "links", None),
+                "cms": getattr(r, "cms", None),
+                "firewall": getattr(r, "firewall", None),
+            }
+            content_type: str = getattr(r, "content_type", "html") or "html"
+            try:
+                await save_scrape(url=url, content=content, content_type=content_type, user_id=user_id)
+            except Exception as inner_exc:
+                logger.error("[network] Failed to persist scrape for %s: %s", url, inner_exc)
+    except Exception as exc:
+        logger.error("[network] _persist_scrape_results raised: %s", exc, exc_info=True)
+
+
 def _scrape_result_to_output(result: Any) -> str:
     """Format a ScrapeResult into a readable string."""
     parts: list[str] = []
@@ -328,6 +384,11 @@ async def tool_scrape(
         return ToolResult(type=ToolResultType.ERROR, output=f"Scrape failed: {type(e).__name__}: {e}")
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
+
+    # Dual-write every successful result: local SQLite + cloud (fire-and-forget).
+    # This must happen regardless of how many URLs were scraped.
+    user_id = getattr(session, "user_id", "") or ""
+    await _persist_scrape_results(results, user_id)
 
     if len(results) == 1:
         r = results[0]
@@ -468,6 +529,7 @@ async def tool_research(
     pages_scraped = 0
     pages_failed = 0
     all_content: list[str] = []
+    scraped_pages: list[Any] = []
 
     try:
         async for event in engine.orchestrator.research(
@@ -481,6 +543,7 @@ async def tool_research(
             if event_type == "ResearchPageEvent":
                 if event.scraped_content:
                     pages_scraped += 1
+                    scraped_pages.append(event)
                 else:
                     pages_failed += 1
             elif event_type == "ResearchDoneEvent":
@@ -489,6 +552,11 @@ async def tool_research(
     except Exception as e:
         logger.exception("Research failed")
         return ToolResult(type=ToolResultType.ERROR, output=f"Research failed: {type(e).__name__}: {e}")
+
+    # Persist every successfully scraped page from the research run
+    user_id = getattr(session, "user_id", "") or ""
+    if scraped_pages:
+        await _persist_research_pages(scraped_pages, user_id)
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
