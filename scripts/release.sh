@@ -244,6 +244,10 @@ monitor_build() {
     ok "Found workflow run ${BOLD}#${run_id}${NC}"
     echo ""
 
+    # Track which failed jobs we've already printed logs for so we
+    # print each failure exactly once, immediately when detected.
+    local reported_failures=""
+
     # ── Poll loop ───────────────────────────────────────────────────────
     local all_done=false
     while ! $all_done; do
@@ -261,7 +265,7 @@ monitor_build() {
         local job_count
         job_count=$(echo "$jobs_json" | jq '.jobs | length')
 
-        # Clear screen and draw
+        # Clear screen and draw status table
         printf '\033[2J\033[H'
         echo ""
         echo -e "${BOLD}  📦 ${PROJECT_NAME} ${version} — Build Monitor${NC}"
@@ -273,6 +277,7 @@ monitor_build() {
         local completed_count=0
         local any_failed=false
         local failed_platforms=()
+        local new_failures=()
 
         if [[ "$job_count" -eq 0 ]]; then
             echo -e "  ${CYAN}🔵 Waiting for jobs to be created...${NC}"
@@ -311,6 +316,10 @@ monitor_build() {
                     if [[ "$j_conclusion" != "success" ]]; then
                         any_failed=true
                         failed_platforms+=("$label")
+                        if [[ "$reported_failures" != *"|${key}|"* ]]; then
+                            new_failures+=("$key")
+                            reported_failures="${reported_failures}|${key}|"
+                        fi
                     fi
                 fi
             done
@@ -346,6 +355,10 @@ monitor_build() {
                     if [[ "$r_conclusion" != "success" && "$r_conclusion" != "skipped" ]]; then
                         any_failed=true
                         failed_platforms+=("$POST_JOB_LABEL")
+                        if [[ "$reported_failures" != *"|${POST_JOB_KEY}|"* ]]; then
+                            new_failures+=("$POST_JOB_KEY")
+                            reported_failures="${reported_failures}|${POST_JOB_KEY}|"
+                        fi
                     fi
                 fi
             fi
@@ -353,6 +366,50 @@ monitor_build() {
 
         echo ""
         echo -e "  ─────────────────────────────────────────────────────────────"
+
+        # ── Immediately print logs for newly-detected failures ───────
+        if [[ ${#new_failures[@]} -gt 0 ]]; then
+            local LOG_TAIL=60
+            for fail_key in "${new_failures[@]}"; do
+                local fail_label="$fail_key"
+                local all_keys=("${PLATFORM_KEYS[@]}" "$POST_JOB_KEY")
+                local all_labels=("${PLATFORM_LABELS[@]}" "$POST_JOB_LABEL")
+                local fi_idx
+                for fi_idx in "${!all_keys[@]}"; do
+                    if [[ "${all_keys[$fi_idx]}" == "$fail_key" ]]; then
+                        fail_label="${all_labels[$fi_idx]}"
+                        break
+                    fi
+                done
+
+                local fail_job_index
+                fail_job_index=$(echo "$jobs_json" | jq -r \
+                    "[.jobs[].name] | to_entries[] | select(.value | test(\"$fail_key\")) | .key" 2>/dev/null | head -1)
+                [[ -z "$fail_job_index" ]] && continue
+
+                local fail_job_id
+                fail_job_id=$(echo "$jobs_json" | jq -r ".jobs[$fail_job_index].databaseId // .jobs[$fail_job_index].id // \"\"")
+                [[ -z "$fail_job_id" ]] && continue
+
+                echo ""
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${RED}  ❌ ${fail_label} FAILED — tail logs:${NC}"
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo ""
+
+                gh run view "$run_id" --repo "$repo" --job "$fail_job_id" --log 2>/dev/null \
+                    | sed 's/^[^\t]*\t[^\t]*\t//' \
+                    | tail -"$LOG_TAIL" \
+                    | sed "s/^/    /" \
+                || echo -e "    ${YELLOW}(could not fetch logs — check GitHub Actions)${NC}"
+
+                echo ""
+                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            done
+            echo ""
+            echo -e "  ${CYAN}Other builds still in progress. Monitoring continues...${NC}"
+            echo -e "  ${CYAN}Debug: https://github.com/${repo}/actions/runs/${run_id}${NC}"
+        fi
 
         # Check overall run status
         local run_status
@@ -394,9 +451,19 @@ monitor_build() {
             fi
             echo ""
         else
-            echo -e "  ${CYAN}Refreshing in 15s...  Press Ctrl-C to stop monitoring.${NC}"
-            echo ""
-            sleep 15
+            # If we just printed failure logs, give the user time to read
+            # them before the next screen clear. Otherwise use the standard interval.
+            if [[ ${#new_failures[@]} -gt 0 ]]; then
+                echo ""
+                echo -e "  ${CYAN}Refreshing in 30s (extra time to review failure logs above)...${NC}"
+                echo -e "  ${CYAN}Press Ctrl-C to stop monitoring.${NC}"
+                echo ""
+                sleep 30
+            else
+                echo -e "  ${CYAN}Refreshing in 15s...  Press Ctrl-C to stop monitoring.${NC}"
+                echo ""
+                sleep 15
+            fi
         fi
     done
 }

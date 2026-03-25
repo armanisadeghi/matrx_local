@@ -143,7 +143,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         disk_size_gb: 9.0,
         ram_required_gb: 10.0,
         tool_calling_rating: 5,
-        speed: "Slow (GPU recommended)",
+        speed: "GPU recommended",
         description: "High-quality reasoning. Requires 10GB+ RAM or dedicated GPU.",
         hf_url: "https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-GGUF/resolve/main/qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf",
         hf_parts: &[

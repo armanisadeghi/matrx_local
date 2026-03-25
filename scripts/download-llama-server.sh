@@ -17,34 +17,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BINARIES_DIR="$SCRIPT_DIR/../desktop/src-tauri/binaries"
 mkdir -p "$BINARIES_DIR"
 
-# llama.cpp release version — update when upgrading
-# b8358: fixes Windows GGUF magic-read regression (PR #17786 / MSVC regex issue)
-LLAMA_FALLBACK_VERSION="b8358"
-LLAMA_VERSION=""
+# llama.cpp release version — update when upgrading.
+# PIN to a known-good release whose assets are fully uploaded and verified.
+# Using "latest" is racy: llama.cpp publishes releases before asset uploads
+# complete, so CI can 404 if it resolves `latest` during that window.
+LLAMA_VERSION="b8519"
 LLAMA_BASE=""
 LLAMA_REPO="ggml-org/llama.cpp"
 
 ensure_llama_version() {
-    [[ -n "$LLAMA_VERSION" ]] && return
-    local curl_args=(-fsSL --connect-timeout 5 --max-time 8)
-    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-        curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
-    fi
-    local response
-    response="$(curl "${curl_args[@]}" "https://api.github.com/repos/${LLAMA_REPO}/releases/latest" 2>/dev/null)" || true
-    if [[ -z "$response" ]]; then
-        echo "Warning: GitHub API unreachable, using fallback version ${LLAMA_FALLBACK_VERSION}" >&2
-        LLAMA_VERSION="$LLAMA_FALLBACK_VERSION"
-    else
-        local parsed
-        parsed="$(echo "$response" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['tag_name'])" 2>/dev/null)" || true
-        if [[ -z "$parsed" ]]; then
-            echo "Warning: Could not parse GitHub API response, using fallback version ${LLAMA_FALLBACK_VERSION}" >&2
-            LLAMA_VERSION="$LLAMA_FALLBACK_VERSION"
-        else
-            LLAMA_VERSION="$parsed"
-        fi
-    fi
     LLAMA_BASE="https://github.com/${LLAMA_REPO}/releases/download/${LLAMA_VERSION}"
     echo "  llama.cpp version: ${LLAMA_VERSION}" >&2
 }
@@ -102,7 +83,7 @@ download_target() {
     tmp_dir="$(mktemp -d)"
 
     if [[ "$asset" == *.tar.gz ]]; then
-        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o "$tmp_dir/archive.tar.gz" "$url"
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 --retry 3 --retry-delay 15 --retry-all-errors -o "$tmp_dir/archive.tar.gz" "$url"
         tar -xzf "$tmp_dir/archive.tar.gz" -C "$tmp_dir" 2>/dev/null || true
         # Find extracted dir
         local extracted_dir
@@ -174,7 +155,7 @@ download_target() {
         fi
 
     elif [[ "$asset" == *.zip ]]; then
-        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 --retry 5 --retry-delay 10 --retry-all-errors -o "$tmp_dir/archive.zip" "$url"
+        curl -fsSL --progress-bar --connect-timeout 15 --max-time 300 --retry 3 --retry-delay 15 --retry-all-errors -o "$tmp_dir/archive.zip" "$url"
         if command -v unzip &>/dev/null; then
             unzip -q "$tmp_dir/archive.zip" -d "$tmp_dir/extracted"
         else
