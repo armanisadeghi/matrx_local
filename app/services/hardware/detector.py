@@ -281,7 +281,6 @@ def _detect_gpus() -> list[dict[str, Any]]:
                         "driver_version": parts[2] if len(parts) > 2 else None,
                         "backend": "cuda",
                         "is_primary": i == 0,
-                        "wsl": _IS_WSL,
                     })
     except Exception:
         pass

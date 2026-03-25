@@ -30,6 +30,7 @@ from app.api.model_repo_routes import router as model_repo_router
 from app.api.hardware_routes import router as hardware_router, run_initial_detection as run_hardware_detection
 from app.api.image_gen_routes import router as image_gen_router
 from app.api.hf_token_routes import router as hf_token_router
+from app.api.scrape_routes import router as scrape_router
 from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, MATRX_HOME_DIR, TUNNEL_ENABLED
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
@@ -494,6 +495,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pass
 
     retry_queue.stop()
+    scrape_store.stop_sync()
     heartbeat_task.cancel()
     try:
         await heartbeat_task
@@ -627,6 +629,7 @@ app.include_router(model_repo_router)
 app.include_router(hardware_router)
 app.include_router(image_gen_router)
 app.include_router(hf_token_router)
+app.include_router(scrape_router)
 
 # NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler
 # (Phase 1b) AFTER initialize_matrx_ai() registers the DB config. Calling it here
@@ -694,6 +697,8 @@ async def _log_requests_dispatch(request: Request, call_next):
         "/capabilities",
         # Hardware polling
         "/hardware/status",
+        # Scrape sync polling
+        "/scrapes/sync-status",
     })
 
     # OPTIONS preflights are always silent — they carry no data.
