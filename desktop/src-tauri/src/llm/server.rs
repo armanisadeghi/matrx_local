@@ -375,7 +375,6 @@ async fn wait_for_health(
 
 /// Classify a log line into a category for the UI to display/filter.
 #[derive(PartialEq)]
-#[derive(PartialEq)]
 enum LogKind {
     Loading,
     Progress,

@@ -308,6 +308,12 @@ export function Configurations() {
                     </SelectContent>
                   </Select>
                 </SettingRow>
+                <SettingRow label="Sidebar collapsed by default" description="Start with sidebar minimized">
+                  <Switch
+                    checked={draft.sidebarCollapsed}
+                    onCheckedChange={(v) => set("sidebarCollapsed", v)}
+                  />
+                </SettingRow>
                 <SectionActions
                   section="appearance"
                   dirty={sectionDirty.appearance}
@@ -389,7 +395,7 @@ export function Configurations() {
                     max={500}
                   />
                 </SettingRow>
-                <SettingRow label="Default system prompt" description="Personality for new conversations">
+                <SettingRow label="System prompt" description="Personality for new conversations">
                   <Select
                     value={draft.chatDefaultSystemPromptId || "__builtin__"}
                     onValueChange={(v) => set("chatDefaultSystemPromptId", v === "__builtin__" ? "" : v)}
@@ -431,7 +437,7 @@ export function Configurations() {
             </Card>
 
             {/* ── Local LLM ──────────────────────────────────── */}
-            <Card className="xl:row-span-2">
+            <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-base">
                   <BrainCircuit className="h-4 w-4" />
@@ -439,7 +445,7 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Default model" description="Model used when starting the LLM server">
+                <SettingRow label="Default model" description="Downloaded model used when starting the LLM server">
                   <div className="flex items-center gap-1.5">
                     <Select
                       value={draft.llmDefaultModel || "__auto__"}
@@ -452,7 +458,7 @@ export function Configurations() {
                         <SelectItem value="__auto__">
                           <span className="flex items-center gap-1.5">
                             <Cpu className="h-3 w-3" />
-                            Auto-detect (hardware-based)
+                            Auto (recommended for your hardware)
                           </span>
                         </SelectItem>
                         {catalogs.llmModels.length > 0 && <Separator className="my-1" />}
@@ -486,12 +492,10 @@ export function Configurations() {
                     )}
                   </div>
                 </SettingRow>
-                <SettingRow label="GPU layers" description="-1 = auto-detect based on hardware">
-                  <NumberInput
+                <SettingRow label="GPU layers" description="How many layers to offload to your GPU">
+                  <GpuLayersRow
                     value={draft.llmDefaultGpuLayers}
                     onChange={(v) => set("llmDefaultGpuLayers", v)}
-                    min={-1}
-                    max={999}
                   />
                 </SettingRow>
                 <SettingRow label="Context length" description="Max tokens per conversation">
@@ -519,9 +523,26 @@ export function Configurations() {
                     onCheckedChange={(v) => set("llmAutoStartServer", v)}
                   />
                 </SettingRow>
+                <SectionActions
+                  section="localLlm"
+                  dirty={sectionDirty.localLlm}
+                  saving={isSaving}
+                  onSave={handleSave}
+                  onCancel={handleCancel}
+                />
+              </CardContent>
+            </Card>
 
-                <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Chat Sampling</p>
+            {/* ── LLM Sampling ──────────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <BrainCircuit className="h-4 w-4" />
+                  LLM Sampling
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Chat</p>
 
                 <SliderRow
                   label="Temperature"
@@ -622,8 +643,8 @@ export function Configurations() {
                 </SettingRow>
 
                 <SectionActions
-                  section="localLlm"
-                  dirty={sectionDirty.localLlm}
+                  section="localLlmSampling"
+                  dirty={sectionDirty.localLlmSampling}
                   saving={isSaving}
                   onSave={handleSave}
                   onCancel={handleCancel}
@@ -737,23 +758,10 @@ export function Configurations() {
                     </Button>
                   </div>
                 </SettingRow>
-                <SettingRow label="Processing timeout" description="Force-reset if stuck longer than this">
-                  <Select
-                    value={String(draft.transcriptionProcessingTimeout)}
-                    onValueChange={(v) => set("transcriptionProcessingTimeout", Number(v))}
-                  >
-                    <SelectTrigger className="w-28">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="5000">5 sec</SelectItem>
-                      <SelectItem value="10000">10 sec</SelectItem>
-                      <SelectItem value="15000">15 sec</SelectItem>
-                      <SelectItem value="30000">30 sec</SelectItem>
-                      <SelectItem value="60000">60 sec</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </SettingRow>
+                <ProcessingTimeoutRow
+                  value={draft.transcriptionProcessingTimeout}
+                  onChange={(v) => set("transcriptionProcessingTimeout", v)}
+                />
                 <SectionActions
                   section="voice"
                   dirty={sectionDirty.voice}
@@ -867,31 +875,16 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Headless mode" description="Run browser without visible window">
+                <SettingRow label="Hide scraping browser" description="Run in headless mode — the browser window won't be visible during scraping">
                   <Switch
                     checked={draft.headlessScraping}
                     onCheckedChange={(v) => set("headlessScraping", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Delay between requests" description="Wait time between page loads">
-                  <Select
-                    value={draft.scrapeDelay}
-                    onValueChange={(v) => set("scrapeDelay", v)}
-                  >
-                    <SelectTrigger className="w-28">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">None</SelectItem>
-                      <SelectItem value="0.5">0.5 sec</SelectItem>
-                      <SelectItem value="1.0">1.0 sec</SelectItem>
-                      <SelectItem value="2.0">2.0 sec</SelectItem>
-                      <SelectItem value="3.0">3.0 sec</SelectItem>
-                      <SelectItem value="5.0">5.0 sec</SelectItem>
-                      <SelectItem value="10.0">10 sec</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </SettingRow>
+                <ScrapeDelayRow
+                  value={draft.scrapeDelay}
+                  onChange={(v) => set("scrapeDelay", v)}
+                />
                 <SectionActions
                   section="scraping"
                   dirty={sectionDirty.scraping}
@@ -983,30 +976,6 @@ export function Configurations() {
               </CardContent>
             </Card>
 
-            {/* ── UI / Layout ────────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Monitor className="h-4 w-4" />
-                  UI & Layout
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1">
-                <SettingRow label="Sidebar collapsed by default" description="Start with sidebar minimized">
-                  <Switch
-                    checked={draft.sidebarCollapsed}
-                    onCheckedChange={(v) => set("sidebarCollapsed", v)}
-                  />
-                </SettingRow>
-                <SectionActions
-                  section="ui"
-                  dirty={sectionDirty.ui}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
-                />
-              </CardContent>
-            </Card>
 
           </div>
         </div>
