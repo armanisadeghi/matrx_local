@@ -237,15 +237,24 @@ async function syncSetting<K extends keyof AppSettings>(
   }
 }
 
+export interface SyncResult {
+  /** localStorage write always succeeds (it's synchronous under the hood). */
+  local: "ok";
+  /** Engine push: "ok" | "skipped" (not connected) | error message string */
+  engine: "ok" | "skipped" | string;
+  /** Cloud push: "ok" | "skipped" | error message string — the engine does this */
+  cloud: "ok" | "skipped" | string;
+}
+
 /**
  * Sync ALL settings to their native/engine counterparts.
  *
- * Called on engine connect and after every save. Pushes the full settings
- * blob to Python (which persists to ~/.matrx/settings.json and cloud),
- * and syncs Tauri-specific settings (autostart, minimize-to-tray).
+ * Returns a structured result for each sync step so callers can surface
+ * per-step success/failure to the user instead of silently swallowing errors.
  */
-export async function syncAllSettings(): Promise<void> {
+export async function syncAllSettings(): Promise<SyncResult> {
   const settings = await loadSettings();
+  const result: SyncResult = { local: "ok", engine: "skipped", cloud: "skipped" };
 
   // ── Tauri-side sync ─────────────────────────────────────────────────────
   await setCloseToTray(settings.minimizeToTray);
@@ -263,26 +272,46 @@ export async function syncAllSettings(): Promise<void> {
     }
   }
 
-  // ── Push ALL settings to Python engine ──────────────────────────────────
-  // This ensures Python's settings.json stays in sync with localStorage
-  // and triggers cloud sync (fire-and-forget) on the Python side.
-  if (engine.engineUrl) {
-    try {
-      await engine.updateCloudSettings(settingsToCloud(settings));
-    } catch (err) {
-      console.warn("[settings] Failed to push settings to engine:", err);
-    }
-
-    // Also sync engine-specific runtime settings (scraper config)
-    try {
-      await engine.updateSettings({
-        headless_scraping: settings.headlessScraping,
-        scrape_delay: parseFloat(settings.scrapeDelay) || 1.0,
-      });
-    } catch (err) {
-      console.warn("[settings] Failed to sync engine runtime settings:", err);
-    }
+  if (!engine.engineUrl) {
+    return result;
   }
+
+  // ── Push ALL settings to Python engine ──────────────────────────────────
+  // The engine writes to ~/.matrx/settings.json and pushes to Supabase.
+  try {
+    const resp = await engine.updateCloudSettings(settingsToCloud(settings));
+    result.engine = "ok";
+    // The engine's push_result tells us if Supabase was updated
+    const pushResult = (resp as { push_result?: { status?: string; reason?: string } }).push_result;
+    if (!pushResult) {
+      result.cloud = "skipped"; // engine not configured for cloud yet
+    } else if (pushResult.status === "pushed" || pushResult.status === "ok") {
+      result.cloud = "ok";
+    } else {
+      result.cloud = pushResult.reason || pushResult.status || "unknown";
+    }
+  } catch (err) {
+    result.engine = err instanceof Error ? err.message : String(err);
+    result.cloud = "skipped";
+    console.warn("[settings] Failed to push settings to engine:", err);
+  }
+
+  // Also sync engine-specific runtime settings (scraper config) — best effort
+  try {
+    await engine.updateSettings({
+      headless_scraping: settings.headlessScraping,
+      scrape_delay: parseFloat(settings.scrapeDelay) || 1.0,
+    });
+  } catch (err) {
+    console.warn("[settings] Failed to sync engine runtime settings:", err);
+  }
+
+  return result;
+}
+
+/** Broadcast that settings changed so other mounted components can reload. */
+export function broadcastSettingsChanged(): void {
+  window.dispatchEvent(new CustomEvent("matrx-settings-changed"));
 }
 
 /**

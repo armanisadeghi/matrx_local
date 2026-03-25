@@ -200,7 +200,19 @@ class InstanceManager:
     def __init__(self) -> None:
         self._instance_id: Optional[str] = None
         self._system_info: Optional[dict] = None
-        self._instance_name: str = "My Computer"
+        # Load persisted instance_name from settings.json so the name
+        # survives engine restarts without requiring re-registration.
+        self._instance_name: str = self._load_persisted_name()
+
+    @staticmethod
+    def _load_persisted_name() -> str:
+        """Read instance_name from ~/.matrx/settings.json if it exists."""
+        try:
+            data = json.loads(INSTANCE_FILE.parent.joinpath("settings.json").read_text())
+            name = data.get("settings", {}).get("instance_name", "")
+            return name if name else "My Computer"
+        except Exception:
+            return "My Computer"
 
     @property
     def instance_id(self) -> str:

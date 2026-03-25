@@ -13,7 +13,9 @@ import {
   loadSettings,
   saveSettings,
   syncAllSettings,
+  broadcastSettingsChanged,
   type AppSettings,
+  type SyncResult,
 } from "@/lib/settings";
 
 /** Section names — each gets its own dirty tracking and save/cancel. */
@@ -100,6 +102,8 @@ export interface ConfigurationsState {
   isSaving: boolean;
   /** Error from last save attempt, if any. */
   saveError: string | null;
+  /** Granular result from the last save: local / engine / cloud status. */
+  lastSyncResult: SyncResult | null;
 }
 
 export interface ConfigurationsActions {
@@ -124,6 +128,7 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
   const [saved, setSaved] = useState<AppSettings | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [lastSyncResult, setLastSyncResult] = useState<SyncResult | null>(null);
   const initialLoadDone = useRef(false);
 
   // Load on mount
@@ -173,16 +178,25 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
       if (!draft || !saved) return;
       setIsSaving(true);
       setSaveError(null);
+      setLastSyncResult(null);
       try {
         // Merge section keys from draft into saved
         const updated = { ...saved };
         for (const key of SECTION_KEYS[section]) {
           (updated as Record<string, unknown>)[key] = draft[key];
         }
+        // Step 1: Write to localStorage (always succeeds)
         await saveSettings(updated);
         setSaved(updated);
-        // Sync side effects to engine/Tauri
-        await syncAllSettings();
+        // Step 2+3: Push to engine (which writes to disk + cloud)
+        const syncResult = await syncAllSettings();
+        setLastSyncResult(syncResult);
+        // Surface engine/cloud errors as saveError so the UI can show them
+        if (syncResult.engine !== "ok" && syncResult.engine !== "skipped") {
+          setSaveError(`Saved locally, but engine sync failed: ${syncResult.engine}`);
+        }
+        // Notify other mounted components (Settings page, etc.) to reload
+        broadcastSettingsChanged();
       } catch (err) {
         setSaveError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -211,10 +225,16 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
     if (!draft) return;
     setIsSaving(true);
     setSaveError(null);
+    setLastSyncResult(null);
     try {
       await saveSettings(draft);
       setSaved({ ...draft });
-      await syncAllSettings();
+      const syncResult = await syncAllSettings();
+      setLastSyncResult(syncResult);
+      if (syncResult.engine !== "ok" && syncResult.engine !== "skipped") {
+        setSaveError(`Saved locally, but engine sync failed: ${syncResult.engine}`);
+      }
+      broadcastSettingsChanged();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -241,6 +261,7 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
     sectionDirty,
     isSaving,
     saveError,
+    lastSyncResult,
   };
 
   const actions: ConfigurationsActions = {

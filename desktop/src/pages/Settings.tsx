@@ -39,8 +39,6 @@ import {
   EyeOff,
   Trash2,
   FileUp,
-  FileCheck,
-  SkipForward,
   Mic,
   Speaker,
   Camera,
@@ -82,7 +80,7 @@ import {
   settingsToCloud,
   type AppSettings,
 } from "@/lib/settings";
-import type { StoragePath } from "@/lib/api";
+import type { StoragePath, StoragePathStats } from "@/lib/api";
 import { parseEnvBlock, type ParsedEnvEntry } from "@/lib/api-key-patterns";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -125,6 +123,7 @@ export function Settings({
     return params.get("tab") ?? "general";
   });
   const [restarting, setRestarting] = useState(false);
+  const [updateRestarting, setUpdateRestarting] = useState(false);
 
   // Proxy state
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
@@ -166,6 +165,8 @@ export function Settings({
   const [pathEditValue, setPathEditValue] = useState("");
   const [pathSaving, setPathSaving] = useState<string | null>(null);
   const [pathError, setPathError] = useState<string | null>(null);
+  const [pathStats, setPathStats] = useState<Record<string, StoragePathStats>>({});
+  const [statsLoading, setStatsLoading] = useState<Record<string, boolean>>({});
   const [newForbiddenUrl, setNewForbiddenUrl] = useState("");
   const [forbiddenSaving, setForbiddenSaving] = useState(false);
 
@@ -189,12 +190,28 @@ export function Settings({
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkSaving, setBulkSaving] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ saved: string[]; skipped: string[]; errors: Record<string, string> } | null>(null);
+  // Per-entry editable values, custom provider mappings, and value visibility
+  const [bulkEditedValues, setBulkEditedValues] = useState<Record<string, string>>({});
+  const [bulkCustomMapping, setBulkCustomMapping] = useState<Record<string, string>>({});
+  const [bulkShowValues, setBulkShowValues] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     loadSettings().then(setSettings);
     loadForbiddenUrls();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reload settings when another part of the app (e.g. Configurations page) saves changes.
+  useEffect(() => {
+    const onChanged = () => {
+      loadSettings().then(setSettings);
+      // Also reload instance info so Computer Name displays the new value immediately.
+      if (engineStatus === "connected") loadInstanceInfo();
+    };
+    window.addEventListener("matrx-settings-changed", onChanged);
+    return () => window.removeEventListener("matrx-settings-changed", onChanged);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engineStatus]);
 
   useEffect(() => {
     if (engineStatus !== "connected") return;
@@ -298,6 +315,23 @@ export function Settings({
       const paths = await engine.getStoragePaths();
       setStoragePaths(paths);
     } catch { /* non-critical */ }
+  }, [engineStatus]);
+
+  const loadPathStats = useCallback(async (names: string[]) => {
+    if (engineStatus !== "connected") return;
+    setStatsLoading(Object.fromEntries(names.map((n) => [n, true])));
+    await Promise.all(
+      names.map(async (name) => {
+        try {
+          const stats = await engine.getStoragePathStats(name);
+          setPathStats((prev) => ({ ...prev, [name]: stats }));
+        } catch {
+          // non-critical
+        } finally {
+          setStatsLoading((prev) => ({ ...prev, [name]: false }));
+        }
+      }),
+    );
   }, [engineStatus]);
 
   const startEditPath = useCallback((p: StoragePath) => {
@@ -541,6 +575,9 @@ export function Settings({
     setBulkResult(null);
     const parsed = parseEnvBlock(text);
     setBulkParsed(parsed);
+    setBulkEditedValues({});
+    setBulkCustomMapping({});
+    setBulkShowValues({});
     // Auto-select all entries that match a known provider
     setBulkSelected(new Set(
       parsed
@@ -550,26 +587,28 @@ export function Settings({
   }, []);
 
   const handleBulkImport = useCallback(async () => {
-    const toSave = bulkParsed.filter(
-      (e) => e.provider !== null && bulkSelected.has(e.rawKey),
-    );
+    // Collect entries to save: matched OR custom-mapped, and selected
+    const toSave = bulkParsed.filter((e) => {
+      if (!bulkSelected.has(e.rawKey)) return false;
+      const effectiveProvider = e.provider ?? bulkCustomMapping[e.rawKey] ?? null;
+      return effectiveProvider !== null;
+    });
     if (toSave.length === 0) return;
 
     setBulkSaving(true);
     setBulkResult(null);
     try {
       const result = await engine.post("/settings/api-keys/bulk", {
-        keys: toSave.map((e) => ({ provider: e.provider!, key: e.rawValue })),
+        keys: toSave.map((e) => ({
+          provider: e.provider ?? bulkCustomMapping[e.rawKey],
+          key: (bulkEditedValues[e.rawKey] ?? e.rawValue).trim(),
+        })),
       }) as { saved: string[]; skipped: string[]; errors: Record<string, string> };
       setBulkResult(result);
       if (result.saved.length > 0) {
-        // Refresh the provider status list so badges update
         await loadApiKeyStatus();
-        // Clear the textarea on success
-        setBulkEnvText("");
-        setBulkParsed([]);
-        setBulkSelected(new Set());
       }
+      // Do NOT clear the form — let the user see what was saved vs errored
     } catch (err) {
       setBulkResult({
         saved: [],
@@ -579,7 +618,7 @@ export function Settings({
     } finally {
       setBulkSaving(false);
     }
-  }, [bulkParsed, bulkSelected, loadApiKeyStatus]);
+  }, [bulkParsed, bulkSelected, bulkEditedValues, bulkCustomMapping, loadApiKeyStatus]);
 
   const handleTunnelToggle = async (enable: boolean) => {
     setTunnelLoading(true);
@@ -1309,172 +1348,383 @@ export function Settings({
                       size="sm"
                       className="h-7 px-2 text-xs"
                       onClick={() => {
-                        setBulkImportOpen((v) => !v);
-                        if (bulkImportOpen) {
+                        const opening = !bulkImportOpen;
+                        setBulkImportOpen(opening);
+                        if (!opening) {
                           setBulkEnvText("");
                           setBulkParsed([]);
                           setBulkSelected(new Set());
                           setBulkResult(null);
+                          setBulkEditedValues({});
+                          setBulkCustomMapping({});
+                          setBulkShowValues({});
                         }
                       }}
                     >
-                      {bulkImportOpen ? "Cancel" : "Open"}
+                      {bulkImportOpen ? "Close" : "Open"}
                     </Button>
                   </div>
                   {!bulkImportOpen && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Paste a .env file and we'll detect and import matching API keys automatically.
+                      Paste a .env file — we'll detect and import matching API keys automatically.
                     </p>
                   )}
                 </CardHeader>
 
                 {bulkImportOpen && (
-                  <CardContent className="space-y-3 pt-0">
-                    <p className="text-xs text-muted-foreground">
-                      Paste any block of <code className="font-mono bg-muted px-1 rounded">KEY=VALUE</code> lines.
-                      We'll detect known provider keys — including alternate names like{" "}
-                      <code className="font-mono bg-muted px-1 rounded">GEMINI_API_KEY</code> →&nbsp;Google and{" "}
-                      <code className="font-mono bg-muted px-1 rounded">CLAUDE_API_KEY</code> →&nbsp;Anthropic.
-                    </p>
-
-                    <Textarea
-                      value={bulkEnvText}
-                      onChange={(e) => handleBulkEnvChange(e.target.value)}
-                      placeholder={`OPENAI_API_KEY=sk-...\nGEMINI_API_KEY=AIzaSy...\nHUGGING_FACE_HUB_TOKEN=hf_...\n# Comments and unrecognised lines are ignored`}
-                      className="font-mono text-xs min-h-32 resize-y"
-                      spellCheck={false}
-                    />
-
-                    {/* Parsed preview */}
-                    {bulkParsed.length > 0 && (
-                      <div className="space-y-1.5">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {bulkParsed.filter((e) => e.provider).length} of {bulkParsed.length} line
-                          {bulkParsed.length !== 1 ? "s" : ""} matched a known provider:
-                        </p>
-                        {bulkParsed.map((entry) => {
-                          const matched = entry.provider !== null;
-                          const selected = bulkSelected.has(entry.rawKey);
-                          return (
-                            <div
-                              key={entry.rawKey}
-                              className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors ${
-                                matched
-                                  ? selected
-                                    ? "border-primary/40 bg-primary/5"
-                                    : "border-border/50 bg-muted/20 opacity-60"
-                                  : "border-border/30 bg-muted/10 opacity-40"
-                              }`}
-                            >
-                              {matched ? (
-                                <input
-                                  type="checkbox"
-                                  checked={selected}
-                                  onChange={(e) => {
-                                    setBulkSelected((prev) => {
-                                      const next = new Set(prev);
-                                      if (e.target.checked) next.add(entry.rawKey);
-                                      else next.delete(entry.rawKey);
-                                      return next;
-                                    });
-                                  }}
-                                  className="h-3.5 w-3.5 accent-primary shrink-0"
-                                />
-                              ) : (
-                                <SkipForward className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
-                              )}
-
-                              <code className="flex-1 truncate font-mono text-muted-foreground">
-                                {entry.rawKey}
-                              </code>
-
-                              {matched ? (
-                                <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">
-                                  → {entry.label}
-                                </span>
-                              ) : (
-                                <span className="shrink-0 text-[10px] text-muted-foreground/50">
-                                  unrecognised
-                                </span>
-                              )}
-
-                              <code className="max-w-[120px] truncate font-mono text-muted-foreground/50">
-                                {entry.rawValue.slice(0, 8)}…
-                              </code>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Result banner */}
-                    {bulkResult && (
-                      <div className={`rounded-lg border px-3 py-2 text-xs space-y-0.5 ${
-                        Object.keys(bulkResult.errors).length > 0
-                          ? "border-red-500/30 bg-red-500/5 text-red-400"
-                          : "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
-                      }`}>
-                        {bulkResult.saved.length > 0 && (
-                          <p>
-                            <FileCheck className="mr-1 inline h-3.5 w-3.5" />
-                            Saved: {bulkResult.saved.join(", ")}
-                          </p>
-                        )}
-                        {bulkResult.skipped.length > 0 && (
-                          <p className="text-muted-foreground">
-                            Skipped (unknown): {bulkResult.skipped.join(", ")}
-                          </p>
-                        )}
-                        {Object.entries(bulkResult.errors).map(([k, v]) => (
-                          <p key={k}>
-                            <AlertCircle className="mr-1 inline h-3.5 w-3.5" />
-                            {k === "_" ? v : `${k}: ${v}`}
-                          </p>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => void handleBulkImport()}
-                        disabled={
-                          bulkSaving ||
-                          bulkSelected.size === 0 ||
-                          engineStatus !== "connected"
-                        }
-                        className="flex-1"
-                      >
-                        {bulkSaving ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <FileUp className="h-3.5 w-3.5" />
-                        )}
-                        Import {bulkSelected.size > 0 ? `${bulkSelected.size} key${bulkSelected.size !== 1 ? "s" : ""}` : "Selected Keys"}
-                      </Button>
-                      {bulkParsed.some((e) => e.provider !== null) && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-xs text-muted-foreground"
-                          onClick={() => {
-                            const matchedKeys = bulkParsed
-                              .filter((e) => e.provider !== null)
-                              .map((e) => e.rawKey);
-                            const allSelected =
-                              matchedKeys.length > 0 &&
-                              matchedKeys.every((k) => bulkSelected.has(k));
-                            setBulkSelected(allSelected ? new Set() : new Set(matchedKeys));
-                          }}
-                        >
-                          {bulkParsed
-                            .filter((e) => e.provider !== null)
-                            .every((e) => bulkSelected.has(e.rawKey))
-                            ? "Deselect All"
-                            : "Select All"}
-                        </Button>
-                      )}
+                  <CardContent className="pt-0 space-y-4">
+                    {/* ── Paste zone ── */}
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-muted-foreground">
+                        Paste any block of <code className="font-mono bg-muted px-1 rounded">KEY=VALUE</code> lines.
+                        Alternate names like <code className="font-mono bg-muted px-1 rounded">GEMINI_API_KEY</code> → Google are auto-detected.
+                        You can edit any value or manually map unrecognised keys below.
+                      </p>
+                      <Textarea
+                        value={bulkEnvText}
+                        onChange={(e) => handleBulkEnvChange(e.target.value)}
+                        placeholder={`OPENAI_API_KEY=sk-...\nGEMINI_API_KEY=AIzaSy...\nHUGGING_FACE_HUB_TOKEN=hf_...\n# Comments and unrecognised lines are ignored`}
+                        className="font-mono text-sm min-h-40 resize-y"
+                        spellCheck={false}
+                      />
                     </div>
+
+                    {/* ── Parsed entries ── */}
+                    {bulkParsed.length > 0 && (() => {
+                      const matched = bulkParsed.filter((e) => e.provider !== null);
+                      const unmatched = bulkParsed.filter((e) => e.provider === null);
+                      const selectableKeys = [
+                        ...matched.map((e) => e.rawKey),
+                        ...unmatched.filter((e) => bulkCustomMapping[e.rawKey]).map((e) => e.rawKey),
+                      ];
+                      const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => bulkSelected.has(k));
+
+                      return (
+                        <div className="space-y-3">
+                          {/* Header row */}
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium">
+                              {matched.length} of {bulkParsed.length} keys matched
+                              {unmatched.length > 0 && ` · ${unmatched.length} unrecognised`}
+                            </p>
+                            {selectableKeys.length > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs"
+                                onClick={() => setBulkSelected(allSelected ? new Set() : new Set(selectableKeys))}
+                              >
+                                {allSelected ? "Deselect All" : "Select All"}
+                              </Button>
+                            )}
+                          </div>
+
+                          {/* ── Matched entries ── */}
+                          {matched.length > 0 && (
+                            <div className="space-y-2">
+                              {matched.map((entry) => {
+                                const selected = bulkSelected.has(entry.rawKey);
+                                const alreadyConfigured = apiKeyProviders.find(
+                                  (p) => p.provider === entry.provider && p.configured,
+                                );
+                                const savedOk = bulkResult?.saved.includes(entry.provider!);
+                                const saveErr = bulkResult?.errors[entry.provider!];
+                                const editedVal = bulkEditedValues[entry.rawKey] ?? entry.rawValue;
+                                const showVal = bulkShowValues[entry.rawKey] ?? false;
+
+                                return (
+                                  <div
+                                    key={entry.rawKey}
+                                    className={`rounded-lg border transition-colors ${
+                                      savedOk
+                                        ? "border-emerald-500/40 bg-emerald-500/5"
+                                        : saveErr
+                                          ? "border-red-500/40 bg-red-500/5"
+                                          : selected
+                                            ? "border-primary/40 bg-primary/5"
+                                            : "border-border/50 bg-muted/10 opacity-60"
+                                    }`}
+                                  >
+                                    {/* Top row: checkbox + labels + status */}
+                                    <div className="flex items-center gap-3 px-4 py-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={selected}
+                                        disabled={!!savedOk}
+                                        onChange={(e) => {
+                                          setBulkSelected((prev) => {
+                                            const next = new Set(prev);
+                                            if (e.target.checked) next.add(entry.rawKey);
+                                            else next.delete(entry.rawKey);
+                                            return next;
+                                          });
+                                        }}
+                                        className="h-4 w-4 accent-primary shrink-0"
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <code className="font-mono text-sm font-medium">{entry.rawKey}</code>
+                                          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                                            → {entry.label}
+                                          </span>
+                                          {alreadyConfigured && !savedOk && (
+                                            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                                              already configured — will overwrite
+                                            </span>
+                                          )}
+                                          {savedOk && (
+                                            <span className="flex items-center gap-1 text-xs text-emerald-500 font-medium">
+                                              <CheckCircle2 className="h-3.5 w-3.5" /> Saved
+                                            </span>
+                                          )}
+                                          {saveErr && (
+                                            <span className="flex items-center gap-1 text-xs text-red-500 font-medium">
+                                              <AlertCircle className="h-3.5 w-3.5" /> {saveErr}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {/* Value row */}
+                                    <div className="flex items-center gap-2 px-4 pb-3">
+                                      <div className="relative flex-1">
+                                        <Input
+                                          type={showVal ? "text" : "password"}
+                                          value={editedVal}
+                                          onChange={(ev) =>
+                                            setBulkEditedValues((prev) => ({
+                                              ...prev,
+                                              [entry.rawKey]: ev.target.value,
+                                            }))
+                                          }
+                                          className="font-mono text-sm pr-10 h-8"
+                                          spellCheck={false}
+                                          disabled={!!savedOk}
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setBulkShowValues((prev) => ({
+                                              ...prev,
+                                              [entry.rawKey]: !showVal,
+                                            }))
+                                          }
+                                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                          tabIndex={-1}
+                                        >
+                                          {showVal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                                        </button>
+                                      </div>
+                                      {editedVal !== entry.rawValue && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-8 text-xs text-muted-foreground"
+                                          onClick={() =>
+                                            setBulkEditedValues((prev) => {
+                                              const next = { ...prev };
+                                              delete next[entry.rawKey];
+                                              return next;
+                                            })
+                                          }
+                                        >
+                                          <RotateCcw className="h-3 w-3" /> Reset
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* ── Unmatched entries ── */}
+                          {unmatched.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                Unrecognised — map manually to import
+                              </p>
+                              {unmatched.map((entry) => {
+                                const customProvider = bulkCustomMapping[entry.rawKey] ?? "";
+                                const selected = bulkSelected.has(entry.rawKey);
+                                const savedOk = customProvider && bulkResult?.saved.includes(customProvider);
+                                const saveErr = customProvider && bulkResult?.errors[customProvider];
+                                const editedVal = bulkEditedValues[entry.rawKey] ?? entry.rawValue;
+                                const showVal = bulkShowValues[entry.rawKey] ?? false;
+
+                                return (
+                                  <div
+                                    key={entry.rawKey}
+                                    className={`rounded-lg border transition-colors ${
+                                      savedOk
+                                        ? "border-emerald-500/40 bg-emerald-500/5"
+                                        : saveErr
+                                          ? "border-red-500/40 bg-red-500/5"
+                                          : customProvider && selected
+                                            ? "border-primary/40 bg-primary/5"
+                                            : "border-border/40 bg-muted/10"
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 px-4 py-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={selected && !!customProvider}
+                                        disabled={!customProvider || !!savedOk}
+                                        onChange={(e) => {
+                                          if (!customProvider) return;
+                                          setBulkSelected((prev) => {
+                                            const next = new Set(prev);
+                                            if (e.target.checked) next.add(entry.rawKey);
+                                            else next.delete(entry.rawKey);
+                                            return next;
+                                          });
+                                        }}
+                                        className="h-4 w-4 accent-primary shrink-0"
+                                      />
+                                      <div className="flex-1 min-w-0 flex items-center gap-3 flex-wrap">
+                                        <code className="font-mono text-sm font-medium text-muted-foreground">{entry.rawKey}</code>
+                                        <span className="text-xs text-muted-foreground/60">→</span>
+                                        <Select
+                                          value={customProvider}
+                                          onValueChange={(v) => {
+                                            setBulkCustomMapping((prev) => ({ ...prev, [entry.rawKey]: v }));
+                                            if (v) {
+                                              setBulkSelected((prev) => {
+                                                const next = new Set(prev);
+                                                next.add(entry.rawKey);
+                                                return next;
+                                              });
+                                            }
+                                          }}
+                                        >
+                                          <SelectTrigger className="h-7 w-44 text-xs">
+                                            <SelectValue placeholder="Map to provider…" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {apiKeyProviders.map((p) => (
+                                              <SelectItem key={p.provider} value={p.provider} className="text-xs">
+                                                {p.label}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                        {savedOk && (
+                                          <span className="flex items-center gap-1 text-xs text-emerald-500 font-medium">
+                                            <CheckCircle2 className="h-3.5 w-3.5" /> Saved
+                                          </span>
+                                        )}
+                                        {saveErr && (
+                                          <span className="flex items-center gap-1 text-xs text-red-500 font-medium">
+                                            <AlertCircle className="h-3.5 w-3.5" /> {saveErr}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 px-4 pb-3">
+                                      <div className="relative flex-1">
+                                        <Input
+                                          type={showVal ? "text" : "password"}
+                                          value={editedVal}
+                                          onChange={(ev) =>
+                                            setBulkEditedValues((prev) => ({
+                                              ...prev,
+                                              [entry.rawKey]: ev.target.value,
+                                            }))
+                                          }
+                                          className="font-mono text-sm pr-10 h-8"
+                                          spellCheck={false}
+                                          disabled={!!savedOk}
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setBulkShowValues((prev) => ({
+                                              ...prev,
+                                              [entry.rawKey]: !showVal,
+                                            }))
+                                          }
+                                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                          tabIndex={-1}
+                                        >
+                                          {showVal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                                        </button>
+                                      </div>
+                                      {editedVal !== entry.rawValue && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-8 text-xs text-muted-foreground"
+                                          onClick={() =>
+                                            setBulkEditedValues((prev) => {
+                                              const next = { ...prev };
+                                              delete next[entry.rawKey];
+                                              return next;
+                                            })
+                                          }
+                                        >
+                                          <RotateCcw className="h-3 w-3" /> Reset
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* ── Top-level error (network / unexpected) ── */}
+                          {bulkResult?.errors._ && (
+                            <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-2.5 text-sm text-red-500 flex items-center gap-2">
+                              <AlertCircle className="h-4 w-4 shrink-0" />
+                              {bulkResult.errors._}
+                            </div>
+                          )}
+
+                          {/* ── Action bar ── */}
+                          <div className="flex items-center gap-3 pt-1">
+                            <Button
+                              onClick={() => void handleBulkImport()}
+                              disabled={
+                                bulkSaving ||
+                                bulkSelected.size === 0 ||
+                                engineStatus !== "connected"
+                              }
+                            >
+                              {bulkSaving ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <FileUp className="h-4 w-4" />
+                              )}
+                              {bulkSaving
+                                ? "Saving…"
+                                : `Import ${bulkSelected.size > 0 ? `${bulkSelected.size} key${bulkSelected.size !== 1 ? "s" : ""}` : "Selected Keys"}`}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              onClick={() => {
+                                setBulkEnvText("");
+                                setBulkParsed([]);
+                                setBulkSelected(new Set());
+                                setBulkResult(null);
+                                setBulkEditedValues({});
+                                setBulkCustomMapping({});
+                                setBulkShowValues({});
+                              }}
+                              className="text-muted-foreground"
+                            >
+                              <X className="h-4 w-4" /> Clear
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Empty state after paste that yielded nothing */}
+                    {bulkEnvText.trim().length > 0 && bulkParsed.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        No API key patterns detected. Make sure your lines follow <code className="font-mono bg-muted px-1 rounded text-xs">KEY=VALUE</code> format.
+                      </p>
+                    )}
                   </CardContent>
                 )}
               </Card>
@@ -1619,156 +1869,254 @@ export function Settings({
           )}
 
           {/* ── Storage Tab ────────────────────────────────── */}
-          {activeTab === "storage" && (
-            <>
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <HardDrive className="h-4 w-4 text-primary" /> Storage Locations
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Customise where Matrx stores your files. Changes take effect immediately — the engine creates the directory if it doesn't exist, and falls back to the default if the path is inaccessible.
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {engineStatus !== "connected" && (
-                    <p className="text-xs text-muted-foreground">Connect to the engine to manage storage paths.</p>
-                  )}
+          {activeTab === "storage" && (() => {
+            const userPaths = storagePaths.filter((p) => p.user_visible);
+            const internalPaths = storagePaths.filter((p) => !p.user_visible);
 
-                  {pathError && (
-                    <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
-                      <AlertCircle className="mr-1.5 inline h-4 w-4" />
-                      {pathError}
+            const formatBytes = (bytes: number) => {
+              if (bytes === 0) return "0 B";
+              const k = 1024;
+              const sizes = ["B", "KB", "MB", "GB"];
+              const i = Math.floor(Math.log(bytes) / Math.log(k));
+              return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+            };
+
+            const StatsCell = ({ name }: { name: string }) => {
+              const stats = pathStats[name];
+              const loading = statsLoading[name];
+              if (loading) return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />;
+              if (!stats) return <span className="text-muted-foreground/40">—</span>;
+              if (!stats.exists) return <span className="text-muted-foreground/40 text-xs">not found</span>;
+              return (
+                <span className="text-sm tabular-nums">
+                  {stats.file_count.toLocaleString()} file{stats.file_count !== 1 ? "s" : ""}
+                  <span className="text-muted-foreground ml-1.5">({formatBytes(stats.size_bytes)})</span>
+                </span>
+              );
+            };
+
+            const PathRow = ({ p, editable }: { p: StoragePath; editable: boolean }) => {
+              const isEditing = pathEditing === p.name;
+              return (
+                <tr key={p.name} className="group border-b last:border-0 hover:bg-muted/30 transition-colors">
+                  {/* Location name */}
+                  <td className="py-3 pl-4 pr-3 align-top w-36">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-sm font-medium leading-tight">{p.label}</span>
+                      {p.is_custom ? (
+                        <Badge variant="secondary" className="w-fit text-[10px] px-1.5 py-0">Custom</Badge>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground/50">Default</span>
+                      )}
                     </div>
-                  )}
+                  </td>
 
-                  {storagePaths.filter(p => p.user_visible).map((p, i) => (
-                    <div key={p.name}>
-                      {i > 0 && <Separator className="my-3" />}
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <Label className="text-sm font-medium">{p.label}</Label>
-                            {p.is_custom && (
-                              <Badge variant="secondary" className="ml-2 text-xs">Custom</Badge>
-                            )}
-                          </div>
-                          <div className="flex gap-1.5">
-                            {p.is_custom && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-xs text-muted-foreground"
-                                disabled={pathSaving === p.name}
-                                onClick={() => resetPathToDefault(p.name)}
-                                title="Reset to default"
-                              >
-                                {pathSaving === p.name ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <RotateCcw className="h-3.5 w-3.5" />
-                                )}
-                              </Button>
-                            )}
+                  {/* Path */}
+                  <td className="py-3 px-3 align-middle">
+                    {isEditing ? (
+                      <div className="flex gap-2">
+                        <Input
+                          value={pathEditValue}
+                          onChange={(e) => setPathEditValue(e.target.value)}
+                          placeholder={p.default}
+                          className="h-8 font-mono text-sm flex-1"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") savePathEdit(p.name);
+                            if (e.key === "Escape") cancelEditPath();
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          className="h-8 px-3 shrink-0"
+                          disabled={pathSaving === p.name || !pathEditValue.trim()}
+                          onClick={() => savePathEdit(p.name)}
+                        >
+                          {pathSaving === p.name ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Check className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 shrink-0"
+                          onClick={cancelEditPath}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <code className="block font-mono text-sm text-muted-foreground break-all leading-relaxed">
+                        {p.current}
+                      </code>
+                    )}
+                  </td>
+
+                  {/* Stats */}
+                  <td className="py-3 px-3 align-middle text-right whitespace-nowrap">
+                    <StatsCell name={p.name} />
+                  </td>
+
+                  {/* Actions */}
+                  <td className="py-3 pr-4 pl-2 align-middle whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {editable && !isEditing && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            title="Edit path"
+                            onClick={() => startEditPath(p)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          {p.is_custom && (
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 px-2 text-xs"
-                              onClick={() => pathEditing === p.name ? cancelEditPath() : startEditPath(p)}
-                            >
-                              {pathEditing === p.name ? (
-                                <X className="h-3.5 w-3.5" />
-                              ) : (
-                                <Pencil className="h-3.5 w-3.5" />
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-
-                        {pathEditing === p.name ? (
-                          <div className="flex gap-2">
-                            <Input
-                              value={pathEditValue}
-                              onChange={e => setPathEditValue(e.target.value)}
-                              placeholder={p.default}
-                              className="h-8 font-mono text-xs flex-1"
-                              onKeyDown={e => {
-                                if (e.key === "Enter") savePathEdit(p.name);
-                                if (e.key === "Escape") cancelEditPath();
-                              }}
-                            />
-                            <Button
-                              size="sm"
-                              className="h-8 px-3"
-                              disabled={pathSaving === p.name || !pathEditValue.trim()}
-                              onClick={() => savePathEdit(p.name)}
+                              className="h-7 w-7 p-0 text-muted-foreground"
+                              title="Reset to default"
+                              disabled={pathSaving === p.name}
+                              onClick={() => resetPathToDefault(p.name)}
                             >
                               {pathSaving === p.name ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                               ) : (
-                                <Check className="h-3.5 w-3.5" />
+                                <RotateCcw className="h-3.5 w-3.5" />
                               )}
                             </Button>
-                          </div>
-                        ) : (
-                          <code className="block truncate rounded bg-muted px-2 py-1 text-xs font-mono text-muted-foreground">
-                            {p.current}
-                          </code>
-                        )}
-
-                        {!p.is_custom && (
-                          <p className="text-xs text-muted-foreground">Default location</p>
-                        )}
-                      </div>
+                          )}
+                        </>
+                      )}
                     </div>
-                  ))}
+                  </td>
+                </tr>
+              );
+            };
 
-                  {storagePaths.length > 0 && (
-                    <div className="pt-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={loadStoragePaths}
-                        disabled={engineStatus !== "connected"}
-                      >
-                        <RefreshCw className="h-4 w-4" /> Refresh
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {storagePaths.filter(p => !p.user_visible).length > 0 && (
+            return (
+              <>
+                {/* ── User-visible paths table ── */}
                 <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="flex items-center gap-2 text-base text-muted-foreground">
-                      <HardDrive className="h-4 w-4" /> Internal Directories
-                    </CardTitle>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Engine internals — only change these if you have a specific reason to.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {storagePaths.filter(p => !p.user_visible).map((p, i) => (
-                      <div key={p.name}>
-                        {i > 0 && <Separator className="my-3" />}
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <Label className="text-sm font-medium text-muted-foreground">{p.label}</Label>
-                            {p.is_custom && <Badge variant="secondary" className="text-xs">Custom</Badge>}
-                          </div>
-                          <code className="block truncate rounded bg-muted px-2 py-1 text-xs font-mono text-muted-foreground">
-                            {p.current}
-                          </code>
-                        </div>
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <CardTitle className="flex items-center gap-2 text-base">
+                          <HardDrive className="h-4 w-4 text-primary" /> Storage Locations
+                        </CardTitle>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Customise where Matrx stores your files. Changes take effect immediately.
+                          Hover a row to edit. Click the file count to refresh stats.
+                        </p>
                       </div>
-                    ))}
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            void loadStoragePaths();
+                            void loadPathStats(storagePaths.map((p) => p.name));
+                          }}
+                          disabled={engineStatus !== "connected"}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" /> Refresh
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void loadPathStats(userPaths.map((p) => p.name))}
+                          disabled={engineStatus !== "connected"}
+                        >
+                          <Layers className="h-3.5 w-3.5" /> Scan Files
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent className="p-0">
+                    {engineStatus !== "connected" ? (
+                      <p className="px-4 py-6 text-sm text-muted-foreground text-center">
+                        Connect to the engine to manage storage paths.
+                      </p>
+                    ) : storagePaths.length === 0 ? (
+                      <div className="flex items-center justify-center py-10">
+                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : (
+                      <>
+                        {pathError && (
+                          <div className="mx-4 mb-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
+                            <AlertCircle className="mr-1.5 inline h-4 w-4" />
+                            {pathError}
+                          </div>
+                        )}
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b bg-muted/30">
+                              <th className="py-2 pl-4 pr-3 text-left text-xs font-medium text-muted-foreground w-36">Location</th>
+                              <th className="py-2 px-3 text-left text-xs font-medium text-muted-foreground">Path</th>
+                              <th className="py-2 px-3 text-right text-xs font-medium text-muted-foreground">Contents</th>
+                              <th className="py-2 pr-4 pl-2 w-20" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {userPaths.map((p) => (
+                              <PathRow key={p.name} p={p} editable={true} />
+                            ))}
+                          </tbody>
+                        </table>
+                      </>
+                    )}
                   </CardContent>
                 </Card>
-              )}
-            </>
-          )}
+
+                {/* ── Internal paths table ── */}
+                {internalPaths.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                        <HardDrive className="h-4 w-4" /> Internal Directories
+                      </CardTitle>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Engine internals — read-only here. These paths follow OS conventions and change only on reinstall.
+                      </p>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b bg-muted/30">
+                            <th className="py-2 pl-4 pr-3 text-left text-xs font-medium text-muted-foreground w-36">Directory</th>
+                            <th className="py-2 px-3 text-left text-xs font-medium text-muted-foreground">Path</th>
+                            <th className="py-2 px-3 text-right text-xs font-medium text-muted-foreground">Contents</th>
+                            <th className="py-2 pr-4 pl-2 w-20" />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {internalPaths.map((p) => (
+                            <PathRow key={p.name} p={p} editable={false} />
+                          ))}
+                        </tbody>
+                      </table>
+                      <div className="px-4 py-3 border-t">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs text-muted-foreground"
+                          onClick={() => void loadPathStats(internalPaths.map((p) => p.name))}
+                          disabled={engineStatus !== "connected"}
+                        >
+                          <Layers className="h-3.5 w-3.5" /> Scan Internal Directories
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
+            );
+          })()}
 
           {/* ── Proxy Tab ────────────────────────────────────── */}
           {activeTab === "proxy" && (
@@ -2569,8 +2917,26 @@ export function Settings({
                         </div>
                         <div className="flex gap-2">
                           {updateStatus?.status === "installed" ? (
-                            <Button size="sm" onClick={() => updateActions?.restart()}>
-                              <RefreshCw className="h-4 w-4" /> Restart
+                            <Button
+                              size="sm"
+                              disabled={updateRestarting}
+                              onClick={async () => {
+                                setUpdateRestarting(true);
+                                await new Promise((r) => setTimeout(r, 400));
+                                await updateActions?.restart();
+                              }}
+                            >
+                              {updateRestarting ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                  Restarting…
+                                </>
+                              ) : (
+                                <>
+                                  <RefreshCw className="h-4 w-4" />
+                                  Restart
+                                </>
+                              )}
                             </Button>
                           ) : updateStatus?.status === "available" ? (
                             <>

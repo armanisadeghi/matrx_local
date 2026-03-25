@@ -78,6 +78,13 @@ export interface StoragePath {
   user_visible: boolean; // whether to show in Settings UI
 }
 
+export interface StoragePathStats {
+  name: string;
+  file_count: number;
+  size_bytes: number;
+  exists: boolean;
+}
+
 export interface SystemInfo {
   platform: string;
   architecture: string;
@@ -247,6 +254,11 @@ class EngineAPI {
     });
     if (!resp.ok) throw new Error(`Failed to reset path: ${resp.status}`);
     return resp.json();
+  }
+
+  /** Get file count and total size for a named storage path. */
+  async getStoragePathStats(name: string): Promise<StoragePathStats> {
+    return this.request<StoragePathStats>(`/settings/paths/${name}/stats`);
   }
 
   // ── AI provider status ─────────────────────────────────────────────────

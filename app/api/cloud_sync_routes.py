@@ -125,7 +125,17 @@ async def update_cloud_settings(req: SettingsUpdateRequest) -> dict:
     sync = get_settings_sync()
     sync.set_many(req.settings)
 
-    # Attempt to push to cloud if configured
+    # If instance_name changed, keep InstanceManager in sync and re-register
+    # so app_instances in Supabase reflects the new name immediately.
+    if "instance_name" in req.settings:
+        new_name = str(req.settings["instance_name"])
+        mgr = get_instance_manager()
+        mgr.instance_name = new_name
+        if sync.is_configured:
+            registration = mgr.get_registration_payload()
+            await sync.register_instance(registration)
+
+    # Attempt to push settings blob to cloud if configured
     push_result = None
     if sync.is_configured:
         push_result = await sync.push_to_cloud()

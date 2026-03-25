@@ -11,7 +11,7 @@
  * cloud AI models from the engine database.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import {
   Settings2,
   Palette,
@@ -29,6 +29,10 @@ import {
   RefreshCw,
   Star,
   Cpu,
+  CheckCircle2,
+  AlertCircle,
+  CloudOff,
+  Cloud,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,50 +57,161 @@ import {
   type ConfigSection,
 } from "@/hooks/use-configurations";
 import { useConfigCatalogs } from "@/hooks/use-config-catalogs";
-import type { AppSettings } from "@/lib/settings";
+import type { AppSettings, SyncResult } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 
 // ── Section save/cancel bar ──────────────────────────────────────────────────
 
+/**
+ * Shows Save/Cancel when dirty.
+ * After saving, shows a per-step status row (local ✓, engine ✓/✗, cloud ✓/✗)
+ * that auto-clears after 6 seconds.
+ */
 function SectionActions({
   section,
   dirty,
   saving,
+  saveError,
+  lastSyncResult,
   onSave,
   onCancel,
 }: {
   section: ConfigSection;
   dirty: boolean;
   saving: boolean;
+  saveError: string | null;
+  lastSyncResult: SyncResult | null;
   onSave: (s: ConfigSection) => void;
   onCancel: (s: ConfigSection) => void;
 }) {
-  if (!dirty) return null;
+  const [recentResult, setRecentResult] = useState<SyncResult | null>(null);
+  const [recentError, setRecentError] = useState<string | null>(null);
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // When a save completes (saving goes false and we have a result), capture it
+  // and auto-clear after 6 seconds.
+  useEffect(() => {
+    if (!saving && lastSyncResult) {
+      setRecentResult(lastSyncResult);
+      setRecentError(saveError);
+      if (clearTimer.current) clearTimeout(clearTimer.current);
+      clearTimer.current = setTimeout(() => {
+        setRecentResult(null);
+        setRecentError(null);
+      }, 6000);
+    }
+    return () => {
+      if (clearTimer.current) clearTimeout(clearTimer.current);
+    };
+  }, [saving, lastSyncResult, saveError]);
+
+  // Clear status when the section becomes dirty again (user made new changes)
+  useEffect(() => {
+    if (dirty) {
+      setRecentResult(null);
+      setRecentError(null);
+    }
+  }, [dirty]);
+
+  const showStatus = !dirty && !saving && recentResult !== null;
+
+  if (!dirty && !saving && !showStatus) return null;
+
   return (
-    <div className="flex items-center gap-2 pt-3 border-t mt-3">
-      <Button
-        size="sm"
-        onClick={() => onSave(section)}
-        disabled={saving}
-        className="gap-1.5"
-      >
-        {saving ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Save className="h-3.5 w-3.5" />
-        )}
-        Save
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => onCancel(section)}
-        disabled={saving}
-        className="gap-1.5"
-      >
-        <RotateCcw className="h-3.5 w-3.5" />
-        Cancel
-      </Button>
+    <div className="pt-3 border-t mt-3 space-y-2">
+      {(dirty || saving) && (
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => onSave(section)}
+            disabled={saving}
+            className="gap-1.5"
+          >
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
+            {saving ? "Saving…" : "Save"}
+          </Button>
+          {!saving && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onCancel(section)}
+              className="gap-1.5"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Cancel
+            </Button>
+          )}
+        </div>
+      )}
+
+      {showStatus && (
+        <SyncStatusRow result={recentResult!} error={recentError} />
+      )}
+    </div>
+  );
+}
+
+function SyncStatusRow({ result, error }: { result: SyncResult; error: string | null }) {
+  const engineOk = result.engine === "ok";
+  const engineSkipped = result.engine === "skipped";
+  const cloudOk = result.cloud === "ok";
+  const cloudSkipped = result.cloud === "skipped";
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-xs">
+      {/* Local always ok */}
+      <span className="flex items-center gap-1 text-green-500">
+        <CheckCircle2 className="h-3 w-3" />
+        Saved locally
+      </span>
+
+      {/* Engine */}
+      {engineOk && (
+        <span className="flex items-center gap-1 text-green-500">
+          <CheckCircle2 className="h-3 w-3" />
+          Engine synced
+        </span>
+      )}
+      {engineSkipped && (
+        <span className="flex items-center gap-1 text-muted-foreground">
+          <CloudOff className="h-3 w-3" />
+          Engine offline
+        </span>
+      )}
+      {!engineOk && !engineSkipped && (
+        <span className="flex items-center gap-1 text-destructive" title={result.engine}>
+          <AlertCircle className="h-3 w-3" />
+          Engine error
+        </span>
+      )}
+
+      {/* Cloud */}
+      {engineOk && cloudOk && (
+        <span className="flex items-center gap-1 text-green-500">
+          <Cloud className="h-3 w-3" />
+          Cloud synced
+        </span>
+      )}
+      {engineOk && cloudSkipped && (
+        <span className="flex items-center gap-1 text-muted-foreground">
+          <CloudOff className="h-3 w-3" />
+          Not signed in
+        </span>
+      )}
+      {engineOk && !cloudOk && !cloudSkipped && (
+        <span className="flex items-center gap-1 text-amber-500" title={result.cloud}>
+          <AlertCircle className="h-3 w-3" />
+          Cloud sync failed
+        </span>
+      )}
+
+      {error && (
+        <p className="w-full text-destructive">{error}</p>
+      )}
     </div>
   );
 }
@@ -496,7 +611,7 @@ function ScrapeDelayRow({
 
 export function Configurations() {
   const [state, actions] = useConfigurations();
-  const { draft, sectionDirty, isGlobalDirty, isSaving } = state;
+  const { draft, sectionDirty, isGlobalDirty, isSaving, saveError, lastSyncResult } = state;
   const catalogs = useConfigCatalogs();
 
   const set = actions.set;
@@ -508,6 +623,15 @@ export function Configurations() {
     (s: ConfigSection) => actions.cancelSection(s),
     [actions]
   );
+
+  // Convenience: common props for every SectionActions instance
+  const sectionActionProps = {
+    saving: isSaving,
+    saveError,
+    lastSyncResult: lastSyncResult ?? null,
+    onSave: handleSave,
+    onCancel: handleCancel,
+  };
 
   if (!draft) {
     return (
@@ -572,9 +696,7 @@ export function Configurations() {
                 <SectionActions
                   section="application"
                   dirty={sectionDirty.application}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -612,9 +734,7 @@ export function Configurations() {
                 <SectionActions
                   section="appearance"
                   dirty={sectionDirty.appearance}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -724,9 +844,7 @@ export function Configurations() {
                 <SectionActions
                   section="chatAi"
                   dirty={sectionDirty.chatAi}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -821,9 +939,7 @@ export function Configurations() {
                 <SectionActions
                   section="localLlm"
                   dirty={sectionDirty.localLlm}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -940,9 +1056,7 @@ export function Configurations() {
                 <SectionActions
                   section="localLlmSampling"
                   dirty={sectionDirty.localLlmSampling}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -1060,9 +1174,7 @@ export function Configurations() {
                 <SectionActions
                   section="voice"
                   dirty={sectionDirty.voice}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -1154,9 +1266,7 @@ export function Configurations() {
                 <SectionActions
                   section="wakeWord"
                   dirty={sectionDirty.wakeWord}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -1183,9 +1293,7 @@ export function Configurations() {
                 <SectionActions
                   section="scraping"
                   dirty={sectionDirty.scraping}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -1223,9 +1331,7 @@ export function Configurations() {
                 <SectionActions
                   section="proxy"
                   dirty={sectionDirty.proxy}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -1264,9 +1370,7 @@ export function Configurations() {
                 <SectionActions
                   section="notifications"
                   dirty={sectionDirty.notifications}
-                  saving={isSaving}
-                  onSave={handleSave}
-                  onCancel={handleCancel}
+                  {...sectionActionProps}
                 />
               </CardContent>
             </Card>
@@ -1277,22 +1381,24 @@ export function Configurations() {
       </ScrollArea>
 
       {/* ── Global floating save bar ─────────────────────────────── */}
-      {isGlobalDirty && (
-        <div className="border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75 px-6 py-3 flex items-center justify-between">
+      {(isGlobalDirty || isSaving) && (
+        <div className="border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75 px-6 py-3 flex items-center justify-between gap-4">
           <p className="text-sm text-muted-foreground">
-            You have unsaved changes
+            {isSaving ? "Saving…" : "You have unsaved changes"}
           </p>
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={actions.cancelAll}
-              disabled={isSaving}
-              className="gap-1.5"
-            >
-              <X className="h-3.5 w-3.5" />
-              Discard all
-            </Button>
+            {!isSaving && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={actions.cancelAll}
+                disabled={isSaving}
+                className="gap-1.5"
+              >
+                <X className="h-3.5 w-3.5" />
+                Discard all
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={actions.saveAll}

@@ -207,6 +207,48 @@ async def reset_path_to_default(name: str) -> dict[str, Any]:
     return entry
 
 
+class PathStats(BaseModel):
+    name: str
+    file_count: int
+    size_bytes: int
+    exists: bool
+
+
+@router.get("/paths/{name}/stats", response_model=PathStats)
+async def get_path_stats(name: str) -> dict[str, Any]:
+    """Return file count and total size for a storage path."""
+    import asyncio
+    from pathlib import Path as _Path
+
+    entries = all_paths()
+    entry = next((e for e in entries if e["name"] == name), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Path '{name}' not found")
+
+    target = _Path(entry["current"])
+    if not target.exists():
+        return {"name": name, "file_count": 0, "size_bytes": 0, "exists": False}
+
+    def _count() -> tuple[int, int]:
+        count = 0
+        total = 0
+        try:
+            for f in target.rglob("*"):
+                if f.is_file():
+                    count += 1
+                    try:
+                        total += f.stat().st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        return count, total
+
+    loop = asyncio.get_event_loop()
+    file_count, size_bytes = await loop.run_in_executor(None, _count)
+    return {"name": name, "file_count": file_count, "size_bytes": size_bytes, "exists": True}
+
+
 # ── AI provider API keys ───────────────────────────────────────────────────────
 #
 # Keys are stored (base64-obfuscated) in the local SQLite app_settings blob and
