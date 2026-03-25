@@ -509,20 +509,36 @@ def _start_parent_watchdog() -> None:
     by PID 1 (launchd/init/System) and keeps running forever with ports bound.
     This is the primary cause of orphaned `aimatrx-engine` processes.
 
-    This watchdog thread checks os.getppid() every 2 seconds. On macOS/Linux,
-    when the parent dies the OS reparents us to PID 1. On Windows, PPID doesn't
-    change but the parent PID becomes invalid (not running).
+    On Windows, Tauri spawns the sidecar via an intermediate pipe/shim helper
+    whose lifetime is shorter than the Tauri app itself.  os.getppid() therefore
+    returns the PID of that short-lived launcher, which exits almost immediately
+    after the child starts — making the watchdog falsely believe the parent died
+    and triggering an immediate self-termination.
+
+    To fix this, Tauri passes TAURI_APP_PID (the Tauri process's own PID) as an
+    environment variable.  On Windows we watch that PID instead of os.getppid().
+    On macOS/Linux the OS guarantees that os.getppid() stays correct (it becomes
+    1 only when the true parent dies), so we use it there unchanged.
     """
     import time
 
-    parent_pid = os.getppid()
+    if sys.platform == "win32":
+        # Prefer the explicit Tauri app PID passed via env; fall back to PPID
+        # only if the env var is absent (e.g. standalone / dev mode).
+        tauri_pid_str = os.environ.get("TAURI_APP_PID", "")
+        if tauri_pid_str.isdigit():
+            parent_pid = int(tauri_pid_str)
+        else:
+            parent_pid = os.getppid()
+    else:
+        parent_pid = os.getppid()
+
     if parent_pid <= 1:
         return
 
     def _watch() -> None:
         while not _shutdown_event.is_set():
             time.sleep(2)
-            current_ppid = os.getppid()
             parent_gone = False
 
             if sys.platform == "win32":
@@ -531,6 +547,7 @@ def _start_parent_watchdog() -> None:
                 except (ProcessLookupError, PermissionError, OSError):
                     parent_gone = True
             else:
+                current_ppid = os.getppid()
                 parent_gone = (current_ppid == 1 or current_ppid != parent_pid)
 
             if parent_gone:
