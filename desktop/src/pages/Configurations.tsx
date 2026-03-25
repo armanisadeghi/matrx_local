@@ -197,6 +197,301 @@ function fmtSize(gb: number): string {
   return `${gb.toFixed(1)} GB`;
 }
 
+// ── Update check interval dropdown ──────────────────────────────────────────
+
+const UPDATE_INTERVAL_PRESETS: { label: string; value: number }[] = [
+  { label: "Every 5 minutes", value: 5 },
+  { label: "Every 15 minutes", value: 15 },
+  { label: "Every 30 minutes", value: 30 },
+  { label: "Hourly", value: 60 },
+  { label: "Every 2 hours", value: 120 },
+  { label: "Every 4 hours", value: 240 },
+  { label: "Every 8 hours", value: 480 },
+  { label: "Once a day", value: 1440 },
+];
+
+const PRESET_VALUES = new Set<number>(UPDATE_INTERVAL_PRESETS.map((p) => p.value));
+
+function UpdateIntervalRow({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const isCustom = !PRESET_VALUES.has(value);
+  const [customInput, setCustomInput] = useState(isCustom ? String(value) : "");
+
+  const handleSelect = (v: string) => {
+    if (v === "__custom__") {
+      setCustomInput(String(value));
+      return;
+    }
+    onChange(Number(v));
+  };
+
+  const selectValue = isCustom ? "__custom__" : String(value);
+
+  return (
+    <SettingRow label="Update check frequency" description="How often the app checks for new updates">
+      <div className="flex items-center gap-2">
+        <Select value={selectValue} onValueChange={handleSelect}>
+          <SelectTrigger className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {UPDATE_INTERVAL_PRESETS.map((p) => (
+              <SelectItem key={p.value} value={String(p.value)}>
+                {p.label}
+              </SelectItem>
+            ))}
+            <Separator className="my-1" />
+            <SelectItem value="__custom__">Custom...</SelectItem>
+          </SelectContent>
+        </Select>
+        {(isCustom || selectValue === "__custom__") && (
+          <div className="flex items-center gap-1">
+            <Input
+              type="number"
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              onBlur={() => {
+                const v = Math.max(5, Number(customInput) || 60);
+                setCustomInput(String(v));
+                onChange(v);
+              }}
+              min={5}
+              className="w-20 text-right"
+            />
+            <span className="text-xs text-muted-foreground">min</span>
+          </div>
+        )}
+      </div>
+    </SettingRow>
+  );
+}
+
+// ── GPU layers dropdown ──────────────────────────────────────────────────────
+
+const GPU_LAYERS_PRESETS: { label: string; value: number }[] = [
+  { label: "Auto (recommended)", value: -1 },
+  { label: "None (CPU only)", value: 0 },
+  { label: "8 layers", value: 8 },
+  { label: "16 layers", value: 16 },
+  { label: "24 layers", value: 24 },
+  { label: "32 layers", value: 32 },
+  { label: "All layers", value: 999 },
+];
+
+const GPU_PRESET_VALUES = new Set<number>(GPU_LAYERS_PRESETS.map((p) => p.value));
+
+function GpuLayersRow({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const isCustom = !GPU_PRESET_VALUES.has(value);
+  const [customInput, setCustomInput] = useState(isCustom ? String(value) : "");
+
+  const handleSelect = (v: string) => {
+    if (v === "__custom__") {
+      setCustomInput(String(value));
+      return;
+    }
+    onChange(Number(v));
+  };
+
+  const selectValue = isCustom ? "__custom__" : String(value);
+
+  return (
+    <div className="flex items-center gap-2">
+      <Select value={selectValue} onValueChange={handleSelect}>
+        <SelectTrigger className="w-44">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {GPU_LAYERS_PRESETS.map((p) => (
+            <SelectItem key={p.value} value={String(p.value)}>
+              {p.label}
+            </SelectItem>
+          ))}
+          <Separator className="my-1" />
+          <SelectItem value="__custom__">Custom...</SelectItem>
+        </SelectContent>
+      </Select>
+      {(isCustom || selectValue === "__custom__") && (
+        <div className="flex items-center gap-1">
+          <Input
+            type="number"
+            value={customInput}
+            onChange={(e) => setCustomInput(e.target.value)}
+            onBlur={() => {
+              const v = Math.max(0, Number(customInput) || 0);
+              setCustomInput(String(v));
+              onChange(v);
+            }}
+            min={0}
+            max={999}
+            className="w-20 text-right"
+          />
+          <span className="text-xs text-muted-foreground">layers</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Processing timeout dropdown ──────────────────────────────────────────────
+
+const TIMEOUT_PRESETS: { label: string; value: number }[] = [
+  { label: "5 seconds", value: 5000 },
+  { label: "10 seconds", value: 10000 },
+  { label: "15 seconds", value: 15000 },
+  { label: "30 seconds", value: 30000 },
+  { label: "1 minute", value: 60000 },
+  { label: "2 minutes", value: 120000 },
+  { label: "5 minutes", value: 300000 },
+];
+
+const TIMEOUT_PRESET_VALUES = new Set<number>(TIMEOUT_PRESETS.map((p) => p.value));
+
+function ProcessingTimeoutRow({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const isCustom = !TIMEOUT_PRESET_VALUES.has(value);
+  const [customInput, setCustomInput] = useState(isCustom ? String(Math.round(value / 1000)) : "");
+
+  const handleSelect = (v: string) => {
+    if (v === "__custom__") {
+      setCustomInput(String(Math.round(value / 1000)));
+      return;
+    }
+    onChange(Number(v));
+  };
+
+  const selectValue = isCustom ? "__custom__" : String(value);
+
+  return (
+    <SettingRow label="Processing timeout" description="Force-reset if transcription gets stuck">
+      <div className="flex items-center gap-2">
+        <Select value={selectValue} onValueChange={handleSelect}>
+          <SelectTrigger className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {TIMEOUT_PRESETS.map((p) => (
+              <SelectItem key={p.value} value={String(p.value)}>
+                {p.label}
+              </SelectItem>
+            ))}
+            <Separator className="my-1" />
+            <SelectItem value="__custom__">Custom...</SelectItem>
+          </SelectContent>
+        </Select>
+        {(isCustom || selectValue === "__custom__") && (
+          <div className="flex items-center gap-1">
+            <Input
+              type="number"
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              onBlur={() => {
+                const secs = Math.max(1, Number(customInput) || 15);
+                setCustomInput(String(secs));
+                onChange(secs * 1000);
+              }}
+              min={1}
+              className="w-16 text-right"
+            />
+            <span className="text-xs text-muted-foreground">sec</span>
+          </div>
+        )}
+      </div>
+    </SettingRow>
+  );
+}
+
+// ── Scrape delay dropdown ────────────────────────────────────────────────────
+
+const SCRAPE_DELAY_PRESETS: { label: string; value: string }[] = [
+  { label: "No delay", value: "0" },
+  { label: "Half a second", value: "0.5" },
+  { label: "1 second", value: "1.0" },
+  { label: "2 seconds", value: "2.0" },
+  { label: "3 seconds", value: "3.0" },
+  { label: "5 seconds", value: "5.0" },
+  { label: "10 seconds", value: "10.0" },
+  { label: "30 seconds", value: "30.0" },
+];
+
+const SCRAPE_PRESET_VALUES = new Set<string>(SCRAPE_DELAY_PRESETS.map((p) => p.value));
+
+function ScrapeDelayRow({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const isCustom = !SCRAPE_PRESET_VALUES.has(value);
+  const [customInput, setCustomInput] = useState(isCustom ? value : "");
+
+  const handleSelect = (v: string) => {
+    if (v === "__custom__") {
+      setCustomInput(value);
+      return;
+    }
+    onChange(v);
+  };
+
+  const selectValue = isCustom ? "__custom__" : value;
+
+  return (
+    <SettingRow label="Delay between requests" description="Pause between page loads to avoid getting blocked">
+      <div className="flex items-center gap-2">
+        <Select value={selectValue} onValueChange={handleSelect}>
+          <SelectTrigger className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SCRAPE_DELAY_PRESETS.map((p) => (
+              <SelectItem key={p.value} value={p.value}>
+                {p.label}
+              </SelectItem>
+            ))}
+            <Separator className="my-1" />
+            <SelectItem value="__custom__">Custom...</SelectItem>
+          </SelectContent>
+        </Select>
+        {(isCustom || selectValue === "__custom__") && (
+          <div className="flex items-center gap-1">
+            <Input
+              type="number"
+              value={customInput}
+              onChange={(e) => setCustomInput(e.target.value)}
+              onBlur={() => {
+                const v = Math.max(0, Number(customInput) || 1);
+                const s = v.toFixed(1);
+                setCustomInput(s);
+                onChange(s);
+              }}
+              min={0}
+              step={0.5}
+              className="w-16 text-right"
+            />
+            <span className="text-xs text-muted-foreground">sec</span>
+          </div>
+        )}
+      </div>
+    </SettingRow>
+  );
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 
 export function Configurations() {
