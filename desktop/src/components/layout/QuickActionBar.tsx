@@ -497,7 +497,7 @@ export function QuickActionBar(props: QuickActionBarProps) {
         engineStatus={engineStatus}
         userId={userId}
       />
-      <QuickScrapeModal open={scrapeOpen} onOpenChange={setScrapeOpen} userId={userId} />
+      <QuickScrapeModal open={scrapeOpen} onOpenChange={setScrapeOpen} />
       <QuickTranscriptModal
         open={transcriptOpen}
         onOpenChange={setTranscriptOpen}
