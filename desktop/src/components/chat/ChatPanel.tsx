@@ -252,6 +252,7 @@ export function ChatPanel({
           onModelChange={setModel}
           onModeChange={setMode}
           engineReady={engineStatus === "connected"}
+          autoFocus={compact}
           agents={[...builtins, ...userAgents, ...sharedAgents]}
           selectedAgentId={activeAgent?.id ?? null}
           onAgentChange={(agentId) => {

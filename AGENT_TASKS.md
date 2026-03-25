@@ -19,7 +19,11 @@
 
 ### P2 — Features & polish
 
-- [ ] **Image generation engine** — Integrate Python `diffusers` library as a new FastAPI route (`POST /tools/image-gen`). Support HunyuanImage-3.0-Distil (12 GB VRAM) and FLUX.2-klein-4B (8 GB VRAM). Model download to `~/.matrx/image-models/`. Add VRAM detection gating. Frontend: new Image Gen tab in LocalModels with prompt input, parameter controls, download/run/progress UI, result display. See `desktop/src/pages/LocalModels.tsx` `MediaModelsTab` stub for model list.
+- [x] **Image generation engine** — Integrated Python `diffusers` library as optional feature (2026-03-25). Routes at `/image-gen/*`. Models: FLUX.1 Schnell, FLUX.1 Dev, HunyuanDiT v1.2, SDXL Turbo. 6 workflow presets. Full UI in LocalModels "Image & Video" tab. Install deps: `uv sync --extra image-gen`. See `app/services/image_gen/`, `app/api/image_gen_routes.py`.
+- [ ] **Image gen: VRAM detection gating** — Surface hardware VRAM from `/hardware` in the image gen model picker to mark models as "incompatible" for the user's GPU. Currently shows VRAM requirements but doesn't cross-reference detected hardware.
+- [ ] **Image gen: model download progress** — Hugging Face `from_pretrained` downloads silently. Wire up HF `tqdm` callback or `huggingface_hub.snapshot_download` with progress events via SSE so the UI shows download progress.
+- [ ] **Image gen: persistent cache path** — Currently models download to HF default cache (`~/.cache/huggingface`). Consider moving to `~/.matrx/image-models/` for consistency with other matrx data paths.
+- [ ] **Image gen: FLUX.1 Dev token gate** — FLUX.1 Dev requires a HF token AND accepting license on HF. Surface a pre-check in the UI: call `/settings/api-keys/huggingface/value` and show a warning if absent before loading.
 - [ ] **Video generation engine** — Integrate Python `diffusers` for Kandinsky-5.0-T2V-Pro and Wan2.2-TI2V-5B. Route: `POST /tools/video-gen`. Similar architecture to image gen. GPU/VRAM requirement is higher (24+ GB for Kandinsky; 8–12 GB for Wan2.2-5B).
 - [ ] **ComfyUI sidecar** — Evaluate embedding ComfyUI as an optional second sidecar for advanced image/video generation workflows. Would replace or augment the Diffusers integration. See `local-llm-inference-integration.md` for sidecar pattern.
 - [ ] **Gemma-3n vision** — Gemma-3n-E4B has native multimodal (text+image+audio) but llama.cpp support is text-only currently. When llama.cpp adds gemma3n vision pipeline, enable vision for this model (update `vision_rating` from 0 to 3 in `model_selector.rs`, add mmproj download).

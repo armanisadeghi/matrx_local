@@ -39,7 +39,6 @@ import {
   ThumbsDown,
   GitFork,
   Image,
-  Video,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
 import { Button } from "@/components/ui/button";
@@ -65,6 +64,17 @@ import { useNavigate } from "react-router-dom";
 import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
 import type { SystemPrompt } from "@/lib/system-prompts";
 import { ModelRepoAnalyzer } from "@/components/llm/ModelRepoAnalyzer";
+import {
+  engine,
+  getImageGenStatus,
+  listImageGenModels,
+  listImageGenPresets,
+  loadImageGenModel,
+  unloadImageGenModel,
+  generateImage,
+  generateImageFromWorkflow,
+} from "@/lib/api";
+import type { ImageGenModelInfo, ImageGenWorkflowPreset, ImageGenStatus } from "@/lib/api";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
 
@@ -3065,136 +3075,603 @@ export function LocalModels() {
   );
 }
 
-// ── Image & Video Models Tab ──────────────────────────────────────────────
+// ── Image Generation Tab ─────────────────────────────────────────────────
 
-const IMAGE_MODELS = [
-  {
-    name: "HunyuanImage 3.0",
-    provider: "Tencent",
-    description: "#1 open-source image generator. 83B parameter native multimodal model. Best quality for text-to-image.",
-    vram: "24–48 GB (FP16) / Distilled: 12 GB",
-    license: "Tencent Hunyuan Community License",
-    url: "https://huggingface.co/tencent/HunyuanImage-3.0",
-    urlDistil: "https://huggingface.co/tencent/HunyuanImage-3.0-Instruct-Distil",
-    arenaRank: "#13 text-to-image (score 1151)",
-    compatible: false,
-    note: "Requires Python Diffusers pipeline",
-  },
-  {
-    name: "FLUX.2-klein-4B",
-    provider: "Black Forest Labs",
-    description: "Lightweight 4B image generator with image editing support. Runs on consumer GPUs (8–12 GB VRAM).",
-    vram: "8–12 GB",
-    license: "Apache 2.0",
-    url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B",
-    arenaRank: "#41 (score 1020)",
-    compatible: false,
-    note: "Requires Python Diffusers pipeline",
-  },
-] as const;
+function StarRating({ value, max = 5 }: { value: number; max?: number }) {
+  return (
+    <span className="flex gap-0.5">
+      {Array.from({ length: max }).map((_, i) => (
+        <span
+          key={i}
+          className={`h-2 w-2 rounded-full ${i < value ? "bg-violet-500" : "bg-muted-foreground/20"}`}
+        />
+      ))}
+    </span>
+  );
+}
 
-const VIDEO_MODELS = [
-  {
-    name: "Kandinsky 5.0 T2V Pro",
-    provider: "Kandinsky Lab",
-    description: "#1 open-source text-to-video. MIT license. Available in 5s and 10s variants. High quality video generation.",
-    vram: "24+ GB",
-    license: "MIT",
-    url: "https://huggingface.co/kandinskylab/Kandinsky-5.0-T2V-Pro-sft-5s-Diffusers",
-    arenaRank: "#26 text-to-video (score 1179)",
-    compatible: false,
-    note: "Requires Python Diffusers pipeline",
-  },
-  {
-    name: "Wan2.2 T2V 5B",
-    provider: "Alibaba (Wan-AI)",
-    description: "Lightweight text-to-video and image-to-video. 5B model runs on consumer GPUs. Apache 2.0.",
-    vram: "8–12 GB",
-    license: "Apache 2.0",
-    url: "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B",
-    arenaRank: "#30 (score 1130)",
-    compatible: false,
-    note: "Requires Python Diffusers pipeline",
-  },
-] as const;
+type ImageGenView = "picker" | "generate" | "workflow";
 
 function MediaModelsTab() {
-  return (
-    <div className="space-y-6 pb-8">
-      {/* Explainer banner */}
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 flex items-start gap-3">
-        <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-        <div className="text-sm space-y-1">
-          <p className="font-medium text-foreground">Image & video generation coming soon</p>
-          <p className="text-muted-foreground text-xs leading-relaxed">
-            Image and video generation models use diffusion pipelines — not llama.cpp/GGUF. They require a separate
-            Python engine (Diffusers / ComfyUI) that is not yet integrated. The models below are the best available
-            open-source options. Click any card to view the model on HuggingFace.
+  const [igStatus, setIgStatus] = useState<ImageGenStatus | null>(null);
+  const [models, setModels] = useState<ImageGenModelInfo[]>([]);
+  const [presets, setPresets] = useState<ImageGenWorkflowPreset[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // generation state
+  const [view, setView] = useState<ImageGenView>("picker");
+  const [selectedModel, setSelectedModel] = useState<ImageGenModelInfo | null>(null);
+
+  // free-form generate
+  const [prompt, setPrompt] = useState("");
+  const [negPrompt, setNegPrompt] = useState("");
+  const [steps, setSteps] = useState<number | null>(null);
+  const [guidance, setGuidance] = useState<number | null>(null);
+
+  // workflow generate
+  const [workflowSubject, setWorkflowSubject] = useState("");
+  const [workflowPresetId, setWorkflowPresetId] = useState<string>("");
+
+  // output
+  const [generating, setGenerating] = useState(false);
+  const [modelLoading, setModelLoading] = useState(false);
+  const [generatedImage, setGeneratedImage] = useState<{ b64: string; elapsed: number; width: number; height: number } | null>(null);
+  const [genError, setGenError] = useState<string | null>(null);
+
+  function getBaseUrl(): string | null {
+    return engine.engineUrl;
+  }
+
+  const fetchStatus = useCallback(async () => {
+    const base = getBaseUrl();
+    if (!base) {
+      setError("Engine not connected");
+      setLoading(false);
+      return;
+    }
+    try {
+      const [status, modelList, presetList] = await Promise.all([
+        getImageGenStatus(base),
+        listImageGenModels(base),
+        listImageGenPresets(base),
+      ]);
+      setIgStatus(status);
+      setModels(modelList);
+      setPresets(presetList);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load image gen status");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchStatus();
+  }, [fetchStatus]);
+
+  async function handleLoadModel(model: ImageGenModelInfo) {
+    const base = getBaseUrl();
+    if (!base) return;
+    setModelLoading(true);
+    setGenError(null);
+    try {
+      const result = await loadImageGenModel(base, model.model_id);
+      if (result.success) {
+        setSelectedModel(model);
+        setSteps(model.recommended_steps);
+        setGuidance(model.recommended_guidance);
+        setView("generate");
+        await fetchStatus();
+      } else {
+        setGenError(result.error ?? "Failed to load model");
+      }
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : "Failed to load model");
+    } finally {
+      setModelLoading(false);
+    }
+  }
+
+  async function handleUnload() {
+    const base = getBaseUrl();
+    if (!base) return;
+    await unloadImageGenModel(base).catch(() => null);
+    setSelectedModel(null);
+    setGeneratedImage(null);
+    setView("picker");
+    await fetchStatus();
+  }
+
+  async function handleGenerate() {
+    const base = getBaseUrl();
+    if (!base || !selectedModel) return;
+    if (!prompt.trim()) return;
+    setGenerating(true);
+    setGenError(null);
+    setGeneratedImage(null);
+    try {
+      const result = await generateImage(base, {
+        prompt: prompt.trim(),
+        model_id: selectedModel.model_id,
+        negative_prompt: negPrompt.trim() || undefined,
+        steps: steps ?? undefined,
+        guidance: guidance ?? undefined,
+      });
+      if (result.success && result.image_b64) {
+        setGeneratedImage({ b64: result.image_b64, elapsed: result.elapsed_seconds, width: result.width, height: result.height });
+      } else {
+        setGenError(result.error ?? "Generation failed");
+      }
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : "Generation failed");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function handleWorkflowGenerate() {
+    const base = getBaseUrl();
+    if (!base || !workflowPresetId || !workflowSubject.trim()) return;
+    const preset = presets.find((p) => p.preset_id === workflowPresetId);
+    if (!preset) return;
+    setGenerating(true);
+    setGenError(null);
+    setGeneratedImage(null);
+    try {
+      const result = await generateImageFromWorkflow(base, {
+        preset_id: workflowPresetId,
+        subject: workflowSubject.trim(),
+        model_id: selectedModel?.model_id,
+      });
+      if (result.success && result.image_b64) {
+        setGeneratedImage({ b64: result.image_b64, elapsed: result.elapsed_seconds, width: result.width, height: result.height });
+        setView("generate"); // switch to show the image
+      } else {
+        setGenError(result.error ?? "Generation failed");
+      }
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : "Generation failed");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  function handleDownload() {
+    if (!generatedImage) return;
+    const a = document.createElement("a");
+    a.href = `data:image/png;base64,${generatedImage.b64}`;
+    a.download = `matrx-image-${Date.now()}.png`;
+    a.click();
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 gap-3 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span className="text-sm">Checking image generation status…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 flex items-start gap-3">
+        <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+        <div className="text-sm">
+          <p className="font-medium text-foreground">Engine not available</p>
+          <p className="text-muted-foreground text-xs mt-0.5">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not available — deps not installed
+  if (igStatus && !igStatus.available) {
+    return (
+      <div className="space-y-6 pb-8">
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium">Image generation dependencies not installed</p>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{igStatus.unavailable_reason}</p>
+            </div>
+          </div>
+          <div className="rounded bg-muted/60 border px-3 py-2 font-mono text-xs text-foreground">
+            uv sync --extra image-gen
+          </div>
+          <p className="text-xs text-muted-foreground">
+            This installs PyTorch + Diffusers (~3–8 GB). Run in your matrx-local repo directory, then restart the engine.
           </p>
         </div>
-      </div>
 
-      {/* Image generation */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold flex items-center gap-2">
-          <Image className="h-4 w-4 text-violet-500" />
-          Image Generation
-        </h3>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {IMAGE_MODELS.map((m) => (
-            <button
-              key={m.name}
-              className="rounded-lg border bg-card p-4 text-left hover:bg-muted/20 transition-colors space-y-2"
-              onClick={() => openUrl(m.url)}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-medium text-sm">{m.name}</p>
-                  <p className="text-xs text-muted-foreground">{m.provider}</p>
+        {/* Still show the model catalog so the user can plan */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <Image className="h-4 w-4 text-violet-500" />
+            Available Models
+          </h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {models.map((m) => (
+              <div key={m.model_id} className="rounded-lg border bg-card p-4 space-y-2 opacity-70">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-medium text-sm">{m.name}</p>
+                    <p className="text-xs text-muted-foreground">{m.provider}</p>
+                  </div>
+                  <button onClick={() => openUrl(m.model_card_url)} className="shrink-0">
+                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
                 </div>
-                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
+                <div className="flex flex-wrap gap-2 text-[10px]">
+                  <span className="rounded bg-muted px-1.5 py-0.5">VRAM: {m.vram_gb} GB</span>
+                  <span className="rounded bg-muted px-1.5 py-0.5">RAM: {m.ram_gb} GB</span>
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
-              <div className="flex flex-wrap gap-2 text-[10px]">
-                <span className="rounded bg-muted px-1.5 py-0.5">VRAM: {m.vram}</span>
-                <span className="rounded bg-muted px-1.5 py-0.5">{m.license}</span>
-                <span className="rounded bg-muted px-1.5 py-0.5">{m.arenaRank}</span>
-              </div>
-              <p className="text-[10px] text-amber-600 dark:text-amber-400">{m.note}</p>
-            </button>
-          ))}
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Model picker ────────────────────────────────────────────────────────
+  if (view === "picker") {
+    return (
+      <div className="space-y-6 pb-8">
+        {/* Quick workflow strip */}
+        {presets.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Quick workflows</h3>
+              <button
+                onClick={() => setView("workflow")}
+                className="text-xs text-violet-500 hover:underline"
+              >
+                Run a workflow →
+              </button>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {presets.map((p) => (
+                <button
+                  key={p.preset_id}
+                  onClick={() => { setWorkflowPresetId(p.preset_id); setView("workflow"); }}
+                  className="rounded-full border px-3 py-1 text-xs hover:bg-muted/30 transition-colors"
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Currently loaded indicator */}
+        {igStatus?.loaded_model_id && (
+          <div className="flex items-center justify-between rounded-lg border border-green-500/30 bg-green-500/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm">
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <span>Model loaded: <span className="font-medium">{igStatus.loaded_model_id}</span></span>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => {
+                const m = models.find((x) => x.model_id === igStatus.loaded_model_id);
+                if (m) { setSelectedModel(m); setSteps(m.recommended_steps); setGuidance(m.recommended_guidance); setView("generate"); }
+              }}>
+                Generate
+              </Button>
+              <Button size="sm" variant="ghost" onClick={handleUnload}>Unload</Button>
+            </div>
+          </div>
+        )}
+
+        {/* Model grid */}
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <Image className="h-4 w-4 text-violet-500" />
+            Select a model to load
+          </h3>
+          {genError && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive flex items-center gap-2">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              {genError}
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {models.map((m) => {
+              const isLoaded = igStatus?.loaded_model_id === m.model_id;
+              return (
+                <div
+                  key={m.model_id}
+                  className={`rounded-lg border bg-card p-4 space-y-3 transition-colors ${isLoaded ? "border-violet-500/40 bg-violet-500/5" : "hover:bg-muted/10"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-sm">{m.name}</p>
+                      <p className="text-xs text-muted-foreground">{m.provider}</p>
+                    </div>
+                    <button onClick={() => openUrl(m.model_card_url)} className="shrink-0 text-muted-foreground hover:text-foreground">
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      Quality <StarRating value={m.quality_rating} />
+                    </span>
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      Speed <StarRating value={m.speed_rating} />
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 text-[10px]">
+                    <span className="rounded bg-muted px-1.5 py-0.5">VRAM: {m.vram_gb} GB</span>
+                    <span className="rounded bg-muted px-1.5 py-0.5">RAM: {m.ram_gb} GB</span>
+                    <span className="rounded bg-muted px-1.5 py-0.5">{m.recommended_steps} steps</span>
+                    {m.requires_hf_token && (
+                      <span className="rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 px-1.5 py-0.5">HF token required</span>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    variant={isLoaded ? "default" : "outline"}
+                    disabled={modelLoading || igStatus?.is_loading}
+                    onClick={() => {
+                      if (isLoaded) {
+                        setSelectedModel(m);
+                        setSteps(m.recommended_steps);
+                        setGuidance(m.recommended_guidance);
+                        setView("generate");
+                      } else {
+                        void handleLoadModel(m);
+                      }
+                    }}
+                  >
+                    {modelLoading ? (
+                      <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Loading…</>
+                    ) : isLoaded ? (
+                      "Generate →"
+                    ) : (
+                      "Load model"
+                    )}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Workflow view ────────────────────────────────────────────────────────
+  if (view === "workflow") {
+    const preset = presets.find((p) => p.preset_id === workflowPresetId);
+    const resolvedPrompt = preset ? preset.prompt_template.replace("{subject}", workflowSubject || "…") : "";
+
+    return (
+      <div className="space-y-5 pb-8 max-w-xl">
+        <div className="flex items-center gap-2">
+          <button onClick={() => setView("picker")} className="text-xs text-muted-foreground hover:text-foreground">
+            ← Back
+          </button>
+          <span className="text-sm font-semibold">Quick Workflow</span>
+        </div>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Workflow</Label>
+            <div className="flex gap-2 flex-wrap">
+              {presets.map((p) => (
+                <button
+                  key={p.preset_id}
+                  onClick={() => setWorkflowPresetId(p.preset_id)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${workflowPresetId === p.preset_id ? "border-violet-500 bg-violet-500/10 text-violet-600 dark:text-violet-400" : "hover:bg-muted/30"}`}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+            {preset && <p className="text-xs text-muted-foreground">{preset.description}</p>}
+          </div>
+
+          {workflowPresetId && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Subject / Topic</Label>
+              <Input
+                value={workflowSubject}
+                onChange={(e) => setWorkflowSubject(e.target.value)}
+                placeholder={preset?.name === "Photorealistic Portrait" ? "a smiling woman in business attire" : "describe your subject…"}
+                className="text-sm"
+              />
+            </div>
+          )}
+
+          {workflowSubject && preset && (
+            <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">Generated prompt: </span>
+              {resolvedPrompt}
+            </div>
+          )}
+
+          {igStatus?.loaded_model_id && (
+            <div className="text-xs text-muted-foreground">
+              Model: <span className="font-medium text-foreground">{igStatus.loaded_model_id}</span>
+              <button onClick={() => setView("picker")} className="ml-2 text-violet-500 hover:underline">change</button>
+            </div>
+          )}
+
+          {genError && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive flex items-center gap-2">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              {genError}
+            </div>
+          )}
+
+          <Button
+            className="w-full"
+            disabled={generating || !workflowPresetId || !workflowSubject.trim()}
+            onClick={() => { void handleWorkflowGenerate(); }}
+          >
+            {generating ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Generating…</> : "Generate Image"}
+          </Button>
+        </div>
+
+        {generatedImage && (
+          <div className="space-y-2">
+            <img
+              src={`data:image/png;base64,${generatedImage.b64}`}
+              alt="Generated"
+              className="w-full rounded-lg border"
+            />
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>{generatedImage.width}×{generatedImage.height} · {generatedImage.elapsed.toFixed(1)}s</span>
+              <Button size="sm" variant="outline" onClick={handleDownload}>
+                <Download className="h-3.5 w-3.5 mr-1.5" />
+                Download
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Generate view ────────────────────────────────────────────────────────
+  return (
+    <div className="space-y-5 pb-8">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={() => setView("picker")} className="text-xs text-muted-foreground hover:text-foreground">
+            ← Models
+          </button>
+          <span className="text-sm font-semibold">{selectedModel?.name ?? "Image Generation"}</span>
+          {selectedModel && (
+            <Badge variant="outline" className="text-[10px]">{selectedModel.provider}</Badge>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={() => setView("workflow")}>
+            Workflows
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleUnload}>
+            Unload model
+          </Button>
         </div>
       </div>
 
-      {/* Video generation */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold flex items-center gap-2">
-          <Video className="h-4 w-4 text-blue-500" />
-          Video Generation
-        </h3>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {VIDEO_MODELS.map((m) => (
-            <button
-              key={m.name}
-              className="rounded-lg border bg-card p-4 text-left hover:bg-muted/20 transition-colors space-y-2"
-              onClick={() => openUrl(m.url)}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Controls */}
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Prompt</Label>
+            <Textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Describe the image you want to generate…"
+              className="text-sm min-h-[100px] resize-none"
+            />
+          </div>
+
+          {selectedModel?.supports_negative_prompt && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Negative prompt <span className="text-muted-foreground">(what to avoid)</span></Label>
+              <Textarea
+                value={negPrompt}
+                onChange={(e) => setNegPrompt(e.target.value)}
+                placeholder="blurry, low quality, deformed…"
+                className="text-sm min-h-[60px] resize-none"
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Steps <span className="text-muted-foreground">({steps ?? selectedModel?.recommended_steps})</span></Label>
+              <Slider
+                min={1}
+                max={selectedModel?.pipeline_type === "flux" ? 50 : 100}
+                step={1}
+                value={[steps ?? selectedModel?.recommended_steps ?? 20]}
+                onValueChange={([v]) => setSteps(v)}
+              />
+            </div>
+            {selectedModel && selectedModel.recommended_guidance > 0 && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Guidance <span className="text-muted-foreground">({(guidance ?? selectedModel.recommended_guidance).toFixed(1)})</span></Label>
+                <Slider
+                  min={0}
+                  max={20}
+                  step={0.5}
+                  value={[guidance ?? selectedModel.recommended_guidance]}
+                  onValueChange={([v]) => setGuidance(v)}
+                />
+              </div>
+            )}
+          </div>
+
+          {genError && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive flex items-center gap-2">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              {genError}
+            </div>
+          )}
+
+          <Button
+            className="w-full"
+            disabled={generating || !prompt.trim()}
+            onClick={() => { void handleGenerate(); }}
+          >
+            {generating ? (
+              <><Loader2 className="h-4 w-4 animate-spin mr-2" />Generating…</>
+            ) : (
+              <><Image className="h-4 w-4 mr-2" />Generate</>
+            )}
+          </Button>
+
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-1 text-xs"
+              onClick={() => setView("workflow")}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-medium text-sm">{m.name}</p>
-                  <p className="text-xs text-muted-foreground">{m.provider}</p>
-                </div>
-                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+              Use a workflow preset
+            </Button>
+          </div>
+        </div>
+
+        {/* Output */}
+        <div className="space-y-3">
+          {generatedImage ? (
+            <>
+              <img
+                src={`data:image/png;base64,${generatedImage.b64}`}
+                alt="Generated image"
+                className="w-full rounded-lg border object-contain"
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{generatedImage.width}×{generatedImage.height} · {generatedImage.elapsed.toFixed(1)}s</span>
+                <Button size="sm" variant="outline" onClick={handleDownload}>
+                  <Download className="h-3.5 w-3.5 mr-1.5" />
+                  Download PNG
+                </Button>
               </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
-              <div className="flex flex-wrap gap-2 text-[10px]">
-                <span className="rounded bg-muted px-1.5 py-0.5">VRAM: {m.vram}</span>
-                <span className="rounded bg-muted px-1.5 py-0.5">{m.license}</span>
-                <span className="rounded bg-muted px-1.5 py-0.5">{m.arenaRank}</span>
-              </div>
-              <p className="text-[10px] text-amber-600 dark:text-amber-400">{m.note}</p>
-            </button>
-          ))}
+            </>
+          ) : generating ? (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed aspect-square gap-3 text-muted-foreground">
+              <Loader2 className="h-8 w-8 animate-spin text-violet-500" />
+              <span className="text-sm">Generating image…</span>
+              <span className="text-xs">This may take 5–60 seconds depending on your hardware</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed aspect-square gap-3 text-muted-foreground">
+              <Image className="h-10 w-10 opacity-20" />
+              <span className="text-sm">Your generated image will appear here</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

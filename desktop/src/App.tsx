@@ -92,6 +92,60 @@ export default function App() {
     }
   }, [transcriptionState.segments, isCompact]);
 
+  // ---------------------------------------------------------------------------
+  // Background recording mode (no UI change, icon animates, saves on stop)
+  // ---------------------------------------------------------------------------
+  const [bgRecording, setBgRecording] = useState(false);
+  const bgSegmentCountRef = useRef(0);
+  const bgTranscriptRef = useRef("");
+  const bgStartTimeRef = useRef(0);
+
+  useEffect(() => {
+    if (!bgRecording) return;
+    const text = transcriptionState.segments
+      .slice(bgSegmentCountRef.current)
+      .map((s) => s.text)
+      .join(" ")
+      .trim();
+    if (text) {
+      bgTranscriptRef.current = bgTranscriptRef.current
+        ? `${bgTranscriptRef.current} ${text}`
+        : text;
+      bgSegmentCountRef.current = transcriptionState.segments.length;
+    }
+  }, [bgRecording, transcriptionState.segments]);
+
+  const addNotification = notif.addNotification;
+  useEffect(() => {
+    if (!bgRecording && bgTranscriptRef.current && !transcriptionState.isRecording && !transcriptionState.isProcessingTail) {
+      const text = bgTranscriptRef.current;
+      const durationSecs = Math.round((Date.now() - bgStartTimeRef.current) / 1000);
+      const mins = Math.floor(durationSecs / 60);
+      const secs = durationSecs % 60;
+      navigator.clipboard.writeText(text).catch(() => {});
+      addNotification(
+        "Background Recording Saved",
+        `${mins}m ${secs}s transcription copied to clipboard.`,
+        "success",
+      );
+      bgTranscriptRef.current = "";
+      bgSegmentCountRef.current = 0;
+    }
+  }, [bgRecording, transcriptionState.isRecording, transcriptionState.isProcessingTail, addNotification]);
+
+  const toggleBackgroundRecording = useCallback(async () => {
+    if (bgRecording || transcriptionState.isRecording) {
+      setBgRecording(false);
+      await transcriptionActions.stopRecording();
+    } else {
+      bgTranscriptRef.current = "";
+      bgSegmentCountRef.current = transcriptionState.segments.length;
+      bgStartTimeRef.current = Date.now();
+      setBgRecording(true);
+      await transcriptionActions.startRecording();
+    }
+  }, [bgRecording, transcriptionState.isRecording, transcriptionState.segments.length, transcriptionActions]);
+
   const invokeSetCompactMode = useCallback(async (enabled: boolean) => {
     if (!isTauri()) return;
     try {
@@ -347,7 +401,7 @@ export default function App() {
       <WakeWordProvider>
       <PermissionsProvider>
       <AudioDevicesProvider>
-      <TooltipProvider>
+      <TooltipProvider delayDuration={150}>
         <HashRouter>
           <Routes>
             <Route path="/overlay" element={<TranscriptOverlay />} />
@@ -369,6 +423,8 @@ export default function App() {
                       onSignOut={auth.signOut}
                       isRecording={transcriptionState.isRecording}
                       onRecord={enterCompactMode}
+                      onBackgroundRecord={toggleBackgroundRecording}
+                      isBackgroundRecording={bgRecording}
                       transcriptionState={transcriptionState}
                       transcriptionActions={transcriptionActions}
                       tools={tools}

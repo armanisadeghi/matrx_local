@@ -2459,3 +2459,140 @@ export interface HardwareResponse {
 
 // Singleton instance
 export const engine = new EngineAPI();
+
+// ── Image Generation Types ─────────────────────────────────────────────────
+
+export interface ImageGenModelInfo {
+  model_id: string;
+  name: string;
+  provider: string;
+  pipeline_type: string;
+  vram_gb: number;
+  ram_gb: number;
+  description: string;
+  quality_rating: number;
+  speed_rating: number;
+  recommended_steps: number;
+  recommended_guidance: number;
+  supports_negative_prompt: boolean;
+  model_card_url: string;
+  default_width: number;
+  default_height: number;
+  requires_hf_token: boolean;
+  tags: string[];
+}
+
+export interface ImageGenWorkflowPreset {
+  preset_id: string;
+  name: string;
+  description: string;
+  prompt_template: string;
+  negative_prompt: string;
+  suggested_model_id: string;
+  steps: number;
+  guidance: number;
+  width: number;
+  height: number;
+  tags: string[];
+}
+
+export interface ImageGenStatus {
+  available: boolean;
+  unavailable_reason: string | null;
+  loaded_model_id: string | null;
+  is_loading: boolean;
+  load_progress: number;
+}
+
+export interface ImageGenResult {
+  success: boolean;
+  /** Base64-encoded PNG. Use as: `data:image/png;base64,${image_b64}` */
+  image_b64?: string;
+  width: number;
+  height: number;
+  model_id: string;
+  elapsed_seconds: number;
+  error?: string;
+}
+
+// ── Image Generation API helper ────────────────────────────────────────────
+
+function imageGenUrl(baseUrl: string, path: string): string {
+  return `${baseUrl}/image-gen${path}`;
+}
+
+async function imageGenFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  const resp = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body) as { detail?: string };
+      if (parsed.detail) detail = parsed.detail;
+    } catch {
+      // use raw body
+    }
+    throw new Error(detail || `HTTP ${resp.status}`);
+  }
+  return resp.json() as Promise<T>;
+}
+
+export async function getImageGenStatus(baseUrl: string): Promise<ImageGenStatus> {
+  return imageGenFetch<ImageGenStatus>(imageGenUrl(baseUrl, "/status"));
+}
+
+export async function listImageGenModels(baseUrl: string): Promise<ImageGenModelInfo[]> {
+  return imageGenFetch<ImageGenModelInfo[]>(imageGenUrl(baseUrl, "/models"));
+}
+
+export async function listImageGenPresets(baseUrl: string): Promise<ImageGenWorkflowPreset[]> {
+  return imageGenFetch<ImageGenWorkflowPreset[]>(imageGenUrl(baseUrl, "/presets"));
+}
+
+export async function loadImageGenModel(baseUrl: string, model_id: string): Promise<{ success: boolean; error?: string }> {
+  return imageGenFetch(imageGenUrl(baseUrl, "/load"), {
+    method: "POST",
+    body: JSON.stringify({ model_id }),
+  });
+}
+
+export async function unloadImageGenModel(baseUrl: string): Promise<void> {
+  await imageGenFetch(imageGenUrl(baseUrl, "/unload"), { method: "POST" });
+}
+
+export async function generateImage(
+  baseUrl: string,
+  req: {
+    prompt: string;
+    model_id: string;
+    negative_prompt?: string;
+    steps?: number;
+    guidance?: number;
+    width?: number;
+    height?: number;
+    seed?: number;
+  }
+): Promise<ImageGenResult> {
+  return imageGenFetch<ImageGenResult>(imageGenUrl(baseUrl, "/generate"), {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function generateImageFromWorkflow(
+  baseUrl: string,
+  req: {
+    preset_id: string;
+    subject: string;
+    model_id?: string;
+    seed?: number;
+  }
+): Promise<ImageGenResult> {
+  return imageGenFetch<ImageGenResult>(imageGenUrl(baseUrl, "/generate-workflow"), {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}

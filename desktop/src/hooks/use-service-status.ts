@@ -1,5 +1,6 @@
 /**
- * useServiceStatus — polls proxy and tunnel status from the Python engine.
+ * useServiceStatus — polls proxy, tunnel, and cloud sync status from the
+ * Python engine.
  *
  * Only polls when the engine is connected. Interval: 15 seconds.
  * Provides cached status for the QuickActionBar indicators and a manual
@@ -19,14 +20,51 @@ export interface TunnelStatus {
   mode: string;
 }
 
+export interface CloudDebugState {
+  is_configured: boolean;
+  is_orphan: boolean;
+  user_id: string | null;
+  instance_id: string | null;
+  configure_called_at: string | null;
+  last_registration_at: string | null;
+  last_registration_result: string | null;
+  last_error: string | null;
+  instance_name: string;
+  supabase_url_configured: boolean;
+  supabase_key_configured: boolean;
+}
+
+export type CloudSyncStatus =
+  | "synced"
+  | "not-configured"
+  | "orphan"
+  | "error"
+  | "syncing"
+  | "unknown";
+
 export interface ServiceStatusState {
   proxy: ProxyStatus | null;
   tunnel: TunnelStatus | null;
-  cloudConfigured: boolean;
+  cloudDebug: CloudDebugState | null;
+  cloudSyncStatus: CloudSyncStatus;
   cloudSyncing: boolean;
 }
 
 const POLL_INTERVAL = 15_000;
+
+function deriveCloudStatus(
+  debug: CloudDebugState | null,
+  syncing: boolean,
+): CloudSyncStatus {
+  if (syncing) return "syncing";
+  if (!debug) return "unknown";
+  if (!debug.is_configured) return "not-configured";
+  if (debug.is_orphan) return "orphan";
+  if (debug.last_error) return "error";
+  if (debug.last_registration_result === "ok") return "synced";
+  if (debug.last_registration_result?.startsWith("error")) return "error";
+  return "synced";
+}
 
 export function useServiceStatus(engineStatus: EngineStatus): [
   ServiceStatusState,
@@ -35,7 +73,8 @@ export function useServiceStatus(engineStatus: EngineStatus): [
   const [state, setState] = useState<ServiceStatusState>({
     proxy: null,
     tunnel: null,
-    cloudConfigured: false,
+    cloudDebug: null,
+    cloudSyncStatus: "unknown",
     cloudSyncing: false,
   });
   const mountedRef = useRef(true);
@@ -43,17 +82,27 @@ export function useServiceStatus(engineStatus: EngineStatus): [
   const poll = useCallback(async () => {
     if (!engine.engineUrl) return;
     try {
-      const [proxyRes, tunnelRes] = await Promise.allSettled([
+      const [proxyRes, tunnelRes, cloudRes] = await Promise.allSettled([
         engine.proxyStatus(),
         engine.get("/tunnel/status") as Promise<TunnelStatus>,
+        engine.get("/cloud/debug") as Promise<CloudDebugState>,
       ]);
       if (!mountedRef.current) return;
-      setState((prev) => ({
-        ...prev,
-        proxy: proxyRes.status === "fulfilled" ? proxyRes.value : prev.proxy,
-        tunnel:
-          tunnelRes.status === "fulfilled" ? tunnelRes.value : prev.tunnel,
-      }));
+      setState((prev) => {
+        const newProxy =
+          proxyRes.status === "fulfilled" ? proxyRes.value : prev.proxy;
+        const newTunnel =
+          tunnelRes.status === "fulfilled" ? tunnelRes.value : prev.tunnel;
+        const newCloud =
+          cloudRes.status === "fulfilled" ? cloudRes.value : prev.cloudDebug;
+        return {
+          ...prev,
+          proxy: newProxy,
+          tunnel: newTunnel,
+          cloudDebug: newCloud,
+          cloudSyncStatus: deriveCloudStatus(newCloud, prev.cloudSyncing),
+        };
+      });
     } catch {
       /* non-critical */
     }
@@ -72,12 +121,26 @@ export function useServiceStatus(engineStatus: EngineStatus): [
 
   const triggerCloudSync = useCallback(async () => {
     if (!engine.engineUrl) return;
-    setState((prev) => ({ ...prev, cloudSyncing: true }));
+    setState((prev) => ({
+      ...prev,
+      cloudSyncing: true,
+      cloudSyncStatus: "syncing",
+    }));
     try {
       await engine.triggerCloudSync();
-      setState((prev) => ({ ...prev, cloudSyncing: false, cloudConfigured: true }));
+      const debug = (await engine.get("/cloud/debug")) as CloudDebugState;
+      setState((prev) => ({
+        ...prev,
+        cloudSyncing: false,
+        cloudDebug: debug,
+        cloudSyncStatus: deriveCloudStatus(debug, false),
+      }));
     } catch {
-      setState((prev) => ({ ...prev, cloudSyncing: false }));
+      setState((prev) => ({
+        ...prev,
+        cloudSyncing: false,
+        cloudSyncStatus: "error",
+      }));
     }
   }, []);
 

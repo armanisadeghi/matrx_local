@@ -82,8 +82,22 @@ dependencies = [
 transcription = [
     "openai-whisper",
 ]
+image-gen = [
+    # Hugging Face diffusers-based image generation (large install ~3-10 GB)
+    # Install with: uv sync --extra image-gen
+    # Torch: CPU-only by default. For GPU support install torch with CUDA manually.
+    "torch>=2.3.0",
+    "torchvision>=0.18.0",
+    "diffusers>=0.32.0",
+    "transformers>=4.45.0",
+    "accelerate>=0.33.0",
+    "sentencepiece>=0.2.0",
+    "protobuf>=3.20.0",
+]
 all = [
     "openai-whisper",
+    # Note: image-gen is NOT included in 'all' intentionally — it's a multi-GB
+    # optional install. Enable explicitly with: uv sync --extra image-gen
 ]
 
 [dependency-groups]

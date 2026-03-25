@@ -21,6 +21,8 @@ interface ChatInputProps {
   onModeChange: (mode: ChatMode) => void;
   /** When true, the send button is disabled but the textarea remains typeable. */
   engineReady?: boolean;
+  /** When true, focus the textarea on mount. */
+  autoFocus?: boolean;
   // Agent props
   agents?: AgentInfo[];
   selectedAgentId?: string | null;
@@ -44,6 +46,7 @@ export function ChatInput({
   onModelChange,
   onModeChange,
   engineReady = true,
+  autoFocus = false,
   agents = [],
   selectedAgentId = null,
   onAgentChange,
@@ -54,6 +57,12 @@ export function ChatInput({
   const [showAgentPicker, setShowAgentPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (autoFocus) {
+      setTimeout(() => textareaRef.current?.focus(), 100);
+    }
+  }, [autoFocus]);
 
   // Auto-resize textarea
   useEffect(() => {

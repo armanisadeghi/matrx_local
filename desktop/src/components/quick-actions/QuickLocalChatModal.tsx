@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -24,18 +25,35 @@ export function QuickLocalChatModal({
   engineUrl,
   tools,
 }: QuickLocalChatModalProps) {
-  const [llmState] = useLlmApp();
+  const [llmState, llmActions] = useLlmApp();
   const serverRunning = llmState.serverStatus?.running ?? false;
+  const hasModels = llmState.downloadedModels.length > 0;
+  const autoStartedRef = useRef(false);
+
+  useEffect(() => {
+    if (open && !serverRunning && !llmState.isStarting && hasModels && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      const model = llmState.downloadedModels[0];
+      llmActions.startServer(model.filename, 0).catch(() => {});
+    }
+    if (!open) {
+      autoStartedRef.current = false;
+    }
+  }, [open, serverRunning, llmState.isStarting, hasModels, llmState.downloadedModels, llmActions]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex h-[70vh] max-w-2xl flex-col gap-0 p-0">
         <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
-          <DialogTitle>Quick Local Chat</DialogTitle>
-          {!serverRunning && (
+          <DialogTitle>Quick Local AI Chat</DialogTitle>
+          {!serverRunning && !llmState.isStarting && !hasModels && (
             <DialogDescription className="text-amber-500">
-              Local LLM server is not running. Start it from the toolbar or Local
-              Models page.
+              No local AI models downloaded. Visit the Local Models page to get started.
+            </DialogDescription>
+          )}
+          {llmState.isStarting && (
+            <DialogDescription className="text-sky-500">
+              Starting local AI engine...
             </DialogDescription>
           )}
         </DialogHeader>

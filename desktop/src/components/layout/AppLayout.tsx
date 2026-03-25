@@ -27,6 +27,8 @@ interface AppLayoutProps {
   // QuickActionBar props
   isRecording: boolean;
   onRecord: () => void;
+  onBackgroundRecord: () => void;
+  isBackgroundRecording: boolean;
   transcriptionState: TranscriptionState;
   transcriptionActions: TranscriptionActions;
   tools: string[];
@@ -63,6 +65,8 @@ export function AppLayout({
   onSignOut,
   isRecording,
   onRecord,
+  onBackgroundRecord,
+  isBackgroundRecording,
   transcriptionState,
   transcriptionActions,
   tools,
@@ -89,6 +93,8 @@ export function AppLayout({
         <QuickActionBar
           isRecording={isRecording}
           onRecord={onRecord}
+          onBackgroundRecord={onBackgroundRecord}
+          isBackgroundRecording={isBackgroundRecording}
           engineStatus={engineStatus}
           engineUrl={engineUrl}
           tools={tools}
