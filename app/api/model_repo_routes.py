@@ -345,17 +345,24 @@ class HuggingFaceProvider(ModelRepoProvider):
         if resp.status_code == 401 or resp.status_code == 403:
             raise HTTPException(
                 status_code=422,
-                detail="This model requires a HuggingFace account or access token. Only public models are supported.",
+                detail=(
+                    f"Repository '{repo_id}' is private or requires authentication. "
+                    "Only public models are supported. If this model exists, the author "
+                    "may need to make it public first."
+                ),
             )
         if resp.status_code == 404:
             raise HTTPException(
                 status_code=404,
-                detail=f"Repository '{repo_id}' not found on HuggingFace. Check the URL.",
+                detail=(
+                    f"Repository '{repo_id}' was not found on HuggingFace. "
+                    "Double-check the URL — the repo may have been renamed, deleted, or the URL may have a typo."
+                ),
             )
         if not resp.is_success:
             raise HTTPException(
                 status_code=502,
-                detail=f"HuggingFace API returned {resp.status_code}.",
+                detail=f"HuggingFace API returned {resp.status_code} for '{repo_id}'. Try again in a moment.",
             )
 
         data = resp.json()
@@ -487,6 +494,41 @@ class HuggingFaceProvider(ModelRepoProvider):
             return (rank, 0.0)
 
         final_entries.sort(key=sort_key)
+
+        # Check if the repo has any files at all vs. just no GGUF files
+        has_gguf = any(e.format == "gguf" for e in final_entries)
+        has_safetensors = any(e.format == "safetensors" for e in final_entries)
+
+        if not has_gguf and has_safetensors:
+            # Repo exists and has safetensors but no GGUF — provide actionable guidance
+            # by looking for known GGUF conversion repos on HuggingFace
+            gguf_search_url = f"https://huggingface.co/models?search={model_name}+gguf"
+            unsloth_url = f"https://huggingface.co/unsloth/{model_name}-GGUF"
+            bartowski_url = f"https://huggingface.co/bartowski/{model_name}-GGUF"
+            # Add a synthetic informational entry to guide the user
+            final_entries.append(ModelFileEntry(
+                filename=f"[No GGUF files in {repo_id}]",
+                format="other",
+                role="other",
+                quant=None,
+                is_split=False,
+                split_group=None,
+                part_index=None,
+                total_parts=None,
+                size_bytes=0,
+                total_size_bytes=0,
+                ram_required_gb=0.0,
+                compatibility_status="incompatible_format",
+                compatibility_reason=(
+                    f"This repo contains {len(siblings)} file(s) but none are .gguf format. "
+                    f"It uses safetensors (PyTorch format), which requires a different runtime. "
+                    f"To use this model here, look for a GGUF conversion: try searching "
+                    f"'{model_name} GGUF' on HuggingFace, or check unsloth/{model_name}-GGUF or "
+                    f"bartowski/{model_name}-GGUF."
+                ),
+                download_urls=[],
+                recommended=False,
+            ))
 
         return RepoAnalysisResult(
             provider="huggingface",

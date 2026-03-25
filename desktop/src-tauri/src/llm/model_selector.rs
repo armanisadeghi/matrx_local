@@ -249,7 +249,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::LowAlt,
-        name: "Phi-4-mini-Instruct",
+        name: "Phi 4 Mini",
         provider: "Microsoft",
         filename: "microsoft_Phi-4-mini-instruct-Q4_K_M.gguf",
         disk_size_gb: 2.5,
@@ -274,7 +274,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Low,
-        name: "Qwen3-4B-Instruct",
+        name: "Qwen 3 4B",
         provider: "Alibaba",
         filename: "Qwen3-4B-Q4_K_M.gguf",
         disk_size_gb: 2.5,
@@ -299,7 +299,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::UltraLow,
-        name: "Gemma-3n-E4B",
+        name: "Gemma 3n E4B",
         provider: "Google",
         filename: "gemma-3n-E4B-it-Q4_K_M.gguf",
         disk_size_gb: 4.54,
@@ -324,7 +324,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Low2,
-        name: "DeepSeek-R1-Distill-Llama-8B",
+        name: "DeepSeek R1 Distill 8B",
         provider: "DeepSeek",
         filename: "DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf",
         disk_size_gb: 4.92,
@@ -349,7 +349,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Low3,
-        name: "Llama-3.1-8B-Instruct",
+        name: "Llama 3.1 8B",
         provider: "Meta",
         filename: "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
         disk_size_gb: 4.92,
@@ -376,7 +376,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Default,
-        name: "Qwen3-8B-Instruct",
+        name: "Qwen 3 8B",
         provider: "Alibaba",
         filename: "Qwen3-8B-Q4_K_M.gguf",
         disk_size_gb: 5.1,
@@ -401,7 +401,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Mid,
-        name: "Gemma-3-12B",
+        name: "Gemma 3 12B",
         provider: "Google",
         filename: "google_gemma-3-12b-it-qat-Q4_K_M.gguf",
         disk_size_gb: 7.3,
@@ -426,7 +426,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Mid2,
-        name: "Phi-4-Reasoning",
+        name: "Phi 4 Reasoning",
         provider: "Microsoft",
         filename: "microsoft_Phi-4-reasoning-Q4_K_M.gguf",
         disk_size_gb: 9.0,
@@ -451,7 +451,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::High,
-        name: "GPT-OSS-20B",
+        name: "GPT OSS 20B",
         provider: "OpenAI",
         filename: "openai_gpt-oss-20b-MXFP4.gguf",
         disk_size_gb: 12.1,
@@ -476,7 +476,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::HighAlt,
-        name: "Mistral-Small-3.1-24B",
+        name: "Mistral Small 3.1 24B",
         provider: "Mistral",
         filename: "Mistral-Small-3.1-24B-Instruct-2503-Q4_K_M.gguf",
         disk_size_gb: 14.4,
@@ -501,7 +501,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::High2,
-        name: "Qwen3.5-27B",
+        name: "Qwen 3.5 27B",
         provider: "Alibaba",
         // Default variant: Compact (IQ3_XXS) — fits more hardware
         filename: "Qwen3.5-27B-UD-IQ3_XXS.gguf",
@@ -527,7 +527,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::High3,
-        name: "DeepSeek-R1-Distill-32B",
+        name: "DeepSeek R1 Distill 32B",
         provider: "DeepSeek",
         filename: "DeepSeek-R1-Distill-Qwen-32B-Q4_K_M.gguf",
         disk_size_gb: 19.85,
@@ -552,7 +552,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::High4,
-        name: "Gemma-3-27B",
+        name: "Gemma 3 27B",
         provider: "Google",
         filename: "google_gemma-3-27b-it-Q4_K_M.gguf",
         disk_size_gb: 16.55,
@@ -577,7 +577,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::VHigh,
-        name: "Qwen3.5-35B-A3B",
+        name: "Qwen 3.5 35B A3B",
         provider: "Alibaba",
         // Default variant: Balanced (IQ4_XS)
         filename: "Qwen3.5-35B-A3B-UD-IQ4_XS.gguf",
@@ -605,7 +605,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::UncensoredCompact,
-        name: "Qwen3.5-35B-A3B-Uncensored (Compact)",
+        name: "Qwen 3.5 35B Uncensored (Compact)",
         provider: "HauhauCS",
         filename: "Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ2_M.gguf",
         disk_size_gb: 11.0,
@@ -630,7 +630,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::UncensoredBalanced,
-        name: "Qwen3.5-35B-A3B-Uncensored (Balanced)",
+        name: "Qwen 3.5 35B Uncensored (Balanced)",
         provider: "HauhauCS",
         filename: "Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf",
         disk_size_gb: 18.0,
@@ -657,7 +657,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Server,
-        name: "Llama-3.3-70B-Instruct",
+        name: "Llama 3.3 70B",
         provider: "Meta",
         filename: "Llama-3.3-70B-Instruct-Q4_K_M.gguf",
         disk_size_gb: 42.5,
@@ -682,7 +682,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Server2,
-        name: "Qwen3.5-122B-A10B",
+        name: "Qwen 3.5 122B A10B",
         provider: "Alibaba",
         filename: "Qwen3.5-122B-A10B-UD-IQ2_M.gguf",
         disk_size_gb: 39.1,
@@ -707,7 +707,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Server3,
-        name: "Mistral-Small-4-119B",
+        name: "Mistral Small 4 119B",
         provider: "Mistral",
         filename: "Mistral-Small-4-119B-2603-Q4_K_M.gguf",
         disk_size_gb: 72.6,
@@ -732,7 +732,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Server4,
-        name: "Llama-4-Scout-17B-16E",
+        name: "Llama 4 Scout 17B",
         provider: "Meta",
         // Split: 2 parts
         filename: "Llama-4-Scout-17B-16E-Instruct-Q4_K_M-00001-of-00002.gguf",
@@ -760,7 +760,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Server5,
-        name: "GPT-OSS-120B",
+        name: "GPT OSS 120B",
         provider: "OpenAI",
         filename: "openai_gpt-oss-120b-Q4_K_M.gguf",
         disk_size_gb: 88.0,
@@ -785,7 +785,7 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
 
     LlmModelInfo {
         tier: LlmTier::Server6,
-        name: "Qwen3.5-397B-A17B",
+        name: "Qwen 3.5 397B A17B",
         provider: "Alibaba",
         filename: "Qwen3.5-397B-A17B-UD-IQ2_XXS.gguf",
         disk_size_gb: 115.0,
@@ -853,7 +853,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
             return (
                 LlmTier::VHigh,
                 format!(
-                    "Apple Silicon with {:.0}GB RAM — Qwen3.5-35B-A3B (MoE) runs excellently with Metal",
+                    "Apple Silicon with {:.0}GB RAM — Qwen 3.5 35B A3B (MoE) runs excellently with Metal",
                     total_ram_gb
                 ),
             );
@@ -862,7 +862,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
             return (
                 LlmTier::High2,
                 format!(
-                    "Apple Silicon with {:.0}GB RAM — Qwen3.5-27B recommended with Metal acceleration",
+                    "Apple Silicon with {:.0}GB RAM — Qwen 3.5 27B recommended with Metal acceleration",
                     total_ram_gb
                 ),
             );
@@ -870,26 +870,26 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         if total_ram_gb >= 16.0 {
             return (
                 LlmTier::High,
-                "Apple Silicon with 16GB RAM — GPT-OSS-20B recommended (12 GB, Metal accelerated)".to_string(),
+                "Apple Silicon with 16GB RAM — GPT OSS 20B recommended (12 GB, Metal accelerated)".to_string(),
             );
         }
         if total_ram_gb >= 10.0 {
             return (
                 LlmTier::Mid,
-                "Apple Silicon with 10GB+ RAM — Gemma-3-12B recommended with Metal".to_string(),
+                "Apple Silicon with 10GB+ RAM — Gemma 3 12B recommended with Metal".to_string(),
             );
         }
         if total_ram_gb >= 8.0 {
             return (
                 LlmTier::Default,
-                "Apple Silicon with 8GB RAM — Qwen3-8B recommended with Metal acceleration".to_string(),
+                "Apple Silicon with 8GB RAM — Qwen 3 8B recommended with Metal acceleration".to_string(),
             );
         }
         if total_ram_gb >= 6.0 {
             return (
                 LlmTier::Low,
                 format!(
-                    "Apple Silicon with {:.0}GB RAM — Qwen3-4B recommended",
+                    "Apple Silicon with {:.0}GB RAM — Qwen 3 4B recommended",
                     total_ram_gb
                 ),
             );
@@ -897,7 +897,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         return (
             LlmTier::LowAlt,
             format!(
-                "Apple Silicon with {:.0}GB RAM — Phi-4-mini is the smallest supported model",
+                "Apple Silicon with {:.0}GB RAM — Phi 4 Mini is the smallest supported model",
                 total_ram_gb
             ),
         );
@@ -911,7 +911,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
             return (
                 LlmTier::VHigh,
                 format!(
-                    "{} GPU with {:.0}GB VRAM — Qwen3.5-35B-A3B MoE fits with full GPU offload",
+                    "{} GPU with {:.0}GB VRAM — Qwen 3.5 35B A3B MoE fits with full GPU offload",
                     backend, gpu_vram_gb
                 ),
             );
@@ -920,7 +920,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
             return (
                 LlmTier::High2,
                 format!(
-                    "{} GPU with {:.0}GB VRAM — Qwen3.5-27B recommended with full GPU offload",
+                    "{} GPU with {:.0}GB VRAM — Qwen 3.5 27B recommended with full GPU offload",
                     backend, gpu_vram_gb
                 ),
             );
@@ -929,7 +929,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
             return (
                 LlmTier::High,
                 format!(
-                    "{} GPU with {:.0}GB VRAM — GPT-OSS-20B fits with full GPU offload",
+                    "{} GPU with {:.0}GB VRAM — GPT OSS 20B fits with full GPU offload",
                     backend, gpu_vram_gb
                 ),
             );
@@ -938,7 +938,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
             return (
                 LlmTier::Mid,
                 format!(
-                    "{} GPU with {:.0}GB VRAM — Gemma-3-12B recommended with full GPU offload",
+                    "{} GPU with {:.0}GB VRAM — Gemma 3 12B recommended with full GPU offload",
                     backend, gpu_vram_gb
                 ),
             );
@@ -947,7 +947,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
             return (
                 LlmTier::Default,
                 format!(
-                    "{} GPU with {:.0}GB VRAM — Qwen3-8B fits with full GPU offload",
+                    "{} GPU with {:.0}GB VRAM — Qwen 3 8B fits with full GPU offload",
                     backend, gpu_vram_gb
                 ),
             );
@@ -956,7 +956,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
             return (
                 LlmTier::Default,
                 format!(
-                    "{} GPU with {:.0}GB VRAM — Qwen3-8B with partial GPU offload (faster than pure CPU)",
+                    "{} GPU with {:.0}GB VRAM — Qwen 3 8B with partial GPU offload (faster than pure CPU)",
                     backend, gpu_vram_gb
                 ),
             );
@@ -964,7 +964,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         return (
             LlmTier::Low,
             format!(
-                "{} GPU detected — using compact Qwen3-4B model; GPU acceleration active",
+                "{} GPU detected — using compact Qwen 3 4B model; GPU acceleration active",
                 backend
             ),
         );
@@ -975,7 +975,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         return (
             LlmTier::LowAlt,
             format!(
-                "Limited RAM ({:.0}GB) — Phi-4-mini is the smallest supported model",
+                "Limited RAM ({:.0}GB) — Phi 4 Mini is the smallest supported model",
                 total_ram_gb
             ),
         );
@@ -984,7 +984,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         return (
             LlmTier::UltraLow,
             format!(
-                "{:.0}GB RAM — Gemma-3n-E4B recommended for CPU inference",
+                "{:.0}GB RAM — Gemma 3n E4B recommended for CPU inference",
                 total_ram_gb
             ),
         );
@@ -993,7 +993,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         return (
             LlmTier::Low,
             format!(
-                "{:.0}GB RAM — Qwen3-4B recommended; CPU inference is slower but functional",
+                "{:.0}GB RAM — Qwen 3 4B recommended; CPU inference is slower but functional",
                 total_ram_gb
             ),
         );
@@ -1002,7 +1002,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
         return (
             LlmTier::Default,
             format!(
-                "{:.0}GB RAM — Qwen3-8B recommended (CPU inference; expect ~3–8 tokens/sec)",
+                "{:.0}GB RAM — Qwen 3 8B recommended (CPU inference; expect ~3–8 tokens/sec)",
                 total_ram_gb
             ),
         );
@@ -1011,7 +1011,7 @@ fn select_tier(hw: &HardwareProfile, total_ram_gb: f32, gpu_vram_gb: f32) -> (Ll
     (
         LlmTier::Mid,
         format!(
-            "{:.0}GB RAM — Gemma-3-12B recommended for balanced CPU performance",
+            "{:.0}GB RAM — Gemma 3 12B recommended for balanced CPU performance",
             total_ram_gb
         ),
     )

@@ -1,7 +1,19 @@
 "use client";
 
-import { useState, useRef, useCallback, createContext, useContext, useEffect } from "react";
-import type { LlmState, LlmActions, ServerStartProgress, ServerLogLine } from "@/hooks/use-llm";
+import {
+  useState,
+  useRef,
+  useCallback,
+  createContext,
+  useContext,
+  useEffect,
+} from "react";
+import type {
+  LlmState,
+  LlmActions,
+  ServerStartProgress,
+  ServerLogLine,
+} from "@/hooks/use-llm";
 import { useLlmApp } from "@/contexts/LlmContext";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -70,7 +82,11 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { streamCompletion, callWithTools, ContextSizeError } from "@/lib/llm/api";
+import {
+  streamCompletion,
+  callWithTools,
+  ContextSizeError,
+} from "@/lib/llm/api";
 import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
 import { useNavigate } from "react-router-dom";
 import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
@@ -86,7 +102,11 @@ import {
   generateImage,
   generateImageFromWorkflow,
 } from "@/lib/api";
-import type { ImageGenModelInfo, ImageGenWorkflowPreset, ImageGenStatus } from "@/lib/api";
+import type {
+  ImageGenModelInfo,
+  ImageGenWorkflowPreset,
+  ImageGenStatus,
+} from "@/lib/api";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
 
@@ -111,7 +131,10 @@ function formatBytes(bytes: number): string {
 // ── Open external URL via Tauri shell ────────────────────────────────────
 
 async function openUrl(url: string) {
-  if (typeof window !== "undefined" && (window as unknown as Record<string, unknown>).__TAURI__) {
+  if (
+    typeof window !== "undefined" &&
+    (window as unknown as Record<string, unknown>).__TAURI__
+  ) {
     const { open } = await import("@tauri-apps/plugin-shell");
     await open(url);
   } else {
@@ -133,14 +156,17 @@ const RATING_LABELS: Record<number, string> = {
 // A single numeric rating cell — color-coded, full-size, easy to scan
 function RatingCell({ value, label }: { value: number; label: string }) {
   const color =
-    value === 0 ? "text-muted-foreground/30" :
-    value <= 2  ? "text-amber-400" :
-    value <= 4  ? "text-blue-400" :
-                  "text-green-400";
+    value === 0
+      ? "text-muted-foreground/30"
+      : value <= 2
+        ? "text-amber-400"
+        : value <= 4
+          ? "text-blue-400"
+          : "text-green-400";
   const tooltip = `${label}: ${value}/5 — ${RATING_LABELS[value] ?? ""}`;
   return (
     <span
-      className={`tabular-nums font-semibold text-sm ${color}`}
+      className={`tabular-nums font-bold text-base leading-none ${color}`}
       title={tooltip}
     >
       {value > 0 ? value : "—"}
@@ -159,7 +185,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   return (
     <Button variant="ghost" size="sm" className="h-7 px-2 gap-1" onClick={copy}>
       <Copy className="h-3 w-3" />
-      {copied ? "Copied!" : label ?? "Copy"}
+      {copied ? "Copied!" : (label ?? "Copy")}
     </Button>
   );
 }
@@ -177,7 +203,11 @@ function MsgCopyButton({ text }: { text: string }) {
       className={`rounded-md p-1.5 transition-colors ${copied ? "text-emerald-500" : "text-muted-foreground hover:text-foreground"}`}
       title="Copy"
     >
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? (
+        <Check className="h-3.5 w-3.5" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
     </button>
   );
 }
@@ -204,7 +234,8 @@ function ModelLoadingCard({
   }, [modelName]);
 
   const pct = progress?.percent ?? Math.min((elapsed / 120) * 60, 55);
-  const phase = progress?.phase ?? (elapsed < 3 ? "initializing" : "loading model");
+  const phase =
+    progress?.phase ?? (elapsed < 3 ? "initializing" : "loading model");
   const elapsedDisplay = progress?.elapsed_secs ?? elapsed;
 
   // Meaningful log lines to show
@@ -253,7 +284,11 @@ function ModelLoadingCard({
             className="w-full flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
             onClick={() => setShowLogs((v) => !v)}
           >
-            {showLogs ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            {showLogs ? (
+              <ChevronUp className="h-3 w-3" />
+            ) : (
+              <ChevronDown className="h-3 w-3" />
+            )}
             {showLogs ? "Hide" : "Show"} server output
           </button>
           {showLogs && (
@@ -265,8 +300,8 @@ function ModelLoadingCard({
                     l.kind === "error"
                       ? "text-destructive"
                       : l.kind === "ready"
-                      ? "text-green-600"
-                      : "text-muted-foreground"
+                        ? "text-green-600"
+                        : "text-muted-foreground"
                   }`}
                 >
                   {l.line}
@@ -304,11 +339,13 @@ function SetupTab() {
     if (!hardwareResult && !isDetecting) {
       detectHardware().catch(() => {});
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const isModelDownloaded = hardwareResult
-    ? downloadedModels.some((m) => m.filename === hardwareResult.recommended_filename)
+    ? downloadedModels.some(
+        (m) => m.filename === hardwareResult.recommended_filename,
+      )
     : false;
 
   const handleQuickSetup = async () => {
@@ -322,7 +359,7 @@ function SetupTab() {
       ? ` — Part ${downloadProgress.part} of ${downloadProgress.total_parts}`
       : "";
   const bytesLabel = downloadProgress
-    ? `${formatBytes(downloadProgress.bytes_downloaded)} / ${formatBytes(downloadProgress.total_bytes || (hardwareResult?.all_models.find(m => m.filename === downloadProgress.filename)?.expected_size_bytes ?? 0))}`
+    ? `${formatBytes(downloadProgress.bytes_downloaded)} / ${formatBytes(downloadProgress.total_bytes || (hardwareResult?.all_models.find((m) => m.filename === downloadProgress.filename)?.expected_size_bytes ?? 0))}`
     : "";
 
   return (
@@ -356,7 +393,9 @@ function SetupTab() {
               </div>
               <div>
                 <p className="text-muted-foreground text-xs">CPU Threads</p>
-                <p className="font-medium">{hardwareResult.hardware.cpu_threads}</p>
+                <p className="font-medium">
+                  {hardwareResult.hardware.cpu_threads}
+                </p>
               </div>
               <div>
                 <p className="text-muted-foreground text-xs">GPU</p>
@@ -364,22 +403,25 @@ function SetupTab() {
                   {hardwareResult.hardware.is_apple_silicon
                     ? "Apple Silicon (Metal)"
                     : hardwareResult.hardware.supports_cuda
-                    ? `CUDA${hardwareResult.hardware.gpu_name ? ` — ${hardwareResult.hardware.gpu_name}` : ""} — ${((hardwareResult.hardware.gpu_vram_mb ?? 0) / 1024).toFixed(0)} GB VRAM`
-                    : hardwareResult.hardware.supports_vulkan
-                    ? `Vulkan${hardwareResult.hardware.gpu_name ? ` — ${hardwareResult.hardware.gpu_name}` : ""}${hardwareResult.hardware.gpu_vram_mb ? ` — ${((hardwareResult.hardware.gpu_vram_mb) / 1024).toFixed(0)} GB VRAM` : ""}`
-                    : "No GPU detected — CPU inference"}
+                      ? `CUDA${hardwareResult.hardware.gpu_name ? ` — ${hardwareResult.hardware.gpu_name}` : ""} — ${((hardwareResult.hardware.gpu_vram_mb ?? 0) / 1024).toFixed(0)} GB VRAM`
+                      : hardwareResult.hardware.supports_vulkan
+                        ? `Vulkan${hardwareResult.hardware.gpu_name ? ` — ${hardwareResult.hardware.gpu_name}` : ""}${hardwareResult.hardware.gpu_vram_mb ? ` — ${(hardwareResult.hardware.gpu_vram_mb / 1024).toFixed(0)} GB VRAM` : ""}`
+                        : "No GPU detected — CPU inference"}
                 </p>
-                {!hardwareResult.hardware.is_apple_silicon
-                  && !hardwareResult.hardware.supports_cuda
-                  && !hardwareResult.hardware.supports_vulkan && (
-                  <p className="text-xs text-amber-500 mt-0.5">
-                    GPU not found. Ensure GPU drivers are installed and try Re-detect.
-                  </p>
-                )}
+                {!hardwareResult.hardware.is_apple_silicon &&
+                  !hardwareResult.hardware.supports_cuda &&
+                  !hardwareResult.hardware.supports_vulkan && (
+                    <p className="text-xs text-amber-500 mt-0.5">
+                      GPU not found. Ensure GPU drivers are installed and try
+                      Re-detect.
+                    </p>
+                  )}
               </div>
               <div>
                 <p className="text-muted-foreground text-xs">Recommended</p>
-                <p className="font-medium text-blue-500">{hardwareResult.recommended_name}</p>
+                <p className="font-medium text-blue-500">
+                  {hardwareResult.recommended_name}
+                </p>
               </div>
             </div>
             <p className="text-xs text-muted-foreground mt-3 bg-muted/40 rounded px-3 py-2">
@@ -404,14 +446,16 @@ function SetupTab() {
           {hardwareResult && (
             <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
               <div className="flex-1">
-                <p className="font-medium text-sm">{hardwareResult.recommended_name}</p>
+                <p className="font-medium text-sm">
+                  {hardwareResult.recommended_name}
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {hardwareResult.recommended_size_gb.toFixed(1)} GB •{" "}
                   {hardwareResult.recommended_gpu_layers === 99
                     ? "Full GPU offload"
                     : hardwareResult.recommended_gpu_layers === 0
-                    ? "CPU inference"
-                    : `${hardwareResult.recommended_gpu_layers} GPU layers`}
+                      ? "CPU inference"
+                      : `${hardwareResult.recommended_gpu_layers} GPU layers`}
                 </p>
               </div>
               {isModelDownloaded ? (
@@ -429,9 +473,7 @@ function SetupTab() {
           {isDownloading && downloadProgress && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span className="font-medium">
-                  Downloading{partLabel}
-                </span>
+                <span className="font-medium">Downloading{partLabel}</span>
                 <span>{bytesLabel}</span>
               </div>
               <Progress value={progressPercent} className="h-2" />
@@ -471,7 +513,8 @@ function SetupTab() {
           {serverStatus?.running && (
             <div className="flex items-center gap-2 text-sm text-green-600">
               <CheckCircle2 className="h-4 w-4" />
-              Server running on port {serverStatus.port} — model: {serverStatus.model_name}
+              Server running on port {serverStatus.port} — model:{" "}
+              {serverStatus.model_name}
             </div>
           )}
 
@@ -484,20 +527,22 @@ function SetupTab() {
 
           <Button
             className="w-full"
-            disabled={isDetecting || isDownloading || isStarting || !hardwareResult}
+            disabled={
+              isDetecting || isDownloading || isStarting || !hardwareResult
+            }
             onClick={handleQuickSetup}
           >
             {isDetecting
               ? "Detecting hardware…"
               : isDownloading
-              ? "Downloading…"
-              : isStarting
-              ? "Starting server…"
-              : serverStatus?.running && isModelDownloaded
-              ? "Restart with Recommended Model"
-              : isModelDownloaded
-              ? "Start Inference Server"
-              : "Download & Start"}
+                ? "Downloading…"
+                : isStarting
+                  ? "Starting server…"
+                  : serverStatus?.running && isModelDownloaded
+                    ? "Restart with Recommended Model"
+                    : isModelDownloaded
+                      ? "Start Inference Server"
+                      : "Download & Start"}
           </Button>
           {!hardwareResult && isDetecting && (
             <p className="text-xs text-center text-muted-foreground">
@@ -530,7 +575,9 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
       const segments = new URL(u).pathname.split("/");
       const last = segments[segments.length - 1];
       if (last.endsWith(".gguf")) return last;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return "";
   };
 
@@ -544,7 +591,10 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
     setSuccessMsg(null);
     const trimmedUrl = url.trim();
     if (!trimmedUrl) return;
-    let filename = customFilename.trim() || deriveFilenameFromUrl(trimmedUrl) || "custom-model.gguf";
+    let filename =
+      customFilename.trim() ||
+      deriveFilenameFromUrl(trimmedUrl) ||
+      "custom-model.gguf";
     if (!filename.endsWith(".gguf")) filename += ".gguf";
     try {
       await actions.downloadModel(filename, [trimmedUrl]);
@@ -574,7 +624,10 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
     }
     setIsImporting(true);
     try {
-      const saved = await actions.importLocalModel(filePath, customFilename.trim());
+      const saved = await actions.importLocalModel(
+        filePath,
+        customFilename.trim(),
+      );
       setSuccessMsg(`Imported: ${saved}`);
       setCustomFilename("");
       onAdded();
@@ -588,17 +641,24 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
   };
 
   const progressPercent = downloadProgress?.percent ?? 0;
-  const isCustomDownloading = isDownloading && downloadProgress && !downloadProgress.filename.startsWith("ggml");
+  const isCustomDownloading =
+    isDownloading &&
+    downloadProgress &&
+    !downloadProgress.filename.startsWith("ggml");
 
   return (
     <div className="rounded-lg border border-dashed bg-muted/10 p-4 space-y-3">
       <div className="flex items-center gap-3">
         <PackagePlus className="h-4 w-4 text-muted-foreground shrink-0" />
-        <span className="text-sm font-medium text-muted-foreground">Add Custom Model</span>
+        <span className="text-sm font-medium text-muted-foreground">
+          Add Custom Model
+        </span>
         <div className="flex gap-0.5 rounded-md border p-0.5 bg-muted/30 ml-auto">
           <button
             className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-              mode === "url" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"
+              mode === "url"
+                ? "bg-background shadow text-foreground"
+                : "text-muted-foreground hover:text-foreground"
             }`}
             onClick={() => setMode("url")}
           >
@@ -606,7 +666,9 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
           </button>
           <button
             className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-              mode === "local" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"
+              mode === "local"
+                ? "bg-background shadow text-foreground"
+                : "text-muted-foreground hover:text-foreground"
             }`}
             onClick={() => setMode("local")}
           >
@@ -615,7 +677,13 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
         </div>
       </div>
 
-      <input ref={fileInputRef} type="file" accept=".gguf" className="hidden" onChange={handleLocalFile} />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".gguf"
+        className="hidden"
+        onChange={handleLocalFile}
+      />
 
       <div className="flex items-end gap-2">
         {mode === "url" ? (
@@ -661,8 +729,15 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
       {isCustomDownloading && downloadProgress && (
         <div className="flex items-center gap-3">
           <Progress value={progressPercent} className="h-1.5 flex-1" />
-          <span className="text-xs text-muted-foreground tabular-nums w-12 text-right">{progressPercent.toFixed(0)}%</span>
-          <button className="text-xs text-destructive hover:underline" onClick={actions.cancelDownload}>Cancel</button>
+          <span className="text-xs text-muted-foreground tabular-nums w-12 text-right">
+            {progressPercent.toFixed(0)}%
+          </span>
+          <button
+            className="text-xs text-destructive hover:underline"
+            onClick={actions.cancelDownload}
+          >
+            Cancel
+          </button>
         </div>
       )}
 
@@ -693,13 +768,19 @@ function CustomModelRow({ onAdded }: { onAdded: () => void }) {
 // Shown only when a download fails because the model requires a free HF token.
 // Tries Playwright automation first. Falls back to guided manual steps if unavailable.
 
-type HfStep = "ask_account" | "browser_working" | "browser_opened" | "has_account" | "no_account";
+type HfStep =
+  | "ask_account"
+  | "browser_working"
+  | "browser_opened"
+  | "has_account"
+  | "no_account";
 
 function HuggingFaceAccessModal() {
   const navigate = useNavigate();
   const [state, actions] = useLlmContext();
   const { xetTokenRequired, xetPendingFilename } = state;
-  const { saveHfTokenAndRetry, dismissXetModal, refreshHfTokenConfigured } = actions;
+  const { saveHfTokenAndRetry, dismissXetModal, refreshHfTokenConfigured } =
+    actions;
 
   const [step, setStep] = useState<HfStep>("ask_account");
   const [token, setToken] = useState("");
@@ -760,14 +841,20 @@ function HuggingFaceAccessModal() {
   };
 
   const openHfSignup = () => openUrl("https://huggingface.co/join");
-  const openHfTokens = () => openUrl("https://huggingface.co/settings/tokens/new?tokenType=read");
+  const openHfTokens = () =>
+    openUrl("https://huggingface.co/settings/tokens/new?tokenType=read");
   const openSettingsKeys = () => {
     dismissXetModal();
     navigate("/settings?tab=api-keys");
   };
 
   return (
-    <Dialog open={xetTokenRequired} onOpenChange={(open) => { if (!open && step !== "browser_working") dismissXetModal(); }}>
+    <Dialog
+      open={xetTokenRequired}
+      onOpenChange={(open) => {
+        if (!open && step !== "browser_working") dismissXetModal();
+      }}
+    >
       <DialogContent className="max-w-lg p-0 gap-0 overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-br from-orange-500/10 via-amber-500/5 to-transparent px-6 pt-6 pb-4 border-b">
@@ -780,21 +867,27 @@ function HuggingFaceAccessModal() {
                 One small step before downloading
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                <span className="font-medium text-foreground/80">{modelShortName}</span> is hosted on Hugging Face and needs a free access token.
+                <span className="font-medium text-foreground/80">
+                  {modelShortName}
+                </span>{" "}
+                is hosted on Hugging Face and needs a free access token.
               </DialogDescription>
             </DialogHeader>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            This is completely normal — it&apos;s just Hugging Face&apos;s way of tracking who downloads their models. It&apos;s free, takes 2 minutes, and you only need to do it once.
+            This is completely normal — it&apos;s just Hugging Face&apos;s way
+            of tracking who downloads their models. It&apos;s free, takes 2
+            minutes, and you only need to do it once.
           </p>
         </div>
 
         <div className="px-6 py-5 space-y-5">
-
           {/* Step: Ask if they have an account */}
           {step === "ask_account" && (
             <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground">Do you already have a Hugging Face account?</p>
+              <p className="text-sm font-medium text-foreground">
+                Do you already have a Hugging Face account?
+              </p>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -823,8 +916,13 @@ function HuggingFaceAccessModal() {
                 <Loader2 className="h-8 w-8 text-primary animate-spin" />
               </div>
               <div className="space-y-1">
-                <p className="text-sm font-medium text-foreground">Opening Hugging Face for you…</p>
-                <p className="text-xs text-muted-foreground">We&apos;re launching a browser and navigating to the right page.</p>
+                <p className="text-sm font-medium text-foreground">
+                  Opening Hugging Face for you…
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  We&apos;re launching a browser and navigating to the right
+                  page.
+                </p>
               </div>
             </div>
           )}
@@ -835,14 +933,20 @@ function HuggingFaceAccessModal() {
               <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-3 flex items-start gap-2">
                 <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
                 <div className="space-y-0.5">
-                  <p className="text-sm font-medium text-foreground">Browser is open</p>
+                  <p className="text-sm font-medium text-foreground">
+                    Browser is open
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    We&apos;ve opened Hugging Face and navigated to the right page. If you&apos;re signed in, just check the browser window — the form may already be filled in.
+                    We&apos;ve opened Hugging Face and navigated to the right
+                    page. If you&apos;re signed in, just check the browser
+                    window — the form may already be filled in.
                   </p>
                 </div>
               </div>
 
-              <p className="text-sm font-medium text-foreground">Once you have your token, paste it here:</p>
+              <p className="text-sm font-medium text-foreground">
+                Once you have your token, paste it here:
+              </p>
 
               <div className="space-y-2">
                 <div className="relative">
@@ -863,7 +967,11 @@ function HuggingFaceAccessModal() {
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     tabIndex={-1}
                   >
-                    {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {showToken ? (
+                      <EyeOff className="h-3.5 w-3.5" />
+                    ) : (
+                      <Eye className="h-3.5 w-3.5" />
+                    )}
                   </button>
                 </div>
                 {saveError && (
@@ -875,7 +983,12 @@ function HuggingFaceAccessModal() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setStep("ask_account")} className="h-8 text-xs">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setStep("ask_account")}
+                  className="h-8 text-xs"
+                >
                   ← Back
                 </Button>
                 <Button
@@ -885,9 +998,15 @@ function HuggingFaceAccessModal() {
                   onClick={handleSaveAndRetry}
                 >
                   {saving ? (
-                    <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving &amp; downloading…</>
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving
+                      &amp; downloading…
+                    </>
                   ) : (
-                    <><Download className="h-3.5 w-3.5" /> Save token &amp; download</>
+                    <>
+                      <Download className="h-3.5 w-3.5" /> Save token &amp;
+                      download
+                    </>
                   )}
                 </Button>
               </div>
@@ -907,26 +1026,53 @@ function HuggingFaceAccessModal() {
                   <div className="rounded-lg bg-green-500/10 border border-green-500/20 p-3 flex items-start gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
                     <div>
-                      <p className="text-sm font-medium text-foreground">Token found automatically!</p>
-                      <p className="text-xs text-muted-foreground">We grabbed it from the browser for you. Just click download below.</p>
+                      <p className="text-sm font-medium text-foreground">
+                        Token found automatically!
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        We grabbed it from the browser for you. Just click
+                        download below.
+                      </p>
                     </div>
                   </div>
                 ) : (
                   <>
-                    <p className="text-sm font-medium text-foreground">Let&apos;s grab your access token</p>
+                    <p className="text-sm font-medium text-foreground">
+                      Let&apos;s grab your access token
+                    </p>
                     <ol className="space-y-3">
                       {[
-                        { num: 1, text: "Click the button below — it opens Hugging Face in your browser." },
-                        { num: 2, text: "If you're not signed in yet, sign in first." },
-                        { num: 3, text: 'The page will show a form. Leave the type as "Read" and click "Create token".' },
-                        { num: 4, text: "Copy the token that appears (it starts with hf_…)." },
-                        { num: 5, text: "Paste it in the box below and click Download." },
+                        {
+                          num: 1,
+                          text: "Click the button below — it opens Hugging Face in your browser.",
+                        },
+                        {
+                          num: 2,
+                          text: "If you're not signed in yet, sign in first.",
+                        },
+                        {
+                          num: 3,
+                          text: 'The page will show a form. Leave the type as "Read" and click "Create token".',
+                        },
+                        {
+                          num: 4,
+                          text: "Copy the token that appears (it starts with hf_…).",
+                        },
+                        {
+                          num: 5,
+                          text: "Paste it in the box below and click Download.",
+                        },
                       ].map((item) => (
-                        <li key={item.num} className="flex items-start gap-3 text-sm">
+                        <li
+                          key={item.num}
+                          className="flex items-start gap-3 text-sm"
+                        >
                           <span className="flex-shrink-0 flex items-center justify-center h-5 w-5 rounded-full bg-primary/15 text-primary text-xs font-bold mt-0.5">
                             {item.num}
                           </span>
-                          <span className="text-muted-foreground leading-relaxed">{item.text}</span>
+                          <span className="text-muted-foreground leading-relaxed">
+                            {item.text}
+                          </span>
                         </li>
                       ))}
                     </ol>
@@ -945,7 +1091,9 @@ function HuggingFaceAccessModal() {
 
               <div className="space-y-2">
                 <Label htmlFor="hf-token-input" className="text-xs font-medium">
-                  {token.startsWith("hf_") ? "Your token (auto-filled)" : "Paste your token here"}
+                  {token.startsWith("hf_")
+                    ? "Your token (auto-filled)"
+                    : "Paste your token here"}
                 </Label>
                 <div className="relative">
                   <Input
@@ -964,7 +1112,11 @@ function HuggingFaceAccessModal() {
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                     tabIndex={-1}
                   >
-                    {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {showToken ? (
+                      <EyeOff className="h-3.5 w-3.5" />
+                    ) : (
+                      <Eye className="h-3.5 w-3.5" />
+                    )}
                   </button>
                 </div>
                 {saveError && (
@@ -976,7 +1128,12 @@ function HuggingFaceAccessModal() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setStep("ask_account")} className="h-8 text-xs">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setStep("ask_account")}
+                  className="h-8 text-xs"
+                >
                   ← Back
                 </Button>
                 <Button
@@ -986,22 +1143,35 @@ function HuggingFaceAccessModal() {
                   onClick={handleSaveAndRetry}
                 >
                   {saving ? (
-                    <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving &amp; downloading…</>
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving
+                      &amp; downloading…
+                    </>
                   ) : (
-                    <><Download className="h-3.5 w-3.5" /> Save token &amp; download</>
+                    <>
+                      <Download className="h-3.5 w-3.5" /> Save token &amp;
+                      download
+                    </>
                   )}
                 </Button>
               </div>
 
               <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <ShieldCheck className="h-3 w-3 shrink-0" />
-                <span>Your token is stored locally on this machine only. It is never sent to Matrx servers.</span>
+                <span>
+                  Your token is stored locally on this machine only. It is never
+                  sent to Matrx servers.
+                </span>
               </div>
 
               <div className="border-t pt-3">
                 <p className="text-[11px] text-muted-foreground">
                   Prefer to save it in Settings?{" "}
-                  <button type="button" onClick={openSettingsKeys} className="text-primary hover:underline font-medium">
+                  <button
+                    type="button"
+                    onClick={openSettingsKeys}
+                    className="text-primary hover:underline font-medium"
+                  >
                     Open Settings → API Keys
                   </button>
                 </p>
@@ -1013,21 +1183,38 @@ function HuggingFaceAccessModal() {
           {step === "no_account" && (
             <div className="space-y-4">
               <div className="space-y-3">
-                <p className="text-sm font-medium text-foreground">No problem — creating an account is free and fast</p>
+                <p className="text-sm font-medium text-foreground">
+                  No problem — creating an account is free and fast
+                </p>
                 <p className="text-xs text-muted-foreground">
-                  We&apos;ve opened the Hugging Face signup page in a browser window. Fill it out there, then come back here.
+                  We&apos;ve opened the Hugging Face signup page in a browser
+                  window. Fill it out there, then come back here.
                 </p>
                 <ol className="space-y-3">
                   {[
-                    { num: 1, text: "In the browser window we just opened, enter your email and choose a password. No credit card needed." },
-                    { num: 2, text: "Check your email and click the confirmation link." },
-                    { num: 3, text: "Once confirmed, come back here and click \"I'm signed in\"." },
+                    {
+                      num: 1,
+                      text: "In the browser window we just opened, enter your email and choose a password. No credit card needed.",
+                    },
+                    {
+                      num: 2,
+                      text: "Check your email and click the confirmation link.",
+                    },
+                    {
+                      num: 3,
+                      text: 'Once confirmed, come back here and click "I\'m signed in".',
+                    },
                   ].map((item) => (
-                    <li key={item.num} className="flex items-start gap-3 text-sm">
+                    <li
+                      key={item.num}
+                      className="flex items-start gap-3 text-sm"
+                    >
                       <span className="flex-shrink-0 flex items-center justify-center h-5 w-5 rounded-full bg-primary/15 text-primary text-xs font-bold mt-0.5">
                         {item.num}
                       </span>
-                      <span className="text-muted-foreground leading-relaxed">{item.text}</span>
+                      <span className="text-muted-foreground leading-relaxed">
+                        {item.text}
+                      </span>
                     </li>
                   ))}
                 </ol>
@@ -1043,7 +1230,12 @@ function HuggingFaceAccessModal() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setStep("ask_account")} className="h-8 text-xs">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setStep("ask_account")}
+                  className="h-8 text-xs"
+                >
                   ← Back
                 </Button>
                 <Button
@@ -1061,9 +1253,17 @@ function HuggingFaceAccessModal() {
 
         {/* Footer dismiss */}
         <div className="px-6 py-3 border-t bg-muted/30 flex items-center justify-between">
-          <p className="text-[11px] text-muted-foreground">You can also skip this and download other models that don&apos;t need a token.</p>
+          <p className="text-[11px] text-muted-foreground">
+            You can also skip this and download other models that don&apos;t
+            need a token.
+          </p>
           {step !== "browser_working" && (
-            <Button variant="ghost" size="sm" onClick={dismissXetModal} className="h-7 text-xs text-muted-foreground">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={dismissXetModal}
+              className="h-7 text-xs text-muted-foreground"
+            >
               Skip for now
             </Button>
           )}
@@ -1099,10 +1299,16 @@ function HuggingFaceTokenStatusHint() {
             <CheckCircle2 className="h-3 w-3" /> Configured
           </span>
         ) : (
-          <span className="text-muted-foreground">Not set — only needed for some models</span>
+          <span className="text-muted-foreground">
+            Not set — only needed for some models
+          </span>
         )}
         <span className="text-muted-foreground hidden sm:inline">·</span>
-        <button type="button" className="text-primary hover:underline font-medium" onClick={openApiKeys}>
+        <button
+          type="button"
+          className="text-primary hover:underline font-medium"
+          onClick={openApiKeys}
+        >
           Manage in Settings → API Keys
         </button>
       </div>
@@ -1117,7 +1323,9 @@ interface ModelRowProps {
   downloadedModels: import("@/hooks/use-llm").LlmState["downloadedModels"];
   isDownloading: boolean;
   downloadingFilename: string | null;
-  downloadProgress: import("@/hooks/use-llm").LlmState["downloadProgress"] | null;
+  downloadProgress:
+    | import("@/hooks/use-llm").LlmState["downloadProgress"]
+    | null;
   downloadQueue: import("@/hooks/use-llm").LlmState["downloadQueue"];
   isRunning: boolean;
   runningModelPath: string;
@@ -1133,12 +1341,26 @@ interface ModelRowProps {
 
 // ── Column layout (shared between header + rows) ──────────────────────────
 // provider | name | text | code | vision | tools | size | RAM | cutoff | actions
-const TABLE_COLS = "grid-cols-[120px_1fr_44px_44px_44px_44px_72px_60px_72px_96px]";
+const TABLE_COLS =
+  "grid-cols-[96px_1fr_44px_44px_44px_44px_72px_60px_72px_112px]";
 
 function ModelRow({
-  model, downloadedModels, isDownloading, downloadingFilename, downloadProgress,
-  downloadQueue, isRunning, runningModelPath, isStarting, hardwareResult,
-  expandedRow, setExpandedRow, onDownload, onLoad, onDelete, cancelDownload,
+  model,
+  downloadedModels,
+  isDownloading,
+  downloadingFilename,
+  downloadProgress,
+  downloadQueue,
+  isRunning,
+  runningModelPath,
+  isStarting,
+  hardwareResult,
+  expandedRow,
+  setExpandedRow,
+  onDownload,
+  onLoad,
+  onDelete,
+  cancelDownload,
   rowIndex,
 }: ModelRowProps & { rowIndex: number }) {
   const isThisRunning = isRunning && runningModelPath.includes(model.filename);
@@ -1148,10 +1370,17 @@ function ModelRow({
   const [selectedVariantIdx, setSelectedVariantIdx] = useState<number>(0);
   const hasVariants = model.variants && model.variants.length > 1;
 
-  const effectiveFilename = hasVariants ? model.variants[selectedVariantIdx].filename : model.filename;
-  const effectiveDownloaded = downloadedModels.some((m) => m.filename === effectiveFilename);
-  const effectiveDownloadingThis = isDownloading && downloadingFilename === effectiveFilename;
-  const effectiveQueued = !effectiveDownloadingThis && downloadQueue.some((e) => e.filename === effectiveFilename);
+  const effectiveFilename = hasVariants
+    ? model.variants[selectedVariantIdx].filename
+    : model.filename;
+  const effectiveDownloaded = downloadedModels.some(
+    (m) => m.filename === effectiveFilename,
+  );
+  const effectiveDownloadingThis =
+    isDownloading && downloadingFilename === effectiveFilename;
+  const effectiveQueued =
+    !effectiveDownloadingThis &&
+    downloadQueue.some((e) => e.filename === effectiveFilename);
 
   // Row background: running > alternating stripes
   const stripeBg = rowIndex % 2 === 0 ? "" : "bg-muted/20";
@@ -1159,31 +1388,47 @@ function ModelRow({
 
   return (
     <div className="border-b last:border-b-0">
-      <div className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2.5 text-sm transition-colors hover:bg-primary/5 ${rowBg}`}>
-
+      <div
+        className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2.5 text-sm transition-colors hover:bg-primary/5 ${rowBg}`}
+      >
         {/* Provider */}
-        <span className="text-xs text-foreground/70 truncate" title={model.provider}>
+        <span
+          className="text-xs text-foreground/70 truncate"
+          title={model.provider}
+        >
           {model.provider}
         </span>
 
         {/* Name — downloaded state is the primary signal */}
         <div className="flex items-center gap-2 min-w-0">
           {/* Status dot: green = downloaded, empty = not yet */}
-          <div className="shrink-0 w-2 h-2 rounded-full mt-px"
+          <div
+            className="shrink-0 w-2 h-2 rounded-full mt-px"
             title={effectiveDownloaded ? "Downloaded" : "Not downloaded"}
-            style={{ background: effectiveDownloaded ? "rgb(34 197 94)" : "rgb(100 116 139 / 0.3)" }}
+            style={{
+              background: effectiveDownloaded
+                ? "rgb(34 197 94)"
+                : "rgb(100 116 139 / 0.3)",
+            }}
           />
           <button
             className="flex items-center gap-1 min-w-0 text-left group"
             onClick={() => setExpandedRow(isExpanded ? null : model.filename)}
           >
-            <span className={`font-medium truncate ${effectiveDownloaded ? "text-foreground" : "text-foreground/60"}`}>
+            <span
+              className={`font-medium truncate ${effectiveDownloaded ? "text-foreground" : "text-foreground/60"}`}
+            >
               {model.name}
             </span>
-            <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform group-hover:text-foreground ${isExpanded ? "rotate-180" : ""}`} />
+            <ChevronDown
+              className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform group-hover:text-foreground ${isExpanded ? "rotate-180" : ""}`}
+            />
           </button>
           {isRecommended && (
-            <Badge className="text-[10px] px-1.5 py-0 h-4 bg-blue-500/15 text-blue-400 border-blue-500/30 shrink-0" title="Recommended for your hardware">
+            <Badge
+              className="text-[10px] px-1.5 py-0 h-4 bg-blue-500/15 text-blue-400 border-blue-500/30 shrink-0"
+              title="Recommended for your hardware"
+            >
               ★
             </Badge>
           )}
@@ -1227,15 +1472,19 @@ function ModelRow({
         </span>
 
         {/* Knowledge cutoff */}
-        <span className="text-xs text-foreground/80 text-center tabular-nums" title={`Knowledge cutoff: ${model.knowledge_cutoff}`}>
+        <span
+          className="text-xs text-foreground/80 text-center tabular-nums"
+          title={`Knowledge cutoff: ${model.knowledge_cutoff}`}
+        >
           {model.knowledge_cutoff}
         </span>
 
-        {/* Actions */}
-        <div className="flex justify-end items-center gap-0.5">
+        {/* Actions — always at stable positions; disabled when not applicable */}
+        <div className="flex justify-end items-center">
           {/* HuggingFace model card link */}
           <Button
-            size="sm" variant="ghost"
+            size="sm"
+            variant="ghost"
             className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
             onClick={() => openUrl(model.hf_model_card_url)}
             title="View model card on HuggingFace"
@@ -1243,52 +1492,25 @@ function ModelRow({
             <ExternalLink className="h-3.5 w-3.5" />
           </Button>
 
-          {/* Download / load / cancel */}
-          {effectiveDownloadingThis ? (
-            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={cancelDownload} title="Cancel download">
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          ) : effectiveQueued ? (
-            <span className="h-7 w-7 flex items-center justify-center" title="Queued for download">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-            </span>
-          ) : effectiveDownloaded ? (
-            <>
-              {!isThisRunning && (
-                <Button
-                  size="sm" variant="ghost"
-                  className="h-7 w-7 p-0 text-green-500 hover:text-green-400"
-                  onClick={() => {
-                    if (hasVariants) {
-                      const v = model.variants[selectedVariantIdx];
-                      onLoad({ ...model, filename: v.filename, hf_url: v.hf_url });
-                    } else {
-                      onLoad(model);
-                    }
-                  }}
-                  disabled={isStarting}
-                  title="Load and run model"
-                >
-                  <Play className="h-3.5 w-3.5" />
-                </Button>
-              )}
-              <Button
-                size="sm" variant="ghost"
-                className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                onClick={() => onDelete(effectiveFilename)}
-                title="Delete model file"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </>
-          ) : (
+          {/* Download button — visible when not downloaded; hidden placeholder otherwise */}
+          {!effectiveDownloaded && !effectiveDownloadingThis && !effectiveQueued ? (
             <Button
-              size="sm" variant="ghost"
+              size="sm"
+              variant="ghost"
               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
               onClick={() => {
                 if (hasVariants) {
                   const v = model.variants[selectedVariantIdx];
-                  onDownload({ ...model, filename: v.filename, hf_url: v.hf_url, hf_parts: v.hf_parts, all_part_urls: v.all_part_urls }, false);
+                  onDownload(
+                    {
+                      ...model,
+                      filename: v.filename,
+                      hf_url: v.hf_url,
+                      hf_parts: v.hf_parts,
+                      all_part_urls: v.all_part_urls,
+                    },
+                    false,
+                  );
                 } else {
                   onDownload(model, false);
                 }
@@ -1297,7 +1519,55 @@ function ModelRow({
             >
               <Download className="h-3.5 w-3.5" />
             </Button>
+          ) : effectiveDownloadingThis ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-destructive"
+              onClick={cancelDownload}
+              title="Cancel download"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          ) : effectiveQueued ? (
+            <span className="h-7 w-7 flex items-center justify-center" title="Queued for download">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            </span>
+          ) : (
+            <div className="h-7 w-7" />
           )}
+
+          {/* Play — enabled when downloaded and not running */}
+          <Button
+            size="sm"
+            variant="ghost"
+            className={`h-7 w-7 p-0 ${effectiveDownloaded && !isThisRunning ? "text-green-500 hover:text-green-400" : "text-muted-foreground/20 cursor-not-allowed"}`}
+            onClick={() => {
+              if (!effectiveDownloaded || isThisRunning) return;
+              if (hasVariants) {
+                const v = model.variants[selectedVariantIdx];
+                onLoad({ ...model, filename: v.filename, hf_url: v.hf_url });
+              } else {
+                onLoad(model);
+              }
+            }}
+            disabled={!effectiveDownloaded || isThisRunning || isStarting}
+            title={isThisRunning ? "Model is running" : effectiveDownloaded ? "Load and run model" : "Download the model first"}
+          >
+            <Play className="h-3.5 w-3.5" />
+          </Button>
+
+          {/* Delete — enabled when downloaded */}
+          <Button
+            size="sm"
+            variant="ghost"
+            className={`h-7 w-7 p-0 ${effectiveDownloaded ? "text-muted-foreground hover:text-destructive" : "text-muted-foreground/20 cursor-not-allowed"}`}
+            onClick={() => { if (effectiveDownloaded) onDelete(effectiveFilename); }}
+            disabled={!effectiveDownloaded}
+            title={effectiveDownloaded ? "Delete model file" : "No file to delete"}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
         </div>
       </div>
 
@@ -1306,7 +1576,8 @@ function ModelRow({
         <div className="px-4 pb-2 flex items-center gap-3">
           <Progress value={downloadProgress.percent} className="h-1.5 flex-1" />
           <span className="text-xs text-foreground/70 tabular-nums w-24 text-right">
-            {downloadProgress.percent.toFixed(0)}% · {formatBytes(downloadProgress.bytes_downloaded)}
+            {downloadProgress.percent.toFixed(0)}% ·{" "}
+            {formatBytes(downloadProgress.bytes_downloaded)}
           </span>
         </div>
       )}
@@ -1320,22 +1591,34 @@ function ModelRow({
               Uncensored — no content filtering
             </div>
           )}
-          <p className="text-sm text-foreground/80 leading-relaxed">{model.description}</p>
+          <p className="text-sm text-foreground/80 leading-relaxed">
+            {model.description}
+          </p>
           <p className="text-xs text-foreground/60">
-            <span className="font-medium text-foreground/80">{model.provider}</span>
-            {" · "}{model.context_length.toLocaleString()} token context
-            {model.is_split && ` · split download (${model.hf_parts.length + 1} parts)`}
+            <span className="font-medium text-foreground/80">
+              {model.provider}
+            </span>
+            {" · "}
+            {model.context_length.toLocaleString()} token context
+            {model.is_split &&
+              ` · split download (${model.hf_parts.length + 1} parts)`}
           </p>
 
           {/* Variant picker for multi-quant models */}
           {hasVariants && (
             <div className="mt-2">
-              <p className="text-xs font-medium text-foreground/70 mb-2">Choose quantization</p>
+              <p className="text-xs font-medium text-foreground/70 mb-2">
+                Choose quantization
+              </p>
               <div className="flex gap-2 flex-wrap">
                 {model.variants.map((v, idx) => {
-                  const vDownloaded = downloadedModels.some((d) => d.filename === v.filename);
-                  const fitsHardware = hardwareResult &&
-                    v.ram_required_gb <= (hardwareResult.hardware.total_ram_mb / 1024);
+                  const vDownloaded = downloadedModels.some(
+                    (d) => d.filename === v.filename,
+                  );
+                  const fitsHardware =
+                    hardwareResult &&
+                    v.ram_required_gb <=
+                      hardwareResult.hardware.total_ram_mb / 1024;
                   return (
                     <button
                       key={v.filename}
@@ -1349,14 +1632,21 @@ function ModelRow({
                       <div className="flex items-center gap-1.5 mb-0.5">
                         <span className="font-semibold">{v.label}</span>
                         {fitsHardware && (
-                          <span className="text-[10px] bg-green-500/15 text-green-400 rounded px-1.5 py-0.5">fits your machine</span>
+                          <span className="text-[10px] bg-green-500/15 text-green-400 rounded px-1.5 py-0.5">
+                            fits your machine
+                          </span>
                         )}
                         {vDownloaded && (
                           <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
                         )}
                       </div>
-                      <span className="text-foreground/60">{v.disk_size_gb.toFixed(1)} GB disk · {v.ram_required_gb.toFixed(0)} GB RAM</span>
-                      <span className="text-foreground/40 text-[10px] mt-0.5">{v.quant}</span>
+                      <span className="text-foreground/60">
+                        {v.disk_size_gb.toFixed(1)} GB disk ·{" "}
+                        {v.ram_required_gb.toFixed(0)} GB RAM
+                      </span>
+                      <span className="text-foreground/40 text-[10px] mt-0.5">
+                        {v.quant}
+                      </span>
                     </button>
                   );
                 })}
@@ -1371,7 +1661,12 @@ function ModelRow({
 
 // ── Server-grade collapsible section ─────────────────────────────────────
 
-function ServerGradeSection(props: Omit<ModelRowProps & { rowIndex: number }, "model" | "rowIndex"> & { models: LlmModelInfo[]; startIndex: number }) {
+function ServerGradeSection(
+  props: Omit<ModelRowProps & { rowIndex: number }, "model" | "rowIndex"> & {
+    models: LlmModelInfo[];
+    startIndex: number;
+  },
+) {
   const { models, startIndex, ...rowProps } = props;
   const [expanded, setExpanded] = useState(false);
 
@@ -1381,16 +1676,27 @@ function ServerGradeSection(props: Omit<ModelRowProps & { rowIndex: number }, "m
         className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-foreground/70 hover:text-foreground hover:bg-muted/20 transition-colors"
         onClick={() => setExpanded((e) => !e)}
       >
-        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} />
+        <ChevronDown
+          className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
         <Server className="h-3.5 w-3.5" />
         <span className="font-medium">Server-grade models</span>
-        <Badge variant="outline" className="text-xs px-2 py-0 ml-1">{models.length}</Badge>
-        <span className="ml-2 text-foreground/40 text-xs">40 GB+ VRAM · multi-GPU</span>
+        <Badge variant="outline" className="text-xs px-2 py-0 ml-1">
+          {models.length}
+        </Badge>
+        <span className="ml-2 text-foreground/40 text-xs">
+          40 GB+ VRAM · multi-GPU
+        </span>
       </button>
       {expanded && (
         <div>
           {models.map((model, idx) => (
-            <ModelRow key={model.filename} model={model} rowIndex={startIndex + idx} {...rowProps} />
+            <ModelRow
+              key={model.filename}
+              model={model}
+              rowIndex={startIndex + idx}
+              {...rowProps}
+            />
           ))}
         </div>
       )}
@@ -1417,16 +1723,34 @@ function ModelsTab() {
     serverStatus,
     error,
   } = state;
-  const { detectHardware, startServer, deleteModel, cancelDownload, queueDownload, downloadAll, listModels } = actions;
+  const {
+    detectHardware,
+    startServer,
+    deleteModel,
+    cancelDownload,
+    queueDownload,
+    downloadAll,
+    listModels,
+  } = actions;
 
   const [localError, setLocalError] = useState<string | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const [expandedCustomRow, setExpandedCustomRow] = useState<string | null>(null);
+  const [editingCustomRow, setEditingCustomRow] = useState<string | null>(null);
+  const [editingCustomName, setEditingCustomName] = useState("");
+  const [customModelNames, setCustomModelNames] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("custom-model-names") ?? "{}");
+    } catch {
+      return {};
+    }
+  });
 
   useEffect(() => {
     if (!hardwareResult && !isDetecting) {
       detectHardware().catch(() => {});
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const ensureHardware = useCallback(async () => {
@@ -1444,9 +1768,15 @@ function ModelsTab() {
           queueDownload(model.filename, model.all_part_urls);
           // Wait for download to complete then start server
           const checkAndStart = async () => {
-            const isNowDownloaded = downloadedModels.some((m) => m.filename === model.filename);
+            const isNowDownloaded = downloadedModels.some(
+              (m) => m.filename === model.filename,
+            );
             if (isNowDownloaded) {
-              await startServer(model.filename, hw.recommended_gpu_layers, model.context_length);
+              await startServer(
+                model.filename,
+                hw.recommended_gpu_layers,
+                model.context_length,
+              );
             } else {
               setTimeout(checkAndStart, 500);
             }
@@ -1475,7 +1805,11 @@ function ModelsTab() {
     setLocalError(null);
     try {
       const hw = await ensureHardware();
-      await startServer(model.filename, hw.recommended_gpu_layers, model.context_length);
+      await startServer(
+        model.filename,
+        hw.recommended_gpu_layers,
+        model.context_length,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setLocalError(msg);
@@ -1503,9 +1837,19 @@ function ModelsTab() {
     }
   };
 
+  const saveCustomModelName = (filename: string, name: string) => {
+    const updated = { ...customModelNames, [filename]: name.trim() || filename };
+    setCustomModelNames(updated);
+    try {
+      localStorage.setItem("custom-model-names", JSON.stringify(updated));
+    } catch {
+      // storage full — ignore
+    }
+  };
+
   const allModels = hardwareResult?.all_models ?? [];
   const customModels = downloadedModels.filter(
-    (dm) => !allModels.some((m) => m.filename === dm.filename)
+    (dm) => !allModels.some((m) => m.filename === dm.filename),
   );
   const isRunning = !!serverStatus?.running;
   const runningModelPath = serverStatus?.model_path ?? "";
@@ -1515,8 +1859,15 @@ function ModelsTab() {
       {(error || localError) && (
         <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-          <span className="whitespace-pre-wrap flex-1">{error ?? localError}</span>
-          <button className="text-xs underline shrink-0" onClick={() => setLocalError(null)}>Dismiss</button>
+          <span className="whitespace-pre-wrap flex-1">
+            {error ?? localError}
+          </span>
+          <button
+            className="text-xs underline shrink-0"
+            onClick={() => setLocalError(null)}
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -1532,7 +1883,12 @@ function ModelsTab() {
         <div className="rounded-lg border bg-muted/20 px-6 py-8 text-center text-sm text-muted-foreground">
           <Cpu className="h-6 w-6 mx-auto mb-2 opacity-30" />
           <p>Detecting hardware to find compatible models…</p>
-          <Button size="sm" variant="outline" className="mt-3" onClick={detectHardware}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-3"
+            onClick={detectHardware}
+          >
             Retry Detection
           </Button>
         </div>
@@ -1548,21 +1904,34 @@ function ModelsTab() {
       {allModels.length > 0 && (
         <div className="rounded-lg border overflow-hidden">
           {/* Sticky table header */}
-          <div className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2 bg-muted/60 text-xs font-semibold text-foreground/60 border-b sticky top-0 z-10`}>
+          <div
+            className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2 bg-muted/60 text-xs font-semibold text-foreground/60 border-b sticky top-0 z-10`}
+          >
             <span>Provider</span>
             <span>Model</span>
-            <span className="text-center" title="Text / Chat quality (0–5)">Text</span>
-            <span className="text-center" title="Code quality (0–5)">Code</span>
-            <span className="text-center" title="Vision capability (0–5)">Vision</span>
-            <span className="text-center" title="Tool calling capability (0–5)">Tools</span>
+            <span className="text-center" title="Text / Chat quality (0–5)">
+              Text
+            </span>
+            <span className="text-center" title="Code quality (0–5)">
+              Code
+            </span>
+            <span className="text-center" title="Vision capability (0–5)">
+              Vision
+            </span>
+            <span className="text-center" title="Tool calling capability (0–5)">
+              Tools
+            </span>
             <span className="text-right">Size</span>
             <span className="text-right">RAM</span>
             <span className="text-center">Cutoff</span>
             <div className="flex items-center justify-end gap-1">
               <span>Actions</span>
-              {allModels.some((m) => !downloadedModels.some((d) => d.filename === m.filename)) && (
+              {allModels.some(
+                (m) => !downloadedModels.some((d) => d.filename === m.filename),
+              ) && (
                 <Button
-                  size="sm" variant="outline"
+                  size="sm"
+                  variant="outline"
                   className="h-5 px-1.5 text-[10px] gap-1 ml-1"
                   onClick={handleDownloadAll}
                   title="Download all missing models"
@@ -1578,19 +1947,6 @@ function ModelsTab() {
                 </span>
               )}
             </div>
-          </div>
-
-          {/* Legend row */}
-          <div className="px-3 py-1.5 flex items-center gap-4 text-[11px] text-foreground/50 border-b bg-background">
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-green-500 inline-block" />
-              Downloaded
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-foreground/20 inline-block" />
-              Not downloaded
-            </span>
-            <span className="ml-auto italic">Ratings 0–5 · hover any cell for description</span>
           </div>
 
           {/* Model rows — consumer models */}
@@ -1622,7 +1978,9 @@ function ModelsTab() {
 
           {/* Server-grade models — collapsible */}
           {(() => {
-            const consumerCount = allModels.filter((m) => !m.is_server_grade).length;
+            const consumerCount = allModels.filter(
+              (m) => !m.is_server_grade,
+            ).length;
             const serverModels = allModels.filter((m) => m.is_server_grade);
             if (serverModels.length === 0) return null;
             return (
@@ -1650,37 +2008,163 @@ function ModelsTab() {
 
           {/* Custom downloaded models */}
           {customModels.map((dm, idx) => {
-            const isThisRunning = isRunning && runningModelPath.includes(dm.filename);
-            const totalConsumer = allModels.filter((m) => !m.is_server_grade).length;
+            const isThisRunning =
+              isRunning && runningModelPath.includes(dm.filename);
+            const totalConsumer = allModels.filter(
+              (m) => !m.is_server_grade,
+            ).length;
             const stripe = (totalConsumer + idx) % 2 === 0 ? "" : "bg-muted/20";
+            const isExpanded = expandedCustomRow === dm.filename;
+            const isEditing = editingCustomRow === dm.filename;
+            const displayName = customModelNames[dm.filename] ?? dm.name;
+
             return (
-              <div
-                key={dm.filename}
-                className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2.5 text-sm border-b last:border-b-0 transition-colors hover:bg-primary/5 ${isThisRunning ? "bg-green-500/5" : stripe}`}
-              >
-                <span className="text-xs text-foreground/50">Custom</span>
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-                  <span className="font-medium truncate text-foreground">{dm.name}</span>
-                  {isThisRunning && <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />}
-                </div>
-                <span className="text-foreground/50 text-xs text-center">—</span>
-                <span className="text-foreground/50 text-xs text-center">—</span>
-                <span className="text-foreground/50 text-xs text-center">—</span>
-                <span className="text-foreground/50 text-xs text-center">—</span>
-                <span className="text-xs text-foreground/80 text-right tabular-nums">{dm.size_gb} GB</span>
-                <span className="text-foreground/50 text-xs text-right">—</span>
-                <span className="text-foreground/50 text-xs text-center">—</span>
-                <div className="flex justify-end gap-0.5">
-                  {!isThisRunning && (
-                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-green-500 hover:text-green-400" onClick={() => handleLoadCustom(dm.filename)} disabled={isStarting} title="Load model">
+              <div key={dm.filename} className="border-b last:border-b-0">
+                <div
+                  className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2.5 text-sm transition-colors hover:bg-primary/5 ${isThisRunning ? "bg-green-500/5" : stripe}`}
+                >
+                  <span className="text-xs text-foreground/50">Custom</span>
+
+                  {/* Name with expand chevron */}
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                    <button
+                      className="flex items-center gap-1 min-w-0 text-left group"
+                      onClick={() => setExpandedCustomRow(isExpanded ? null : dm.filename)}
+                    >
+                      <span className="font-medium truncate text-foreground">
+                        {displayName}
+                      </span>
+                      <ChevronDown
+                        className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform group-hover:text-foreground ${isExpanded ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                    {isThisRunning && (
+                      <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
+                    )}
+                  </div>
+
+                  {/* Rating placeholders */}
+                  <span className="text-foreground/30 text-xs text-center">—</span>
+                  <span className="text-foreground/30 text-xs text-center">—</span>
+                  <span className="text-foreground/30 text-xs text-center">—</span>
+                  <span className="text-foreground/30 text-xs text-center">—</span>
+
+                  {/* Size */}
+                  <span className="text-xs text-foreground/80 text-right tabular-nums">
+                    {dm.size_gb} GB
+                  </span>
+                  <span className="text-foreground/30 text-xs text-right">—</span>
+                  <span className="text-foreground/30 text-xs text-center">—</span>
+
+                  {/* Actions — stable positions */}
+                  <div className="flex justify-end items-center">
+                    {/* Edit/rename */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        if (isEditing) {
+                          setEditingCustomRow(null);
+                        } else {
+                          setEditingCustomName(displayName);
+                          setEditingCustomRow(dm.filename);
+                        }
+                      }}
+                      title="Rename model"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+
+                    {/* Download — not applicable for custom; greyed out */}
+                    <div className="h-7 w-7" />
+
+                    {/* Play */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className={`h-7 w-7 p-0 ${!isThisRunning ? "text-green-500 hover:text-green-400" : "text-muted-foreground/20 cursor-not-allowed"}`}
+                      onClick={() => { if (!isThisRunning) handleLoadCustom(dm.filename); }}
+                      disabled={isThisRunning || isStarting}
+                      title={isThisRunning ? "Model is running" : "Load and run model"}
+                    >
                       <Play className="h-3.5 w-3.5" />
                     </Button>
-                  )}
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(dm.filename)} title="Delete model">
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+
+                    {/* Delete */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDelete(dm.filename)}
+                      title="Delete model file"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
+
+                {/* Inline rename */}
+                {isEditing && (
+                  <div className="px-4 pb-3 pt-2 pl-10 bg-muted/10 border-t flex items-center gap-2">
+                    <Input
+                      className="h-7 text-xs flex-1 max-w-xs"
+                      value={editingCustomName}
+                      onChange={(e) => setEditingCustomName(e.target.value)}
+                      placeholder="Enter a name for this model"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          saveCustomModelName(dm.filename, editingCustomName);
+                          setEditingCustomRow(null);
+                        }
+                        if (e.key === "Escape") setEditingCustomRow(null);
+                      }}
+                      autoFocus
+                    />
+                    <Button
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        saveCustomModelName(dm.filename, editingCustomName);
+                        setEditingCustomRow(null);
+                      }}
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setEditingCustomRow(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+
+                {/* Expanded details */}
+                {isExpanded && !isEditing && (
+                  <div className="px-4 pb-3 pl-10 space-y-1.5 bg-muted/10 border-t">
+                    <p className="text-xs text-foreground/60 pt-2">
+                      <span className="font-medium text-foreground/80">File:</span>{" "}
+                      <span className="font-mono">{dm.filename}</span>
+                    </p>
+                    <p className="text-xs text-foreground/60">
+                      <span className="font-medium text-foreground/80">Size:</span>{" "}
+                      {dm.size_gb} GB
+                    </p>
+                    {isThisRunning && (
+                      <p className="text-xs text-green-400 flex items-center gap-1">
+                        <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+                        Currently running
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Custom model — no metadata available. Use the rename button to give it a friendly name.
+                    </p>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -1744,7 +2228,10 @@ function loadConversations(): SavedConversation[] {
 
 function saveConversations(convs: SavedConversation[]): void {
   try {
-    localStorage.setItem(CONVERSATIONS_STORE_KEY, JSON.stringify(convs.slice(0, MAX_CONVERSATIONS)));
+    localStorage.setItem(
+      CONVERSATIONS_STORE_KEY,
+      JSON.stringify(convs.slice(0, MAX_CONVERSATIONS)),
+    );
   } catch {
     // storage full — ignore silently
   }
@@ -1757,15 +2244,20 @@ function ModelSwitcher() {
   const { startServer, stopServer, detectHardware, listModels } = actions;
   const [switching, setSwitching] = useState(false);
 
-  useEffect(() => { listModels(); }, [listModels]);
+  useEffect(() => {
+    listModels();
+  }, [listModels]);
 
-  const currentModel = serverStatus?.model_name ?? serverStatus?.model_path?.split("/").pop() ?? "";
+  const currentModel =
+    serverStatus?.model_name ??
+    serverStatus?.model_path?.split("/").pop() ??
+    "";
 
   const handleSwitch = async (filename: string) => {
     if (switching || isStarting) return;
     setSwitching(true);
     try {
-      const hw = hardwareResult ?? await detectHardware();
+      const hw = hardwareResult ?? (await detectHardware());
       const ctx = 8192;
       await stopServer();
       await startServer(filename, hw.recommended_gpu_layers, ctx);
@@ -1780,7 +2272,9 @@ function ModelSwitcher() {
     return (
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-        <span className="font-medium truncate max-w-[160px]">{currentModel || "Running"}</span>
+        <span className="font-medium truncate max-w-[160px]">
+          {currentModel || "Running"}
+        </span>
       </div>
     );
   }
@@ -1790,7 +2284,11 @@ function ModelSwitcher() {
       <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
       <select
         className="text-xs bg-transparent border-0 outline-none cursor-pointer font-medium text-foreground max-w-[200px] truncate"
-        value={downloadedModels.find((m) => serverStatus?.model_path?.includes(m.filename))?.filename ?? ""}
+        value={
+          downloadedModels.find((m) =>
+            serverStatus?.model_path?.includes(m.filename),
+          )?.filename ?? ""
+        }
         onChange={(e) => handleSwitch(e.target.value)}
         disabled={switching || isStarting}
         title="Switch model"
@@ -1802,7 +2300,9 @@ function ModelSwitcher() {
         ))}
       </select>
       {(switching || isStarting) && (
-        <span className="text-xs text-muted-foreground animate-pulse">switching…</span>
+        <span className="text-xs text-muted-foreground animate-pulse">
+          switching…
+        </span>
       )}
     </div>
   );
@@ -1821,7 +2321,9 @@ function SystemPromptSelector({
   onChange: (content: string) => void;
 }) {
   const navigate = useNavigate();
-  const [userPrompts, setUserPrompts] = useState<SystemPrompt[]>(() => systemPrompts.list());
+  const [userPrompts, setUserPrompts] = useState<SystemPrompt[]>(() =>
+    systemPrompts.list(),
+  );
   const allPrompts = [...BUILTIN_PROMPTS, ...userPrompts];
   const activePrompt = allPrompts.find((p) => p.content === value);
 
@@ -1865,13 +2367,17 @@ function SystemPromptSelector({
           {userPrompts.length > 0 && (
             <optgroup label="My Prompts">
               {userPrompts.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
               ))}
             </optgroup>
           )}
           <optgroup label="Built-in">
             {BUILTIN_PROMPTS.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
             ))}
           </optgroup>
           <option value="__manage__">→ Open Prompts Library…</option>
@@ -1883,7 +2389,9 @@ function SystemPromptSelector({
           placeholder="You are a helpful assistant… (or select from the library above)"
           className="text-xs resize-none h-32"
         />
-        <p className="text-[10px] text-muted-foreground text-right">{value.length} chars</p>
+        <p className="text-[10px] text-muted-foreground text-right">
+          {value.length} chars
+        </p>
       </div>
     </div>
   );
@@ -1895,9 +2403,11 @@ function InferenceTab() {
   const { startServer, stopServer, detectHardware, listModels } = actions;
 
   // ── Conversation list ──────────────────────────────────────────────────
-  const [conversations, setConversations] = useState<SavedConversation[]>(() => loadConversations());
+  const [conversations, setConversations] = useState<SavedConversation[]>(() =>
+    loadConversations(),
+  );
   const [activeConvId, setActiveConvId] = useState<string | null>(
-    () => loadConversations()[0]?.id ?? null
+    () => loadConversations()[0]?.id ?? null,
   );
 
   // ── Active conversation state ──────────────────────────────────────────
@@ -1913,7 +2423,9 @@ function InferenceTab() {
   // ── Message actions state ─────────────────────────────────────────────
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
-  const [reactions, setReactions] = useState<Record<string, "up" | "down" | null>>({});
+  const [reactions, setReactions] = useState<
+    Record<string, "up" | "down" | null>
+  >({});
   const [switchingModel, setSwitchingModel] = useState(false);
   const [showPromptPicker, setShowPromptPicker] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -1922,7 +2434,9 @@ function InferenceTab() {
 
   // ── Settings panel ─────────────────────────────────────────────────────
   const [showSettings, setShowSettings] = useState(false);
-  const [systemPrompt, setSystemPrompt] = useState(activeConv?.systemPrompt ?? "");
+  const [systemPrompt, setSystemPrompt] = useState(
+    activeConv?.systemPrompt ?? "",
+  );
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(0.8);
   const [maxTokens, setMaxTokens] = useState(1024);
@@ -1930,11 +2444,38 @@ function InferenceTab() {
 
   // Tool / Raw state
   const [toolDef, setToolDef] = useState(
-    JSON.stringify({ type: "function", function: { name: "get_weather", description: "Get current weather for a location", parameters: { type: "object", properties: { location: { type: "string", description: "City name" } }, required: ["location"] } } }, null, 2)
+    JSON.stringify(
+      {
+        type: "function",
+        function: {
+          name: "get_weather",
+          description: "Get current weather for a location",
+          parameters: {
+            type: "object",
+            properties: {
+              location: { type: "string", description: "City name" },
+            },
+            required: ["location"],
+          },
+        },
+      },
+      null,
+      2,
+    ),
   );
   const [toolResult, setToolResult] = useState<string | null>(null);
   const [rawJson, setRawJson] = useState(
-    JSON.stringify({ model: "local", messages: [{ role: "user", content: "Hello!" }], max_tokens: 256, temperature: 0.7, stream: false }, null, 2)
+    JSON.stringify(
+      {
+        model: "local",
+        messages: [{ role: "user", content: "Hello!" }],
+        max_tokens: 256,
+        temperature: 0.7,
+        stream: false,
+      },
+      null,
+      2,
+    ),
   );
   const [rawResult, setRawResult] = useState<string | null>(null);
 
@@ -1944,7 +2485,9 @@ function InferenceTab() {
   const [contextLengthOverride, setContextLengthOverride] = useState(8192);
   const [selectedModel, setSelectedModel] = useState("");
 
-  useEffect(() => { listModels(); }, [listModels]);
+  useEffect(() => {
+    listModels();
+  }, [listModels]);
 
   useEffect(() => {
     if (hardwareResult?.recommended_gpu_layers !== undefined) {
@@ -1992,20 +2535,25 @@ function InferenceTab() {
     }
   };
 
-  const updateMessages = (id: string, msgs: ConversationMessage[], sysPrompt?: string) => {
+  const updateMessages = (
+    id: string,
+    msgs: ConversationMessage[],
+    sysPrompt?: string,
+  ) => {
     setConversations((prev) => {
       const updated = prev.map((c) =>
         c.id === id
           ? {
               ...c,
               messages: msgs,
-              systemPrompt: sysPrompt !== undefined ? sysPrompt : c.systemPrompt,
+              systemPrompt:
+                sysPrompt !== undefined ? sysPrompt : c.systemPrompt,
               title: msgs.find((m) => m.role === "user")
                 ? makeTitle(msgs.find((m) => m.role === "user")!.content)
                 : c.title,
               updatedAt: Date.now(),
             }
-          : c
+          : c,
       );
       saveConversations(updated);
       return updated;
@@ -2013,7 +2561,10 @@ function InferenceTab() {
   };
 
   const scrollToBottom = () => {
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    setTimeout(
+      () => bottomRef.current?.scrollIntoView({ behavior: "smooth" }),
+      50,
+    );
   };
 
   // ── Auto-resize textarea ──────────────────────────────────────────────
@@ -2027,10 +2578,16 @@ function InferenceTab() {
   // ── Close pickers on outside click ────────────────────────────────────
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (promptPickerRef.current && !promptPickerRef.current.contains(e.target as Node)) {
+      if (
+        promptPickerRef.current &&
+        !promptPickerRef.current.contains(e.target as Node)
+      ) {
         setShowPromptPicker(false);
       }
-      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
+      if (
+        modelPickerRef.current &&
+        !modelPickerRef.current.contains(e.target as Node)
+      ) {
         setShowModelPicker(false);
       }
     };
@@ -2056,7 +2613,12 @@ function InferenceTab() {
     const newMessages = [
       ...truncated,
       editedUserMsg,
-      { id: assistantId, role: "assistant" as const, content: "", isStreaming: true },
+      {
+        id: assistantId,
+        role: "assistant" as const,
+        content: "",
+        isStreaming: true,
+      },
     ];
 
     if (activeConvId) updateMessages(activeConvId, newMessages, systemPrompt);
@@ -2065,22 +2627,35 @@ function InferenceTab() {
     scrollToBottom();
 
     const chatMessages: ChatMessage[] = [
-      ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
-      ...truncated.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      ...(systemPrompt.trim()
+        ? [{ role: "system" as const, content: systemPrompt }]
+        : []),
+      ...truncated.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
       { role: "user" as const, content: newContent.trim() },
     ];
 
     let accumulated = "";
     try {
-      const stream = streamCompletion(port, chatMessages, { temperature, maxTokens });
+      const stream = streamCompletion(port, chatMessages, {
+        temperature,
+        maxTokens,
+      });
       for await (const token of stream) {
         if (stopRef.current) break;
         accumulated += token;
         setConversations((prev) => {
           const updated = prev.map((c) =>
             c.id === activeConvId
-              ? { ...c, messages: c.messages.map((m) => m.id === assistantId ? { ...m, content: accumulated } : m) }
-              : c
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === assistantId ? { ...m, content: accumulated } : m,
+                  ),
+                }
+              : c,
           );
           saveConversations(updated);
           return updated;
@@ -2093,8 +2668,13 @@ function InferenceTab() {
       setConversations((prev) => {
         const updated = prev.map((c) =>
           c.id === activeConvId
-            ? { ...c, messages: c.messages.map((m) => m.id === assistantId ? { ...m, isStreaming: false } : m) }
-            : c
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === assistantId ? { ...m, isStreaming: false } : m,
+                ),
+              }
+            : c,
         );
         saveConversations(updated);
         return updated;
@@ -2109,7 +2689,7 @@ function InferenceTab() {
     setEditingMsgId(null);
     setEditingContent("");
     const updatedMsgs = messages.map((m) =>
-      m.id === msgId ? { ...m, content: newContent } : m
+      m.id === msgId ? { ...m, content: newContent } : m,
     );
     updateMessages(activeConvId, updatedMsgs, systemPrompt);
   };
@@ -2152,7 +2732,7 @@ function InferenceTab() {
     setShowModelPicker(false);
     setSwitchingModel(true);
     try {
-      const hw = hardwareResult ?? await detectHardware();
+      const hw = hardwareResult ?? (await detectHardware());
       const ctx = 8192;
       await stopServer();
       await startServer(filename, hw.recommended_gpu_layers, ctx);
@@ -2165,8 +2745,12 @@ function InferenceTab() {
 
   // Prompt/model display helpers
   const allPrompts = [...BUILTIN_PROMPTS, ...systemPrompts.list()];
-  const activePromptName = allPrompts.find((p) => p.content === systemPrompt)?.name ?? null;
-  const currentModelName = serverStatus?.model_name ?? serverStatus?.model_path?.split("/").pop() ?? "Model";
+  const activePromptName =
+    allPrompts.find((p) => p.content === systemPrompt)?.name ?? null;
+  const currentModelName =
+    serverStatus?.model_name ??
+    serverStatus?.model_path?.split("/").pop() ??
+    "Model";
 
   // ── Send message ───────────────────────────────────────────────────────
   const handleSend = async () => {
@@ -2195,8 +2779,13 @@ function InferenceTab() {
     }
 
     const chatMessages: ChatMessage[] = [
-      ...(systemPrompt.trim() ? [{ role: "system" as const, content: systemPrompt }] : []),
-      ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      ...(systemPrompt.trim()
+        ? [{ role: "system" as const, content: systemPrompt }]
+        : []),
+      ...messages.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
       { role: "user" as const, content: userMsg },
     ];
 
@@ -2213,7 +2802,10 @@ function InferenceTab() {
 
     let accumulated = "";
     try {
-      const stream = streamCompletion(port, chatMessages, { temperature, maxTokens });
+      const stream = streamCompletion(port, chatMessages, {
+        temperature,
+        maxTokens,
+      });
       for await (const token of stream) {
         if (stopRef.current) break;
         accumulated += token;
@@ -2223,10 +2815,10 @@ function InferenceTab() {
               ? {
                   ...c,
                   messages: c.messages.map((m) =>
-                    m.id === assistantId ? { ...m, content: accumulated } : m
+                    m.id === assistantId ? { ...m, content: accumulated } : m,
                   ),
                 }
-              : c
+              : c,
           );
           saveConversations(updated);
           return updated;
@@ -2239,8 +2831,11 @@ function InferenceTab() {
         setConversations((prev) => {
           const updated = prev.map((c) =>
             c.id === convId
-              ? { ...c, messages: c.messages.filter((m) => m.id !== assistantId) }
-              : c
+              ? {
+                  ...c,
+                  messages: c.messages.filter((m) => m.id !== assistantId),
+                }
+              : c,
           );
           saveConversations(updated);
           return updated;
@@ -2248,11 +2843,11 @@ function InferenceTab() {
         const overBy = e.promptTokens - e.contextSize;
         setError(
           `Your conversation is too long for this model's context window.\n\n` +
-          `• Used: ${e.promptTokens.toLocaleString()} tokens  •  Limit: ${e.contextSize.toLocaleString()} tokens  •  Over by: ${overBy.toLocaleString()} tokens\n\n` +
-          `To fix this, you can:\n` +
-          `  1. Start a new conversation (the + button above).\n` +
-          `  2. Shorten your message or clear some history.\n` +
-          `  3. Increase the Context Length in Server Settings (currently ${contextLengthOverride.toLocaleString()}) and restart the server.`
+            `• Used: ${e.promptTokens.toLocaleString()} tokens  •  Limit: ${e.contextSize.toLocaleString()} tokens  •  Over by: ${overBy.toLocaleString()} tokens\n\n` +
+            `To fix this, you can:\n` +
+            `  1. Start a new conversation (the + button above).\n` +
+            `  2. Shorten your message or clear some history.\n` +
+            `  3. Increase the Context Length in Server Settings (currently ${contextLengthOverride.toLocaleString()}) and restart the server.`,
         );
       } else {
         setError(e instanceof Error ? e.message : String(e));
@@ -2261,8 +2856,13 @@ function InferenceTab() {
       setConversations((prev) => {
         const updated = prev.map((c) =>
           c.id === convId
-            ? { ...c, messages: c.messages.map((m) => m.id === assistantId ? { ...m, isStreaming: false } : m) }
-            : c
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === assistantId ? { ...m, isStreaming: false } : m,
+                ),
+              }
+            : c,
         );
         saveConversations(updated);
         return updated;
@@ -2278,7 +2878,11 @@ function InferenceTab() {
     setIsGenerating(true);
     try {
       const tool = JSON.parse(toolDef);
-      const result = await callWithTools(port, [{ role: "user", content: input }], [tool]);
+      const result = await callWithTools(
+        port,
+        [{ role: "user", content: input }],
+        [tool],
+      );
       setToolResult(JSON.stringify(result, null, 2));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -2294,11 +2898,14 @@ function InferenceTab() {
     setIsGenerating(true);
     try {
       const body = JSON.parse(rawJson);
-      const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const response = await fetch(
+        `http://127.0.0.1:${port}/v1/chat/completions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
       const data = await response.json();
       setRawResult(JSON.stringify(data, null, 2));
     } catch (e) {
@@ -2311,7 +2918,9 @@ function InferenceTab() {
   const handleStartServer = async () => {
     const modelToLoad = selectedModel || downloadedModels[0]?.filename;
     if (!modelToLoad) {
-      setError("No model selected. Download a model from the Models tab first.");
+      setError(
+        "No model selected. Download a model from the Models tab first.",
+      );
       return;
     }
     try {
@@ -2352,7 +2961,8 @@ function InferenceTab() {
             )}
             {downloadedModels.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No models downloaded yet. Go to the <strong>Models</strong> tab to download one.
+                No models downloaded yet. Go to the <strong>Models</strong> tab
+                to download one.
               </p>
             ) : (
               <>
@@ -2372,14 +2982,26 @@ function InferenceTab() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label className="text-xs" title="Transformer layers to offload to GPU. 99 = all layers (Metal/CUDA). 0 = CPU only.">
+                    <Label
+                      className="text-xs"
+                      title="Transformer layers to offload to GPU. 99 = all layers (Metal/CUDA). 0 = CPU only."
+                    >
                       GPU Layers
                     </Label>
                     <Input
                       type="number"
                       value={gpuLayersRaw}
-                      onChange={(e) => { setGpuLayersRaw(e.target.value); const n = parseInt(e.target.value); if (!isNaN(n)) setGpuLayersOverride(n); }}
-                      onBlur={() => { const n = parseInt(gpuLayersRaw); const c = isNaN(n) ? 0 : n; setGpuLayersOverride(c); setGpuLayersRaw(String(c)); }}
+                      onChange={(e) => {
+                        setGpuLayersRaw(e.target.value);
+                        const n = parseInt(e.target.value);
+                        if (!isNaN(n)) setGpuLayersOverride(n);
+                      }}
+                      onBlur={() => {
+                        const n = parseInt(gpuLayersRaw);
+                        const c = isNaN(n) ? 0 : n;
+                        setGpuLayersOverride(c);
+                        setGpuLayersRaw(String(c));
+                      }}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -2387,15 +3009,23 @@ function InferenceTab() {
                     <select
                       className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                       value={contextLengthOverride}
-                      onChange={(e) => setContextLengthOverride(parseInt(e.target.value))}
+                      onChange={(e) =>
+                        setContextLengthOverride(parseInt(e.target.value))
+                      }
                     >
                       {[2048, 4096, 8192, 16384, 32768].map((n) => (
-                        <option key={n} value={n}>{n.toLocaleString()}</option>
+                        <option key={n} value={n}>
+                          {n.toLocaleString()}
+                        </option>
                       ))}
                     </select>
                   </div>
                 </div>
-                <Button className="w-full" disabled={isStarting} onClick={handleStartServer}>
+                <Button
+                  className="w-full"
+                  disabled={isStarting}
+                  onClick={handleStartServer}
+                >
                   {isStarting ? "Starting…" : "Start Server"}
                 </Button>
               </>
@@ -2409,12 +3039,19 @@ function InferenceTab() {
   // ── Full playground layout ─────────────────────────────────────────────
   return (
     <div className="flex h-full gap-0 rounded-xl border overflow-hidden bg-background">
-
       {/* ── Left sidebar: conversation list ── */}
       <div className="w-56 shrink-0 flex flex-col border-r bg-muted/20">
         <div className="flex items-center justify-between px-3 py-2.5 border-b">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Conversations</span>
-          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={newConversation} title="New conversation">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Conversations
+          </span>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-6 w-6"
+            onClick={newConversation}
+            title="New conversation"
+          >
             <Plus className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -2433,13 +3070,21 @@ function InferenceTab() {
                     ? "bg-primary/10 text-primary"
                     : "hover:bg-muted/60 text-foreground"
                 }`}
-                onClick={() => { setActiveConvId(conv.id); setError(null); }}
+                onClick={() => {
+                  setActiveConvId(conv.id);
+                  setError(null);
+                }}
               >
                 <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-60" />
-                <span className="flex-1 min-w-0 truncate text-xs leading-tight">{conv.title}</span>
+                <span className="flex-1 min-w-0 truncate text-xs leading-tight">
+                  {conv.title}
+                </span>
                 <button
                   className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-destructive transition-opacity"
-                  onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteConversation(conv.id);
+                  }}
                   title="Delete"
                 >
                   <X className="h-3 w-3" />
@@ -2452,7 +3097,6 @@ function InferenceTab() {
 
       {/* ── Main chat area ── */}
       <div className="flex-1 flex flex-col min-w-0">
-
         {/* Header bar */}
         <div className="flex items-center justify-between px-4 py-2 border-b bg-background shrink-0">
           <div className="flex items-center gap-3">
@@ -2462,7 +3106,9 @@ function InferenceTab() {
                 <button
                   key={m}
                   className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                    mode === m ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                    mode === m
+                      ? "bg-background shadow-sm text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                   onClick={() => setMode(m)}
                 >
@@ -2481,7 +3127,10 @@ function InferenceTab() {
                 size="sm"
                 variant="ghost"
                 className="h-7 text-xs text-muted-foreground gap-1"
-                onClick={() => { updateMessages(activeConvId!, [], systemPrompt); setError(null); }}
+                onClick={() => {
+                  updateMessages(activeConvId!, [], systemPrompt);
+                  setError(null);
+                }}
                 title="Clear messages"
               >
                 <RotateCcw className="h-3 w-3" />
@@ -2512,8 +3161,15 @@ function InferenceTab() {
         {error && (
           <div className="flex gap-2 px-4 py-3 text-sm text-destructive bg-destructive/10 border-b shrink-0">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-            <span className="flex-1 whitespace-pre-wrap leading-relaxed">{error}</span>
-            <button className="ml-2 shrink-0 text-xs underline self-start" onClick={() => setError(null)}>Dismiss</button>
+            <span className="flex-1 whitespace-pre-wrap leading-relaxed">
+              {error}
+            </span>
+            <button
+              className="ml-2 shrink-0 text-xs underline self-start"
+              onClick={() => setError(null)}
+            >
+              Dismiss
+            </button>
           </div>
         )}
 
@@ -2528,13 +3184,16 @@ function InferenceTab() {
                       <MessageSquare className="h-6 w-6 text-primary/60" />
                     </div>
                     <p className="text-sm text-muted-foreground max-w-xs">
-                      Start a conversation with the local model. Your chats are saved automatically.
+                      Start a conversation with the local model. Your chats are
+                      saved automatically.
                     </p>
                   </div>
                 )}
                 {messages.map((msg) => (
                   <div key={msg.id} className="group/msg">
-                    <div className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                    >
                       {msg.role === "assistant" && (
                         <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0 mt-0.5">
                           <Cpu className="h-3.5 w-3.5 text-primary" />
@@ -2546,7 +3205,9 @@ function InferenceTab() {
                             <textarea
                               className="w-full min-h-[60px] rounded-xl border bg-background px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
                               value={editingContent}
-                              onChange={(e) => setEditingContent(e.target.value)}
+                              onChange={(e) =>
+                                setEditingContent(e.target.value)
+                              }
                               autoFocus
                             />
                             <div className="flex gap-2 justify-end">
@@ -2554,7 +3215,10 @@ function InferenceTab() {
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 text-xs"
-                                onClick={() => { setEditingMsgId(null); setEditingContent(""); }}
+                                onClick={() => {
+                                  setEditingMsgId(null);
+                                  setEditingContent("");
+                                }}
                               >
                                 Cancel
                               </Button>
@@ -2592,16 +3256,27 @@ function InferenceTab() {
                                         {children}
                                       </pre>
                                     ),
-                                    code: ({ className, children, ...props }) => {
+                                    code: ({
+                                      className,
+                                      children,
+                                      ...props
+                                    }) => {
                                       const isInline = !className;
                                       if (isInline) {
                                         return (
-                                          <code className="rounded bg-muted px-1.5 py-0.5 text-[0.8125rem] font-mono" {...props}>
+                                          <code
+                                            className="rounded bg-muted px-1.5 py-0.5 text-[0.8125rem] font-mono"
+                                            {...props}
+                                          >
                                             {children}
                                           </code>
                                         );
                                       }
-                                      return <code className={className} {...props}>{children}</code>;
+                                      return (
+                                        <code className={className} {...props}>
+                                          {children}
+                                        </code>
+                                      );
                                     },
                                   }}
                                 >
@@ -2613,7 +3288,9 @@ function InferenceTab() {
                               </div>
                             ) : (
                               <>
-                                <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                                <p className="whitespace-pre-wrap break-words">
+                                  {msg.content}
+                                </p>
                                 {msg.isStreaming && (
                                   <span className="inline-block h-4 w-0.5 bg-current opacity-70 animate-pulse ml-0.5 align-middle" />
                                 )}
@@ -2623,49 +3300,62 @@ function InferenceTab() {
                         )}
 
                         {/* Message action icons — hover row */}
-                        {!msg.isStreaming && editingMsgId !== msg.id && msg.content && (
-                          <div className={`flex items-center gap-0.5 mt-1 opacity-0 transition-opacity group-hover/msg:opacity-100 ${
-                            msg.role === "user" ? "justify-end" : "justify-start"
-                          }`}>
-                            <MsgCopyButton text={msg.content} />
-                            <button
-                              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
-                              title="Edit"
-                              onClick={() => { setEditingMsgId(msg.id); setEditingContent(msg.content); }}
+                        {!msg.isStreaming &&
+                          editingMsgId !== msg.id &&
+                          msg.content && (
+                            <div
+                              className={`flex items-center gap-0.5 mt-1 opacity-0 transition-opacity group-hover/msg:opacity-100 ${
+                                msg.role === "user"
+                                  ? "justify-end"
+                                  : "justify-start"
+                              }`}
                             >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                            {msg.role === "assistant" && (
-                              <>
-                                <button
-                                  className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "up" ? "text-green-500" : "text-muted-foreground hover:text-foreground"}`}
-                                  title="Good response"
-                                  onClick={() => toggleReaction(msg.id, "up")}
-                                >
-                                  <ThumbsUp className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "down" ? "text-red-500" : "text-muted-foreground hover:text-foreground"}`}
-                                  title="Bad response"
-                                  onClick={() => toggleReaction(msg.id, "down")}
-                                >
-                                  <ThumbsDown className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
-                                  title="Fork conversation from here"
-                                  onClick={() => forkFromMessage(msg.id)}
-                                >
-                                  <GitFork className="h-3.5 w-3.5" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        )}
+                              <MsgCopyButton text={msg.content} />
+                              <button
+                                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                title="Edit"
+                                onClick={() => {
+                                  setEditingMsgId(msg.id);
+                                  setEditingContent(msg.content);
+                                }}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              {msg.role === "assistant" && (
+                                <>
+                                  <button
+                                    className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "up" ? "text-green-500" : "text-muted-foreground hover:text-foreground"}`}
+                                    title="Good response"
+                                    onClick={() => toggleReaction(msg.id, "up")}
+                                  >
+                                    <ThumbsUp className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "down" ? "text-red-500" : "text-muted-foreground hover:text-foreground"}`}
+                                    title="Bad response"
+                                    onClick={() =>
+                                      toggleReaction(msg.id, "down")
+                                    }
+                                  >
+                                    <ThumbsDown className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                    title="Fork conversation from here"
+                                    onClick={() => forkFromMessage(msg.id)}
+                                  >
+                                    <GitFork className="h-3.5 w-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
                       </div>
                       {msg.role === "user" && (
                         <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
-                          <span className="text-xs font-semibold text-muted-foreground">U</span>
+                          <span className="text-xs font-semibold text-muted-foreground">
+                            U
+                          </span>
                         </div>
                       )}
                     </div>
@@ -2690,9 +3380,16 @@ function InferenceTab() {
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSend();
+                      }
                     }}
-                    placeholder={switchingModel ? "Switching model…" : "Message the local model… (Enter to send, Shift+Enter for newline)"}
+                    placeholder={
+                      switchingModel
+                        ? "Switching model…"
+                        : "Message the local model… (Enter to send, Shift+Enter for newline)"
+                    }
                     className="min-h-[2.5rem] w-full resize-none bg-transparent px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
                     disabled={isGenerating || switchingModel}
                     rows={1}
@@ -2702,7 +3399,10 @@ function InferenceTab() {
                       {/* Prompt selector */}
                       <div className="relative" ref={promptPickerRef}>
                         <button
-                          onClick={() => { setShowPromptPicker(!showPromptPicker); setShowModelPicker(false); }}
+                          onClick={() => {
+                            setShowPromptPicker(!showPromptPicker);
+                            setShowModelPicker(false);
+                          }}
                           className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                           title="Select system prompt"
                         >
@@ -2715,30 +3415,44 @@ function InferenceTab() {
                           <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[240px] max-h-64 overflow-y-auto rounded-lg p-1.5 z-50">
                             <button
                               className={`flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors ${
-                                !systemPrompt ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
+                                !systemPrompt
+                                  ? "bg-accent text-accent-foreground"
+                                  : "text-foreground hover:bg-accent/50"
                               }`}
                               onClick={() => {
                                 setSystemPrompt("");
-                                if (activeConvId) updateMessages(activeConvId, messages, "");
+                                if (activeConvId)
+                                  updateMessages(activeConvId, messages, "");
                                 setShowPromptPicker(false);
                               }}
                             >
-                              <span className="text-muted-foreground">No prompt</span>
+                              <span className="text-muted-foreground">
+                                No prompt
+                              </span>
                             </button>
                             {allPrompts.map((p) => (
                               <button
                                 key={p.id}
                                 className={`flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors ${
-                                  p.content === systemPrompt ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
+                                  p.content === systemPrompt
+                                    ? "bg-accent text-accent-foreground"
+                                    : "text-foreground hover:bg-accent/50"
                                 }`}
                                 onClick={() => {
                                   setSystemPrompt(p.content);
-                                  if (activeConvId) updateMessages(activeConvId, messages, p.content);
+                                  if (activeConvId)
+                                    updateMessages(
+                                      activeConvId,
+                                      messages,
+                                      p.content,
+                                    );
                                   setShowPromptPicker(false);
                                 }}
                               >
                                 <span className="font-medium">{p.name}</span>
-                                <span className="ml-auto text-[10px] text-muted-foreground">{p.category}</span>
+                                <span className="ml-auto text-[10px] text-muted-foreground">
+                                  {p.category}
+                                </span>
                               </button>
                             ))}
                           </div>
@@ -2748,33 +3462,50 @@ function InferenceTab() {
                       {/* Model selector */}
                       <div className="relative" ref={modelPickerRef}>
                         <button
-                          onClick={() => { setShowModelPicker(!showModelPicker); setShowPromptPicker(false); }}
+                          onClick={() => {
+                            setShowModelPicker(!showModelPicker);
+                            setShowPromptPicker(false);
+                          }}
                           className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                           title="Select model"
                         >
                           <Cpu className="h-3 w-3 text-blue-500 shrink-0" />
-                          <span className="max-w-[140px] truncate">{currentModelName}</span>
+                          <span className="max-w-[140px] truncate">
+                            {currentModelName}
+                          </span>
                           <ChevronDown className="h-3 w-3" />
                         </button>
                         {showModelPicker && (
                           <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[240px] max-h-64 overflow-y-auto rounded-lg p-1.5 z-50">
                             {downloadedModels.map((m) => {
-                              const isCurrent = serverStatus?.model_path?.includes(m.filename);
+                              const isCurrent =
+                                serverStatus?.model_path?.includes(m.filename);
                               return (
                                 <button
                                   key={m.filename}
                                   className={`flex w-full items-center rounded-md px-3 py-2 text-left text-xs transition-colors ${
-                                    isCurrent ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent/50"
+                                    isCurrent
+                                      ? "bg-accent text-accent-foreground"
+                                      : "text-foreground hover:bg-accent/50"
                                   }`}
                                   onClick={() => {
-                                    if (!isCurrent) handleModelSwitch(m.filename);
+                                    if (!isCurrent)
+                                      handleModelSwitch(m.filename);
                                     setShowModelPicker(false);
                                   }}
                                 >
                                   <Cpu className="h-3 w-3 text-blue-500 mr-2 shrink-0" />
-                                  <span className="font-medium truncate">{m.name}</span>
-                                  <span className="ml-auto text-[10px] text-muted-foreground shrink-0">{m.size_gb} GB</span>
-                                  {isCurrent && <span className="ml-1.5 text-[10px] text-green-500 shrink-0">running</span>}
+                                  <span className="font-medium truncate">
+                                    {m.name}
+                                  </span>
+                                  <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                                    {m.size_gb} GB
+                                  </span>
+                                  {isCurrent && (
+                                    <span className="ml-1.5 text-[10px] text-green-500 shrink-0">
+                                      running
+                                    </span>
+                                  )}
                                 </button>
                               );
                             })}
@@ -2819,11 +3550,26 @@ function InferenceTab() {
           <div className="flex-1 overflow-auto p-4">
             <div className="grid grid-cols-2 gap-4 h-full max-w-4xl mx-auto">
               <div className="space-y-3">
-                <Label className="text-sm font-medium">Tool Definition (JSON)</Label>
-                <Textarea value={toolDef} onChange={(e) => setToolDef(e.target.value)} className="font-mono text-xs h-48 resize-none" />
+                <Label className="text-sm font-medium">
+                  Tool Definition (JSON)
+                </Label>
+                <Textarea
+                  value={toolDef}
+                  onChange={(e) => setToolDef(e.target.value)}
+                  className="font-mono text-xs h-48 resize-none"
+                />
                 <Label className="text-sm font-medium">User Prompt</Label>
-                <Textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="What is the weather in San Francisco?" className="text-sm resize-none h-24" />
-                <Button disabled={isGenerating || !input.trim()} onClick={handleToolTest} className="w-full">
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="What is the weather in San Francisco?"
+                  className="text-sm resize-none h-24"
+                />
+                <Button
+                  disabled={isGenerating || !input.trim()}
+                  onClick={handleToolTest}
+                  className="w-full"
+                >
                   {isGenerating ? "Running…" : "Run Tool Call"}
                 </Button>
               </div>
@@ -2834,10 +3580,14 @@ function InferenceTab() {
                 </div>
                 {toolResult ? (
                   <ScrollArea className="h-96 rounded-lg border bg-muted/30">
-                    <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{toolResult}</pre>
+                    <pre className="p-4 text-xs font-mono whitespace-pre-wrap">
+                      {toolResult}
+                    </pre>
                   </ScrollArea>
                 ) : (
-                  <div className="h-96 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">Response will appear here</div>
+                  <div className="h-96 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
+                    Response will appear here
+                  </div>
                 )}
               </div>
             </div>
@@ -2851,10 +3601,20 @@ function InferenceTab() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <Label className="text-sm font-medium">Request Body</Label>
-                  <span className="text-xs text-muted-foreground font-mono">POST /v1/chat/completions</span>
+                  <span className="text-xs text-muted-foreground font-mono">
+                    POST /v1/chat/completions
+                  </span>
                 </div>
-                <Textarea value={rawJson} onChange={(e) => setRawJson(e.target.value)} className="font-mono text-xs h-64 resize-none" />
-                <Button disabled={isGenerating} onClick={handleRawJson} className="w-full">
+                <Textarea
+                  value={rawJson}
+                  onChange={(e) => setRawJson(e.target.value)}
+                  className="font-mono text-xs h-64 resize-none"
+                />
+                <Button
+                  disabled={isGenerating}
+                  onClick={handleRawJson}
+                  className="w-full"
+                >
                   {isGenerating ? "Running…" : "Send Request"}
                 </Button>
               </div>
@@ -2865,10 +3625,14 @@ function InferenceTab() {
                 </div>
                 {rawResult ? (
                   <ScrollArea className="h-96 rounded-lg border bg-muted/30">
-                    <pre className="p-4 text-xs font-mono whitespace-pre-wrap">{rawResult}</pre>
+                    <pre className="p-4 text-xs font-mono whitespace-pre-wrap">
+                      {rawResult}
+                    </pre>
                   </ScrollArea>
                 ) : (
-                  <div className="h-96 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">Response will appear here</div>
+                  <div className="h-96 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
+                    Response will appear here
+                  </div>
                 )}
               </div>
             </div>
@@ -2880,8 +3644,13 @@ function InferenceTab() {
       {showSettings && (
         <div className="w-64 shrink-0 flex flex-col border-l bg-muted/10">
           <div className="flex items-center justify-between px-3 py-2.5 border-b">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Settings</span>
-            <button onClick={() => setShowSettings(false)} className="text-muted-foreground hover:text-foreground">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Settings
+            </span>
+            <button
+              onClick={() => setShowSettings(false)}
+              className="text-muted-foreground hover:text-foreground"
+            >
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -2892,7 +3661,8 @@ function InferenceTab() {
                 value={systemPrompt}
                 onChange={(content) => {
                   setSystemPrompt(content);
-                  if (activeConvId) updateMessages(activeConvId, messages, content);
+                  if (activeConvId)
+                    updateMessages(activeConvId, messages, content);
                 }}
               />
 
@@ -2903,25 +3673,52 @@ function InferenceTab() {
                 <p className="text-xs font-medium">Sampling</p>
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <Label className="text-xs text-muted-foreground">Temperature</Label>
-                    <span className="text-xs tabular-nums">{temperature.toFixed(2)}</span>
+                    <Label className="text-xs text-muted-foreground">
+                      Temperature
+                    </Label>
+                    <span className="text-xs tabular-nums">
+                      {temperature.toFixed(2)}
+                    </span>
                   </div>
-                  <Slider min={0.01} max={2} step={0.01} value={[temperature]} onValueChange={([v]) => setTemperature(v)} />
-                  <p className="text-xs text-muted-foreground">0.7 balanced · 0.1 precise · 1.5 creative</p>
+                  <Slider
+                    min={0.01}
+                    max={2}
+                    step={0.01}
+                    value={[temperature]}
+                    onValueChange={([v]) => setTemperature(v)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    0.7 balanced · 0.1 precise · 1.5 creative
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <Label className="text-xs text-muted-foreground">Top-P</Label>
-                    <span className="text-xs tabular-nums">{topP.toFixed(2)}</span>
+                    <Label className="text-xs text-muted-foreground">
+                      Top-P
+                    </Label>
+                    <span className="text-xs tabular-nums">
+                      {topP.toFixed(2)}
+                    </span>
                   </div>
-                  <Slider min={0.1} max={1} step={0.05} value={[topP]} onValueChange={([v]) => setTopP(v)} />
+                  <Slider
+                    min={0.1}
+                    max={1}
+                    step={0.05}
+                    value={[topP]}
+                    onValueChange={([v]) => setTopP(v)}
+                  />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Max Tokens</Label>
+                  <Label className="text-xs text-muted-foreground">
+                    Max Tokens
+                  </Label>
                   <Input
                     type="number"
                     value={maxTokens}
-                    onChange={(e) => { const n = parseInt(e.target.value); if (!isNaN(n) && n > 0) setMaxTokens(n); }}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value);
+                      if (!isNaN(n) && n > 0) setMaxTokens(n);
+                    }}
                     className="h-8 text-xs"
                   />
                 </div>
@@ -2940,13 +3737,17 @@ function InferenceTab() {
                   {serverStatus?.gpu_layers !== undefined && (
                     <div className="flex justify-between">
                       <span>GPU layers</span>
-                      <span className="font-mono">{serverStatus.gpu_layers}</span>
+                      <span className="font-mono">
+                        {serverStatus.gpu_layers}
+                      </span>
                     </div>
                   )}
                   {serverStatus?.context_length !== undefined && (
                     <div className="flex justify-between">
                       <span>Context</span>
-                      <span className="font-mono">{serverStatus.context_length.toLocaleString()}</span>
+                      <span className="font-mono">
+                        {serverStatus.context_length.toLocaleString()}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -2973,7 +3774,13 @@ function ServerTab() {
     hardwareResult,
     isDetecting,
   } = state;
-  const { startServer, stopServer, getServerStatus, healthCheck, detectHardware } = actions;
+  const {
+    startServer,
+    stopServer,
+    getServerStatus,
+    healthCheck,
+    detectHardware,
+  } = actions;
 
   const [healthOk, setHealthOk] = useState<boolean | null>(null);
   const [healthLatency, setHealthLatency] = useState<number | null>(null);
@@ -2982,7 +3789,7 @@ function ServerTab() {
   const [gpuLayers, setGpuLayers] = useState<number | null>(null);
   const [contextLen, setContextLen] = useState(8192);
   const [selectedModel, setSelectedModel] = useState(
-    downloadedModels[0]?.filename ?? ""
+    downloadedModels[0]?.filename ?? "",
   );
   // Persisted logs shown after a failed start attempt
   const [failureLogs, setFailureLogs] = useState<ServerLogLine[]>([]);
@@ -2991,9 +3798,11 @@ function ServerTab() {
   // Auto-detect hardware on mount so GPU layers have a real default
   useEffect(() => {
     if (!hardwareResult && !isDetecting) {
-      detectHardware().catch(() => {/* non-critical */});
+      detectHardware().catch(() => {
+        /* non-critical */
+      });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Sync gpuLayers default from hardware detection result (only when not yet user-edited)
@@ -3056,7 +3865,9 @@ function ServerTab() {
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive space-y-1">
           <div className="flex items-start gap-2">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-            <pre className="whitespace-pre-wrap font-sans break-words flex-1">{localError}</pre>
+            <pre className="whitespace-pre-wrap font-sans break-words flex-1">
+              {localError}
+            </pre>
           </div>
         </div>
       )}
@@ -3096,8 +3907,8 @@ function ServerTab() {
                     l.kind === "error"
                       ? "text-destructive"
                       : l.kind === "ready"
-                      ? "text-green-600"
-                      : "text-muted-foreground"
+                        ? "text-green-600"
+                        : "text-muted-foreground"
                   }`}
                 >
                   {l.line}
@@ -3116,7 +3927,12 @@ function ServerTab() {
               <Activity className="h-4 w-4" />
               Server Status
             </CardTitle>
-            <Button variant="ghost" size="sm" onClick={handleRefresh} disabled={isStarting}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={isStarting}
+            >
               <RotateCcw className="h-4 w-4" />
             </Button>
           </div>
@@ -3138,7 +3954,9 @@ function ServerTab() {
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">Model</p>
-                  <p className="font-medium truncate">{serverStatus.model_name}</p>
+                  <p className="font-medium truncate">
+                    {serverStatus.model_name}
+                  </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground text-xs">GPU Layers</p>
@@ -3241,13 +4059,17 @@ function ServerTab() {
                       <span className="text-xs text-muted-foreground tabular-nums">
                         {effectiveGpuLayers}
                         {isDetecting && " (detecting…)"}
-                        {!isDetecting && hardwareResult && gpuLayers !== null && (
-                          <span className="text-green-600 ml-1">✓ auto</span>
-                        )}
+                        {!isDetecting &&
+                          hardwareResult &&
+                          gpuLayers !== null && (
+                            <span className="text-green-600 ml-1">✓ auto</span>
+                          )}
                       </span>
                     </div>
                     <Slider
-                      min={0} max={99} step={1}
+                      min={0}
+                      max={99}
+                      step={1}
                       value={[effectiveGpuLayers]}
                       onValueChange={([v]) => setGpuLayers(v)}
                       disabled={isDetecting}
@@ -3257,8 +4079,8 @@ function ServerTab() {
                         ? hardwareResult.recommended_gpu_layers === 99
                           ? "Full GPU offload recommended for your hardware"
                           : hardwareResult.recommended_gpu_layers === 0
-                          ? "CPU-only mode recommended (no compatible GPU)"
-                          : `Partial offload recommended for your hardware`
+                            ? "CPU-only mode recommended (no compatible GPU)"
+                            : `Partial offload recommended for your hardware`
                         : "99 = full GPU offload · 0 = CPU only"}
                     </p>
                   </div>
@@ -3305,7 +4127,7 @@ function HardwareTab() {
     if (!hardwareResult && !isDetecting) {
       detectHardware().catch(() => {});
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listModels]);
 
   return (
@@ -3340,14 +4162,16 @@ function HardwareTab() {
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Total RAM</span>
                   <span className="font-medium">
-                    {(hardwareResult.hardware.total_ram_mb / 1024).toFixed(1)} GB
+                    {(hardwareResult.hardware.total_ram_mb / 1024).toFixed(1)}{" "}
+                    GB
                   </span>
                 </div>
                 {hardwareResult.hardware.gpu_vram_mb && (
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">GPU VRAM</span>
                     <span className="font-medium">
-                      {(hardwareResult.hardware.gpu_vram_mb / 1024).toFixed(1)} GB
+                      {(hardwareResult.hardware.gpu_vram_mb / 1024).toFixed(1)}{" "}
+                      GB
                     </span>
                   </div>
                 )}
@@ -3361,7 +4185,9 @@ function HardwareTab() {
               <CardContent className="pt-0 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">CPU Threads</span>
-                  <span className="font-medium">{hardwareResult.hardware.cpu_threads}</span>
+                  <span className="font-medium">
+                    {hardwareResult.hardware.cpu_threads}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Acceleration</span>
@@ -3369,8 +4195,8 @@ function HardwareTab() {
                     {hardwareResult.hardware.is_apple_silicon
                       ? "Apple Metal"
                       : hardwareResult.hardware.supports_cuda
-                      ? "CUDA"
-                      : "CPU only"}
+                        ? "CUDA"
+                        : "CPU only"}
                   </span>
                 </div>
               </CardContent>
@@ -3384,14 +4210,16 @@ function HardwareTab() {
             <CardContent className="pt-0 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-medium">{hardwareResult.recommended_name}</p>
+                  <p className="font-medium">
+                    {hardwareResult.recommended_name}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     {hardwareResult.recommended_size_gb.toFixed(1)} GB •{" "}
                     {hardwareResult.recommended_gpu_layers === 99
                       ? "Full GPU offload"
                       : hardwareResult.recommended_gpu_layers === 0
-                      ? "CPU inference"
-                      : `${hardwareResult.recommended_gpu_layers} GPU layers`}
+                        ? "CPU inference"
+                        : `${hardwareResult.recommended_gpu_layers} GPU layers`}
                   </p>
                 </div>
                 {hardwareResult.can_upgrade && (
@@ -3413,11 +4241,14 @@ function HardwareTab() {
             <CardContent className="pt-0">
               <div className="space-y-2">
                 {hardwareResult.all_models.map((m) => {
-                  const isRecommended = m.filename === hardwareResult.recommended_filename;
-                  const ramOk = hardwareResult.hardware.total_ram_mb / 1024 >= m.ram_required_gb;
+                  const isRecommended =
+                    m.filename === hardwareResult.recommended_filename;
+                  const ramOk =
+                    hardwareResult.hardware.total_ram_mb / 1024 >=
+                    m.ram_required_gb;
                   const downloaded = m.is_split
                     ? downloadedModels.some(
-                        (d) => d.filename === m.filename && d.all_parts_present
+                        (d) => d.filename === m.filename && d.all_parts_present,
                       )
                     : downloadedModels.some((d) => d.filename === m.filename);
                   return (
@@ -3439,17 +4270,26 @@ function HardwareTab() {
                         <span>{m.disk_size_gb.toFixed(1)} GB</span>
                         <span>{m.ram_required_gb.toFixed(0)} GB RAM</span>
                         {downloaded ? (
-                          <Badge variant="outline" className="text-xs text-green-600 border-green-500/40 gap-1">
+                          <Badge
+                            variant="outline"
+                            className="text-xs text-green-600 border-green-500/40 gap-1"
+                          >
                             <CheckCircle2 className="h-3 w-3" />
                             Downloaded
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                          <Badge
+                            variant="outline"
+                            className="text-xs text-muted-foreground"
+                          >
                             Not downloaded
                           </Badge>
                         )}
                         {!ramOk && (
-                          <Badge variant="outline" className="text-xs text-amber-500 border-amber-500/30">
+                          <Badge
+                            variant="outline"
+                            className="text-xs text-amber-500 border-amber-500/30"
+                          >
                             Low RAM
                           </Badge>
                         )}
@@ -3505,7 +4345,9 @@ function MediaModelsTab() {
 
   // generation state
   const [view, setView] = useState<ImageGenView>("picker");
-  const [selectedModel, setSelectedModel] = useState<ImageGenModelInfo | null>(null);
+  const [selectedModel, setSelectedModel] = useState<ImageGenModelInfo | null>(
+    null,
+  );
 
   // free-form generate
   const [prompt, setPrompt] = useState("");
@@ -3520,7 +4362,12 @@ function MediaModelsTab() {
   // output
   const [generating, setGenerating] = useState(false);
   const [modelLoading, setModelLoading] = useState(false);
-  const [generatedImage, setGeneratedImage] = useState<{ b64: string; elapsed: number; width: number; height: number } | null>(null);
+  const [generatedImage, setGeneratedImage] = useState<{
+    b64: string;
+    elapsed: number;
+    width: number;
+    height: number;
+  } | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
   function getBaseUrl(): string | null {
@@ -3545,7 +4392,9 @@ function MediaModelsTab() {
       setPresets(presetList);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load image gen status");
+      setError(
+        e instanceof Error ? e.message : "Failed to load image gen status",
+      );
     } finally {
       setLoading(false);
     }
@@ -3604,7 +4453,12 @@ function MediaModelsTab() {
         guidance: guidance ?? undefined,
       });
       if (result.success && result.image_b64) {
-        setGeneratedImage({ b64: result.image_b64, elapsed: result.elapsed_seconds, width: result.width, height: result.height });
+        setGeneratedImage({
+          b64: result.image_b64,
+          elapsed: result.elapsed_seconds,
+          width: result.width,
+          height: result.height,
+        });
       } else {
         setGenError(result.error ?? "Generation failed");
       }
@@ -3630,7 +4484,12 @@ function MediaModelsTab() {
         model_id: selectedModel?.model_id,
       });
       if (result.success && result.image_b64) {
-        setGeneratedImage({ b64: result.image_b64, elapsed: result.elapsed_seconds, width: result.width, height: result.height });
+        setGeneratedImage({
+          b64: result.image_b64,
+          elapsed: result.elapsed_seconds,
+          width: result.width,
+          height: result.height,
+        });
         setView("generate"); // switch to show the image
       } else {
         setGenError(result.error ?? "Generation failed");
@@ -3679,15 +4538,20 @@ function MediaModelsTab() {
           <div className="flex items-start gap-3">
             <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
             <div>
-              <p className="text-sm font-medium">Image generation dependencies not installed</p>
-              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{igStatus.unavailable_reason}</p>
+              <p className="text-sm font-medium">
+                Image generation dependencies not installed
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                {igStatus.unavailable_reason}
+              </p>
             </div>
           </div>
           <div className="rounded bg-muted/60 border px-3 py-2 font-mono text-xs text-foreground">
             uv sync --extra image-gen
           </div>
           <p className="text-xs text-muted-foreground">
-            This installs PyTorch + Diffusers (~3–8 GB). Run in your matrx-local repo directory, then restart the engine.
+            This installs PyTorch + Diffusers (~3–8 GB). Run in your matrx-local
+            repo directory, then restart the engine.
           </p>
         </div>
 
@@ -3699,20 +4563,34 @@ function MediaModelsTab() {
           </h3>
           <div className="grid gap-3 sm:grid-cols-2">
             {models.map((m) => (
-              <div key={m.model_id} className="rounded-lg border bg-card p-4 space-y-2 opacity-70">
+              <div
+                key={m.model_id}
+                className="rounded-lg border bg-card p-4 space-y-2 opacity-70"
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="font-medium text-sm">{m.name}</p>
-                    <p className="text-xs text-muted-foreground">{m.provider}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {m.provider}
+                    </p>
                   </div>
-                  <button onClick={() => openUrl(m.model_card_url)} className="shrink-0">
+                  <button
+                    onClick={() => openUrl(m.model_card_url)}
+                    className="shrink-0"
+                  >
                     <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
                   </button>
                 </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {m.description}
+                </p>
                 <div className="flex flex-wrap gap-2 text-[10px]">
-                  <span className="rounded bg-muted px-1.5 py-0.5">VRAM: {m.vram_gb} GB</span>
-                  <span className="rounded bg-muted px-1.5 py-0.5">RAM: {m.ram_gb} GB</span>
+                  <span className="rounded bg-muted px-1.5 py-0.5">
+                    VRAM: {m.vram_gb} GB
+                  </span>
+                  <span className="rounded bg-muted px-1.5 py-0.5">
+                    RAM: {m.ram_gb} GB
+                  </span>
                 </div>
               </div>
             ))}
@@ -3742,7 +4620,10 @@ function MediaModelsTab() {
               {presets.map((p) => (
                 <button
                   key={p.preset_id}
-                  onClick={() => { setWorkflowPresetId(p.preset_id); setView("workflow"); }}
+                  onClick={() => {
+                    setWorkflowPresetId(p.preset_id);
+                    setView("workflow");
+                  }}
                   className="rounded-full border px-3 py-1 text-xs hover:bg-muted/30 transition-colors"
                 >
                   {p.name}
@@ -3757,16 +4638,32 @@ function MediaModelsTab() {
           <div className="flex items-center justify-between rounded-lg border border-green-500/30 bg-green-500/5 px-4 py-3">
             <div className="flex items-center gap-2 text-sm">
               <CheckCircle2 className="h-4 w-4 text-green-500" />
-              <span>Model loaded: <span className="font-medium">{igStatus.loaded_model_id}</span></span>
+              <span>
+                Model loaded:{" "}
+                <span className="font-medium">{igStatus.loaded_model_id}</span>
+              </span>
             </div>
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => {
-                const m = models.find((x) => x.model_id === igStatus.loaded_model_id);
-                if (m) { setSelectedModel(m); setSteps(m.recommended_steps); setGuidance(m.recommended_guidance); setView("generate"); }
-              }}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const m = models.find(
+                    (x) => x.model_id === igStatus.loaded_model_id,
+                  );
+                  if (m) {
+                    setSelectedModel(m);
+                    setSteps(m.recommended_steps);
+                    setGuidance(m.recommended_guidance);
+                    setView("generate");
+                  }
+                }}
+              >
                 Generate
               </Button>
-              <Button size="sm" variant="ghost" onClick={handleUnload}>Unload</Button>
+              <Button size="sm" variant="ghost" onClick={handleUnload}>
+                Unload
+              </Button>
             </div>
           </div>
         )}
@@ -3794,13 +4691,20 @@ function MediaModelsTab() {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="font-medium text-sm">{m.name}</p>
-                      <p className="text-xs text-muted-foreground">{m.provider}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {m.provider}
+                      </p>
                     </div>
-                    <button onClick={() => openUrl(m.model_card_url)} className="shrink-0 text-muted-foreground hover:text-foreground">
+                    <button
+                      onClick={() => openUrl(m.model_card_url)}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                    >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {m.description}
+                  </p>
                   <div className="flex items-center gap-3 text-xs">
                     <span className="flex items-center gap-1 text-muted-foreground">
                       Quality <StarRating value={m.quality_rating} />
@@ -3810,11 +4714,19 @@ function MediaModelsTab() {
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-1.5 text-[10px]">
-                    <span className="rounded bg-muted px-1.5 py-0.5">VRAM: {m.vram_gb} GB</span>
-                    <span className="rounded bg-muted px-1.5 py-0.5">RAM: {m.ram_gb} GB</span>
-                    <span className="rounded bg-muted px-1.5 py-0.5">{m.recommended_steps} steps</span>
+                    <span className="rounded bg-muted px-1.5 py-0.5">
+                      VRAM: {m.vram_gb} GB
+                    </span>
+                    <span className="rounded bg-muted px-1.5 py-0.5">
+                      RAM: {m.ram_gb} GB
+                    </span>
+                    <span className="rounded bg-muted px-1.5 py-0.5">
+                      {m.recommended_steps} steps
+                    </span>
                     {m.requires_hf_token && (
-                      <span className="rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 px-1.5 py-0.5">HF token required</span>
+                      <span className="rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 px-1.5 py-0.5">
+                        HF token required
+                      </span>
                     )}
                   </div>
                   <Button
@@ -3834,7 +4746,10 @@ function MediaModelsTab() {
                     }}
                   >
                     {modelLoading ? (
-                      <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Loading…</>
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                        Loading…
+                      </>
                     ) : isLoaded ? (
                       "Generate →"
                     ) : (
@@ -3853,12 +4768,17 @@ function MediaModelsTab() {
   // ── Workflow view ────────────────────────────────────────────────────────
   if (view === "workflow") {
     const preset = presets.find((p) => p.preset_id === workflowPresetId);
-    const resolvedPrompt = preset ? preset.prompt_template.replace("{subject}", workflowSubject || "…") : "";
+    const resolvedPrompt = preset
+      ? preset.prompt_template.replace("{subject}", workflowSubject || "…")
+      : "";
 
     return (
       <div className="space-y-5 pb-8 max-w-xl">
         <div className="flex items-center gap-2">
-          <button onClick={() => setView("picker")} className="text-xs text-muted-foreground hover:text-foreground">
+          <button
+            onClick={() => setView("picker")}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
             ← Back
           </button>
           <span className="text-sm font-semibold">Quick Workflow</span>
@@ -3878,7 +4798,11 @@ function MediaModelsTab() {
                 </button>
               ))}
             </div>
-            {preset && <p className="text-xs text-muted-foreground">{preset.description}</p>}
+            {preset && (
+              <p className="text-xs text-muted-foreground">
+                {preset.description}
+              </p>
+            )}
           </div>
 
           {workflowPresetId && (
@@ -3887,7 +4811,11 @@ function MediaModelsTab() {
               <Input
                 value={workflowSubject}
                 onChange={(e) => setWorkflowSubject(e.target.value)}
-                placeholder={preset?.name === "Photorealistic Portrait" ? "a smiling woman in business attire" : "describe your subject…"}
+                placeholder={
+                  preset?.name === "Photorealistic Portrait"
+                    ? "a smiling woman in business attire"
+                    : "describe your subject…"
+                }
                 className="text-sm"
               />
             </div>
@@ -3895,15 +4823,25 @@ function MediaModelsTab() {
 
           {workflowSubject && preset && (
             <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">Generated prompt: </span>
+              <span className="font-medium text-foreground">
+                Generated prompt:{" "}
+              </span>
               {resolvedPrompt}
             </div>
           )}
 
           {igStatus?.loaded_model_id && (
             <div className="text-xs text-muted-foreground">
-              Model: <span className="font-medium text-foreground">{igStatus.loaded_model_id}</span>
-              <button onClick={() => setView("picker")} className="ml-2 text-violet-500 hover:underline">change</button>
+              Model:{" "}
+              <span className="font-medium text-foreground">
+                {igStatus.loaded_model_id}
+              </span>
+              <button
+                onClick={() => setView("picker")}
+                className="ml-2 text-violet-500 hover:underline"
+              >
+                change
+              </button>
             </div>
           )}
 
@@ -3916,10 +4854,21 @@ function MediaModelsTab() {
 
           <Button
             className="w-full"
-            disabled={generating || !workflowPresetId || !workflowSubject.trim()}
-            onClick={() => { void handleWorkflowGenerate(); }}
+            disabled={
+              generating || !workflowPresetId || !workflowSubject.trim()
+            }
+            onClick={() => {
+              void handleWorkflowGenerate();
+            }}
           >
-            {generating ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Generating…</> : "Generate Image"}
+            {generating ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Generating…
+              </>
+            ) : (
+              "Generate Image"
+            )}
           </Button>
         </div>
 
@@ -3931,7 +4880,10 @@ function MediaModelsTab() {
               className="w-full rounded-lg border"
             />
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{generatedImage.width}×{generatedImage.height} · {generatedImage.elapsed.toFixed(1)}s</span>
+              <span>
+                {generatedImage.width}×{generatedImage.height} ·{" "}
+                {generatedImage.elapsed.toFixed(1)}s
+              </span>
               <Button size="sm" variant="outline" onClick={handleDownload}>
                 <Download className="h-3.5 w-3.5 mr-1.5" />
                 Download
@@ -3948,12 +4900,19 @@ function MediaModelsTab() {
     <div className="space-y-5 pb-8">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <button onClick={() => setView("picker")} className="text-xs text-muted-foreground hover:text-foreground">
+          <button
+            onClick={() => setView("picker")}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
             ← Models
           </button>
-          <span className="text-sm font-semibold">{selectedModel?.name ?? "Image Generation"}</span>
+          <span className="text-sm font-semibold">
+            {selectedModel?.name ?? "Image Generation"}
+          </span>
           {selectedModel && (
-            <Badge variant="outline" className="text-[10px]">{selectedModel.provider}</Badge>
+            <Badge variant="outline" className="text-[10px]">
+              {selectedModel.provider}
+            </Badge>
           )}
         </div>
         <div className="flex gap-2">
@@ -3981,7 +4940,10 @@ function MediaModelsTab() {
 
           {selectedModel?.supports_negative_prompt && (
             <div className="space-y-1.5">
-              <Label className="text-xs">Negative prompt <span className="text-muted-foreground">(what to avoid)</span></Label>
+              <Label className="text-xs">
+                Negative prompt{" "}
+                <span className="text-muted-foreground">(what to avoid)</span>
+              </Label>
               <Textarea
                 value={negPrompt}
                 onChange={(e) => setNegPrompt(e.target.value)}
@@ -3993,7 +4955,12 @@ function MediaModelsTab() {
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-xs">Steps <span className="text-muted-foreground">({steps ?? selectedModel?.recommended_steps})</span></Label>
+              <Label className="text-xs">
+                Steps{" "}
+                <span className="text-muted-foreground">
+                  ({steps ?? selectedModel?.recommended_steps})
+                </span>
+              </Label>
               <Slider
                 min={1}
                 max={selectedModel?.pipeline_type === "flux" ? 50 : 100}
@@ -4004,7 +4971,16 @@ function MediaModelsTab() {
             </div>
             {selectedModel && selectedModel.recommended_guidance > 0 && (
               <div className="space-y-1.5">
-                <Label className="text-xs">Guidance <span className="text-muted-foreground">({(guidance ?? selectedModel.recommended_guidance).toFixed(1)})</span></Label>
+                <Label className="text-xs">
+                  Guidance{" "}
+                  <span className="text-muted-foreground">
+                    (
+                    {(guidance ?? selectedModel.recommended_guidance).toFixed(
+                      1,
+                    )}
+                    )
+                  </span>
+                </Label>
                 <Slider
                   min={0}
                   max={20}
@@ -4026,12 +5002,20 @@ function MediaModelsTab() {
           <Button
             className="w-full"
             disabled={generating || !prompt.trim()}
-            onClick={() => { void handleGenerate(); }}
+            onClick={() => {
+              void handleGenerate();
+            }}
           >
             {generating ? (
-              <><Loader2 className="h-4 w-4 animate-spin mr-2" />Generating…</>
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Generating…
+              </>
             ) : (
-              <><Image className="h-4 w-4 mr-2" />Generate</>
+              <>
+                <Image className="h-4 w-4 mr-2" />
+                Generate
+              </>
             )}
           </Button>
 
@@ -4057,7 +5041,10 @@ function MediaModelsTab() {
                 className="w-full rounded-lg border object-contain"
               />
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{generatedImage.width}×{generatedImage.height} · {generatedImage.elapsed.toFixed(1)}s</span>
+                <span>
+                  {generatedImage.width}×{generatedImage.height} ·{" "}
+                  {generatedImage.elapsed.toFixed(1)}s
+                </span>
                 <Button size="sm" variant="outline" onClick={handleDownload}>
                   <Download className="h-3.5 w-3.5 mr-1.5" />
                   Download PNG
@@ -4068,12 +5055,16 @@ function MediaModelsTab() {
             <div className="flex flex-col items-center justify-center rounded-lg border border-dashed aspect-square gap-3 text-muted-foreground">
               <Loader2 className="h-8 w-8 animate-spin text-violet-500" />
               <span className="text-sm">Generating image…</span>
-              <span className="text-xs">This may take 5–60 seconds depending on your hardware</span>
+              <span className="text-xs">
+                This may take 5–60 seconds depending on your hardware
+              </span>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center rounded-lg border border-dashed aspect-square gap-3 text-muted-foreground">
               <Image className="h-10 w-10 opacity-20" />
-              <span className="text-sm">Your generated image will appear here</span>
+              <span className="text-sm">
+                Your generated image will appear here
+              </span>
             </div>
           )}
         </div>
@@ -4086,7 +5077,7 @@ function LocalModelsInner() {
   const [state] = useLlmContext();
   const { serverStatus } = state;
   const [activeTab, setActiveTab] = useState(() =>
-    serverStatus?.running ? "inference" : "setup"
+    serverStatus?.running ? "inference" : "setup",
   );
 
   useEffect(() => {
@@ -4120,7 +5111,11 @@ function LocalModelsInner() {
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 px-6">
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="flex-1 flex flex-col min-h-0 px-6"
+      >
         <TabsList className="w-fit shrink-0">
           <TabsTrigger value="inference" className="gap-1.5">
             <MessageSquare className="h-3.5 w-3.5" />

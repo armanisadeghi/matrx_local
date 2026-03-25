@@ -305,9 +305,12 @@ export function useEngine(authenticated = true) {
     await initialize();
   }, [initialize]);
 
-  // Trigger initialize() whenever authentication state changes to true.
+  // Trigger initialize() whenever authentication state first becomes true.
+  // Guard against re-running when already connected — Supabase fires SIGNED_IN
+  // on every token refresh (including on window refocus), which would cause the
+  // engine to restart any time the user switches away from the app.
   useEffect(() => {
-    if (authenticated) {
+    if (authenticated && statusRef.current !== "connected") {
       initialize();
     }
   }, [authenticated, initialize]);

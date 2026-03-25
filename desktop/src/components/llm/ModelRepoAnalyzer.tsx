@@ -533,8 +533,13 @@ export function ModelRepoAnalyzer({
 
           {/* Compatible + needs-more-ram entries */}
           {mainEntries.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-              No compatible model files found in this repository.
+            <div className="px-4 py-6 text-center space-y-2">
+              <XCircle className="h-6 w-6 mx-auto text-muted-foreground/40" />
+              <p className="text-sm font-medium text-foreground/70">No GGUF files found</p>
+              <p className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
+                This repository doesn&apos;t contain any <code className="bg-muted px-0.5 rounded">.gguf</code> files that can be loaded here.
+                It may use safetensors or another format. Try searching for a GGUF conversion of this model — many popular models have community GGUF versions on HuggingFace.
+              </p>
             </div>
           ) : (
             <div className="divide-y divide-border/50">

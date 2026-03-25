@@ -101,10 +101,17 @@ export function useAuth() {
   });
 
   const mountedRef = useRef(true);
+  // Mirrors isAuthenticated for use inside event-listener closures without
+  // stale capture — updated in sync with setState.
+  const isAuthenticatedRef = useRef(false);
 
   const update = useCallback((partial: Partial<AuthState>) => {
     if (mountedRef.current) {
-      setState((prev) => ({ ...prev, ...partial }));
+      setState((prev) => {
+        const next = { ...prev, ...partial };
+        isAuthenticatedRef.current = next.isAuthenticated;
+        return next;
+      });
     }
   }, []);
 
@@ -133,6 +140,28 @@ export function useAuth() {
         `Auth state: ${event}${session ? ` (${session.user.email ?? session.user.id})` : ""}`,
         "auth",
       );
+
+      // TOKEN_REFRESHED fires on silent background refresh.
+      // SIGNED_IN fires on both real logins AND on window refocus when Supabase
+      // refreshes an expiring token — we must distinguish the two cases.
+      //
+      // If we are already authenticated, this is a token refresh: update the
+      // session/user objects so downstream callers have a fresh JWT, but do NOT
+      // re-set isAuthenticated (that would re-trigger useEngine's initialize()
+      // and restart the engine every time the user switches windows).
+      //
+      // If we are NOT yet authenticated, this is a genuine first sign-in: fall
+      // through to the full update so isAuthenticated flips to true and the
+      // engine initializes.
+      if (
+        (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") &&
+        session !== null &&
+        isAuthenticatedRef.current
+      ) {
+        update({ session, user: session.user });
+        return;
+      }
+
       update({
         session,
         user: session?.user ?? null,
