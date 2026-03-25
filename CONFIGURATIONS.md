@@ -52,7 +52,7 @@ Found in `desktop/src/lib/llm/api.ts`, `desktop/src/hooks/use-llm.ts`,
 | 28 | Tool call top_k | `TOOL_CALL_PARAMS.top_k` | number | `20` | Hardcoded | **NO** |
 | 29 | Structured output temperature | hardcoded | number | `0.1` | Hardcoded | **NO** |
 | 30 | Stream max_tokens | hardcoded | number | `1024` | Hardcoded | **NO** |
-| 31 | HuggingFace token | Rust `save_hf_token` | string | `""` | Tauri app data file | **NO** |
+| 31 | HuggingFace token (GGUF downloads) | `ApiKeysRepo` key `huggingface` + `GET /settings/api-keys/huggingface/value` for Tauri | string | unset | Engine SQLite (`~/.matrx/matrx.db` via settings blob); legacy `llm.json` fallback | **NO** (same as other API keys) |
 | 32 | Auto-start LLM server on app launch | not implemented | boolean | `false` | None | **NO** |
 
 ---

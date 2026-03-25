@@ -4,6 +4,8 @@
 **Scope:** Inference engine selection, model catalog, sidecar architecture, tool calling, structured output, Tauri commands, and frontend integration.
 **Prerequisites:** Whisper transcription integration guide completed. Shared infrastructure (hardware detection, downloader, storage layer) is assumed to exist.
 
+> **2026-03 ops note:** Hugging Face **read tokens** for XET / gated GGUF downloads are stored in **Settings → API Keys → Hugging Face** (engine SQLite). The desktop passes them into `download_llm_model` via `GET /settings/api-keys/huggingface/value`. Legacy `llm.json` `hf_token` is fallback-only after one-time migration.
+
 ---
 
 ## 1. Inference Architecture Decision

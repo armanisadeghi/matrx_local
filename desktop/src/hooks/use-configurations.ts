@@ -22,12 +22,12 @@ export type ConfigSection =
   | "appearance"
   | "chatAi"
   | "localLlm"
+  | "localLlmSampling"
   | "voice"
   | "wakeWord"
   | "scraping"
   | "proxy"
-  | "notifications"
-  | "ui";
+  | "notifications";
 
 /**
  * Maps each section to the settings keys it owns.
@@ -35,13 +35,13 @@ export type ConfigSection =
  */
 const SECTION_KEYS: Record<ConfigSection, (keyof AppSettings)[]> = {
   application: [
+    "instanceName",
     "launchOnStartup",
     "minimizeToTray",
-    "instanceName",
     "autoCheckUpdates",
     "updateCheckInterval",
   ],
-  appearance: ["theme"],
+  appearance: ["theme", "sidebarCollapsed"],
   chatAi: [
     "chatDefaultModel",
     "chatDefaultMode",
@@ -53,6 +53,8 @@ const SECTION_KEYS: Record<ConfigSection, (keyof AppSettings)[]> = {
     "llmDefaultGpuLayers",
     "llmDefaultContextLength",
     "llmAutoStartServer",
+  ],
+  localLlmSampling: [
     "llmChatTemperature",
     "llmChatTopP",
     "llmChatTopK",
@@ -83,7 +85,6 @@ const SECTION_KEYS: Record<ConfigSection, (keyof AppSettings)[]> = {
   scraping: ["headlessScraping", "scrapeDelay"],
   proxy: ["proxyEnabled", "proxyPort", "tunnelEnabled"],
   notifications: ["notificationSound", "notificationSoundStyle"],
-  ui: ["sidebarCollapsed"],
 };
 
 export interface ConfigurationsState {

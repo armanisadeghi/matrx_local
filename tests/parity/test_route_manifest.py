@@ -187,6 +187,8 @@ def test_page_files_are_exported() -> None:
         ("Voice.tsx", "Voice"),
         ("LocalModels.tsx", "LocalModels"),
         ("SystemPrompts.tsx", "SystemPrompts"),
+        ("Activity.tsx", "Activity"),
+        ("Devices.tsx", "Devices"),
     ]
     missing: list[str] = []
     for filename, export_name in required_pages:
@@ -203,4 +205,64 @@ def test_page_files_are_exported() -> None:
     assert not missing, (
         f"{len(missing)} page file(s) missing or not exporting expected component:\n"
         + "\n".join(missing)
+    )
+
+
+def test_wakeword_context_exists() -> None:
+    """WakeWordContext.tsx exists (required by App.tsx wrapping WakeWordProvider)."""
+    ctx_file = (
+        PROJECT_ROOT / "desktop" / "src" / "contexts" / "WakeWordContext.tsx"
+    )
+    assert ctx_file.exists(), (
+        "WakeWordContext.tsx not found. App.tsx wraps the entire app in "
+        "<WakeWordProvider> which comes from this file."
+    )
+    source = ctx_file.read_text(encoding="utf-8")
+    assert "WakeWordProvider" in source, (
+        "WakeWordContext.tsx exists but does not export WakeWordProvider."
+    )
+
+
+def test_no_unrouted_page_file_is_sidebar_nav() -> None:
+    """
+    Guard: no page file exists that is referenced in the sidebar but not in App.tsx.
+
+    This is a stricter version of test_each_sidebar_route_is_registered_in_app.
+    It specifically ensures that 'orphan' pages (like WakeWord.tsx, which exists
+    but is not in the sidebar or App.tsx routes) don't accidentally sneak into
+    the sidebar without a corresponding route registration.
+    """
+    sidebar_routes = set(parse_sidebar_routes())
+    app_paths = set(parse_app_registered_paths())
+
+    # Every sidebar route must be in App.tsx
+    sidebar_routes.discard("/")
+    unregistered = [
+        r for r in sorted(sidebar_routes)
+        if not any(
+            p == r or p.startswith(r + "/") or r.startswith(p.rstrip("*"))
+            for p in app_paths
+        )
+    ]
+    assert not unregistered, (
+        f"Sidebar nav item(s) point to routes not registered in App.tsx:\n  "
+        + "\n  ".join(unregistered)
+        + "\n\nEither register the route in App.tsx or remove the sidebar entry."
+    )
+
+
+def test_background_tasks_dir_exists() -> None:
+    """background-tasks/ module directory exists (required for engine startup)."""
+    bg_dir = PROJECT_ROOT / "desktop" / "src" / "lib" / "background-tasks"
+    assert bg_dir.exists(), (
+        f"background-tasks/ directory not found at {bg_dir}. "
+        "This module was introduced to replace direct syncAllSettings() calls "
+        "in use-engine.ts. If it was deleted or moved, engine startup tasks "
+        "(settings sync, token push, cloud configure) will fail silently."
+    )
+    assert (bg_dir / "index.ts").exists(), (
+        "background-tasks/index.ts not found. The orchestrator entry point is missing."
+    )
+    assert (bg_dir / "orchestrator.ts").exists(), (
+        "background-tasks/orchestrator.ts not found. The task runner is missing."
     )

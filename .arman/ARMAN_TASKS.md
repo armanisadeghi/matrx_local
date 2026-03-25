@@ -1,67 +1,63 @@
 # Arman Tasks — Matrx Local
 
-_Last updated: 2026-03-18_
+_Last updated: 2026-03-24_
 
-> Manual actions only — things only you can do (secrets, accounts, hardware, OS-level steps).
-> Code changes go in AGENT_TASKS.md instead.
-
----
-
-## 🔴 ACTIVE — Do These Now
-
-### Wake Word Model Training
-- [ ] **Train "Hey Matrix" OWW model** — See `AGENT_TASKS.md` → "Wake Word Developer Training Guide" for full step-by-step. Summary:
-  1. `pip install "openwakeword[train]"` in a fresh venv
-  2. Run `generate_samples --phrase "hey matrix" --n_samples 5000`
-  3. Download negative data once
-  4. Run `train` → produces `hey_matrix.onnx`
-  5. Test threshold; target ~0.5 with `evaluate`
-  6. Copy to `desktop/src-tauri/resources/oww_models/hey_matrix.onnx` and update bundle config
-
-### Certificates & Signing
-- [ ] **Windows EV Cert** — Purchase from DigiCert or Sectigo ($200–500/yr). Without it, SmartScreen shows a warning. Skip for beta; required before public launch.
-
-### GitHub Actions Secrets
-All three are needed for CI builds to produce working binaries. Go to repo **Settings → Secrets and variables → Actions → New repository secret**.
-
-- [x] `AIDREAM_SERVER_URL_LIVE` — `https://server.app.matrxserver.com`
-- [x] `VITE_SUPABASE_URL` — `https://txzxabzwovsujtloxrus.supabase.co`
-- [x] `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` — your Supabase publishable key
-
-### Local LLM Binaries (needed before Local Models tab works)
-- [x] **Download llama-server binaries** — All four platforms downloaded (b8377) via `./scripts/download-llama-server.sh all`.
-- [ ] **Mirror GGUF models to CDN** — Upload to `assets.aimatrx.com/llm-models/`. Default: `Qwen3-8B-Instruct-Q4_K_M.gguf` (~5.2GB). Also Qwen3-4B, Phi-4-mini.
-- [ ] **Mirror llama-server binaries to CDN** — Upload to `assets.aimatrx.com/llama-server/`.
-
-### Whisper Model CDN Mirror
-- [ ] **Mirror whisper models to CDN** — `assets.aimatrx.com/whisper-models/`: `ggml-tiny.en.bin` (75MB), `ggml-base.en.bin` (142MB), `ggml-small.en.bin` (466MB), `ggml-silero-v6.2.0.bin` (0.8MB).
-
-### Supabase
-- [ ] **Confirm `MAIN_SERVER` URL** — Needed for Proxy "Test Connection" implementation. What should this URL be?
+> Secrets, accounts, CDN, OS-only steps. Code work → `AGENT_TASKS.md`.
 
 ---
 
-## 🟡 FUTURE — Not Urgent
+## Active
 
-### Cloud AI Relay (needed before public launch)
-- [ ] **Build AIDream server relay endpoint** — Add a POST `/ai/relay` endpoint on `server.app.matrxserver.com` that accepts a Supabase JWT + AI request payload, validates the JWT, and forwards the request to the appropriate AI provider using platform-owned API keys. This removes the need for users to supply their own keys. Coordinate with agent to wire `matrx_ai` to call the relay instead of providers directly when no user key is stored.
+- [ ] **Train “Hey Matrix” OWW model** — [`docs/wake-word-training.md`](../docs/wake-word-training.md)
+- [ ] **Windows EV code-signing cert** — Before broad public launch (SmartScreen).
+- [ ] **`MAIN_SERVER` URL** — For a future “real” proxy proof test (callback from server). Pick canonical production base URL.
+- [ ] **CDN: GGUF mirrors** — `assets.aimatrx.com/llm-models/` (per prior plan).
+- [ ] **CDN: llama-server binaries** — `assets.aimatrx.com/llama-server/`.
+- [ ] **CDN: Whisper `.bin` models** — `assets.aimatrx.com/whisper-models/`.
 
-- [x] **Windows MSI → NSIS** — Done. Installer switched to NSIS with custom `installer-hooks.nsh` (2026-03-16).
-- [x] **First-run wizard** — Done. Setup wizard with auto-install implemented (2026-03-11).
-- [ ] **Rate limiting** on remote scraper server per user.
-- [ ] **Wake-on-LAN / smart device protocols** — HomeKit, Google Home, Alexa.
-- [ ] **Reverse tunnel** — cloud→local proxy routing.
-- [ ] **Remove personal Cloudflare named tunnel** (optional) — `sudo launchctl unload /Library/LaunchDaemons/com.cloudflare.cloudflared.plist && sudo rm /Library/LaunchDaemons/com.cloudflare.cloudflared.plist`, then delete `matrx-local` tunnel from Cloudflare dashboard.
+**GitHub Actions secrets** (if anything missing on new fork): `AIDREAM_SERVER_URL_LIVE`, `VITE_SUPABASE_*`.
 
 ---
 
-## ✅ COMPLETED
+## Future
 
-- [x] Enrolled in Apple Developer — notarization enabled.
-- [x] Added `AIDREAM_SERVER_URL_LIVE` GitHub Actions secret.
-- [x] Added `aimatrx://auth/callback` to Supabase OAuth client redirect URIs.
-- [x] Added "close this tab" page on aimatrx.com after OAuth.
-- [x] Verified `app_settings` and `note_folders` tables + RLS in Supabase.
-- [x] Applied migration 005 (`hardware_uuid`, `serial_number`, `board_id` on `app_instances`).
-- [x] Applied migration 003 (`forbidden_urls`).
-- [x] llama-server ARM Mac binary downloaded and placed.
+- [ ] **AIDream AI relay** — JWT-authenticated endpoint so desktop can run cloud models without user API keys.
+- [ ] **Scraper rate limits** — Per-user on remote server.
+- [ ] **Wake-on-LAN / home APIs** — Backlog.
+- [ ] **Reverse tunnel product** — Backlog.
+- [ ] **Personal Cloudflare tunnel cleanup** — Optional; see old notes in repo if still applicable.
+
+---
+
+## Review queue (doc / backlog audit 2026-03-24)
+
+_Skim and check off or delete files._
+
+| Item | Note |
+|------|------|
+| [`AGENT_TASKS.md`](../AGENT_TASKS.md) — “Doc hygiene → candidates” table | Delete or archive the two `.arman/.../INITIAL.md` drafts? Trim [`PLATFORM_AUDIT.md`](../PLATFORM_AUDIT.md)? |
+| [`PLATFORM_AUDIT.md`](../PLATFORM_AUDIT.md) | Says `initPlatformCtx` never called — **wrong**; `use-engine.ts` wires it. Either delete or rewrite Phase 1. |
+| [`.arman/pending/ui-overhaul/INITIAL.md`](pending/ui-overhaul/INITIAL.md) | 600+ line draft UI overhaul; partially superseded by real Tools work. |
+| [`.arman/in-progress/proxy/INITIAL.md`](in-progress/proxy/INITIAL.md) | Generic proxy research; safe to delete if you agree. |
+| [`local-llm-inference-integration.md`](../local-llm-inference-integration.md) | Long operational doc — keep; update when LLM packaging changes. |
+| [`whisper-transcription-integration.md`](../whisper-transcription-integration.md) | Same for voice. |
+| [`docs/react-migration-notes-api.md`](../docs/react-migration-notes-api.md) | Still valid for external clients (`/documents` → `/notes`). |
+
+**Suggested tickets to spawn (your call):**
+
+1. **ORM / matrx-ai safety review** — Decide what “client-only” means for shipping; track in AGENT P0.
+2. **App store assets** — Icon + screenshots when branding final.
+3. **Production Supabase health** — If any user still sees `app_settings` 404, RLS/project mismatch; SQL verify on `txzxabzwovsujtloxrus`.
+
+---
+
+## Done
+
+- [x] Apple Developer / notarization path live.
+- [x] Supabase OAuth redirect `aimatrx://auth/callback`.
+- [x] `app_settings` / `note_folders` verified in Supabase + RLS (historical session).
+- [x] Migrations 003 `forbidden_urls`, 005 hardware columns, 006–008 hardware/tunnel (`per prior sessions`).
+- [x] llama-server binaries downloaded via `scripts/download-llama-server.sh` (per ARMAN note 2026).
+- [x] GitHub secrets: `AIDREAM_SERVER_URL_LIVE`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY`.
+- [x] Windows installer NSIS + hooks.
+- [x] First-run / setup wizard shipped in app (`FirstRunScreen` + wizard).

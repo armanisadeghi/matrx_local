@@ -11,7 +11,7 @@
  * cloud AI models from the engine database.
  */
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   Settings2,
   Palette,
@@ -22,7 +22,6 @@ import {
   Globe,
   Network,
   Bell,
-  Monitor,
   Save,
   X,
   RotateCcw,
@@ -244,6 +243,14 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
+                <SettingRow label="Computer Name" description="Identify this computer in cloud sync">
+                  <Input
+                    value={draft.instanceName}
+                    onChange={(e) => set("instanceName", e.target.value)}
+                    className="w-40"
+                  />
+                </SettingRow>
+                <Separator className="my-2" />
                 <SettingRow label="Launch on startup" description="Start the app when your computer boots">
                   <Switch
                     checked={draft.launchOnStartup}
@@ -256,13 +263,6 @@ export function Configurations() {
                     onCheckedChange={(v) => set("minimizeToTray", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Instance name" description="Identify this computer in cloud sync">
-                  <Input
-                    value={draft.instanceName}
-                    onChange={(e) => set("instanceName", e.target.value)}
-                    className="w-40"
-                  />
-                </SettingRow>
                 <Separator className="my-2" />
                 <SettingRow label="Auto-check for updates">
                   <Switch
@@ -270,15 +270,10 @@ export function Configurations() {
                     onCheckedChange={(v) => set("autoCheckUpdates", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Update check interval" description="Minutes between checks (min 60)">
-                  <NumberInput
-                    value={draft.updateCheckInterval}
-                    onChange={(v) => set("updateCheckInterval", Math.max(60, v))}
-                    min={60}
-                    max={1440}
-                    step={30}
-                  />
-                </SettingRow>
+                <UpdateIntervalRow
+                  value={draft.updateCheckInterval}
+                  onChange={(v) => set("updateCheckInterval", v)}
+                />
                 <SectionActions
                   section="application"
                   dirty={sectionDirty.application}

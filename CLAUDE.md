@@ -45,28 +45,30 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 
 ---
 
-## Current State (as of 2026-03-11)
+## Current State (as of 2026-03-24)
 
 ### What Works
 - Python FastAPI engine with 79 tools (REST + WebSocket)
 - Engine auto-discovery from React UI, tools page, scraping page
-- Activity log with real-time WebSocket events
+- Activity log with real-time WebSocket + structured access SSE
 - Dashboard with live CPU/RAM/Disk/Battery gauges and user profile
-- Tauri sidecar lifecycle (spawn/kill), auto-updater
+- Tauri sidecar lifecycle (spawn/kill), auto-updater (background pre-download; see `use-auto-update.ts`)
 - CORS, remote scraper proxy routes, SSE streaming
 - Supabase OAuth 2.1 PKCE auth flow
-- Cloud instance registration + settings sync (migration 005 applied)
-- Local-first notes/documents with Supabase sync
-- Local HTTP proxy server at `127.0.0.1:22180`
-- Voice tab (Setup/Transcribe/Models/Devices) — infrastructure wired, pipeline bugs fixed
-- Setup wizard with auto-install on first run
-- AiMatrx iframe tab with session handoff (token refresh logic in place)
+- Cloud instance registration + settings sync
+- Local-first notes/documents with optional Supabase sync
+- Local HTTP proxy at `127.0.0.1:22180` with status + connectivity test
+- Voice tab (Rust Whisper + wake word); settings include `transcription_auto_init`
+- First-run / setup wizard + capability installs
+- Local Models tab + llama-server sidecar (binaries via `scripts/download-llama-server.sh`; bundle in release pipeline)
+- Settings: hardware inventory tab, forbidden URL list (scraping), API Keys (incl. Hugging Face for GGUF downloads)
+- Platform context: `use-engine.ts` calls `initPlatformCtx()` after `getPlatformContext()`
+- AiMatrx iframe tab with session handoff
 
-### Known Broken / Not Yet Working
-- **Voice: full flow not working end-to-end** — transcription requires manual init; should auto-initialize. See AGENT_TASKS P1.
-- **Local LLM: no binaries bundled** — The Rust/TS code for `llama-server` sidecar exists but binaries are not downloaded and the sidebar entry is missing. See AGENT_TASKS P1.
-- **ORM: server-side DB access** — `matrx-ai` engine still uses server-side ORM. Blocks safe shipping. See AGENT_TASKS P0.
-- **App icon** — Still showing default purple box.
+### Known gaps / verify on device
+- **Voice** — Confirm full record→transcribe UX on hardware you care about; see `AGENT_TASKS.md` P1.
+- **matrx-ai ORM / server DB** — Treat as **P0 ship risk** until client-only path is verified (`AGENT_TASKS.md`).
+- **Custom app icon** — Replace placeholder when branding is ready.
 
 ### Key Integration Guides
 - **Voice/Whisper:** `whisper-transcription-integration.md` — full Rust architecture, model catalog, download URLs, gotchas

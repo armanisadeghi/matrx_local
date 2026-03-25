@@ -168,6 +168,12 @@ print(f'All tool files parse cleanly')
 
     run_step "parity: tool count >= 79" \
       uv run --frozen pytest tests/parity/test_tool_count.py -q --no-header
+
+    run_step "parity: api-key providers (TS vs Python)" \
+      uv run --frozen pytest tests/parity/test_api_key_providers.py -q --no-header
+
+    run_step "parity: background tasks integrity" \
+      uv run --frozen pytest tests/parity/test_background_tasks.py -q --no-header
   fi
 fi
 

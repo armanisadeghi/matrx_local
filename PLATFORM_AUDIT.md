@@ -1,28 +1,23 @@
 # Platform Context Enforcement — Phase 1 Audit
 
-> **Generated:** 2026-03-18
-> **Purpose:** Complete inventory of every platform/OS detection, hardcoded path, and capability check outside the canonical context modules. This is the checklist for Phase 2 refactoring.
+> **⚠️ Stale sections inside (2026-03-24):** The “`initPlatformCtx()` is never called” finding is **incorrect**. **`use-engine.ts`** calls `engine.getPlatformContext()` then `initPlatformCtx(ctx)` after connect. Treat the rest of this file as a **best-effort 2026-03-18 inventory** — re-run grep if used for Phase 2.
 >
-> **Canonical modules (the only places platform detection should live):**
-> - Python: `app/common/platform_ctx.py` — exports `PLATFORM`, `CAPABILITIES`, `refresh_capabilities`, `get_platform_context`
-> - TypeScript: `desktop/src/lib/platformCtx.ts` — exports `PLATFORM`, `CAPABILITIES`, `initPlatformCtx`, `getPlatformSnapshot`
+> **Generated:** 2026-03-18  
+> **Purpose:** Inventory platform/OS detection and hardcoded paths outside canonical modules (Phase 2 checklist).
+>
+> **Canonical modules:**
+> - Python: `app/common/platform_ctx.py`
+> - TypeScript: `desktop/src/lib/platformCtx.ts` + `initPlatformCtx()` (called from `use-engine.ts`)
 
 ---
 
-## 1. Critical Infrastructure Gap
+## 1. Resolved: platform context wiring
 
-### `initPlatformCtx()` is never called
+`initPlatformCtx` **is** called from `desktop/src/hooks/use-engine.ts` during engine initialization (post-`getPlatformContext`). Remove this section from any runbooks — kept only as archive marker.
 
-The frontend defines `PLATFORM` and `CAPABILITIES` as Proxy objects in `desktop/src/lib/platformCtx.ts` and provides `initPlatformCtx(data)` to populate them from the engine. The API client in `desktop/src/lib/api.ts` exposes `getPlatformContext()` and `refreshPlatformContext()` methods that call `GET /platform/context`.
+### ~~`initPlatformCtx()` is never called~~ (obsolete)
 
-**Problem:** No code anywhere calls `initPlatformCtx()`. The `PLATFORM` and `CAPABILITIES` objects are permanently stuck on the browser-side fallback values. The engine data is never consumed.
-
-**Files involved:**
-- `desktop/src/lib/platformCtx.ts` — defines `initPlatformCtx()` (line 155)
-- `desktop/src/lib/api.ts` — defines `getPlatformContext()` (line 1507) and `refreshPlatformContext()` (line 1511)
-- No caller exists in the codebase
-
-**What needs to change:** During engine connection (likely in `use-engine.ts` or app initialization), call `engine.getPlatformContext()` and pass the result to `initPlatformCtx()`.
+~~The following paragraphs were true at draft time and are retained struck-through for history: the frontend did not call `initPlatformCtx`.~~ **Fixed:** `use-engine.ts` now wires engine → `initPlatformCtx`.
 
 ---
 

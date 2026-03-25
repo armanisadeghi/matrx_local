@@ -44,7 +44,7 @@ Cloud-hosted AI platforms hit a wall when the task requires the user's real file
 | **WiFi & Bluetooth** | `WifiNetworks`, `BluetoothDevices`, `ConnectedDevices` | macOS / Windows / Linux |
 | **Transport** | WebSocket `/ws`, REST `/tools/invoke`, `/tools/list` | Concurrent dispatch, session state, cancellation |
 | **Packaging** | PyInstaller `.spec` | macOS `.app` / Windows `.exe` / Linux binary |
-| **Auto-Update** | tufup | Checks on startup, applies, restarts |
+| **Auto-Update** | `tauri-plugin-updater` + GitHub Releases | Check, background pre-download, restart |
 
 **79 tools total** — all available via both WebSocket and REST.
 

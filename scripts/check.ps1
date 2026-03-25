@@ -131,6 +131,12 @@ print(f'All {len(list(tools_dir.glob(chr(42) + chr(46) + chr(112) + chr(121))))}
         Run-Step "parity: tool count >= 79" {
             & uv run --frozen pytest tests/parity/test_tool_count.py -q --no-header
         }
+        Run-Step "parity: api-key providers (TS vs Python)" {
+            & uv run --frozen pytest tests/parity/test_api_key_providers.py -q --no-header
+        }
+        Run-Step "parity: background tasks integrity" {
+            & uv run --frozen pytest tests/parity/test_background_tasks.py -q --no-header
+        }
     }
 }
 
