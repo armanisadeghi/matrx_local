@@ -331,7 +331,7 @@ export function QuickActionBar(props: QuickActionBarProps) {
           </BarButton>
         )}
 
-        <div className="relative">
+        <div ref={userMenuRef} className="relative">
           <BarButton
             tooltip={user?.email ?? "Not signed in"}
             onClick={() => setUserMenuOpen((v) => !v)}
