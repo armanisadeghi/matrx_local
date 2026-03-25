@@ -54,8 +54,8 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
 
   return (
     <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) actions.dismiss(); }}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[85vh] max-w-md flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
           <DialogTitle className="flex items-center gap-2">
             {isInstalled ? (
               <CheckCircle2 className="h-5 w-5 text-green-500" />
@@ -67,44 +67,46 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
           <DialogDescription>{descriptionText}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          {status?.version && (
-            <div className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">Current</span>
-                <Badge variant="secondary">{__APP_VERSION__}</Badge>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
+          <div className="space-y-4 py-2">
+            {status?.version && (
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">Current</span>
+                  <Badge variant="secondary">{__APP_VERSION__}</Badge>
+                </div>
+                <span className="text-muted-foreground">→</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">New</span>
+                  <Badge variant="default">v{status.version}</Badge>
+                </div>
               </div>
-              <span className="text-muted-foreground">→</span>
-              <div className="flex items-center gap-2">
-                <span className="text-muted-foreground">New</span>
-                <Badge variant="default">v{status.version}</Badge>
-              </div>
-            </div>
-          )}
+            )}
 
-          {status?.body && (showAsAvailable || isDownloadingUi) && (
-            <div className="rounded-lg bg-muted/50 p-3 max-h-40 overflow-y-auto">
-              <p className="text-xs font-medium text-muted-foreground mb-1">Release Notes</p>
-              <p className="text-sm whitespace-pre-wrap">{status.body}</p>
-            </div>
-          )}
-
-          {isDownloadingUi && (
-            <div className="space-y-2">
-              <Progress value={progress} />
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{progress}%</span>
-                {status?.content_length && (
-                  <span>
-                    {formatBytes(status.downloaded ?? 0)} / {formatBytes(status.content_length)}
-                  </span>
-                )}
+            {status?.body && (showAsAvailable || isDownloadingUi) && (
+              <div className="rounded-lg bg-muted/50 p-3 max-h-40 overflow-y-auto">
+                <p className="text-xs font-medium text-muted-foreground mb-1">Release Notes</p>
+                <p className="text-sm whitespace-pre-wrap">{status.body}</p>
               </div>
-            </div>
-          )}
+            )}
+
+            {isDownloadingUi && (
+              <div className="space-y-2">
+                <Progress value={progress} />
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{progress}%</span>
+                  {status?.content_length && (
+                    <span>
+                      {formatBytes(status.downloaded ?? 0)} / {formatBytes(status.content_length)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 px-6 py-4 border-t">
           {isInstalled ? (
             <Button onClick={actions.restart} className="gap-2">
               <RefreshCw className="h-4 w-4" />

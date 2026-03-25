@@ -69,49 +69,51 @@ export function QuickTranscriptModal({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[85vh] max-w-lg flex-col gap-0 p-0">
+        <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
           <DialogTitle>Quick Transcription</DialogTitle>
         </DialogHeader>
-        <div className="flex flex-col items-center gap-3">
-          {isRecording ? (
-            <button
-              onClick={handleStop}
-              className="flex h-14 w-14 items-center justify-center rounded-full bg-destructive text-destructive-foreground animate-pulse transition-all"
-            >
-              <Square className="h-5 w-5" />
-            </button>
-          ) : (
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-              <span className="text-xs text-muted-foreground">
-                {isProcessingTail ? "..." : "Done"}
-              </span>
-            </div>
-          )}
-          <p className="text-xs text-muted-foreground">
-            {!activeModel
-              ? "No transcription model loaded. Set up in the Voice tab first."
-              : isRecording
-                ? "Listening... click the button to stop"
-                : isProcessingTail
-                  ? "Processing remaining audio..."
-                  : fullTranscript
-                    ? "Recording complete"
-                    : "Starting microphone..."}
-          </p>
-        </div>
-        <div className="max-h-48 min-h-[6rem] overflow-auto rounded-lg border bg-muted/30 p-3">
-          {fullTranscript ? (
-            <p className="text-sm">{fullTranscript}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground italic">
-              {savedText
-                ? "Transcript copied to clipboard."
-                : "Your words will appear here as you speak..."}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
+          <div className="flex flex-col items-center gap-3">
+            {isRecording ? (
+              <button
+                onClick={handleStop}
+                className="flex h-14 w-14 items-center justify-center rounded-full bg-destructive text-destructive-foreground animate-pulse transition-all"
+              >
+                <Square className="h-5 w-5" />
+              </button>
+            ) : (
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                <span className="text-xs text-muted-foreground">
+                  {isProcessingTail ? "..." : "Done"}
+                </span>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {!activeModel
+                ? "No transcription model loaded. Set up in the Voice tab first."
+                : isRecording
+                  ? "Listening... click the button to stop"
+                  : isProcessingTail
+                    ? "Processing remaining audio..."
+                    : fullTranscript
+                      ? "Recording complete"
+                      : "Starting microphone..."}
             </p>
-          )}
+          </div>
+          <div className="mt-3 max-h-48 min-h-[6rem] overflow-auto rounded-lg border bg-muted/30 p-3">
+            {fullTranscript ? (
+              <p className="text-sm">{fullTranscript}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">
+                {savedText
+                  ? "Transcript copied to clipboard."
+                  : "Your words will appear here as you speak..."}
+              </p>
+            )}
+          </div>
         </div>
-        <DialogFooter>
+        <DialogFooter className="shrink-0 px-6 py-4 border-t">
           <Button
             onClick={handleSave}
             disabled={!fullTranscript.trim()}

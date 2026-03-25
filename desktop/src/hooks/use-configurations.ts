@@ -63,6 +63,8 @@ const SECTION_KEYS: Record<ConfigSection, (keyof AppSettings)[]> = {
     "llmChatMaxTokens",
     "llmReasoningTemperature",
     "llmReasoningTopP",
+    "llmReasoningTopK",
+    "llmReasoningMaxTokens",
     "llmEnableThinking",
     "llmToolCallTemperature",
     "llmToolCallTopP",
@@ -139,6 +141,39 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
       setSaved(s);
       setDraft({ ...s });
     });
+  }, []);
+
+  // Reload from localStorage when another part of the app saves settings
+  // (e.g. Settings.tsx, AppSidebar). Update `saved` to the fresh values so
+  // dirty computation stays correct. Update `draft` only for keys the user
+  // has NOT edited (draft[key] === saved[key]) to preserve in-progress edits.
+  const savedRef = useRef<AppSettings | null>(null);
+  useEffect(() => { savedRef.current = saved; }, [saved]);
+
+  useEffect(() => {
+    const onChanged = () => {
+      loadSettings().then((fresh) => {
+        setSaved(fresh);
+        setDraft((prev) => {
+          if (!prev) return { ...fresh };
+          const prevSaved = savedRef.current;
+          if (!prevSaved) return { ...fresh };
+          const merged = { ...prev };
+          (Object.keys(fresh) as (keyof AppSettings)[]).forEach((key) => {
+            const draftVal = JSON.stringify(prev[key]);
+            const oldSavedVal = JSON.stringify(prevSaved[key]);
+            if (draftVal === oldSavedVal) {
+              // User hasn't edited this key — accept the fresh value
+              (merged as Record<string, unknown>)[key] = fresh[key];
+            }
+            // else: user has unsaved changes for this key — keep their draft value
+          });
+          return merged;
+        });
+      });
+    };
+    window.addEventListener("matrx-settings-changed", onChanged);
+    return () => window.removeEventListener("matrx-settings-changed", onChanged);
   }, []);
 
   // Compute per-section dirty flags

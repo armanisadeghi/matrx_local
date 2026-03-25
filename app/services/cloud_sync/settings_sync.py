@@ -88,6 +88,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "llm_chat_max_tokens": 1024,
     "llm_reasoning_temperature": 0.6,
     "llm_reasoning_top_p": 0.95,
+    "llm_reasoning_top_k": 20,
+    "llm_reasoning_max_tokens": 4096,
     "llm_enable_thinking": False,
     "llm_tool_call_temperature": 0.7,
     "llm_tool_call_top_p": 0.8,

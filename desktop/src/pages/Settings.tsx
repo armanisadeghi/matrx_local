@@ -77,6 +77,7 @@ import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update
 import {
   loadSettings,
   saveSetting,
+  syncAllSettings,
   settingsToCloud,
   type AppSettings,
 } from "@/lib/settings";
@@ -403,8 +404,16 @@ export function Settings({
     key: K,
     value: AppSettings[K]
   ) => {
+    // Optimistic local state update — instant
     setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
-    saveSetting(key, value);
+    // Write to localStorage + sync side-effects (proxy, tunnel, autostart, etc.)
+    saveSetting(key, value).then(() => {
+      // Fire-and-forget full sync to engine + cloud in the background.
+      // Errors are logged by syncAllSettings; they don't block the UI.
+      syncAllSettings().catch((err) => {
+        console.warn("[Settings] Background sync failed after updateSetting:", err);
+      });
+    });
   };
 
   const handleRestartEngine = async () => {

@@ -43,7 +43,7 @@ export function QuickLocalChatModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[70vh] max-w-2xl flex-col gap-0 p-0">
+      <DialogContent className="flex h-[80vh] max-h-[80vh] max-w-2xl flex-col gap-0 p-0">
         <DialogHeader className="shrink-0 px-6 pt-6 pb-2">
           <DialogTitle>Quick Local AI Chat</DialogTitle>
           {!serverRunning && !llmState.isStarting && !hasModels && (

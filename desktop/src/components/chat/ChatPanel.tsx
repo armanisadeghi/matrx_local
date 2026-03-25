@@ -230,7 +230,7 @@ export function ChatPanel({
       </div>
 
       {hasVariables && (
-        <div className="px-4 pt-2">
+        <div className="max-h-[40%] overflow-y-auto px-4 pt-2">
           <GuidedVariableInputs
             variableDefaults={activeVariables}
             values={variableValues}

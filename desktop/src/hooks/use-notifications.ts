@@ -63,12 +63,19 @@ let _notificationCounter = 0;
 export function useNotifications() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const soundEnabledRef = useRef(true);
+  const soundStyleRef = useRef<AppSettings["notificationSoundStyle"]>("chime");
 
-  // Load sound preference from settings on mount
+  // Load sound preferences from settings, and reload whenever any settings change.
   useEffect(() => {
-    loadSettings().then((s) => {
-      soundEnabledRef.current = (s as AppSettings & { notificationSound?: boolean }).notificationSound !== false;
-    });
+    const reload = () => {
+      loadSettings().then((s) => {
+        soundEnabledRef.current = s.notificationSound !== false;
+        soundStyleRef.current = s.notificationSoundStyle ?? "chime";
+      });
+    };
+    reload();
+    window.addEventListener("matrx-settings-changed", reload);
+    return () => window.removeEventListener("matrx-settings-changed", reload);
   }, []);
 
   const addNotification = useCallback((
@@ -89,7 +96,11 @@ export function useNotifications() {
     setNotifications((prev) => [notif, ...prev].slice(0, 100));
 
     if (soundEnabledRef.current) {
-      playTone(soundForLevel(level));
+      // If user chose a specific style, honour it; otherwise use level-based default.
+      const style = soundStyleRef.current !== "chime"
+        ? soundStyleRef.current
+        : soundForLevel(level);
+      playTone(style);
     }
   }, []);
 
@@ -141,5 +152,4 @@ export function useNotifications() {
   };
 }
 
-// Exported type so settings.ts can reference it without a circular dep
 import type { AppSettings } from "@/lib/settings";

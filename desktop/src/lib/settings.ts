@@ -56,6 +56,8 @@ export interface AppSettings {
   llmChatMaxTokens: number;
   llmReasoningTemperature: number;
   llmReasoningTopP: number;
+  llmReasoningTopK: number;
+  llmReasoningMaxTokens: number;
   llmEnableThinking: boolean;        // default thinking mode for reasoning
   llmToolCallTemperature: number;
   llmToolCallTopP: number;
@@ -127,6 +129,8 @@ const DEFAULTS: AppSettings = {
   llmChatMaxTokens: 1024,
   llmReasoningTemperature: 0.6,
   llmReasoningTopP: 0.95,
+  llmReasoningTopK: 20,
+  llmReasoningMaxTokens: 4096,
   llmEnableThinking: false,
   llmToolCallTemperature: 0.7,
   llmToolCallTopP: 0.8,
@@ -148,8 +152,11 @@ export async function loadSettings(): Promise<AppSettings> {
     if (raw) {
       return { ...DEFAULTS, ...JSON.parse(raw) };
     }
-  } catch {
-    // Corrupted storage, reset
+  } catch (err) {
+    console.error(
+      "[settings] localStorage key \"matrx-settings\" contains invalid JSON — resetting to defaults.",
+      err,
+    );
   }
   return { ...DEFAULTS };
 }
@@ -406,6 +413,8 @@ export function mergeCloudSettings(
     llmChatMaxTokens: cloudNum(cloud, "llm_chat_max_tokens", local.llmChatMaxTokens),
     llmReasoningTemperature: cloudNum(cloud, "llm_reasoning_temperature", local.llmReasoningTemperature),
     llmReasoningTopP: cloudNum(cloud, "llm_reasoning_top_p", local.llmReasoningTopP),
+    llmReasoningTopK: cloudNum(cloud, "llm_reasoning_top_k", local.llmReasoningTopK),
+    llmReasoningMaxTokens: cloudNum(cloud, "llm_reasoning_max_tokens", local.llmReasoningMaxTokens),
     llmEnableThinking: cloudBool(cloud, "llm_enable_thinking", local.llmEnableThinking),
     llmToolCallTemperature: cloudNum(cloud, "llm_tool_call_temperature", local.llmToolCallTemperature),
     llmToolCallTopP: cloudNum(cloud, "llm_tool_call_top_p", local.llmToolCallTopP),
@@ -470,6 +479,8 @@ export function settingsToCloud(settings: AppSettings): Record<string, unknown> 
     llm_chat_max_tokens: settings.llmChatMaxTokens,
     llm_reasoning_temperature: settings.llmReasoningTemperature,
     llm_reasoning_top_p: settings.llmReasoningTopP,
+    llm_reasoning_top_k: settings.llmReasoningTopK,
+    llm_reasoning_max_tokens: settings.llmReasoningMaxTokens,
     llm_enable_thinking: settings.llmEnableThinking,
     llm_tool_call_temperature: settings.llmToolCallTemperature,
     llm_tool_call_top_p: settings.llmToolCallTopP,

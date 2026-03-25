@@ -55,6 +55,11 @@ export function invalidateLlmSettingsCache(): void {
   _cached = null;
 }
 
+// Automatically invalidate whenever the user saves settings anywhere in the app.
+if (typeof window !== "undefined") {
+  window.addEventListener("matrx-settings-changed", () => { _cached = null; });
+}
+
 function chatParams(s: AppSettings) {
   return {
     temperature: s.llmChatTemperature,
@@ -68,7 +73,7 @@ function reasoningParams(s: AppSettings) {
   return {
     temperature: s.llmReasoningTemperature,
     top_p: s.llmReasoningTopP,
-    top_k: s.llmChatTopK,
+    top_k: s.llmReasoningTopK,
     chat_template_kwargs: { enable_thinking: s.llmEnableThinking },
   };
 }

@@ -1008,6 +1008,23 @@ export function Configurations() {
                   onChange={(v) => set("llmReasoningTopP", v)}
                   min={0} max={1} step={0.05}
                 />
+                <SettingRow label="Top K">
+                  <NumberInput
+                    value={draft.llmReasoningTopK}
+                    onChange={(v) => set("llmReasoningTopK", v)}
+                    min={1}
+                    max={200}
+                  />
+                </SettingRow>
+                <SettingRow label="Max tokens" description="Maximum response length for reasoning">
+                  <NumberInput
+                    value={draft.llmReasoningMaxTokens}
+                    onChange={(v) => set("llmReasoningMaxTokens", v)}
+                    min={64}
+                    max={32768}
+                    step={64}
+                  />
+                </SettingRow>
 
                 <Separator className="my-2" />
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Tool Calling</p>

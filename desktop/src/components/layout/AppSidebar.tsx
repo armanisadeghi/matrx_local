@@ -31,6 +31,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
+import { saveSetting, broadcastSettingsChanged } from "@/lib/settings";
 
 interface AppSidebarProps {
   engineStatus: EngineStatus;
@@ -91,16 +92,10 @@ export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
   const toggleCollapsed = () => {
     const next = !collapsed;
     setCollapsed(next);
+    // Write through the canonical settings API so the engine + cloud stay in sync.
+    // Also write the legacy key for any code that hasn't migrated yet.
     localStorage.setItem("sidebar-collapsed", String(next));
-    // Also update in unified settings
-    try {
-      const raw = localStorage.getItem("matrx-settings");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        parsed.sidebarCollapsed = next;
-        localStorage.setItem("matrx-settings", JSON.stringify(parsed));
-      }
-    } catch { /* ignore */ }
+    saveSetting("sidebarCollapsed", next).then(() => broadcastSettingsChanged());
   };
 
   const isActive = (to: string) =>
