@@ -12,6 +12,8 @@ import { engine as engineAPI } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { ActiveAgent, AgentInfo, PromptVariable } from "@/types/agents";
 
+type UseChatReturn = ReturnType<typeof useChat>;
+
 interface AiStatusWarning {
   message: string;
   detail: string;
@@ -23,6 +25,8 @@ export interface ChatPanelProps {
   tools: string[];
   compact?: boolean;
   forceLocalModel?: boolean;
+  /** Pass an external useChat instance to share state with the sidebar. */
+  chatState?: UseChatReturn;
 }
 
 export function ChatPanel({
@@ -31,6 +35,7 @@ export function ChatPanel({
   tools,
   compact = false,
   forceLocalModel = false,
+  chatState: externalChat,
 }: ChatPanelProps) {
   const navigate = useNavigate();
   const [aiWarning, setAiWarning] = useState<AiStatusWarning | null>(null);
@@ -66,6 +71,9 @@ export function ChatPanel({
   );
   const [activeVariables, setActiveVariables] = useState<PromptVariable[]>([]);
 
+  const internalChat = useChat({ engineUrl: externalChat ? null : engineUrl });
+  const chat = externalChat ?? internalChat;
+
   const {
     activeConversation,
     isStreaming,
@@ -78,7 +86,7 @@ export function ChatPanel({
     setMode,
     setModel,
     setToolSchemas,
-  } = useChat({ engineUrl });
+  } = chat;
 
   useEffect(() => {
     if (engineStatus !== "connected" || !engineUrl) return;
@@ -120,7 +128,7 @@ export function ChatPanel({
   }, [activeAgent?.id, hasMessages]);
 
   useEffect(() => {
-    if (!activeConversation) {
+    if (compact && !activeConversation) {
       createConversation();
     }
   }, []);

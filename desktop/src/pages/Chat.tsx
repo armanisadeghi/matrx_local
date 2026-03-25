@@ -12,38 +12,30 @@ interface ChatPageProps {
 
 export function Chat({ engineStatus, engineUrl, tools }: ChatPageProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-
-  const {
-    conversations,
-    activeConversationId,
-    groupedConversations,
-    createConversation,
-    selectConversation,
-    deleteConversation,
-    renameConversation,
-  } = useChat({ engineUrl });
+  const chatState = useChat({ engineUrl });
 
   const handleNewChat = useCallback(() => {
-    createConversation();
-  }, [createConversation]);
+    chatState.createConversation();
+  }, [chatState]);
 
   return (
     <div className="flex h-full overflow-hidden">
       <ChatSidebar
-        conversations={conversations}
-        groupedConversations={groupedConversations}
-        activeConversationId={activeConversationId}
+        conversations={chatState.conversations}
+        groupedConversations={chatState.groupedConversations}
+        activeConversationId={chatState.activeConversationId}
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((p) => !p)}
-        onSelect={selectConversation}
+        onSelect={chatState.selectConversation}
         onNew={handleNewChat}
-        onDelete={deleteConversation}
-        onRename={renameConversation}
+        onDelete={chatState.deleteConversation}
+        onRename={chatState.renameConversation}
       />
       <ChatPanel
         engineStatus={engineStatus}
         engineUrl={engineUrl}
         tools={tools}
+        chatState={chatState}
       />
     </div>
   );

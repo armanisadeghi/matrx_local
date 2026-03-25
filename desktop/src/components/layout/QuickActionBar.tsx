@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Mic,
   Headphones,
@@ -147,7 +147,19 @@ export function QuickActionBar(props: QuickActionBarProps) {
   const [scrapeOpen, setScrapeOpen] = useState(false);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
   const [restarting, setRestarting] = useState(false);
+
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [userMenuOpen]);
 
   const llmRunning = llmState.serverStatus?.running ?? false;
   const llmStarting = llmState.isStarting;
@@ -162,7 +174,7 @@ export function QuickActionBar(props: QuickActionBarProps) {
       await llmActions.stopServer();
     } else if (llmState.downloadedModels.length > 0) {
       const model = llmState.downloadedModels[0];
-      await llmActions.startServer(model.filename, model.recommended_gpu_layers ?? 0);
+      await llmActions.startServer(model.filename, 0);
     }
   }, [llmRunning, llmState.downloadedModels, llmActions]);
 
