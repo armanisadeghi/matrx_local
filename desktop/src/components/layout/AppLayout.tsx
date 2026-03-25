@@ -1,9 +1,11 @@
 import { useLocation } from "react-router-dom";
 import { AppSidebar } from "./AppSidebar";
 import { StatusBar } from "./StatusBar";
-import { NotificationCenter } from "@/components/notifications/NotificationCenter";
+import { QuickActionBar } from "./QuickActionBar";
 import { useDevTerminalHeight } from "@/components/DevTerminalPanel";
 import type { EngineStatus } from "@/hooks/use-engine";
+import type { TranscriptionState, TranscriptionActions } from "@/hooks/use-transcription";
+import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update";
 import type { AppNotification } from "@/hooks/use-notifications";
 import type { User } from "@supabase/supabase-js";
 
@@ -22,6 +24,15 @@ interface AppLayoutProps {
   onOpenMonitor?: () => void;
   user: User | null;
   onSignOut: () => void;
+  // QuickActionBar props
+  isRecording: boolean;
+  onRecord: () => void;
+  transcriptionState: TranscriptionState;
+  transcriptionActions: TranscriptionActions;
+  tools: string[];
+  updateState: AutoUpdateState;
+  updateActions: AutoUpdateActions;
+  // Notifications
   notifications: AppNotification[];
   unreadCount: number;
   onMarkRead: (id: string) => void;
@@ -50,6 +61,13 @@ export function AppLayout({
   onOpenMonitor,
   user,
   onSignOut,
+  isRecording,
+  onRecord,
+  transcriptionState,
+  transcriptionActions,
+  tools,
+  updateState,
+  updateActions,
   notifications,
   unreadCount,
   onMarkRead,
@@ -68,17 +86,27 @@ export function AppLayout({
         className="flex flex-1 flex-col overflow-hidden transition-[padding-bottom] duration-150"
         style={{ paddingBottom: terminalHeight }}
       >
-        {/* Top-right notification bell */}
-        <div className="flex justify-end px-4 pt-2 pb-0">
-          <NotificationCenter
-            notifications={notifications}
-            unreadCount={unreadCount}
-            onMarkRead={onMarkRead}
-            onMarkAllRead={onMarkAllRead}
-            onDismiss={onDismissNotification}
-            onClearAll={onClearAllNotifications}
-          />
-        </div>
+        <QuickActionBar
+          isRecording={isRecording}
+          onRecord={onRecord}
+          engineStatus={engineStatus}
+          engineUrl={engineUrl}
+          tools={tools}
+          onOpenMonitor={onOpenMonitor ?? (() => {})}
+          transcriptionState={transcriptionState}
+          transcriptionActions={transcriptionActions}
+          user={user}
+          userId={user?.id ?? null}
+          onSignOut={onSignOut}
+          updateState={updateState}
+          updateActions={updateActions}
+          notifications={notifications}
+          unreadCount={unreadCount}
+          onMarkRead={onMarkRead}
+          onMarkAllRead={onMarkAllRead}
+          onDismissNotification={onDismissNotification}
+          onClearAllNotifications={onClearAllNotifications}
+        />
         <main className="flex flex-1 flex-col overflow-hidden">
           {pages.map(({ path, element }) => (
             <div

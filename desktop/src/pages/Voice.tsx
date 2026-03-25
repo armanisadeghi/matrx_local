@@ -4,6 +4,7 @@ import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
 import { useTranscriptionSessions } from "@/hooks/use-transcription-sessions";
 import { useWakeWord } from "@/hooks/use-wake-word";
+import { usePublishWakeWord } from "@/contexts/WakeWordContext";
 import { WakeWordOverlay } from "@/components/WakeWordOverlay";
 import { WakeWordControls } from "@/components/WakeWordControls";
 import { WakeWordPage } from "@/pages/WakeWord";
@@ -98,6 +99,11 @@ export function Voice() {
     handleSleep,
     state.fullTranscript,
   );
+
+  const publishWakeWord = usePublishWakeWord();
+  useEffect(() => {
+    publishWakeWord(wwState, wwActions);
+  }, [wwState, wwActions, publishWakeWord]);
 
   // ── Auto-start listen mode — only after transcription model is loaded ────
   // This prevents a CPAL race where the wake word thread and the transcription

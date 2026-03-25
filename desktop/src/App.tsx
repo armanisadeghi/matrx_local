@@ -40,32 +40,22 @@ import { CompactRecorderWindow } from "@/components/CompactRecorderWindow";
 import { PermissionsProvider } from "@/contexts/PermissionsContext";
 import { AudioDevicesProvider } from "@/contexts/AudioDevicesContext";
 import { LlmProvider } from "@/contexts/LlmContext";
+import { WakeWordProvider } from "@/contexts/WakeWordContext";
 import { engine } from "@/lib/api";
 import { isTauri } from "@/lib/sidecar";
 import { initUnifiedLog, initTauriLogStream, stopEngineStreams, stopTauriStream } from "@/hooks/use-unified-log";
 import supabase from "@/lib/supabase";
-import { Mic } from "lucide-react";
 
 const SETUP_DISMISSED_KEY = "matrx-setup-dismissed";
 
 // ---------------------------------------------------------------------------
 // HashRouter + OAuth callback bridge
-//
-// When Supabase redirects after OAuth approval it lands on the real URL:
-//   http://localhost:1420/auth/callback?code=XXX&state=YYY
-//
-// HashRouter only reads window.location.hash, so "/auth/callback" as a real
-// pathname is invisible to it — the app would render the "/" route instead.
-//
-// We detect this on every render (before anything mounts) and immediately
-// redirect to the equivalent hash route, preserving the query string so
-// AuthCallback.tsx can read window.location.search as normal.
 if (
   typeof window !== "undefined" &&
   window.location.pathname === "/auth/callback" &&
   !window.location.hash.includes("/auth/callback")
 ) {
-  const search = window.location.search; // "?code=XXX&state=YYY"
+  const search = window.location.search;
   window.location.replace(`/#/auth/callback${search}`);
 }
 
@@ -88,12 +78,11 @@ export default function App() {
   const [updateState, updateActions] = useAutoUpdate();
 
   // ---------------------------------------------------------------------------
-  // Compact recorder mode — shrinks the OS window to a tiny floating recorder
+  // Compact recorder mode
   // ---------------------------------------------------------------------------
   const [isCompact, setIsCompact] = useState(false);
   const [transcriptionState, transcriptionActions] = useTranscription();
 
-  // Accumulated transcript text — append segments as they arrive.
   const [compactTranscript, setCompactTranscript] = useState("");
   useEffect(() => {
     if (isCompact && transcriptionState.segments.length > 0) {
@@ -117,13 +106,9 @@ export default function App() {
     setCompactTranscript("");
     setIsCompact(true);
     await invokeSetCompactMode(true);
-    // Auto-start recording immediately — the whole point of compact mode.
-    // Small delay lets the window finish resizing before we invoke Tauri audio.
     if (!transcriptionState.isRecording && !transcriptionState.isProcessingTail) {
       setTimeout(() => {
-        transcriptionActions.startRecording().catch(() => {
-          // Silently ignore — CompactRecorderWindow also tries on mount.
-        });
+        transcriptionActions.startRecording().catch(() => {});
       }, 150);
     }
   }, [invokeSetCompactMode, transcriptionState.isRecording, transcriptionState.isProcessingTail, transcriptionActions]);
@@ -137,12 +122,8 @@ export default function App() {
   }, [invokeSetCompactMode, transcriptionState.isRecording, transcriptionActions]);
 
   // ---------------------------------------------------------------------------
-  // Unified log streams — self-initiating, independent of which page is open
+  // Unified log streams
   // ---------------------------------------------------------------------------
-
-  // Tauri sidecar listener starts immediately on mount (no engine needed).
-  // The cleanup return removes the Tauri IPC event listener on unmount so it
-  // doesn't leak after the WebView tears down.
   useEffect(() => {
     initTauriLogStream();
     return () => {
@@ -150,9 +131,6 @@ export default function App() {
     };
   }, []);
 
-  // Engine streams start/stop with engine connection state.
-  // Cleanup closes any open SSE EventSource connections on unmount so they
-  // don't persist after the Tauri WebView is destroyed.
   useEffect(() => {
     if (status === "connected" && url) {
       const getToken = async () => {
@@ -168,10 +146,9 @@ export default function App() {
     };
   }, [status, url]);
 
-  // Keep only the 3 most recent for the toast stack
   const toasts = notif.notifications.slice(0, 3);
 
-  // First-run detection — fetch setup status once engine connects
+  // First-run detection
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const setupCheckedRef = useRef(false);
 
@@ -181,13 +158,11 @@ export default function App() {
       engine.getSetupStatus().then((s) => {
         setSetupComplete(s?.setup_complete ?? true);
       }).catch(() => {
-        // If we can't fetch status, assume complete to not block
         setSetupComplete(true);
       });
     }
   }, [status, url]);
 
-  // Whether we should show the first-run installation screen
   const isFirstRun =
     status === "connected" &&
     url !== null &&
@@ -199,11 +174,10 @@ export default function App() {
     setSetupComplete(true);
   }, []);
 
-  // Engine Monitor — user-controlled but auto-opens on error
+  // Engine Monitor
   const [monitorOpen, setMonitorOpen] = useState(false);
   const prevStatusRef = useRef(status);
 
-  // Auto-open the monitor when engine enters error state (not on initial load)
   useEffect(() => {
     if (
       auth.isAuthenticated &&
@@ -217,16 +191,7 @@ export default function App() {
 
   const handleOpenMonitor = useCallback(() => setMonitorOpen(true), []);
 
-  // Build the persistent pages array — these elements are always mounted once
-  // the user is authenticated. AppLayout shows the active one and hides the
-  // rest via display:none so no page ever unmounts on navigation. Downloads,
-  // streams, and any ongoing work continue uninterrupted regardless of which
-  // tab the user is viewing.
-  //
-  // useMemo keys on the values that legitimately need to cause page re-renders
-  // (engine connection state, user identity, etc.). The page components
-  // themselves receive up-to-date props on every render via their own hooks,
-  // so this does not cause stale closures.
+  // Persistent pages
   const appPages: PageEntry[] = useMemo(() => [
     {
       path: "/",
@@ -318,17 +283,10 @@ export default function App() {
     updateState, updateActions,
   ]);
 
-  // Allow /auth/callback to render before auth loads — it handles its own
-  // loading state and must be reachable immediately after OAuth redirect.
   const isCallbackRoute =
     typeof window !== "undefined" &&
     window.location.hash.startsWith("#/auth/callback");
 
-  // OAuthPending MUST be checked before any engine-state gate.
-  // After completeOAuthExchange() sets isAuthenticated=true, the engine starts
-  // discovering immediately. If we checked isEngineStarting first, StartupScreen
-  // would replace OAuthPending and the deep-link event handler would lose its
-  // listener before it could complete the exchange.
   if (auth.oauthPending) {
     return (
       <ErrorBoundary>
@@ -340,7 +298,6 @@ export default function App() {
     );
   }
 
-  // Show startup screen while auth is loading OR engine is starting/discovering
   const isEngineStarting =
     auth.isAuthenticated &&
     (status === "discovering" || status === "starting") &&
@@ -355,7 +312,6 @@ export default function App() {
     );
   }
 
-  // First-run: engine is connected but setup is not complete — show dedicated install screen
   if (isFirstRun) {
     return (
       <ErrorBoundary>
@@ -367,9 +323,6 @@ export default function App() {
     );
   }
 
-  // ── Compact recorder mode takeover ─────────────────────────────────────────
-  // When compact mode is active the entire app is replaced by the tiny recorder
-  // UI that perfectly fits the shrunken OS window.
   if (isCompact) {
     return (
       <ErrorBoundary>
@@ -391,24 +344,19 @@ export default function App() {
     <ErrorBoundary>
       <DevTerminalProvider>
       <LlmProvider>
+      <WakeWordProvider>
       <PermissionsProvider>
       <AudioDevicesProvider>
       <TooltipProvider>
         <HashRouter>
           <Routes>
-            {/* Transcript overlay window — renders without auth, no chrome */}
             <Route path="/overlay" element={<TranscriptOverlay />} />
-            {/* AuthCallback must be unconditional — renders before auth loads */}
             <Route path="/auth/callback" element={<AuthCallback />} />
 
             {!auth.isAuthenticated ? (
               <Route path="*" element={<Login auth={auth} />} />
             ) : (
               <>
-                {/* AppLayout owns all page rendering. Routes here exist only
-                    so that useLocation() and Link navigation work correctly.
-                    No route renders content — AppLayout shows the right page
-                    based on location.pathname while keeping all others mounted. */}
                 <Route
                   path="/*"
                   element={
@@ -419,6 +367,13 @@ export default function App() {
                       onRefresh={refresh}
                       user={auth.user}
                       onSignOut={auth.signOut}
+                      isRecording={transcriptionState.isRecording}
+                      onRecord={enterCompactMode}
+                      transcriptionState={transcriptionState}
+                      transcriptionActions={transcriptionActions}
+                      tools={tools}
+                      updateState={updateState}
+                      updateActions={updateActions}
                       notifications={notif.notifications}
                       unreadCount={notif.unreadCount}
                       onMarkRead={notif.markRead}
@@ -443,26 +398,13 @@ export default function App() {
           onRestartEngine={restartEngine}
           onRefresh={refresh}
         />
-        {/* Soft persistent notification — shown on any page without interrupting */}
         <UpdateBanner state={updateState} actions={updateActions} />
-        {/* Full dialog — only opens when user clicks Details/Install in the banner, or from Settings */}
         <UpdateDialog state={updateState} actions={updateActions} />
-        {/* Persistent debug terminal — toggled via TerminalToggleButton in AppLayout */}
         <DevTerminalPanel />
-        {/* Global compact-mode trigger — visible from any page when authenticated */}
-        {auth.isAuthenticated && (
-          <button
-            onClick={enterCompactMode}
-            className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full bg-primary/90 px-3 py-2 text-primary-foreground shadow-lg backdrop-blur-sm transition-all hover:bg-primary hover:scale-105 active:scale-95"
-            title="Enter compact recorder mode"
-          >
-            <Mic className="h-4 w-4" />
-            <span className="text-xs font-medium leading-none">Record</span>
-          </button>
-        )}
       </TooltipProvider>
       </AudioDevicesProvider>
       </PermissionsProvider>
+      </WakeWordProvider>
       </LlmProvider>
       </DevTerminalProvider>
     </ErrorBoundary>

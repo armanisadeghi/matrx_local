@@ -363,6 +363,7 @@ export function Settings({
   // Derive convenience variables from the props.
   const updateStatus = updateState?.status ?? null;
   const checking = updateState?.busy ?? false;
+  const updateShowDownloadProgress = updateState?.showDownloadProgress ?? false;
 
   const updateSetting = <K extends keyof AppSettings>(
     key: K,
@@ -2554,12 +2555,13 @@ export function Settings({
                         <div>
                           <Label>Updates</Label>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            {updateStatus?.status === "available"
-                              ? `v${updateStatus.version} available`
-                              : updateStatus?.status === "installed"
-                                ? "Update installed \u2014 restart to apply"
-                                : updateStatus?.status === "downloading"
-                                  ? "Downloading update..."
+                            {updateStatus?.status === "installed"
+                              ? "Update installed \u2014 restart to apply"
+                              : updateShowDownloadProgress && updateStatus?.status === "downloading"
+                                ? "Downloading update…"
+                                : updateStatus?.status === "available" ||
+                                    (updateStatus?.status === "downloading" && !updateShowDownloadProgress)
+                                  ? `v${updateStatus.version} available — preparing in the background; use Install when ready`
                                   : updateStatus?.status === "up_to_date"
                                     ? "You're on the latest version"
                                     : "Check for new releases"}

@@ -123,7 +123,7 @@ const ALL_LEVELS: LogLevel[] = ["info", "success", "warn", "error", "data", "cmd
 const SERVER_SOURCES = new Set(["server", "tauri", "syslog"]);
 
 // Sources that live in the "Client" tab
-const CLIENT_SOURCES = new Set(["engine", "auth", "voice", "setup"]);
+const CLIENT_SOURCES = new Set(["engine", "auth", "voice", "setup", "bg-tasks"]);
 
 // Source for the HTTP tab
 const HTTP_SOURCE = "access";
@@ -829,7 +829,7 @@ const TABS: TabDef[] = [
       const s = l.source ?? "";
       return CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && s !== HTTP_SOURCE && !CLIENT_SOURCES.has(s));
     },
-    clearSources: ["engine", "auth", "voice", "setup"],
+    clearSources: ["engine", "auth", "voice", "setup", "bg-tasks"],
     emptyMessage: "No client logs yet — engine, auth, voice, and setup events appear here",
   },
   {

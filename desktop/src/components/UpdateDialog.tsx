@@ -1,12 +1,8 @@
 /**
  * Update notification dialog.
  *
- * Shows when a new version is available, with release notes,
- * download progress bar, and install/restart buttons.
- *
- * When the update was pre-downloaded in the background (status === "installed"
- * before the user clicked anything), the dialog opens directly to the
- * "Ready to Install" state — no download step is required.
+ * Download progress appears only after the user chooses Install (or opens the
+ * dialog while a user-visible download is already in progress).
  */
 
 import {
@@ -37,22 +33,24 @@ function formatBytes(bytes: number): string {
 }
 
 export function UpdateDialog({ state, actions }: UpdateDialogProps) {
-  const { status, busy, preDownloading, progress, dialogOpen } = state;
-  const isDownloading = status?.status === "downloading" || preDownloading;
+  const { status, busy, showDownloadProgress, progress, dialogOpen } = state;
+  const isDownloadingUi = showDownloadProgress && status?.status === "downloading";
   const isInstalled = status?.status === "installed";
-  const isAvailable = status?.status === "available";
+  const showAsAvailable =
+    status?.status === "available" ||
+    (status?.status === "downloading" && !showDownloadProgress);
 
   const titleText = isInstalled
     ? "Ready to Install"
-    : isDownloading
+    : isDownloadingUi
       ? "Downloading Update"
       : "Update Available";
 
   const descriptionText = isInstalled
     ? "The update has been downloaded. Restart to apply the new version."
-    : isDownloading
-      ? "Downloading update in the background…"
-      : "A new version of AI Matrx is available.";
+    : isDownloadingUi
+      ? "Downloading the update…"
+      : "A new version of AI Matrx is available. If you already checked for updates, the download may be running in the background — tap Install to see progress or finish setup.";
 
   return (
     <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) actions.dismiss(); }}>
@@ -70,7 +68,6 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Version info */}
           {status?.version && (
             <div className="flex items-center justify-between text-sm">
               <div className="flex items-center gap-2">
@@ -85,16 +82,14 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
             </div>
           )}
 
-          {/* Release notes — show for available and while downloading */}
-          {status?.body && (isAvailable || isDownloading) && (
+          {status?.body && (showAsAvailable || isDownloadingUi) && (
             <div className="rounded-lg bg-muted/50 p-3 max-h-40 overflow-y-auto">
               <p className="text-xs font-medium text-muted-foreground mb-1">Release Notes</p>
               <p className="text-sm whitespace-pre-wrap">{status.body}</p>
             </div>
           )}
 
-          {/* Download progress */}
-          {isDownloading && (
+          {isDownloadingUi && (
             <div className="space-y-2">
               <Progress value={progress} />
               <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -115,7 +110,7 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
               <RefreshCw className="h-4 w-4" />
               Restart Now
             </Button>
-          ) : isDownloading ? (
+          ) : isDownloadingUi ? (
             <>
               <Button variant="ghost" onClick={actions.dismiss} className="gap-2">
                 <X className="h-4 w-4" />
@@ -132,13 +127,13 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
                 <X className="h-4 w-4" />
                 Later
               </Button>
-              <Button onClick={actions.install} disabled={busy} className="gap-2">
+              <Button onClick={() => void actions.install()} disabled={busy} className="gap-2">
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
-                Install Update
+                Download & Install
               </Button>
             </>
           )}

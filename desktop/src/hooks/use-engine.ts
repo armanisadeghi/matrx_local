@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { engine, type SystemInfo, type BrowserStatus } from "@/lib/api";
 import { isTauri, startSidecar, stopSidecar, waitForEngine, discoverEnginePort } from "@/lib/sidecar";
 import { initPlatformCtx } from "@/lib/platformCtx";
-import { syncAllSettings, hydrateFromEngine } from "@/lib/settings";
+import { startBackgroundTasks, stopBackgroundTasks } from "@/lib/background-tasks";
 import supabase from "@/lib/supabase";
 import { emitClientLog } from "@/hooks/use-client-log";
 
@@ -87,6 +87,17 @@ export function useEngine(authenticated = true) {
   const initialize = useCallback(async () => {
     // Already running — skip this call (will be retried later)
     if (initializingRef.current) return;
+
+    // Engine is already connected — verify it's genuinely alive before
+    // deciding to skip. This prevents Supabase token refresh events
+    // (SIGNED_IN / TOKEN_REFRESHED on visibility return) from bouncing
+    // the status to "discovering" and flashing the StartupScreen.
+    // Works identically on macOS, Windows, and Linux.
+    if (statusRef.current === "connected") {
+      const alive = await engine.isHealthy();
+      if (alive) return;
+    }
+
     initializingRef.current = true;
 
     try {
@@ -250,38 +261,12 @@ export function useEngine(authenticated = true) {
         emitClientLog("warn", `WebSocket connection failed (non-critical): ${err}`, "engine");
       }
 
-      // Configure cloud sync + push JWT to Python if already authenticated at connect time.
-      // This covers the race where INITIAL_SESSION fired before the engine was discovered.
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token && session?.user?.id) {
-          lastCloudConfigureRef.current = Date.now();
-          // Push the JWT first so Python SyncEngine has it before configureCloudSync triggers agent sync.
-          engine.syncTokenToPython(
-            session.access_token,
-            session.user.id,
-            session.refresh_token ?? undefined,
-            session.expires_in ?? undefined,
-          ).catch(() => {});
-          await engine.configureCloudSync(session.access_token, session.user.id);
-          engine.cloudHeartbeat().catch(() => {});
-        }
-        emitClientLog("info", "Cloud sync configured", "engine");
-      } catch {
-        emitClientLog("warn", "Cloud sync configuration skipped (non-critical)", "engine");
-      }
+      // Fire background tasks: token sync, cloud configure, settings hydration,
+      // prefetch, and heartbeat all run via the idle-scheduled orchestrator.
+      lastCloudConfigureRef.current = Date.now();
+      startBackgroundTasks();
 
-      // Hydrate localStorage from Python (which may have pulled from cloud),
-      // then push the merged result back to engine + Tauri.
-      try {
-        await hydrateFromEngine();
-        emitClientLog("info", "Settings hydrated from engine", "engine");
-      } catch {
-        // Non-critical — localStorage still has usable settings
-      }
-      syncAllSettings().catch(() => {});
-
-      emitClientLog("success", "Engine initialization complete", "engine");
+      emitClientLog("success", "Engine initialization complete — background tasks queued", "engine");
     } finally {
       // Always release the mutex so future retries are possible
       initializingRef.current = false;
@@ -330,18 +315,24 @@ export function useEngine(authenticated = true) {
   // Belt-and-suspenders: also watch supabase auth state directly so we catch
   // the SIGNED_IN event that fires from setSession() in completeOAuthExchange,
   // in case the authenticated prop hasn't propagated yet when it fires.
+  //
+  // Supabase-js fires SIGNED_IN on visibility return (tab/window refocus) when
+  // it refreshes an expiring token. If the engine is already connected we must
+  // NOT call initialize() — that would reset status to "discovering" and flash
+  // the StartupScreen. Instead, only patch up the WebSocket if it dropped.
+  // This behaviour is identical on macOS, Windows, and Linux.
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN") {
-        // If the engine is already connected but WS was skipped (auth not ready at init
-        // time), connect WS now without re-running the full initialization sequence.
-        if (statusRef.current === "connected" && !wsConnectedRef.current && session?.access_token) {
-          try {
-            await engine.connectWebSocket();
-            update({ wsConnected: true });
-            emitClientLog("success", "WebSocket connected (deferred — auth arrived after engine)", "engine");
-          } catch (err) {
-            emitClientLog("warn", `Deferred WebSocket connection failed: ${err}`, "engine");
+        if (statusRef.current === "connected") {
+          if (!wsConnectedRef.current && session?.access_token) {
+            try {
+              await engine.connectWebSocket();
+              update({ wsConnected: true });
+              emitClientLog("success", "WebSocket connected (deferred — auth arrived after engine)", "engine");
+            } catch (err) {
+              emitClientLog("warn", `Deferred WebSocket connection failed: ${err}`, "engine");
+            }
           }
         } else {
           initialize();
@@ -438,8 +429,7 @@ export function useEngine(authenticated = true) {
       authSub.unsubscribe();
       clearInterval(healthInterval);
       clearInterval(heartbeatInterval);
-      // Close the WebSocket and clear the reconnect timer so they don't
-      // keep running after the Tauri WebView starts tearing down.
+      stopBackgroundTasks();
       engine.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

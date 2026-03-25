@@ -11,6 +11,7 @@
  *   "auth"    → Supabase auth lifecycle (emitted by use-auth)
  *   "voice"   → transcription / whisper (emitted by voice hooks)
  *   "setup"   → setup wizard progress (emitted by SetupWizard)
+ *   "bg-tasks" → background task orchestrator (token sync, cloud, prefetch)
  *
  * All streams self-initiate and auto-reconnect with exponential backoff.
  * The bus is module-level so it survives component re-renders and unmounts.

@@ -159,11 +159,12 @@ impl LlmServer {
                     serde_json::json!({ "line": &timeout_msg, "kind": "error" }),
                 );
 
-                // Emit each line of captured output as individual log events
                 for line in output.lines() {
+                    let kind = classify_log_line(line);
+                    let k = if kind == LogKind::Noise { "info" } else { kind.as_str() };
                     let _ = app.emit(
                         "llm-server-log",
-                        serde_json::json!({ "line": line, "kind": "error" }),
+                        serde_json::json!({ "line": line, "kind": k }),
                     );
                 }
 
@@ -313,11 +314,12 @@ async fn wait_for_health(
             let captured = log_buf.lock().unwrap().clone();
             let output = extract_crash_output(&captured);
 
-            // Emit each line of the crash output so the UI log panel can show it
             for line in output.lines() {
+                let kind = classify_log_line(line);
+                let k = if kind == LogKind::Noise { "info" } else { kind.as_str() };
                 let _ = app.emit(
                     "llm-server-log",
-                    serde_json::json!({ "line": line, "kind": "error" }),
+                    serde_json::json!({ "line": line, "kind": k }),
                 );
             }
 
@@ -373,10 +375,12 @@ async fn wait_for_health(
 
 /// Classify a log line into a category for the UI to display/filter.
 #[derive(PartialEq)]
+#[derive(PartialEq)]
 enum LogKind {
     Loading,
     Progress,
     Ready,
+    Info,
     Error,
     Noise,
 }
@@ -387,6 +391,7 @@ impl LogKind {
             Self::Loading => "loading",
             Self::Progress => "progress",
             Self::Ready => "ready",
+            Self::Info => "info",
             Self::Error => "error",
             Self::Noise => "noise",
         }
@@ -395,10 +400,35 @@ impl LogKind {
 
 fn classify_log_line(line: &str) -> LogKind {
     let ll = line.to_lowercase();
+
+    // Must check info patterns BEFORE error patterns because llama.cpp writes
+    // normal status output to stderr and some lines contain words like "error"
+    // as part of harmless identifiers (e.g. "uvicorn.error" in Python logs).
+    if ll.contains("ggml_metal_device_init")
+        || ll.contains("system_info:")
+        || ll.contains("system info:")
+        || ll.contains("n_parallel")
+        || ll.starts_with("build:")
+        || ll.contains("running without ssl")
+        || ll.contains("threads for http")
+        || ll.contains("binding port")
+        || ll.contains("simdgroup")
+        || ll.contains("unified memory")
+        || ll.contains("bfloat")
+        || ll.contains("residency sets")
+        || ll.contains("shared buffers")
+        || ll.contains("recommendedmaxworkingsetsize")
+        || ll.contains("fitting params to device")
+    {
+        return LogKind::Info;
+    }
+
     if ll.contains("error")
         || ll.contains("fail")
         || ll.contains("fatal")
         || ll.contains("exiting due to")
+        || ll.contains("segfault")
+        || ll.contains("abort")
     {
         return LogKind::Error;
     }
@@ -418,7 +448,6 @@ fn classify_log_line(line: &str) -> LogKind {
     if line.starts_with("print_info:") || line.starts_with("llama_model_loader:") {
         return LogKind::Progress;
     }
-    // GPU/Metal init lines, http/slot lines, etc. — suppress
     LogKind::Noise
 }
 

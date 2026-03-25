@@ -1,12 +1,8 @@
 /**
  * Persistent but non-disruptive update notification banner.
  *
- * Appears in the bottom-right corner whenever an update is available,
- * is downloading, or is ready to install. Does NOT take over the page —
- * the user can dismiss it and return later via the Settings > About tab.
- *
- * The full UpdateDialog (with release notes and progress bar) is opened
- * from the "View Details" / "Install" button here.
+ * Appears when an update is available or ready to restart. Background downloads
+ * do not show a progress bar here until the user taps Install / View progress.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -23,31 +19,37 @@ interface UpdateBannerProps {
 }
 
 export function UpdateBanner({ state, actions }: UpdateBannerProps) {
-  const { status, busy, preDownloading, progress } = state;
+  const { status, busy, showDownloadProgress, progress } = state;
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const dismissedVersionRef = useRef<string | null>(null);
 
-  const isAvailable = status?.status === "available";
-  // Pre-downloading counts as "downloading" for the banner
-  const isDownloading = status?.status === "downloading" || preDownloading;
   const isInstalled = status?.status === "installed";
+  const isDownloadingUi = showDownloadProgress && status?.status === "downloading";
+  const showAsAvailable =
+    status?.status === "available" ||
+    (status?.status === "downloading" && !showDownloadProgress);
 
-  // Show banner when update is available, downloading, or installed —
-  // but not if the user already dismissed this exact version.
   useEffect(() => {
-    if (!status && !preDownloading) return;
+    if (status?.status === "up_to_date") {
+      setVisible(false);
+      return;
+    }
 
-    if (isAvailable || preDownloading) {
-      if (status?.version && dismissedVersionRef.current === status.version) return;
-      setVisible(true);
-      setDismissed(false);
-    } else if (isDownloading || isInstalled) {
-      // Always show during active download or when restart is needed
+    if (!status) return;
+
+    if (isInstalled || isDownloadingUi || showAsAvailable) {
+      if (
+        (showAsAvailable || isDownloadingUi) &&
+        status.version &&
+        dismissedVersionRef.current === status.version
+      ) {
+        return;
+      }
       setVisible(true);
       setDismissed(false);
     }
-  }, [status?.status, status?.version, isAvailable, isDownloading, isInstalled, preDownloading]);
+  }, [status, isInstalled, isDownloadingUi, showAsAvailable]);
 
   const handleDismiss = () => {
     setVisible(false);
@@ -55,13 +57,11 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
     if (status?.version) {
       dismissedVersionRef.current = status.version;
     }
-    // Also tell the hook so the full dialog won't re-open for this version
     actions.dismiss();
   };
 
   const handleInstall = () => {
-    // Start install but keep banner visible for progress
-    actions.install();
+    void actions.install();
   };
 
   const handleViewDetails = () => {
@@ -69,7 +69,7 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
   };
 
   if (!visible || dismissed) return null;
-  if (!isAvailable && !isDownloading && !isInstalled) return null;
+  if (!showAsAvailable && !isDownloadingUi && !isInstalled) return null;
 
   return (
     <div
@@ -81,12 +81,11 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
       role="status"
       aria-live="polite"
     >
-      {/* Header row */}
       <div className="flex items-start gap-3 p-4 pb-3">
         <div className="mt-0.5 shrink-0">
           {isInstalled ? (
             <RefreshCw className="h-4 w-4 text-green-500" />
-          ) : isDownloading ? (
+          ) : isDownloadingUi ? (
             <Loader2 className="h-4 w-4 text-primary animate-spin" />
           ) : (
             <ArrowUpCircle className="h-4 w-4 text-primary" />
@@ -97,23 +96,27 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
           <p className="text-sm font-semibold leading-tight">
             {isInstalled
               ? "Update ready to install"
-              : isDownloading
-                ? "Downloading update..."
+              : isDownloadingUi
+                ? "Downloading update…"
                 : "Update available"}
           </p>
           {status?.version && (
             <p className="text-xs text-muted-foreground mt-0.5">
               {isInstalled
                 ? `v${status.version} — restart to apply`
-                : isDownloading
+                : isDownloadingUi
                   ? `v${status.version}`
-                  : `v${__APP_VERSION__} → v${status.version}`}
+                  : `${__APP_VERSION__} → v${status.version}`}
+            </p>
+          )}
+          {showAsAvailable && !isDownloadingUi && !isInstalled && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Download runs in the background — choose Install when you&apos;re ready.
             </p>
           )}
         </div>
 
-        {/* Dismiss — only allowed when not actively downloading */}
-        {!isDownloading && (
+        {!isDownloadingUi && (
           <button
             onClick={handleDismiss}
             className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -124,8 +127,7 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
         )}
       </div>
 
-      {/* Progress bar — shown during download */}
-      {isDownloading && (
+      {isDownloadingUi && (
         <div className="px-4 pb-3 space-y-1">
           <Progress value={progress} className="h-1.5" />
           <div className="flex justify-between text-xs text-muted-foreground">
@@ -139,7 +141,6 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
         </div>
       )}
 
-      {/* Action buttons */}
       <div className="flex items-center gap-2 px-4 pb-4">
         {isInstalled ? (
           <Button
@@ -150,7 +151,7 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
             <RefreshCw className="h-3.5 w-3.5" />
             Restart Now
           </Button>
-        ) : isDownloading ? (
+        ) : isDownloadingUi ? (
           <Button
             size="sm"
             variant="outline"
@@ -183,7 +184,7 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
               Details
             </Button>
             <button
-              onClick={() => actions.check({ showResult: true })}
+              onClick={() => void actions.check({ showResult: true })}
               disabled={busy}
               className="shrink-0 rounded-sm p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
               aria-label="Check for newer version"

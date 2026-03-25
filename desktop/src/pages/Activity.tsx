@@ -77,7 +77,7 @@ const ALL_LEVELS: LogLevel[] = ["info", "success", "warn", "error", "data", "cmd
 const GROUPABLE_LEVELS = new Set<LogLevel>(["info", "success", "data", "cmd"]);
 
 const SERVER_SOURCES = new Set(["server", "tauri", "syslog", "llm"]);
-const CLIENT_SOURCES = new Set(["engine", "auth", "voice", "setup"]);
+const CLIENT_SOURCES = new Set(["engine", "auth", "voice", "setup", "bg-tasks"]);
 const HTTP_SOURCE = "access";
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
@@ -110,15 +110,16 @@ const LEVEL_PILL_ACTIVE: Record<LogLevel, string> = {
 const LEVEL_PILL_INACTIVE = "text-muted-foreground/40 border-border/30 hover:text-muted-foreground hover:border-border/60";
 
 const SOURCE_LABELS: Record<string, string> = {
-  server:  "Engine (SSE)",
-  tauri:   "Sidecar IPC",
-  syslog:  "System Log",
-  llm:     "LLM Server",
-  engine:  "Engine Client",
-  auth:    "Auth",
-  voice:   "Voice",
-  setup:   "Setup Wizard",
-  access:  "HTTP Requests",
+  server:     "Engine (SSE)",
+  tauri:      "Sidecar IPC",
+  syslog:     "System Log",
+  llm:        "LLM Server",
+  engine:     "Engine Client",
+  auth:       "Auth",
+  voice:      "Voice",
+  setup:      "Setup Wizard",
+  access:     "HTTP Requests",
+  "bg-tasks": "Background Tasks",
 };
 
 // ---------------------------------------------------------------------------
@@ -857,7 +858,7 @@ export function Activity({ engineStatus }: ActivityProps) {
           <LogTab
             logs={clientLogs}
             emptyMessage="No client logs yet — engine discovery, auth, voice, and setup events appear here"
-            clearSources={["engine", "auth", "voice", "setup"]}
+            clearSources={["engine", "auth", "voice", "setup", "bg-tasks"]}
           />
         </TabsContent>
 
