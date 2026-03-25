@@ -129,8 +129,12 @@ detect_venv_python() {
 PYTHON="$(detect_venv_python)"
 if [[ -z "$PYTHON" ]]; then
     if command -v uv &>/dev/null; then
-        echo "  → .venv not found — running 'uv sync --extra transcription' first..."
-        uv sync --extra transcription
+        echo "  → .venv not found — running 'uv sync --extra transcription --no-cache' first..."
+        uv sync --extra transcription --no-cache || {
+            echo "  ⚠ uv sync failed — retrying in 30s (PyPI CDN propagation delay)..."
+            sleep 30
+            uv sync --extra transcription --no-cache
+        }
     else
         echo "ERROR: .venv not found. Run 'uv sync' first."
         exit 1
