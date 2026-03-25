@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { isTauri } from "@/lib/sidecar";
 import { engine } from "@/lib/api";
 import { systemPrompts } from "@/lib/system-prompts";
-import { FALLBACK_MODELS, type ModelOption } from "@/hooks/use-chat";
+import type { ModelOption } from "@/hooks/use-chat";
 import type { LlmModelInfo, LlmHardwareResult } from "@/lib/llm/types";
 import type {
   ModelInfo as WhisperModelInfo,
@@ -74,8 +74,8 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useConfigCatalogs(): ConfigCatalogs {
-  // Chat models
-  const [chatModels, setChatModels] = useState<ModelOption[]>(FALLBACK_MODELS);
+  // Chat models — start empty; populated exclusively from engine SQLite cache
+  const [chatModels, setChatModels] = useState<ModelOption[]>([]);
   const [chatModelsLoading, setChatModelsLoading] = useState(false);
 
   // LLM models
@@ -99,28 +99,29 @@ export function useConfigCatalogs(): ConfigCatalogs {
 
   // ── Fetch chat models from engine ─────────────────────────────────────────
   const refreshChatModels = useCallback(async () => {
+    if (!engine.engineUrl) return;
     setChatModelsLoading(true);
     try {
-      if (engine.engineUrl) {
-        const resp = await fetch(`${engine.engineUrl}/ai/models`);
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.models && Array.isArray(data.models) && data.models.length > 0) {
-            const mapped: ModelOption[] = data.models.map((m: { name: string; common_name: string; provider: string; is_primary?: boolean; is_premium?: boolean }, i: number) => ({
-              id: m.name,
-              label: m.common_name,
-              provider: m.provider,
-              default: i === 0,
-              is_primary: m.is_primary,
-              is_premium: m.is_premium,
-            }));
-            if (mountedRef.current) setChatModels(mapped);
-            return;
-          }
+      const resp = await fetch(`${engine.engineUrl}/chat/models`);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.models && Array.isArray(data.models) && data.models.length > 0) {
+          const mapped: ModelOption[] = data.models.map((m: {
+            name: string; common_name: string; provider: string;
+            is_primary?: boolean; is_premium?: boolean;
+          }, i: number) => ({
+            id: m.name,
+            label: m.common_name,
+            provider: m.provider,
+            default: i === 0,
+            is_primary: m.is_primary,
+            is_premium: m.is_premium,
+          }));
+          if (mountedRef.current) setChatModels(mapped);
         }
       }
     } catch {
-      // Fall through to fallback
+      // Engine unreachable — leave list empty; UI shows "not available" state
     } finally {
       if (mountedRef.current) setChatModelsLoading(false);
     }

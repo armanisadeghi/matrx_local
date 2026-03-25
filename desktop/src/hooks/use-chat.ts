@@ -106,16 +106,10 @@ export const LOCAL_MODEL_PREFIX = "local::" as const;
 const STORAGE_KEY = "matrx-chat-conversations";
 const MAX_CONVERSATIONS = 100;
 
-// Fallback models used before/if the engine responds with live DB models.
-// These match real names in the DB so they work immediately.
-export const FALLBACK_MODELS: ModelOption[] = [
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: "anthropic", default: true },
-  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: "anthropic" },
-  { id: "gpt-4o", label: "GPT-4o", provider: "openai" },
-  { id: "gpt-4o-mini", label: "GPT-4o Mini", provider: "openai" },
-  { id: "gemini-2.5-pro-preview-06-05", label: "Gemini 2.5 Pro", provider: "google" },
-  { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", provider: "groq" },
-];
+/** Empty list — the only source of truth for available models is the engine's
+ *  SQLite cache (populated from the AI Matrx server). Never hard-code model names
+ *  here; they will always fail because the API keys are server-side. */
+export const FALLBACK_MODELS: ModelOption[] = [];
 
 // ---- Helpers ----
 
@@ -254,11 +248,11 @@ export function useChat({ engineUrl }: UseChatOptions) {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [mode, setMode] = useState<ChatMode>("chat");
-  const [model, setModel] = useState(FALLBACK_MODELS[0].id);
-  const [availableModels, setAvailableModels] = useState<ModelOption[]>(FALLBACK_MODELS);
+  const [model, setModel] = useState("");
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
   const [toolSchemas, setToolSchemas] = useState<ToolSchema[]>([]);
   const abortRef = useRef<AbortController | null>(null);
-  const cloudModelsRef = useRef<ModelOption[]>(FALLBACK_MODELS);
+  const cloudModelsRef = useRef<ModelOption[]>([]);
 
   // Load default model and mode from user configuration on mount
   useEffect(() => {
@@ -328,8 +322,8 @@ export function useChat({ engineUrl }: UseChatOptions) {
         }
         const merged = mergeLocalModel(mapped, serverStatus);
         setAvailableModels(merged);
-        // If current model isn't in the new list, switch to first
-        setModel((prev) => merged.find((m) => m.id === prev) ? prev : merged[0].id);
+        // If current model isn't in the new list, switch to first available (or keep empty)
+        setModel((prev) => merged.find((m) => m.id === prev) ? prev : (merged[0]?.id ?? ""));
       } catch {
         // Keep fallback models if engine unreachable
       }
@@ -365,10 +359,10 @@ export function useChat({ engineUrl }: UseChatOptions) {
         listen("llm-server-stopped", () => {
           if (!mounted) return;
           setAvailableModels((prev) => prev.filter((m) => m.provider !== "local"));
-          // If a local model was selected, fall back to first cloud model
+          // If a local model was selected, fall back to first cloud model (or empty)
           setModel((prev) => {
             if (prev.startsWith(LOCAL_MODEL_PREFIX)) {
-              return cloudModelsRef.current[0]?.id ?? FALLBACK_MODELS[0].id;
+              return cloudModelsRef.current[0]?.id ?? "";
             }
             return prev;
           });

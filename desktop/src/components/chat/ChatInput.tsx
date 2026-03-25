@@ -87,7 +87,7 @@ export function ChatInput({
   }, []);
 
   const hasText = value.trim().length > 0;
-  const canSend = (hasText || !!selectedAgentId) && !isStreaming && engineReady;
+  const canSend = (hasText || !!selectedAgentId) && !isStreaming && engineReady && (!!model || !!selectedAgentId);
 
   const handleSend = useCallback(() => {
     if (!canSend) return;
@@ -216,6 +216,12 @@ export function ChatInput({
 
               {showModelDropdown && (
                 <div className="glass absolute bottom-full left-0 mb-1.5 min-w-[260px] max-h-80 overflow-y-auto rounded-lg p-1.5">
+                  {/* Empty state — engine not connected or models not yet synced */}
+                  {availableModels.length === 0 && (
+                    <div className="px-3 py-4 text-center text-[11px] text-muted-foreground">
+                      No models available.<br />Connect to engine to load models.
+                    </div>
+                  )}
                   {/* Local Models group — shown first if any exist */}
                   {availableModels.some((m) => m.provider === "local") && (
                     <div>

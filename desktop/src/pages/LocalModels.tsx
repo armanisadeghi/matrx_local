@@ -24,8 +24,6 @@ import {
   MessageSquare,
   Wrench,
   Code,
-  Code2,
-  Eye,
   Server,
   Settings,
   X,
@@ -118,47 +116,21 @@ const RATING_LABELS: Record<number, string> = {
   5: "Near-frontier",
 };
 
-function ratingColor(r: number): string {
-  if (r === 0) return "text-muted-foreground/40";
-  if (r <= 2) return "text-amber-500";
-  if (r <= 4) return "text-blue-500";
-  return "text-green-500";
-}
-
-interface ModelRatingsProps {
-  text: number;
-  code: number;
-  vision: number;
-  tools: number;
-}
-
-function ModelRatings({ text, code, vision, tools }: ModelRatingsProps) {
-  const items = [
-    { icon: MessageSquare, rating: text, label: "Text / Chat" },
-    { icon: Code2, rating: code, label: "Code" },
-    { icon: Eye, rating: vision, label: "Vision" },
-    { icon: Wrench, rating: tools, label: "Tools" },
-  ] as const;
-
+// A single numeric rating cell — color-coded, full-size, easy to scan
+function RatingCell({ value, label }: { value: number; label: string }) {
+  const color =
+    value === 0 ? "text-muted-foreground/30" :
+    value <= 2  ? "text-amber-400" :
+    value <= 4  ? "text-blue-400" :
+                  "text-green-400";
+  const tooltip = `${label}: ${value}/5 — ${RATING_LABELS[value] ?? ""}`;
   return (
-    <div className="flex gap-1.5 items-center">
-      {items.map(({ icon: Icon, rating, label }) => (
-        <div
-          key={label}
-          className="relative group"
-          title={`${label}: ${rating}/5 — ${RATING_LABELS[rating] ?? ""}`}
-        >
-          <div className={`relative flex items-center justify-center w-5 h-5 ${ratingColor(rating)}`}>
-            <Icon className="h-3.5 w-3.5" />
-            {rating > 0 && (
-              <span className="absolute -bottom-0.5 -right-0.5 text-[8px] font-bold leading-none">
-                {rating}
-              </span>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
+    <span
+      className={`tabular-nums font-semibold text-sm ${color}`}
+      title={tooltip}
+    >
+      {value > 0 ? value : "—"}
+    </span>
   );
 }
 
@@ -778,112 +750,133 @@ interface ModelRowProps {
   cancelDownload: () => void;
 }
 
+// ── Column layout (shared between header + rows) ──────────────────────────
+// provider | name | text | code | vision | tools | size | RAM | cutoff | actions
+const TABLE_COLS = "grid-cols-[120px_1fr_44px_44px_44px_44px_72px_60px_72px_96px]";
+
 function ModelRow({
   model, downloadedModels, isDownloading, downloadingFilename, downloadProgress,
   downloadQueue, isRunning, runningModelPath, isStarting, hardwareResult,
   expandedRow, setExpandedRow, onDownload, onLoad, onDelete, cancelDownload,
-}: ModelRowProps) {
+  rowIndex,
+}: ModelRowProps & { rowIndex: number }) {
   const isThisRunning = isRunning && runningModelPath.includes(model.filename);
   const isExpanded = expandedRow === model.filename;
   const isRecommended = hardwareResult?.recommended_filename === model.filename;
 
-  // For multi-variant models, track which variant the user has selected
   const [selectedVariantIdx, setSelectedVariantIdx] = useState<number>(0);
   const hasVariants = model.variants && model.variants.length > 1;
 
-  // Effective filename/url for download (variant override or model default)
   const effectiveFilename = hasVariants ? model.variants[selectedVariantIdx].filename : model.filename;
   const effectiveDownloaded = downloadedModels.some((m) => m.filename === effectiveFilename);
   const effectiveDownloadingThis = isDownloading && downloadingFilename === effectiveFilename;
   const effectiveQueued = !effectiveDownloadingThis && downloadQueue.some((e) => e.filename === effectiveFilename);
 
+  // Row background: running > alternating stripes
+  const stripeBg = rowIndex % 2 === 0 ? "" : "bg-muted/20";
+  const rowBg = isThisRunning ? "bg-green-500/5" : stripeBg;
+
   return (
     <div className="border-b last:border-b-0">
-      <div
-        className={`grid grid-cols-[1fr_72px_64px_80px_96px_96px] gap-px items-center px-4 py-2.5 text-sm transition-colors hover:bg-muted/20 ${
-          isThisRunning ? "bg-green-500/5" : ""
-        }`}
-      >
-        {/* Name + badges */}
+      <div className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2.5 text-sm transition-colors hover:bg-primary/5 ${rowBg}`}>
+
+        {/* Provider */}
+        <span className="text-xs text-foreground/70 truncate" title={model.provider}>
+          {model.provider}
+        </span>
+
+        {/* Name — downloaded state is the primary signal */}
         <div className="flex items-center gap-2 min-w-0">
+          {/* Status dot: green = downloaded, empty = not yet */}
+          <div className="shrink-0 w-2 h-2 rounded-full mt-px"
+            title={effectiveDownloaded ? "Downloaded" : "Not downloaded"}
+            style={{ background: effectiveDownloaded ? "rgb(34 197 94)" : "rgb(100 116 139 / 0.3)" }}
+          />
           <button
-            className="flex items-center gap-1.5 min-w-0 text-left"
+            className="flex items-center gap-1 min-w-0 text-left group"
             onClick={() => setExpandedRow(isExpanded ? null : model.filename)}
           >
-            <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-            <span className="font-medium truncate">{model.name}</span>
+            <span className={`font-medium truncate ${effectiveDownloaded ? "text-foreground" : "text-foreground/60"}`}>
+              {model.name}
+            </span>
+            <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform group-hover:text-foreground ${isExpanded ? "rotate-180" : ""}`} />
           </button>
           {isRecommended && (
-            <Badge className="text-[10px] px-1.5 py-0 bg-blue-500/15 text-blue-600 border-blue-500/30 shrink-0">
-              rec
-            </Badge>
-          )}
-          {model.is_uncensored && (
-            <Badge className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-600 border-amber-500/30 shrink-0">
-              uncensored
+            <Badge className="text-[10px] px-1.5 py-0 h-4 bg-blue-500/15 text-blue-400 border-blue-500/30 shrink-0" title="Recommended for your hardware">
+              ★
             </Badge>
           )}
           {isThisRunning && (
             <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
           )}
-          <button
-            className="ml-1 flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors shrink-0"
-            onClick={() => openUrl(model.hf_model_card_url)}
-            title="Open model card on HuggingFace"
-          >
-            <ExternalLink className="h-2.5 w-2.5" />
-            Model Card
-          </button>
+        </div>
+
+        {/* Rating: Text */}
+        <div className="flex justify-center">
+          <RatingCell value={model.text_rating} label="Text / Chat" />
+        </div>
+
+        {/* Rating: Code */}
+        <div className="flex justify-center">
+          <RatingCell value={model.code_rating} label="Code" />
+        </div>
+
+        {/* Rating: Vision */}
+        <div className="flex justify-center">
+          <RatingCell value={model.vision_rating} label="Vision" />
+        </div>
+
+        {/* Rating: Tools */}
+        <div className="flex justify-center">
+          <RatingCell value={model.tool_calling_rating} label="Tool calling" />
         </div>
 
         {/* Size */}
-        <span className="text-xs text-muted-foreground text-right tabular-nums">
+        <span className="text-xs text-foreground/80 text-right tabular-nums">
           {hasVariants
             ? `${model.variants[selectedVariantIdx].disk_size_gb.toFixed(1)} GB`
             : `${model.disk_size_gb.toFixed(1)} GB`}
         </span>
 
         {/* RAM */}
-        <span className="text-xs text-muted-foreground text-right tabular-nums">
+        <span className="text-xs text-foreground/80 text-right tabular-nums">
           {hasVariants
             ? `${model.variants[selectedVariantIdx].ram_required_gb.toFixed(0)} GB`
             : `${model.ram_required_gb.toFixed(0)} GB`}
         </span>
 
         {/* Knowledge cutoff */}
-        <span className="text-xs text-muted-foreground text-center" title={`Knowledge cutoff: ${model.knowledge_cutoff}`}>
+        <span className="text-xs text-foreground/80 text-center tabular-nums" title={`Knowledge cutoff: ${model.knowledge_cutoff}`}>
           {model.knowledge_cutoff}
         </span>
 
-        {/* Multi-category ratings */}
-        <div className="flex justify-center">
-          <ModelRatings
-            text={model.text_rating}
-            code={model.code_rating}
-            vision={model.vision_rating}
-            tools={model.tool_calling_rating}
-          />
-        </div>
+        {/* Actions */}
+        <div className="flex justify-end items-center gap-0.5">
+          {/* HuggingFace model card link */}
+          <Button
+            size="sm" variant="ghost"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+            onClick={() => openUrl(model.hf_model_card_url)}
+            title="View model card on HuggingFace"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Button>
 
-        {/* Action button */}
-        <div className="flex justify-end">
+          {/* Download / load / cancel */}
           {effectiveDownloadingThis ? (
-            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive" onClick={cancelDownload}>
-              <X className="h-3 w-3 mr-1" />
-              Cancel
+            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={cancelDownload} title="Cancel download">
+              <X className="h-3.5 w-3.5" />
             </Button>
           ) : effectiveQueued ? (
-            <span className="text-xs text-muted-foreground flex items-center gap-1 px-2">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Queued
+            <span className="h-7 w-7 flex items-center justify-center" title="Queued for download">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
             </span>
           ) : effectiveDownloaded ? (
-            <div className="flex gap-1">
+            <>
               {!isThisRunning && (
                 <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 w-7 p-0"
+                  size="sm" variant="ghost"
+                  className="h-7 w-7 p-0 text-green-500 hover:text-green-400"
                   onClick={() => {
                     if (hasVariants) {
                       const v = model.variants[selectedVariantIdx];
@@ -893,26 +886,24 @@ function ModelRow({
                     }
                   }}
                   disabled={isStarting}
-                  title="Load model"
+                  title="Load and run model"
                 >
-                  <Play className="h-3 w-3" />
+                  <Play className="h-3.5 w-3.5" />
                 </Button>
               )}
               <Button
-                size="sm"
-                variant="ghost"
+                size="sm" variant="ghost"
                 className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
                 onClick={() => onDelete(effectiveFilename)}
-                title="Delete model"
+                title="Delete model file"
               >
-                <Trash2 className="h-3 w-3" />
+                <Trash2 className="h-3.5 w-3.5" />
               </Button>
-            </div>
+            </>
           ) : (
             <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-xs gap-1"
+              size="sm" variant="ghost"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
               onClick={() => {
                 if (hasVariants) {
                   const v = model.variants[selectedVariantIdx];
@@ -921,19 +912,19 @@ function ModelRow({
                   onDownload(model, false);
                 }
               }}
+              title="Download model"
             >
-              <Download className="h-3 w-3" />
-              Get
+              <Download className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
       </div>
 
-      {/* Download progress bar */}
+      {/* Download progress */}
       {effectiveDownloadingThis && downloadProgress && (
         <div className="px-4 pb-2 flex items-center gap-3">
-          <Progress value={downloadProgress.percent} className="h-1 flex-1" />
-          <span className="text-xs text-muted-foreground tabular-nums w-16 text-right">
+          <Progress value={downloadProgress.percent} className="h-1.5 flex-1" />
+          <span className="text-xs text-foreground/70 tabular-nums w-24 text-right">
             {downloadProgress.percent.toFixed(0)}% · {formatBytes(downloadProgress.bytes_downloaded)}
           </span>
         </div>
@@ -941,48 +932,50 @@ function ModelRow({
 
       {/* Expanded detail + variant picker */}
       {isExpanded && (
-        <div className="px-4 pb-3 pl-9 space-y-2">
-          <p className="text-xs text-muted-foreground leading-relaxed">{model.description}</p>
-          <p className="text-xs text-muted-foreground">
-            {model.provider} · {model.context_length.toLocaleString()} ctx
-            {model.is_split && ` · split (${model.hf_parts.length + 1} parts)`}
+        <div className="px-4 pb-3 pl-10 space-y-2 bg-muted/10 border-t">
+          {model.is_uncensored && (
+            <div className="flex items-center gap-1.5 text-xs text-amber-400 pt-2">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              Uncensored — no content filtering
+            </div>
+          )}
+          <p className="text-sm text-foreground/80 leading-relaxed">{model.description}</p>
+          <p className="text-xs text-foreground/60">
+            <span className="font-medium text-foreground/80">{model.provider}</span>
+            {" · "}{model.context_length.toLocaleString()} token context
+            {model.is_split && ` · split download (${model.hf_parts.length + 1} parts)`}
           </p>
 
           {/* Variant picker for multi-quant models */}
           {hasVariants && (
             <div className="mt-2">
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
-                Choose size
-              </p>
-              <div className="flex gap-1.5 flex-wrap">
+              <p className="text-xs font-medium text-foreground/70 mb-2">Choose quantization</p>
+              <div className="flex gap-2 flex-wrap">
                 {model.variants.map((v, idx) => {
                   const vDownloaded = downloadedModels.some((d) => d.filename === v.filename);
-                  const isHwRecommended =
-                    hardwareResult &&
+                  const fitsHardware = hardwareResult &&
                     v.ram_required_gb <= (hardwareResult.hardware.total_ram_mb / 1024);
                   return (
                     <button
                       key={v.filename}
                       onClick={() => setSelectedVariantIdx(idx)}
-                      className={`flex flex-col items-start rounded-md border px-2.5 py-1.5 text-left transition-colors text-xs ${
+                      className={`flex flex-col items-start rounded-md border px-3 py-2 text-left transition-colors text-xs ${
                         idx === selectedVariantIdx
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-muted/20 hover:bg-muted/40 text-foreground"
+                          ? "border-primary bg-primary/10 text-foreground"
+                          : "border-border bg-background hover:bg-muted/40 text-foreground/80"
                       }`}
                     >
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-medium">{v.label}</span>
-                        {isHwRecommended && idx === selectedVariantIdx && (
-                          <span className="text-[9px] bg-green-500/20 text-green-600 rounded px-1 py-0.5">fits</span>
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <span className="font-semibold">{v.label}</span>
+                        {fitsHardware && (
+                          <span className="text-[10px] bg-green-500/15 text-green-400 rounded px-1.5 py-0.5">fits your machine</span>
                         )}
                         {vDownloaded && (
-                          <CheckCircle2 className="h-3 w-3 text-green-500" />
+                          <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
                         )}
                       </div>
-                      <span className="text-[10px] text-muted-foreground">
-                        {v.disk_size_gb.toFixed(1)} GB · needs {v.ram_required_gb.toFixed(0)} GB RAM
-                      </span>
-                      <span className="text-[10px] text-muted-foreground/60">{v.quant}</span>
+                      <span className="text-foreground/60">{v.disk_size_gb.toFixed(1)} GB disk · {v.ram_required_gb.toFixed(0)} GB RAM</span>
+                      <span className="text-foreground/40 text-[10px] mt-0.5">{v.quant}</span>
                     </button>
                   );
                 })}
@@ -997,25 +990,26 @@ function ModelRow({
 
 // ── Server-grade collapsible section ─────────────────────────────────────
 
-function ServerGradeSection(props: Omit<ModelRowProps, "model"> & { models: LlmModelInfo[] }) {
-  const { models, ...rowProps } = props;
+function ServerGradeSection(props: Omit<ModelRowProps & { rowIndex: number }, "model" | "rowIndex"> & { models: LlmModelInfo[]; startIndex: number }) {
+  const { models, startIndex, ...rowProps } = props;
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="border-t">
       <button
-        className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors"
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-foreground/70 hover:text-foreground hover:bg-muted/20 transition-colors"
         onClick={() => setExpanded((e) => !e)}
       >
-        <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} />
+        <Server className="h-3.5 w-3.5" />
         <span className="font-medium">Server-grade models</span>
-        <Badge variant="outline" className="text-[10px] px-1.5 py-0 ml-1">{models.length}</Badge>
-        <span className="ml-2 text-muted-foreground/60">· 40 GB+ VRAM or multi-GPU required</span>
+        <Badge variant="outline" className="text-xs px-2 py-0 ml-1">{models.length}</Badge>
+        <span className="ml-2 text-foreground/40 text-xs">40 GB+ VRAM · multi-GPU</span>
       </button>
       {expanded && (
         <div>
-          {models.map((model) => (
-            <ModelRow key={model.filename} model={model} {...rowProps} />
+          {models.map((model, idx) => (
+            <ModelRow key={model.filename} model={model} rowIndex={startIndex + idx} {...rowProps} />
           ))}
         </div>
       )}
@@ -1172,29 +1166,28 @@ function ModelsTab() {
 
       {allModels.length > 0 && (
         <div className="rounded-lg border overflow-hidden">
-          {/* Table header */}
-          <div className="grid grid-cols-[1fr_72px_64px_80px_96px_96px] gap-px items-center px-4 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b">
+          {/* Sticky table header */}
+          <div className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2 bg-muted/60 text-xs font-semibold text-foreground/60 border-b sticky top-0 z-10`}>
+            <span>Provider</span>
             <span>Model</span>
+            <span className="text-center" title="Text / Chat quality (0–5)">Text</span>
+            <span className="text-center" title="Code quality (0–5)">Code</span>
+            <span className="text-center" title="Vision capability (0–5)">Vision</span>
+            <span className="text-center" title="Tool calling capability (0–5)">Tools</span>
             <span className="text-right">Size</span>
             <span className="text-right">RAM</span>
             <span className="text-center">Cutoff</span>
-            <div className="flex items-center gap-1 justify-center" title="Text · Code · Vision · Tools (0–5)">
-              <MessageSquare className="h-3 w-3" />
-              <Code2 className="h-3 w-3" />
-              <Eye className="h-3 w-3" />
-              <Wrench className="h-3 w-3" />
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <span>Action</span>
+            <div className="flex items-center justify-end gap-1">
+              <span>Actions</span>
               {allModels.some((m) => !downloadedModels.some((d) => d.filename === m.filename)) && (
                 <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 px-2 text-[10px] gap-1"
+                  size="sm" variant="outline"
+                  className="h-5 px-1.5 text-[10px] gap-1 ml-1"
                   onClick={handleDownloadAll}
-                  disabled={isDownloading && downloadQueue.length === allModels.filter((m) => !downloadedModels.some((d) => d.filename === m.filename)).length}
+                  title="Download all missing models"
+                  disabled={isDownloading}
                 >
-                  <Download className="h-3 w-3" />
+                  <Download className="h-2.5 w-2.5" />
                   All
                 </Button>
               )}
@@ -1206,75 +1199,105 @@ function ModelsTab() {
             </div>
           </div>
 
-          {/* Model rows — consumer models (non-server-grade) */}
-          {allModels.filter((m) => !m.is_server_grade).map((model) => (
-            <ModelRow
-              key={model.filename}
-              model={model}
-              downloadedModels={downloadedModels}
-              isDownloading={isDownloading}
-              downloadingFilename={downloadingFilename ?? null}
-              downloadProgress={downloadProgress ?? null}
-              downloadQueue={downloadQueue}
-              isRunning={isRunning}
-              runningModelPath={runningModelPath}
-              isStarting={isStarting}
-              hardwareResult={hardwareResult ?? null}
-              expandedRow={expandedRow}
-              setExpandedRow={setExpandedRow}
-              onDownload={handleDownload}
-              onLoad={handleLoad}
-              onDelete={handleDelete}
-              cancelDownload={cancelDownload}
-            />
-          ))}
+          {/* Legend row */}
+          <div className="px-3 py-1.5 flex items-center gap-4 text-[11px] text-foreground/50 border-b bg-background">
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-green-500 inline-block" />
+              Downloaded
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-foreground/20 inline-block" />
+              Not downloaded
+            </span>
+            <span className="ml-auto italic">Ratings 0–5 · hover any cell for description</span>
+          </div>
 
-          {/* Server-grade models — collapsible section */}
+          {/* Model rows — consumer models */}
           {(() => {
-            const serverModels = allModels.filter((m) => m.is_server_grade);
-            if (serverModels.length === 0) return null;
-            return <ServerGradeSection
-              models={serverModels}
-              downloadedModels={downloadedModels}
-              isDownloading={isDownloading}
-              downloadingFilename={downloadingFilename ?? null}
-              downloadProgress={downloadProgress ?? null}
-              downloadQueue={downloadQueue}
-              isRunning={isRunning}
-              runningModelPath={runningModelPath}
-              isStarting={isStarting}
-              hardwareResult={hardwareResult ?? null}
-              expandedRow={expandedRow}
-              setExpandedRow={setExpandedRow}
-              onDownload={handleDownload}
-              onLoad={handleLoad}
-              onDelete={handleDelete}
-              cancelDownload={cancelDownload}
-            />;
+            const consumerModels = allModels.filter((m) => !m.is_server_grade);
+            return consumerModels.map((model, idx) => (
+              <ModelRow
+                key={model.filename}
+                model={model}
+                rowIndex={idx}
+                downloadedModels={downloadedModels}
+                isDownloading={isDownloading}
+                downloadingFilename={downloadingFilename ?? null}
+                downloadProgress={downloadProgress ?? null}
+                downloadQueue={downloadQueue}
+                isRunning={isRunning}
+                runningModelPath={runningModelPath}
+                isStarting={isStarting}
+                hardwareResult={hardwareResult ?? null}
+                expandedRow={expandedRow}
+                setExpandedRow={setExpandedRow}
+                onDownload={handleDownload}
+                onLoad={handleLoad}
+                onDelete={handleDelete}
+                cancelDownload={cancelDownload}
+              />
+            ));
           })()}
 
-          {/* Custom models in the same table */}
-          {customModels.map((dm) => {
-            const isThisRunning = isRunning && runningModelPath.includes(dm.filename);
+          {/* Server-grade models — collapsible */}
+          {(() => {
+            const consumerCount = allModels.filter((m) => !m.is_server_grade).length;
+            const serverModels = allModels.filter((m) => m.is_server_grade);
+            if (serverModels.length === 0) return null;
             return (
-              <div key={dm.filename} className={`grid grid-cols-[1fr_72px_64px_80px_96px_96px] gap-px items-center px-4 py-2.5 text-sm border-b last:border-b-0 ${isThisRunning ? "bg-green-500/5" : ""}`}>
+              <ServerGradeSection
+                models={serverModels}
+                startIndex={consumerCount}
+                downloadedModels={downloadedModels}
+                isDownloading={isDownloading}
+                downloadingFilename={downloadingFilename ?? null}
+                downloadProgress={downloadProgress ?? null}
+                downloadQueue={downloadQueue}
+                isRunning={isRunning}
+                runningModelPath={runningModelPath}
+                isStarting={isStarting}
+                hardwareResult={hardwareResult ?? null}
+                expandedRow={expandedRow}
+                setExpandedRow={setExpandedRow}
+                onDownload={handleDownload}
+                onLoad={handleLoad}
+                onDelete={handleDelete}
+                cancelDownload={cancelDownload}
+              />
+            );
+          })()}
+
+          {/* Custom downloaded models */}
+          {customModels.map((dm, idx) => {
+            const isThisRunning = isRunning && runningModelPath.includes(dm.filename);
+            const totalConsumer = allModels.filter((m) => !m.is_server_grade).length;
+            const stripe = (totalConsumer + idx) % 2 === 0 ? "" : "bg-muted/20";
+            return (
+              <div
+                key={dm.filename}
+                className={`grid ${TABLE_COLS} gap-x-3 items-center px-3 py-2.5 text-sm border-b last:border-b-0 transition-colors hover:bg-primary/5 ${isThisRunning ? "bg-green-500/5" : stripe}`}
+              >
+                <span className="text-xs text-foreground/50">Custom</span>
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-medium truncate pl-5">{dm.name}</span>
-                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">custom</Badge>
+                  <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                  <span className="font-medium truncate text-foreground">{dm.name}</span>
                   {isThisRunning && <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />}
                 </div>
-                <span className="text-xs text-muted-foreground text-right tabular-nums">{dm.size_gb} GB</span>
-                <span className="text-xs text-muted-foreground text-right">—</span>
-                <span className="text-xs text-muted-foreground text-center">—</span>
-                <span className="text-xs text-muted-foreground text-center">—</span>
-                <div className="flex justify-end gap-1">
+                <span className="text-foreground/50 text-xs text-center">—</span>
+                <span className="text-foreground/50 text-xs text-center">—</span>
+                <span className="text-foreground/50 text-xs text-center">—</span>
+                <span className="text-foreground/50 text-xs text-center">—</span>
+                <span className="text-xs text-foreground/80 text-right tabular-nums">{dm.size_gb} GB</span>
+                <span className="text-foreground/50 text-xs text-right">—</span>
+                <span className="text-foreground/50 text-xs text-center">—</span>
+                <div className="flex justify-end gap-0.5">
                   {!isThisRunning && (
-                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-xs" onClick={() => handleLoadCustom(dm.filename)} disabled={isStarting} title="Load model">
-                      <Play className="h-3 w-3" />
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-green-500 hover:text-green-400" onClick={() => handleLoadCustom(dm.filename)} disabled={isStarting} title="Load model">
+                      <Play className="h-3.5 w-3.5" />
                     </Button>
                   )}
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(dm.filename)} title="Delete model">
-                    <Trash2 className="h-3 w-3" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </div>

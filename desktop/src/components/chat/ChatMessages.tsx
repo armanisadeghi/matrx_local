@@ -99,7 +99,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
           <span className="text-xs font-semibold">AI Matrx</span>
           {message.model && !message.isStreaming && (
             <span className="text-[10px] text-muted-foreground">
-              {message.model.replace("claude-", "").replace(/-\d+$/, "")}
+              {message.model}
             </span>
           )}
         </div>

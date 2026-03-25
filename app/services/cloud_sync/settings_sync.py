@@ -73,7 +73,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "wake_word_oww_threshold": 0.5,
     "wake_word_custom_keyword": "hey matrix",
     # Chat & AI
-    "chat_default_model": "claude-sonnet-4-6",
+    "chat_default_model": "",  # Empty = use first model from DB; never hard-code a model name
     "chat_default_mode": "chat",
     "chat_max_conversations": 100,
     "chat_default_system_prompt_id": "",

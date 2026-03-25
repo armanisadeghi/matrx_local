@@ -113,8 +113,8 @@ const DEFAULTS: AppSettings = {
   wakeWordOwwModel: "hey_jarvis",
   wakeWordOwwThreshold: 0.5,
   wakeWordCustomKeyword: "hey matrix",
-  // Chat & AI
-  chatDefaultModel: "claude-sonnet-4-6",
+  // Chat & AI — empty string means "use first model from DB" (no hard-coded model name)
+  chatDefaultModel: "",
   chatDefaultMode: "chat",
   chatMaxConversations: 100,
   chatDefaultSystemPromptId: "",

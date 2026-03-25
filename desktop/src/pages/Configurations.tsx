@@ -758,8 +758,13 @@ export function Configurations() {
                         <SelectValue placeholder="Select model..." />
                       </SelectTrigger>
                       <SelectContent>
-                        {(() => {
-                          // Group models by provider
+                        {catalogs.chatModels.length === 0 ? (
+                          <div className="py-3 px-2 text-center text-xs text-muted-foreground">
+                            {catalogs.chatModelsLoading
+                              ? "Loading models…"
+                              : "No models available — connect to engine"}
+                          </div>
+                        ) : (() => {
                           const groups: Record<string, typeof catalogs.chatModels> = {};
                           for (const m of catalogs.chatModels) {
                             const p = m.provider;
