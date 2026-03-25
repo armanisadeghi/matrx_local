@@ -12,14 +12,14 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import {
-  Mic,
-  MicOff,
   Loader2,
   Maximize2,
   Copy,
   Check,
-  Square,
+  MicOff,
 } from "lucide-react";
+import { RecordingMicButton } from "@/components/recording/RecordingMicButton";
+import { RmsLevelBar } from "@/components/recording/RmsLevelBar";
 import { cn } from "@/lib/utils";
 
 interface CompactRecorderWindowProps {
@@ -79,14 +79,6 @@ export function CompactRecorderWindow({
 
   const displayText =
     transcript.length > 400 ? "…" + transcript.slice(-400) : transcript;
-
-  const rmsWidth = `${Math.min(liveRms * 10000, 100)}%`;
-  const rmsColor =
-    liveRms > 0.001
-      ? "bg-green-400"
-      : liveRms > 0.0001
-      ? "bg-yellow-400"
-      : "bg-red-400";
 
   const statusLabel = isRecording
     ? isCalibrating
@@ -185,53 +177,25 @@ export function CompactRecorderWindow({
 
       {/* ── Controls bar ─────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2.5 px-3 py-2.5 border-t border-border/50 shrink-0">
-        {/* Mic / Stop button */}
-        <button
-          onClick={isRecording ? onStopRecording : isProcessingTail ? undefined : onStartRecording}
-          disabled={isProcessingTail}
-          className={cn(
-            "flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200 shrink-0",
-            isRecording
-              ? "bg-red-500 text-white hover:bg-red-600"
-              : isProcessingTail
-              ? "bg-amber-500 text-white cursor-wait"
-              : "bg-primary text-primary-foreground hover:bg-primary/90"
-          )}
-          style={
-            isRecording && liveRms > 0.00005
-              ? {
-                  boxShadow: `0 0 ${6 + Math.min(liveRms * 6000, 24)}px ${2 + Math.min(liveRms * 3000, 12)}px rgba(239,68,68,${Math.min(0.25 + liveRms * 150, 0.55)})`,
-                }
-              : undefined
-          }
-          title={isRecording ? "Stop recording" : "Start recording"}
-        >
-          {isProcessingTail ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : isRecording ? (
-            <Square className="h-4 w-4 fill-white" />
-          ) : (
-            <Mic className="h-4 w-4" />
-          )}
-        </button>
+        <RecordingMicButton
+          isRecording={isRecording}
+          isProcessingTail={isProcessingTail}
+          liveRms={liveRms}
+          onToggle={isRecording ? onStopRecording : onStartRecording}
+          size="sm"
+          stopIcon="square"
+        />
 
         {/* RMS meter / status text */}
         <div className="flex-1 flex flex-col gap-1 min-w-0">
           {isRecording ? (
-            <>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-red-400 font-medium">REC</span>
-                <span className="text-[10px] text-muted-foreground font-mono tabular-nums">
-                  {liveRms > 0 ? (liveRms * 1000).toFixed(1) : "—"}
-                </span>
-              </div>
-              <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                <div
-                  className={cn("h-full rounded-full transition-all duration-75", rmsColor)}
-                  style={{ width: rmsWidth }}
-                />
-              </div>
-            </>
+            <RmsLevelBar
+              liveRms={liveRms}
+              height="sm"
+              showDot
+              showReadout
+              label="REC"
+            />
           ) : isProcessingTail ? (
             <span className="text-[11px] text-amber-400">Finishing…</span>
           ) : (
@@ -243,7 +207,6 @@ export function CompactRecorderWindow({
           )}
         </div>
 
-        {/* Stop / mic icon — visual affordance for what the big button does */}
         {isRecording && (
           <span title="Tap button to stop">
             <MicOff className="h-3.5 w-3.5 text-red-400/60 shrink-0" />

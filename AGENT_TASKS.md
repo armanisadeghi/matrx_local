@@ -1,6 +1,6 @@
 # Matrx Local — Agent task queue
 
-> **Living doc.** Log new bugs the moment you find them. **Last cleaned:** 2026-03-24 (code-audited: forbidden URLs, first-run, system tab, installed apps, platform ctx).
+> **Living doc.** Log new bugs the moment you find them. **Last cleaned:** 2026-03-25 (added image gen engine, model catalog overhaul, LLM tier expansion).
 > Wake word training steps moved to [`docs/wake-word-training.md`](docs/wake-word-training.md).
 
 ---
@@ -63,6 +63,8 @@
 
 _Order bullets = newest areas first; details live in git history._
 
+- Image generation engine: `app/services/image_gen/`, `/image-gen/*` routes, FLUX.1/HunyuanDiT/SDXL catalog, 6 workflow presets, full LocalModels UI tab (2026-03-25).
+- Local LLM model catalog overhaul: 22-tier system, Qwen/Llama/GPT-OSS/Gemma/DeepSeek/Mistral models, multi-variant quant picker, server-grade section, uncensored models, multi-category star ratings, knowledge cutoff (2026-03-25).
 - Auto-update: background pre-download without spamming progress UI; prepared-version cache in `localStorage` (2026-03-24).
 - HF XET downloads + Hugging Face token in engine API Keys + bridge endpoint for Tauri (2026-03-24).
 - Sidecar orphans, parent watchdog (Windows `TAURI_APP_PID` shim), SIGTERM→SIGKILL timing, force-exit 25s, cloudflared/llama cleanup, `kill_orphaned_sidecars`, `stop.ps1`, discovery-file race (2026-03).

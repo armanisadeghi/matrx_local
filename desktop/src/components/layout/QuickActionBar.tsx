@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Mic,
   Ear,
@@ -90,7 +91,7 @@ function BarButton({
   active,
   dotColor,
   disabled,
-  pulseMic,
+  pulseActive,
   children,
 }: {
   tooltip: string;
@@ -98,7 +99,7 @@ function BarButton({
   active?: boolean;
   dotColor?: DotColor;
   disabled?: boolean;
-  pulseMic?: boolean;
+  pulseActive?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -111,7 +112,7 @@ function BarButton({
             "relative flex h-7 w-7 items-center justify-center rounded-md transition-colors",
             "text-muted-foreground hover:text-foreground hover:bg-muted/50",
             active && "text-emerald-500 hover:text-emerald-400",
-            pulseMic && "text-red-500 animate-pulse",
+            pulseActive && "text-emerald-500 animate-pulse",
             disabled && "opacity-40 pointer-events-none",
           )}
         >
@@ -188,6 +189,7 @@ export function QuickActionBar(props: QuickActionBarProps) {
     onClearAllNotifications,
   } = props;
 
+  const navigate = useNavigate();
   const [llmState, llmActions] = useLlmApp();
   const { state: wwState, actions: wwActions } = useWakeWordContext();
   const [serviceStatus, serviceActions] = useServiceStatus(engineStatus);
@@ -319,7 +321,7 @@ export function QuickActionBar(props: QuickActionBarProps) {
         <BarButton
           tooltip={isBackgroundRecording ? "Background recording... click to stop and save" : "Background recording — click and just talk"}
           onClick={onBackgroundRecord}
-          pulseMic={isBackgroundRecording}
+          pulseActive={isBackgroundRecording}
           dotColor={isBackgroundRecording ? "green" : "blue"}
         >
           <CircleDot className="h-4 w-4" />
@@ -495,12 +497,13 @@ export function QuickActionBar(props: QuickActionBarProps) {
         engineStatus={engineStatus}
         userId={userId}
       />
-      <QuickScrapeModal open={scrapeOpen} onOpenChange={setScrapeOpen} />
+      <QuickScrapeModal open={scrapeOpen} onOpenChange={setScrapeOpen} userId={userId} />
       <QuickTranscriptModal
         open={transcriptOpen}
         onOpenChange={setTranscriptOpen}
         transcriptionState={transcriptionState}
         transcriptionActions={transcriptionActions}
+        onNavigateToVoice={() => navigate("/voice")}
       />
     </>
   );

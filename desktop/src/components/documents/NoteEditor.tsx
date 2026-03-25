@@ -17,10 +17,11 @@ import {
   Save,
   Loader2,
   Mic,
-  MicOff,
   Check,
   X,
 } from "lucide-react";
+import { RecordingMicButton } from "@/components/recording/RecordingMicButton";
+import { RmsLevelBar } from "@/components/recording/RmsLevelBar";
 import { cn } from "@/lib/utils";
 import type { DocNote } from "@/lib/api";
 import Markdown from "react-markdown";
@@ -304,60 +305,18 @@ export function NoteEditor({
       {showDictation && (
         <div className="border-b bg-muted/30 px-4 py-3 space-y-2">
           <div className="flex items-center gap-2">
-            <button
-              onClick={
-                transcriptionState.isRecording
-                  ? handleStopDictation
-                  : transcriptionState.isProcessingTail
-                  ? undefined
-                  : handleStartDictation
-              }
-              disabled={
-                transcriptionState.isProcessingTail ||
-                !transcriptionState.activeModel
-              }
-              className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full transition-all shrink-0",
-                transcriptionState.isRecording
-                  ? "bg-red-500 text-white hover:bg-red-600"
-                  : transcriptionState.isProcessingTail
-                  ? "bg-amber-500 text-white cursor-wait"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
-              )}
-              style={
-                transcriptionState.isRecording && transcriptionState.liveRms > 0.00005
-                  ? {
-                      boxShadow: `0 0 ${6 + Math.min(transcriptionState.liveRms * 5000, 20)}px rgba(239,68,68,${Math.min(0.3 + transcriptionState.liveRms * 150, 0.6)})`,
-                    }
-                  : undefined
-              }
-            >
-              {transcriptionState.isProcessingTail ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : transcriptionState.isRecording ? (
-                <MicOff className="h-4 w-4" />
-              ) : (
-                <Mic className="h-4 w-4" />
-              )}
-            </button>
+            <RecordingMicButton
+              isRecording={transcriptionState.isRecording}
+              isProcessingTail={transcriptionState.isProcessingTail}
+              liveRms={transcriptionState.liveRms}
+              onToggle={transcriptionState.isRecording ? handleStopDictation : handleStartDictation}
+              disabled={!transcriptionState.activeModel}
+              size="xs"
+            />
 
-            {/* Live RMS bar */}
             {transcriptionState.isRecording && (
-              <div className="flex-1 flex items-center gap-2">
-                <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
-                <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all duration-75",
-                      transcriptionState.liveRms > 0.001
-                        ? "bg-green-500"
-                        : transcriptionState.liveRms > 0.0001
-                        ? "bg-yellow-500"
-                        : "bg-red-400"
-                    )}
-                    style={{ width: `${Math.min(transcriptionState.liveRms * 10000, 100)}%` }}
-                  />
-                </div>
+              <div className="flex-1">
+                <RmsLevelBar liveRms={transcriptionState.liveRms} height="sm" showDot />
               </div>
             )}
             {!transcriptionState.isRecording && !transcriptionState.isProcessingTail && (

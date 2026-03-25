@@ -7,8 +7,9 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Mic, MicOff, Loader2, X, Maximize2, GripVertical } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { X, Maximize2, GripVertical } from "lucide-react";
+import { RecordingMicButton } from "@/components/recording/RecordingMicButton";
+import { RmsLevelBar } from "@/components/recording/RmsLevelBar";
 
 interface MiniModeProps {
   isRecording: boolean;
@@ -185,58 +186,17 @@ export function TranscriptionMiniMode({
 
         {/* Controls row */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Mic button */}
-          <button
-            onClick={
-              isRecording
-                ? onStopRecording
-                : isProcessingTail
-                ? undefined
-                : onStartRecording
-            }
-            disabled={isProcessingTail}
-            className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 shrink-0",
-              isRecording
-                ? "bg-red-500 text-white hover:bg-red-600"
-                : isProcessingTail
-                ? "bg-amber-500 text-white cursor-wait"
-                : "bg-primary text-primary-foreground hover:bg-primary/90"
-            )}
-            style={
-              isRecording && liveRms > 0.00005
-                ? {
-                    boxShadow: `0 0 ${6 + Math.min(liveRms * 6000, 24)}px ${2 + Math.min(liveRms * 3000, 12)}px rgba(239,68,68,${Math.min(0.25 + liveRms * 150, 0.55)})`,
-                  }
-                : undefined
-            }
-          >
-            {isProcessingTail ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : isRecording ? (
-              <MicOff className="h-4 w-4" />
-            ) : (
-              <Mic className="h-4 w-4" />
-            )}
-          </button>
+          <RecordingMicButton
+            isRecording={isRecording}
+            isProcessingTail={isProcessingTail}
+            liveRms={liveRms}
+            onToggle={isRecording ? onStopRecording : onStartRecording}
+            size="xs"
+          />
 
-          {/* Live RMS meter */}
           {isRecording && (
-            <div className="flex-1 flex items-center gap-1.5">
-              <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
-              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={cn(
-                    "h-full rounded-full transition-all duration-75",
-                    liveRms > 0.001
-                      ? "bg-green-500"
-                      : liveRms > 0.0001
-                      ? "bg-yellow-500"
-                      : "bg-red-400"
-                  )}
-                  style={{ width: `${Math.min(liveRms * 10000, 100)}%` }}
-                />
-              </div>
+            <div className="flex-1">
+              <RmsLevelBar liveRms={liveRms} height="sm" showDot />
             </div>
           )}
           {!isRecording && !isProcessingTail && (

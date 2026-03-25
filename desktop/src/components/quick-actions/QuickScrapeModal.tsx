@@ -6,10 +6,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
-import { engine } from "@/lib/api";
-
-type ScrapeMethod = "engine" | "browser" | "remote";
+import { ScrapeResultViewer } from "@/components/scraping/ScrapeResultViewer";
+import { MethodSelector } from "@/components/scraping/MethodSelector";
+import { useScrapeOne, normalizeUrl, type ScrapeMethod } from "@/hooks/use-scrape";
 
 interface QuickScrapeModalProps {
   open: boolean;
@@ -19,87 +21,100 @@ interface QuickScrapeModalProps {
 export function QuickScrapeModal({ open, onOpenChange }: QuickScrapeModalProps) {
   const [url, setUrl] = useState("");
   const [method, setMethod] = useState<ScrapeMethod>("engine");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [useCache, setUseCache] = useState(true);
+  const { scrape, loading, result, error, reset } = useScrapeOne();
 
   const handleScrape = useCallback(async () => {
     const trimmed = url.trim();
     if (!trimmed) return;
-    setLoading(true);
-    setResult(null);
-    setError(null);
-    try {
-      const toolName = method === "browser" ? "FetchWithBrowser" : "Scrape";
-      const args =
-        method === "browser"
-          ? { url: trimmed, extract_text: true }
-          : { urls: [trimmed] };
-      const res = await engine.invokeTool(toolName, args);
-      const text =
-        typeof res === "string"
-          ? res
-          : JSON.stringify(res, null, 2).slice(0, 5000);
-      setResult(text);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Scrape failed");
-    } finally {
-      setLoading(false);
-    }
-  }, [url, method]);
+    await scrape(normalizeUrl(trimmed), method, useCache);
+  }, [url, method, useCache, scrape]);
+
+  const handleClose = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        setUrl("");
+        reset();
+      }
+      onOpenChange(open);
+    },
+    [onOpenChange, reset],
+  );
+
+  const hasResult = result !== null || error !== null;
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v) {
-          setUrl("");
-          setResult(null);
-          setError(null);
-        }
-        onOpenChange(v);
-      }}
-    >
-      <DialogContent className="flex max-h-[70vh] max-w-2xl flex-col gap-0 p-0">
-        <DialogHeader className="shrink-0 px-6 pt-6 pb-3">
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col gap-0 p-0">
+        <DialogHeader className="shrink-0 px-6 pt-5 pb-0">
           <DialogTitle>Quick Scrape</DialogTitle>
         </DialogHeader>
-        <div className="flex shrink-0 items-center gap-2 border-b px-6 pb-3">
-          <input
-            type="url"
-            placeholder="https://example.com"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleScrape()}
-            className="min-w-0 flex-1 rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-            autoFocus
-          />
-          <select
-            value={method}
-            onChange={(e) => setMethod(e.target.value as ScrapeMethod)}
-            className="rounded-lg border bg-transparent px-2 py-2 text-xs outline-none"
-          >
-            <option value="engine">Engine</option>
-            <option value="browser">Browser</option>
-            <option value="remote">Remote</option>
-          </select>
-          <Button onClick={handleScrape} disabled={loading || !url.trim()} size="sm">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Go"}
-          </Button>
+
+        {/* Controls */}
+        <div className="shrink-0 space-y-3 border-b px-6 py-4">
+          <div className="flex items-center gap-2">
+            <input
+              type="url"
+              placeholder="https://example.com"
+              value={url}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                if (hasResult) reset();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !loading) handleScrape();
+              }}
+              disabled={loading}
+              className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 placeholder:text-muted-foreground/60"
+              autoFocus
+            />
+            <Button
+              onClick={handleScrape}
+              disabled={loading || !url.trim()}
+              size="sm"
+              className="shrink-0 gap-1.5"
+            >
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Scrape"
+              )}
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <MethodSelector value={method} onChange={setMethod} />
+            <div className="ml-auto flex items-center gap-2">
+              <Switch
+                id="qs-cache"
+                checked={useCache}
+                onCheckedChange={setUseCache}
+              />
+              <Label htmlFor="qs-cache" className="text-xs cursor-pointer">
+                Cache
+              </Label>
+            </div>
+          </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto px-6 py-3">
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
-          )}
-          {result && (
-            <pre className="whitespace-pre-wrap text-xs text-muted-foreground">
-              {result}
-            </pre>
-          )}
-          {!result && !error && !loading && (
-            <p className="text-sm text-muted-foreground">
-              Enter a URL and click Go to scrape.
-            </p>
+
+        {/* Result */}
+        <div className="flex min-h-[200px] flex-1 flex-col overflow-hidden">
+          {error ? (
+            <div className="p-6">
+              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+                <p className="mb-1.5 text-sm font-semibold text-red-400">Scrape failed</p>
+                <pre className="whitespace-pre-wrap font-mono text-xs text-red-300/80 leading-relaxed">
+                  {error}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <ScrapeResultViewer
+              url={url ? normalizeUrl(url) : undefined}
+              result={result}
+              loading={loading}
+              className="flex-1"
+            />
           )}
         </div>
       </DialogContent>

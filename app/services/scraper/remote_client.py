@@ -37,19 +37,23 @@ class RemoteScraperClient:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self._api_key and self._server_url)
+        # Server URL is always set (hardcoded default). API key is optional since
+        # authenticated routes accept Supabase JWTs. The retry poller uses the
+        # API key as fallback — return True so it runs for all users.
+        return bool(self._server_url)
 
     def _headers(self, auth_token: str | None = None) -> dict[str, str]:
         token = auth_token or self._api_key
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        }
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
 
     async def health(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 f"{self._server_url}/api/v1/health",
+                headers=self._headers(),
             )
             resp.raise_for_status()
             return resp.json()

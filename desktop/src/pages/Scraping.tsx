@@ -1,16 +1,13 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Globe,
   Play,
-  Loader2,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  ExternalLink,
-  Trash2,
   StopCircle,
-  Plus,
+  Trash2,
   History,
+  Plus,
+  Construction,
+  X,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -20,357 +17,319 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { engine, type ScrapeResultData } from "@/lib/api";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrapeResultViewer } from "@/components/scraping/ScrapeResultViewer";
+import { ScrapeUrlList } from "@/components/scraping/ScrapeUrlList";
+import { MethodSelector } from "@/components/scraping/MethodSelector";
+import {
+  useScrapeOne,
+  useScrapeMany,
+  loadScrapeHistory,
+  normalizeUrl,
+  type ScrapeMethod,
+  type ScrapeHistoryEntry,
+} from "@/hooks/use-scrape";
 import type { EngineStatus } from "@/hooks/use-engine";
-import { formatDuration, truncateUrl } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-
-const HISTORY_KEY = "matrx:scrape-history";
-const MAX_HISTORY = 100;
-
-interface ScrapeHistoryEntry {
-  url: string;
-  success: boolean;
-  title: string;
-  elapsed_ms: number;
-  savedAt: string;
-  content?: string;
-}
-
-function loadHistory(): ScrapeHistoryEntry[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? (JSON.parse(raw) as ScrapeHistoryEntry[]) : [];
-  } catch { return []; }
-}
-
-function saveToHistory(entries: ScrapeHistoryEntry[]) {
-  try {
-    const existing = loadHistory();
-    const existingUrls = new Set(existing.map((e) => e.url + e.savedAt));
-    const newEntries = entries.filter((e) => !existingUrls.has(e.url + e.savedAt));
-    const merged = [...newEntries, ...existing].slice(0, MAX_HISTORY);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
-  } catch { /* quota exceeded — ignore */ }
-}
 
 interface ScrapingProps {
   engineStatus: EngineStatus;
   engineUrl: string | null;
 }
 
-interface ScrapeEntry {
-  url: string;
-  status: "pending" | "running" | "success" | "error";
-  result: ScrapeResultData | null;
-  startedAt: Date;
-  completedAt?: Date;
-}
+// ── Single Tab ─────────────────────────────────────────────────────────────
 
-/** Normalize a URL — prefix bare domains with https:// */
-function normalizeUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "";
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
-}
-
-export function Scraping({ engineStatus, engineUrl: _engineUrl }: ScrapingProps) {
-  const [urlDraft, setUrlDraft] = useState("");
+function SingleTab({ engineStatus }: { engineStatus: EngineStatus }) {
+  const [urlInput, setUrlInput] = useState("");
+  const [method, setMethod] = useState<ScrapeMethod>("engine");
   const [useCache, setUseCache] = useState(true);
-  const [method, setMethod] = useState<"engine" | "local-browser" | "remote">("engine");
-  const [entries, setEntries] = useState<ScrapeEntry[]>([]);
-  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const [running, setRunning] = useState(false);
-  const [history, setHistory] = useState<ScrapeHistoryEntry[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
+  const { scrape, loading, result, error, reset } = useScrapeOne();
 
-  // Load history from localStorage on mount
-  useEffect(() => {
-    setHistory(loadHistory());
-  }, []);
+  const handleScrape = useCallback(async () => {
+    const normalized = normalizeUrl(urlInput);
+    if (!normalized) return;
+    await scrape(normalized, method, useCache);
+  }, [urlInput, method, useCache, scrape]);
 
-  // Persist successful entries to history when they complete
-  useEffect(() => {
-    const completed = entries.filter(
-      (e) => (e.status === "success" || e.status === "error") && e.result
-    );
-    if (completed.length === 0) return;
-    const toSave: ScrapeHistoryEntry[] = completed.map((e) => ({
-      url: e.url,
-      success: e.status === "success",
-      title: e.result?.title ?? "",
-      elapsed_ms: e.result?.elapsed_ms ?? 0,
-      savedAt: (e.completedAt ?? new Date()).toISOString(),
-      content: e.result?.content?.slice(0, 2000),
-    }));
-    saveToHistory(toSave);
-    setHistory(loadHistory());
-  }, [entries]);
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter" && !loading) handleScrape();
+    },
+    [handleScrape, loading],
+  );
 
-  const selectedEntry = entries.find((e) => e.url === selectedUrl) ?? null;
-
-  /** Parse multi-line URL input into a normalized list */
-  const parseUrlDraft = useCallback((text: string): string[] => {
-    return text
-      .split(/[\n,]+/)
-      .map((u) => normalizeUrl(u))
-      .filter(Boolean);
-  }, []);
-
-  const addUrls = useCallback(() => {
-    const urls = parseUrlDraft(urlDraft);
-    if (urls.length === 0) return;
-    setEntries((prev) => {
-      const existingUrls = new Set(prev.map((e) => e.url));
-      const newEntries: ScrapeEntry[] = urls
-        .filter((u) => !existingUrls.has(u))
-        .map((url) => ({
-          url,
-          status: "pending",
-          result: null,
-          startedAt: new Date(),
-        }));
-      return [...prev, ...newEntries];
-    });
-    setUrlDraft("");
-  }, [urlDraft, parseUrlDraft]);
-
-  const removeEntry = useCallback((url: string) => {
-    setEntries((prev) => prev.filter((e) => e.url !== url));
-    setSelectedUrl((prev) => (prev === url ? null : prev));
-  }, []);
-
-  const clearAll = useCallback(() => {
-    abortRef.current?.abort();
-    setEntries([]);
-    setSelectedUrl(null);
-    setRunning(false);
-  }, []);
-
-  const stopScrape = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setRunning(false);
-    setEntries((prev) =>
-      prev.map((e) =>
-        e.status === "running" || e.status === "pending"
-          ? { ...e, status: "error", result: { ...makeFallbackResult(e.url), error: "Stopped by user" } }
-          : e,
-      ),
-    );
-  }, []);
-
-  const startScrape = useCallback(async () => {
-    // Determine URLs to scrape: pending entries, or all if none pending
-    const toScrape = entries.filter((e) => e.status === "pending");
-    if (toScrape.length === 0) return;
-
-    setRunning(true);
-    abortRef.current = new AbortController();
-
-    if (method === "remote") {
-      const urls = toScrape.map((e) => e.url);
-      // Mark them all as running
-      setEntries((prev) =>
-        prev.map((e) =>
-          urls.includes(e.url) ? { ...e, status: "running" } : e,
-        ),
-      );
-
-      const controller = await engine.scrapeRemotelyStream(
-        urls,
-        { use_cache: useCache },
-        (event, data) => {
-          const d = data as Record<string, unknown>;
-          if (event === "page_result") {
-            const url = String(d.url ?? "");
-            const result: ScrapeResultData = {
-              url,
-              success: d.status === "success",
-              status_code: (d.status_code as number) ?? 0,
-              content: String(d.text_data ?? d.content ?? ""),
-              title: String(d.title ?? ""),
-              content_type: String(d.content_type ?? ""),
-              response_url: String(d.url ?? ""),
-              error: d.error ? String(d.error) : null,
-              elapsed_ms: (d.elapsed_ms as number) ?? 0,
-            };
-            setEntries((prev) =>
-              prev.map((e) =>
-                e.url === url
-                  ? { ...e, status: result.success ? "success" : "error", result, completedAt: new Date() }
-                  : e,
-              ),
-            );
-            setSelectedUrl((prev) => prev ?? url);
-          }
-        },
-        () => {
-          abortRef.current = null;
-          setRunning(false);
-        },
-        () => {
-          abortRef.current = null;
-          setRunning(false);
-        },
-      );
-      abortRef.current = controller;
-      return;
-    }
-
-    // Sequential scraping for engine / local-browser
-    for (const entry of toScrape) {
-      if (abortRef.current?.signal.aborted) break;
-
-      setEntries((prev) =>
-        prev.map((e) => (e.url === entry.url ? { ...e, status: "running" } : e)),
-      );
-
-      try {
-        let result: ScrapeResultData;
-
-        if (method === "local-browser") {
-          const toolResult = await engine.invokeTool("FetchWithBrowser", {
-            url: entry.url,
-            extract_text: true,
-          });
-          result = {
-            url: entry.url,
-            success: toolResult.type === "success",
-            status_code: (toolResult.metadata?.status_code as number) ?? 0,
-            content: toolResult.output,
-            title: "",
-            content_type: "text/html",
-            response_url: (toolResult.metadata?.url as string) ?? entry.url,
-            error: toolResult.type === "error" ? toolResult.output : null,
-            elapsed_ms: (toolResult.metadata?.elapsed_ms as number) ?? 0,
-          };
-        } else {
-          const toolResult = await engine.invokeTool("Scrape", {
-            urls: [entry.url],
-            use_cache: useCache,
-          });
-          const meta = toolResult.metadata ?? {};
-          const results = meta.results as Record<string, unknown>[] | undefined;
-          const r = results?.[0];
-          result = {
-            url: entry.url,
-            success: r ? r.status === "success" : toolResult.type === "success",
-            status_code: (r?.status_code as number) ?? (meta.status_code as number) ?? 0,
-            content: toolResult.output,
-            title: (r?.title as string) ?? "",
-            content_type: (r?.content_type as string) ?? "text/html",
-            response_url: (r?.url as string) ?? entry.url,
-            error: r?.error ? String(r.error) : toolResult.type === "error" ? toolResult.output : null,
-            elapsed_ms: (r?.elapsed_ms as number) ?? (meta.elapsed_ms as number) ?? 0,
-          };
-        }
-
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.url === entry.url
-              ? { ...e, status: result.success ? "success" : "error", result, completedAt: new Date() }
-              : e,
-          ),
-        );
-        setSelectedUrl((prev) => prev ?? entry.url);
-      } catch (err) {
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.url === entry.url
-              ? {
-                  ...e,
-                  status: "error",
-                  result: { ...makeFallbackResult(e.url), error: err instanceof Error ? err.message : String(err) },
-                  completedAt: new Date(),
-                }
-              : e,
-          ),
-        );
-      }
-    }
-
-    setRunning(false);
-    abortRef.current = null;
-  }, [entries, useCache, method]);
-
-  const urlCount = parseUrlDraft(urlDraft).filter(
-    (u) => !entries.find((e) => e.url === u),
-  ).length;
-
-  const pendingCount = entries.filter((e) => e.status === "pending").length;
-  const doneCount = entries.filter((e) => e.status === "success" || e.status === "error").length;
+  const isConnected = engineStatus === "connected";
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <PageHeader
-        title="Scraping"
-        description="Scrape websites using multiple strategies"
+      {/* Controls */}
+      <div className="shrink-0 space-y-3 border-b p-4">
+        <div className="flex items-center gap-2">
+          <input
+            type="url"
+            placeholder="https://example.com"
+            value={urlInput}
+            onChange={(e) => {
+              setUrlInput(e.target.value);
+              if (result || error) reset();
+            }}
+            onKeyDown={handleKeyDown}
+            disabled={loading}
+            className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-sm font-mono outline-none placeholder:text-muted-foreground/60 focus:ring-1 focus:ring-primary disabled:opacity-50"
+            autoFocus
+          />
+          <Button
+            onClick={handleScrape}
+            disabled={loading || !urlInput.trim() || !isConnected}
+            size="sm"
+            className="shrink-0 gap-1.5"
+          >
+            <Play className="h-3.5 w-3.5" />
+            Scrape
+          </Button>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <MethodSelector value={method} onChange={setMethod} />
+          <div className="flex items-center gap-2 ml-auto">
+            <Switch id="single-cache" checked={useCache} onCheckedChange={setUseCache} />
+            <Label htmlFor="single-cache" className="text-xs cursor-pointer">
+              Cache
+            </Label>
+          </div>
+        </div>
+
+        {!isConnected && (
+          <p className="text-xs text-amber-400">
+            Engine not connected — start the Python engine to scrape
+          </p>
+        )}
+      </div>
+
+      {/* Result */}
+      <ScrapeResultViewer
+        url={urlInput ? normalizeUrl(urlInput) : undefined}
+        result={result}
+        loading={loading}
+        className="flex-1"
       />
+    </div>
+  );
+}
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* ── Left Panel: URL list + controls ── */}
-        <div className="flex w-[320px] shrink-0 flex-col border-r">
-          {/* Input area */}
-          <div className="space-y-3 p-3">
-            <div className="flex gap-1">
-              <textarea
-                placeholder={
-                  "Paste URLs (one per line)\nyahoo.com\nhttps://example.com"
-                }
-                value={urlDraft}
-                onChange={(e) => setUrlDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    addUrls();
-                  }
+// ── History Drawer ─────────────────────────────────────────────────────────
+
+function HistoryDrawer({
+  open,
+  onClose,
+  onRestore,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onRestore: (entry: ScrapeHistoryEntry) => void;
+}) {
+  const [history, setHistory] = useState<ScrapeHistoryEntry[]>([]);
+
+  useEffect(() => {
+    if (open) setHistory(loadScrapeHistory());
+  }, [open]);
+
+  const clearHistory = useCallback(() => {
+    localStorage.removeItem("matrx:scrape-history");
+    setHistory([]);
+  }, []);
+
+  if (!open) return null;
+
+  return (
+    <div className="absolute inset-y-0 right-0 z-20 flex w-80 flex-col border-l bg-background shadow-xl">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <span className="text-sm font-semibold">History ({history.length})</span>
+        <div className="flex items-center gap-1">
+          {history.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={clearHistory}
+              title="Clear all history"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      <ScrollArea className="flex-1">
+        {history.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+            <History className="h-8 w-8 opacity-20" />
+            <p className="text-xs">No scrape history</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border/40">
+            {history.map((h, i) => (
+              <button
+                key={`${h.url}-${h.savedAt}-${i}`}
+                onClick={() => {
+                  onRestore(h);
+                  onClose();
                 }}
-                className="h-24 w-full resize-none rounded-md border bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/60"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5 text-xs"
-                onClick={addUrls}
-                disabled={urlCount === 0}
+                className="group flex w-full flex-col gap-0.5 px-4 py-2.5 text-left transition-colors hover:bg-accent/50"
               >
-                <Plus className="h-3.5 w-3.5" />
-                Add {urlCount > 0 ? `${urlCount}` : ""}
-              </Button>
-
-              {/* Method selector */}
-              <div className="ml-auto flex gap-0.5">
-                {(["engine", "local-browser", "remote"] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => setMethod(m)}
+                <div className="flex items-center gap-2">
+                  <span
                     className={cn(
-                      "rounded px-2 py-1 text-[10px] font-medium transition-colors",
-                      method === m
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-accent",
+                      "h-2 w-2 shrink-0 rounded-full",
+                      h.success ? "bg-emerald-500" : "bg-red-400",
                     )}
-                  >
-                    {m === "engine" ? "Engine" : m === "local-browser" ? "Browser" : "Remote"}
-                  </button>
-                ))}
-              </div>
-            </div>
+                  />
+                  <span className="flex-1 truncate font-mono text-xs" title={h.url}>
+                    {h.url.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                  </span>
+                  {h.status_code && h.status_code > 0 && (
+                    <Badge variant="secondary" className="text-[10px] font-mono shrink-0">
+                      {h.status_code}
+                    </Badge>
+                  )}
+                </div>
+                {h.title && (
+                  <p className="truncate pl-4 text-[10px] text-muted-foreground">{h.title}</p>
+                )}
+                <div className="flex items-center gap-2 pl-4 text-[10px] text-muted-foreground/60">
+                  <span>{new Date(h.savedAt).toLocaleDateString()}</span>
+                  {h.method && <span>· {h.method}</span>}
+                  {h.elapsed_ms > 0 && (
+                    <span>· {h.elapsed_ms < 1000 ? `${h.elapsed_ms}ms` : `${(h.elapsed_ms / 1000).toFixed(1)}s`}</span>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </ScrollArea>
+    </div>
+  );
+}
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Switch id="cache" checked={useCache} onCheckedChange={setUseCache} />
-                <Label htmlFor="cache" className="text-xs">Cache</Label>
-              </div>
+// ── Bulk Tab ───────────────────────────────────────────────────────────────
 
+function BulkTab({ engineStatus }: { engineStatus: EngineStatus }) {
+  const [urlDraft, setUrlDraft] = useState("");
+  const [method, setMethod] = useState<ScrapeMethod>("engine");
+  const [useCache, setUseCache] = useState(true);
+  const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const {
+    entries,
+    running,
+    pendingCount,
+    doneCount,
+    progress,
+    addUrls,
+    removeEntry,
+    clearAll,
+    stop,
+    startScrape,
+  } = useScrapeMany();
+
+  const selectedEntry = entries.find((e) => e.url === selectedUrl) ?? null;
+
+  const handleAdd = useCallback(() => {
+    addUrls(urlDraft);
+    setUrlDraft("");
+  }, [urlDraft, addUrls]);
+
+  const handleRemove = useCallback(
+    (url: string) => {
+      removeEntry(url);
+      if (selectedUrl === url) setSelectedUrl(null);
+    },
+    [removeEntry, selectedUrl],
+  );
+
+  const handleClearAll = useCallback(() => {
+    clearAll();
+    setSelectedUrl(null);
+  }, [clearAll]);
+
+  const handleRestore = useCallback(
+    (h: ScrapeHistoryEntry) => {
+      // Add the URL to queue with a pre-filled result from history
+      if (!entries.find((e) => e.url === h.url)) {
+        addUrls(h.url);
+      }
+      setSelectedUrl(h.url);
+    },
+    [entries, addUrls],
+  );
+
+  // Auto-select first completed entry
+  const handleSelect = useCallback(
+    (url: string) => {
+      setSelectedUrl((prev) => (prev === url ? null : url));
+    },
+    [],
+  );
+
+  // When a new entry becomes success/error, auto-select if nothing selected
+  useEffect(() => {
+    if (!selectedUrl) {
+      const done = entries.find((e) => e.status === "success" || e.status === "error");
+      if (done) setSelectedUrl(done.url);
+    }
+  }, [entries, selectedUrl]);
+
+  const isConnected = engineStatus === "connected";
+
+  // Count new URLs that would be added
+  const newUrlCount = urlDraft
+    .split(/[\n,]+/)
+    .map((u) => u.trim())
+    .filter((u) => u && !entries.find((e) => e.url === (u.startsWith("http") ? u : `https://${u}`))).length;
+
+  return (
+    <div className="relative flex h-full overflow-hidden">
+      {/* Left panel */}
+      <div className="flex w-72 shrink-0 flex-col border-r">
+        {/* URL input */}
+        <div className="shrink-0 space-y-2 p-3">
+          <textarea
+            placeholder={"Paste URLs — one per line or comma-separated\n\nexample.com\nhttps://site.org"}
+            value={urlDraft}
+            onChange={(e) => setUrlDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                handleAdd();
+              }
+            }}
+            className="h-28 w-full resize-none rounded-md border bg-background px-3 py-2 font-mono text-xs outline-none focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50"
+          />
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-xs"
+              onClick={handleAdd}
+              disabled={newUrlCount === 0}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add{newUrlCount > 0 ? ` ${newUrlCount}` : ""}
+            </Button>
+            <MethodSelector value={method} onChange={setMethod} className="ml-auto" />
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch id="bulk-cache" checked={useCache} onCheckedChange={setUseCache} />
+            <Label htmlFor="bulk-cache" className="text-xs cursor-pointer">
+              Cache
+            </Label>
+            <div className="ml-auto flex items-center gap-1.5">
               {running ? (
-                <Button size="sm" variant="destructive" className="gap-1.5 text-xs h-7" onClick={stopScrape}>
+                <Button size="sm" variant="destructive" className="gap-1.5 text-xs h-7" onClick={stop}>
                   <StopCircle className="h-3.5 w-3.5" />
                   Stop
                 </Button>
@@ -378,266 +337,133 @@ export function Scraping({ engineStatus, engineUrl: _engineUrl }: ScrapingProps)
                 <Button
                   size="sm"
                   className="gap-1.5 text-xs h-7"
-                  onClick={startScrape}
-                  disabled={pendingCount === 0 || engineStatus !== "connected"}
+                  onClick={() => startScrape(method, useCache)}
+                  disabled={pendingCount === 0 || !isConnected}
                 >
                   <Play className="h-3.5 w-3.5" />
-                  Scrape {pendingCount > 0 ? pendingCount : ""}
+                  Scrape{pendingCount > 0 ? ` ${pendingCount}` : ""}
                 </Button>
               )}
             </div>
-
-            {running && entries.some((e) => e.status === "running") && (
-              <Progress
-                value={(doneCount / entries.length) * 100}
-                className="h-1"
-              />
-            )}
           </div>
 
-          <Separator />
-
-          {/* URL list header */}
-          <div className="flex items-center justify-between px-3 py-1.5">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowHistory(false)}
-                className={cn(
-                  "text-[10px] font-semibold uppercase tracking-wide transition-colors",
-                  !showHistory ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                Queue ({entries.length})
-              </button>
-              <span className="text-muted-foreground/30 text-[10px]">|</span>
-              <button
-                onClick={() => setShowHistory(true)}
-                className={cn(
-                  "flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide transition-colors",
-                  showHistory ? "text-foreground" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <History className="h-3 w-3" />
-                History ({history.length})
-              </button>
-            </div>
-            {!showHistory && entries.length > 0 && (
-              <button
-                onClick={clearAll}
-                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-              >
-                <Trash2 className="h-3 w-3" />
-                Clear
-              </button>
-            )}
-            {showHistory && history.length > 0 && (
-              <button
-                onClick={() => {
-                  localStorage.removeItem(HISTORY_KEY);
-                  setHistory([]);
-                }}
-                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-              >
-                <Trash2 className="h-3 w-3" />
-                Clear
-              </button>
-            )}
-          </div>
-
-          {/* Flat URL list or History */}
-          <ScrollArea className="flex-1">
-            {showHistory && (
-              <div className="space-y-0.5 px-2 pb-3">
-                {history.length === 0 ? (
-                  <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
-                    <History className="h-8 w-8 opacity-20" />
-                    <p className="text-xs">No scrape history yet</p>
-                  </div>
-                ) : (
-                  history.map((h) => (
-                    <button
-                      key={h.url + h.savedAt}
-                      onClick={() => {
-                        const existing = entries.find((e) => e.url === h.url);
-                        if (!existing && h.content) {
-                          const restored: ScrapeEntry = {
-                            url: h.url,
-                            status: h.success ? "success" : "error",
-                            result: {
-                              url: h.url,
-                              success: h.success,
-                              status_code: 0,
-                              content: h.content ?? "",
-                              title: h.title,
-                              content_type: "text/html",
-                              response_url: h.url,
-                              error: h.success ? null : "Historical error",
-                              elapsed_ms: h.elapsed_ms,
-                            },
-                            startedAt: new Date(h.savedAt),
-                            completedAt: new Date(h.savedAt),
-                          };
-                          setEntries((prev) => [restored, ...prev]);
-                        }
-                        setSelectedUrl(h.url);
-                        setShowHistory(false);
-                      }}
-                      className="group flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent/50"
-                    >
-                      <span className="shrink-0">
-                        {h.success
-                          ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                          : <XCircle className="h-3.5 w-3.5 text-red-400" />
-                        }
-                      </span>
-                      <span className="flex-1 min-w-0">
-                        <span className="block truncate font-mono text-xs">{truncateUrl(h.url)}</span>
-                        {h.title && <span className="block truncate text-[10px] text-muted-foreground">{h.title}</span>}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-muted-foreground">
-                        {new Date(h.savedAt).toLocaleDateString()}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-            <div className={cn("space-y-0.5 px-2 pb-3", showHistory && "hidden")}>
-              {entries.map((entry) => (
-                <button
-                  key={entry.url}
-                  onClick={() => setSelectedUrl(entry.url)}
-                  className={cn(
-                    "group flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors",
-                    selectedUrl === entry.url
-                      ? "bg-accent"
-                      : "hover:bg-accent/50",
-                  )}
-                >
-                  {/* Status icon */}
-                  <span className="shrink-0">
-                    {entry.status === "running" && (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                    )}
-                    {entry.status === "success" && (
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                    )}
-                    {entry.status === "error" && (
-                      <XCircle className="h-3.5 w-3.5 text-red-400" />
-                    )}
-                    {entry.status === "pending" && (
-                      <span className="h-3.5 w-3.5 rounded-full border border-muted-foreground/40 inline-block" />
-                    )}
-                  </span>
-
-                  {/* URL */}
-                  <span className="flex-1 truncate font-mono text-xs">
-                    {truncateUrl(entry.url)}
-                  </span>
-
-                  {/* Meta */}
-                  <span className="shrink-0 flex items-center gap-1 text-[10px] text-muted-foreground">
-                    {entry.result?.elapsed_ms ? (
-                      <span className="flex items-center gap-0.5">
-                        <Clock className="h-2.5 w-2.5" />
-                        {formatDuration(entry.result.elapsed_ms)}
-                      </span>
-                    ) : null}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeEntry(entry.url); }}
-                      className="opacity-0 group-hover:opacity-100 ml-0.5 hover:text-destructive transition-opacity"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </span>
-                </button>
-              ))}
-
-              {entries.length === 0 && (
-                <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
-                  <Globe className="h-8 w-8 opacity-20" />
-                  <p className="text-xs">No URLs added yet</p>
-                </div>
-              )}
-            </div>
-          </ScrollArea>
+          {running && (
+            <Progress value={progress} className="h-1" />
+          )}
         </div>
 
-        {/* ── Right Panel: Content viewer ── */}
-        <div className="flex flex-1 flex-col overflow-hidden">
-          {selectedEntry?.result ? (
-            <>
-              {/* Content header */}
-              <div className="flex items-center gap-3 border-b px-4 py-2.5 shrink-0">
-                {selectedEntry.result.success ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-                ) : (
-                  <XCircle className="h-4 w-4 shrink-0 text-red-400" />
-                )}
-                <span className="flex-1 truncate font-mono text-xs text-muted-foreground">
-                  {selectedEntry.url}
-                </span>
-                <div className="flex items-center gap-2 shrink-0">
-                  {selectedEntry.result.status_code > 0 && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {selectedEntry.result.status_code}
-                    </Badge>
-                  )}
-                  {selectedEntry.result.elapsed_ms > 0 && (
-                    <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {formatDuration(selectedEntry.result.elapsed_ms)}
-                    </span>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={() => window.open(selectedEntry.url, "_blank")}
-                    title="Open in browser"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
+        <Separator />
 
-              {/* Scrollable content */}
-              <div className="flex-1 overflow-auto">
-                {selectedEntry.result.error ? (
-                  <div className="p-4">
-                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
-                      <p className="text-sm font-medium text-red-400 mb-1">Scrape failed</p>
-                      <pre className="text-xs text-red-300/80 whitespace-pre-wrap font-mono">
-                        {selectedEntry.result.error}
-                      </pre>
-                    </div>
-                  </div>
-                ) : (
-                  <pre className="p-4 text-xs font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
-                    {selectedEntry.result.content || "(no content)"}
-                  </pre>
-                )}
-              </div>
-            </>
-          ) : selectedEntry?.status === "running" ? (
-            <div className="flex flex-1 items-center justify-center gap-3 text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              <span className="text-sm">Scraping {selectedEntry.url}...</span>
+        {/* Queue header */}
+        <div className="flex shrink-0 items-center justify-between px-3 py-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground">
+              Queue
+            </span>
+            <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+              {entries.length}
+            </Badge>
+            {doneCount > 0 && (
+              <span className="text-[10px] text-muted-foreground">
+                ({doneCount} done)
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setHistoryOpen(true)}
+              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+              title="View scrape history"
+            >
+              <History className="h-3 w-3" />
+              History
+            </button>
+            {entries.length > 0 && (
+              <>
+                <span className="text-muted-foreground/30 text-[10px] mx-0.5">|</span>
+                <button
+                  onClick={handleClearAll}
+                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Clear
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* URL list */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <ScrapeUrlList
+            entries={entries}
+            selectedUrl={selectedUrl}
+            onSelect={handleSelect}
+            onRemove={handleRemove}
+          />
+        </div>
+      </div>
+
+      {/* Right panel — result viewer */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {selectedEntry ? (
+          <ScrapeResultViewer
+            url={selectedEntry.url}
+            result={selectedEntry.result}
+            loading={selectedEntry.status === "running"}
+            className="flex-1"
+          />
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+            <div className="rounded-full border border-dashed border-muted-foreground/30 p-6">
+              <Globe className="h-8 w-8 opacity-20" />
             </div>
-          ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
-              <Globe className="h-12 w-12 opacity-15" />
-              <div className="text-center">
-                <p className="text-sm font-medium">
-                  {entries.length === 0 ? "Add URLs to get started" : "Select a URL to view content"}
-                </p>
-                <p className="mt-1 text-xs opacity-70">
-                  {entries.length === 0
-                    ? "Paste one or more URLs in the left panel"
-                    : "Click any URL in the list to view its scraped content"}
-                </p>
-              </div>
+            <div className="text-center">
+              <p className="text-sm font-medium">
+                {entries.length === 0 ? "Add URLs to get started" : "Select a URL to view result"}
+              </p>
+              <p className="mt-1 text-xs opacity-60">
+                {entries.length === 0
+                  ? "Paste URLs in the left panel, then click Scrape"
+                  : "Click any row in the queue to view its content"}
+              </p>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* History drawer */}
+      <HistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onRestore={handleRestore}
+      />
+    </div>
+  );
+}
+
+// ── Site Tab ───────────────────────────────────────────────────────────────
+
+function SiteTab() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-6 text-muted-foreground">
+      <div className="rounded-full border border-dashed border-muted-foreground/30 p-8">
+        <Construction className="h-10 w-10 opacity-30" />
+      </div>
+      <div className="text-center max-w-sm">
+        <p className="text-base font-semibold text-foreground">Coming Soon</p>
+        <p className="mt-2 text-sm opacity-70 leading-relaxed">
+          Site Scrape will crawl and scrape an entire website — following internal
+          links, respecting robots.txt, and extracting structured content from
+          every page.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          {["Full site crawl", "Sitemap discovery", "Link graph", "Depth control", "Rate limiting"].map(
+            (f) => (
+              <Badge key={f} variant="outline" className="text-xs opacity-60">
+                {f}
+              </Badge>
+            ),
           )}
         </div>
       </div>
@@ -645,16 +471,57 @@ export function Scraping({ engineStatus, engineUrl: _engineUrl }: ScrapingProps)
   );
 }
 
-function makeFallbackResult(url: string): ScrapeResultData {
-  return {
-    url,
-    success: false,
-    status_code: 0,
-    content: "",
-    title: "",
-    content_type: "",
-    response_url: url,
-    error: null,
-    elapsed_ms: 0,
-  };
+// ── Main Page ──────────────────────────────────────────────────────────────
+
+export function Scraping({ engineStatus }: ScrapingProps) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <PageHeader
+        title="Scraping"
+        description="Extract content from websites using multiple strategies"
+      />
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-0">
+        <Tabs defaultValue="single" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="shrink-0 border-b px-4">
+            <TabsList className="h-9 rounded-none bg-transparent p-0 gap-0">
+              <TabsTrigger
+                value="single"
+                className="rounded-none border-b-2 border-transparent px-4 py-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              >
+                Single
+              </TabsTrigger>
+              <TabsTrigger
+                value="bulk"
+                className="rounded-none border-b-2 border-transparent px-4 py-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              >
+                Bulk Scrape
+              </TabsTrigger>
+              <TabsTrigger
+                value="site"
+                className="rounded-none border-b-2 border-transparent px-4 py-2 text-sm font-medium data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              >
+                Site Scrape
+                <Badge variant="secondary" className="ml-1.5 text-[10px] py-0 px-1">
+                  Soon
+                </Badge>
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <TabsContent value="single" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden">
+            <SingleTab engineStatus={engineStatus} />
+          </TabsContent>
+
+          <TabsContent value="bulk" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden">
+            <BulkTab engineStatus={engineStatus} />
+          </TabsContent>
+
+          <TabsContent value="site" className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden data-[state=inactive]:hidden">
+            <SiteTab />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
 }

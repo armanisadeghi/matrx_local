@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
-import { useTranscriptionSessions } from "@/hooks/use-transcription-sessions";
+import { useSessionsContext } from "@/contexts/TranscriptionSessionsContext";
 import { useWakeWord } from "@/hooks/use-wake-word";
 import { usePublishWakeWord } from "@/contexts/WakeWordContext";
 import { WakeWordOverlay } from "@/components/WakeWordOverlay";
@@ -13,6 +13,8 @@ import { loadSettings } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import { DownloadProgress } from "@/components/DownloadProgress";
 import { TranscriptionMiniMode } from "@/components/TranscriptionMiniMode";
+import { RecordingMicButton } from "@/components/recording/RecordingMicButton";
+import { RmsLevelBar } from "@/components/recording/RmsLevelBar";
 import { engine } from "@/lib/api";
 import { isTauri } from "@/lib/sidecar";
 import { useLlmApp } from "@/contexts/LlmContext";
@@ -79,7 +81,7 @@ const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const [state, actions] = useTranscription();
-  const [sessionsState, sessionsActions] = useTranscriptionSessions();
+  const { state: sessionsState, actions: sessionsActions } = useSessionsContext();
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const recordingStartRef = useRef<number>(0);
@@ -1176,37 +1178,13 @@ function TranscribeTab({
               )}
 
               {/* Main mic button */}
-              <button
-                onClick={
-                  state.isRecording
-                    ? actions.stopRecording
-                    : state.isProcessingTail
-                    ? undefined
-                    : handleStartRecording
-                }
-                disabled={state.isProcessingTail}
-                className={cn(
-                  "flex h-20 w-20 items-center justify-center rounded-full transition-all duration-300",
-                  state.isRecording
-                    ? "bg-red-500 text-white shadow-lg shadow-red-500/25 hover:bg-red-600"
-                    : state.isProcessingTail
-                    ? "bg-amber-500 text-white shadow-lg shadow-amber-500/25 cursor-wait"
-                    : "bg-primary text-primary-foreground shadow-lg shadow-primary/25 hover:bg-primary/90"
-                )}
-                style={
-                  state.isRecording && state.liveRms > 0.00005
-                    ? { boxShadow: `0 0 ${8 + Math.min(state.liveRms * 8000, 40)}px ${4 + Math.min(state.liveRms * 4000, 20)}px rgba(239,68,68,${Math.min(0.2 + state.liveRms * 200, 0.6)})` }
-                    : undefined
-                }
-              >
-                {state.isProcessingTail ? (
-                  <Loader2 className="h-8 w-8 animate-spin" />
-                ) : state.isRecording ? (
-                  <MicOff className="h-8 w-8" />
-                ) : (
-                  <Mic className="h-8 w-8" />
-                )}
-              </button>
+              <RecordingMicButton
+                isRecording={state.isRecording}
+                isProcessingTail={state.isProcessingTail}
+                liveRms={state.liveRms}
+                onToggle={state.isRecording ? actions.stopRecording : handleStartRecording}
+                size="lg"
+              />
 
               {state.isProcessingTail && (
                 <div className="flex flex-col items-center gap-2 text-center">
@@ -1224,28 +1202,14 @@ function TranscribeTab({
 
               {/* Live audio level meter */}
               {state.isRecording && (
-                <div className="w-full max-w-xs space-y-1.5">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
-                      {state.isCalibrating ? "Calibrating mic level…" : "Recording"}
-                      {state.selectedDevice && (
-                        <span className="text-muted-foreground/60">· {state.selectedDevice}</span>
-                      )}
-                    </span>
-                    <span className="font-mono tabular-nums">
-                      {state.liveRms > 0 ? (state.liveRms * 1000).toFixed(2) : "—"}
-                    </span>
-                  </div>
-                  <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-                    <div
-                      className={cn(
-                        "h-full rounded-full transition-all duration-75",
-                        state.liveRms > 0.001 ? "bg-green-500" : state.liveRms > 0.0001 ? "bg-yellow-500" : "bg-red-400"
-                      )}
-                      style={{ width: `${Math.min(state.liveRms * 10000, 100)}%` }}
-                    />
-                  </div>
+                <div className="w-full max-w-xs">
+                  <RmsLevelBar
+                    liveRms={state.liveRms}
+                    showDot
+                    showReadout
+                    label={state.isCalibrating ? "Calibrating mic level…" : "Recording"}
+                    detail={state.selectedDevice ?? undefined}
+                  />
                 </div>
               )}
             </div>

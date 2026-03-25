@@ -4,10 +4,17 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Square } from "lucide-react";
+import { Copy, FileText, Sparkles, Loader2, Check, ExternalLink } from "lucide-react";
+import { RecordingMicButton } from "@/components/recording/RecordingMicButton";
+import { RmsLevelBar } from "@/components/recording/RmsLevelBar";
+import { useSessionsContext } from "@/contexts/TranscriptionSessionsContext";
+import { useLlmApp } from "@/contexts/LlmContext";
+import { useLlmPipeline, parsePolishOutput } from "@/hooks/use-llm-pipeline";
+import { engine } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import type { TranscriptPolishOutput } from "@/hooks/use-llm-pipeline";
 import type { TranscriptionState, TranscriptionActions } from "@/hooks/use-transcription";
 
 interface QuickTranscriptModalProps {
@@ -15,6 +22,7 @@ interface QuickTranscriptModalProps {
   onOpenChange: (open: boolean) => void;
   transcriptionState: TranscriptionState;
   transcriptionActions: TranscriptionActions;
+  onNavigateToVoice?: () => void;
 }
 
 export function QuickTranscriptModal({
@@ -22,107 +30,255 @@ export function QuickTranscriptModal({
   onOpenChange,
   transcriptionState,
   transcriptionActions,
+  onNavigateToVoice,
 }: QuickTranscriptModalProps) {
-  const [savedText, setSavedText] = useState("");
+  const { actions: sessionsActions } = useSessionsContext();
+  const [llmState] = useLlmApp();
+  const llmPort = llmState.serverStatus?.port ?? null;
+  const llmRunning = llmState.serverStatus?.running ?? false;
+  const { run: runPipeline, running: polishing } = useLlmPipeline(() => llmPort);
+
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const prevSegCountRef = useRef(0);
+  const recordingStartRef = useRef(0);
   const autoStartedRef = useRef(false);
-  const { isRecording, isProcessingTail, fullTranscript, activeModel } =
+
+  const [copiedId, setCopiedId] = useState(false);
+  const [pushingNote, setPushingNote] = useState(false);
+  const [pushSuccess, setPushSuccess] = useState(false);
+  const [polishSuccess, setPolishSuccess] = useState(false);
+
+  const { isRecording, isProcessingTail, fullTranscript, liveRms, activeModel, selectedDevice, isCalibrating } =
     transcriptionState;
 
   const canRecord = !!activeModel && !isProcessingTail;
+  const hasText = fullTranscript.trim().length > 0;
+  const doneRecording = !isRecording && !isProcessingTail && sessionId !== null;
 
+  // Auto-start recording on open
   useEffect(() => {
     if (open && canRecord && !isRecording && !autoStartedRef.current) {
       autoStartedRef.current = true;
+      const session = sessionsActions.startNew(activeModel, selectedDevice);
+      setSessionId(session.id);
+      prevSegCountRef.current = transcriptionState.segments.length;
+      recordingStartRef.current = Date.now();
       transcriptionActions.startRecording().catch(() => {});
     }
     if (!open) {
       autoStartedRef.current = false;
     }
-  }, [open, canRecord, isRecording, transcriptionActions]);
+  }, [open, canRecord, isRecording, activeModel, selectedDevice, sessionsActions, transcriptionActions, transcriptionState.segments.length]);
 
-  const handleStop = useCallback(async () => {
-    await transcriptionActions.stopRecording();
-  }, [transcriptionActions]);
-
-  const handleSave = useCallback(() => {
-    if (fullTranscript.trim()) {
-      navigator.clipboard.writeText(fullTranscript.trim()).catch(() => {});
-      setSavedText(fullTranscript.trim());
-    }
-  }, [fullTranscript]);
-
+  // Append segments to session in real-time
   useEffect(() => {
-    if (!open) {
-      setSavedText("");
+    if (!sessionId) return;
+    if (transcriptionState.segments.length > prevSegCountRef.current) {
+      const newSegs = transcriptionState.segments.slice(prevSegCountRef.current);
+      prevSegCountRef.current = transcriptionState.segments.length;
+      sessionsActions.append(sessionId, newSegs);
     }
-  }, [open]);
+  }, [sessionId, transcriptionState.segments, sessionsActions]);
 
-  const handleClose = useCallback(
-    async (v: boolean) => {
-      if (!v && isRecording) {
-        await transcriptionActions.stopRecording();
+  // Finalize session when recording fully stops
+  useEffect(() => {
+    if (sessionId && !isRecording && !isProcessingTail && recordingStartRef.current > 0) {
+      const dur = Math.round((Date.now() - recordingStartRef.current) / 1000);
+      if (dur > 0) {
+        sessionsActions.finalize(sessionId, dur);
+        recordingStartRef.current = 0;
       }
-      onOpenChange(v);
-    },
-    [isRecording, transcriptionActions, onOpenChange],
-  );
+    }
+  }, [sessionId, isRecording, isProcessingTail, sessionsActions]);
+
+  const handleToggle = useCallback(async () => {
+    if (isRecording) {
+      await transcriptionActions.stopRecording();
+    } else if (canRecord) {
+      if (!sessionId) {
+        const session = sessionsActions.startNew(activeModel, selectedDevice);
+        setSessionId(session.id);
+        prevSegCountRef.current = transcriptionState.segments.length;
+      }
+      recordingStartRef.current = Date.now();
+      await transcriptionActions.startRecording();
+    }
+  }, [isRecording, canRecord, sessionId, activeModel, selectedDevice, sessionsActions, transcriptionActions, transcriptionState.segments.length]);
+
+  const handleClose = useCallback(async (v: boolean) => {
+    if (!v && isRecording) {
+      await transcriptionActions.stopRecording();
+    }
+    if (!v) {
+      setSessionId(null);
+      prevSegCountRef.current = 0;
+      setCopiedId(false);
+      setPushSuccess(false);
+      setPolishSuccess(false);
+    }
+    onOpenChange(v);
+  }, [isRecording, transcriptionActions, onOpenChange]);
+
+  const handleCopy = useCallback(() => {
+    if (!hasText) return;
+    navigator.clipboard.writeText(fullTranscript.trim()).catch(() => {});
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
+  }, [hasText, fullTranscript]);
+
+  const handlePushToNote = useCallback(async () => {
+    if (!hasText || !sessionId || !engine.engineUrl) return;
+    setPushingNote(true);
+    try {
+      const label = `Voice Note — ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+      await engine.createNote("local", {
+        label,
+        content: fullTranscript.trim(),
+        folder_name: "Voice Notes",
+      });
+      setPushSuccess(true);
+      setTimeout(() => setPushSuccess(false), 3000);
+    } catch {
+      /* engine handles error state */
+    } finally {
+      setPushingNote(false);
+    }
+  }, [hasText, sessionId, fullTranscript]);
+
+  const handlePolish = useCallback(async () => {
+    if (!hasText || !sessionId || !llmRunning) return;
+    try {
+      const raw = await runPipeline<TranscriptPolishOutput>(
+        "polish_transcript",
+        { transcript: fullTranscript.trim() },
+      );
+      const result = parsePolishOutput(raw, "", fullTranscript.trim());
+      sessionsActions.applyPolish(sessionId, {
+        polishedText: result.cleaned,
+        aiTitle: result.title || null,
+        aiDescription: result.description || null,
+        aiTags: result.tags,
+      });
+      setPolishSuccess(true);
+      setTimeout(() => setPolishSuccess(false), 4000);
+    } catch {
+      /* pipeline handles its own errors */
+    }
+  }, [hasText, sessionId, llmRunning, runPipeline, fullTranscript, sessionsActions]);
+
+  const handleOpenInVoice = useCallback(() => {
+    if (sessionId) {
+      sessionsActions.open(sessionId);
+    }
+    onOpenChange(false);
+    onNavigateToVoice?.();
+  }, [sessionId, sessionsActions, onOpenChange, onNavigateToVoice]);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="flex max-h-[85vh] max-w-lg flex-col gap-0 p-0">
-        <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
           <DialogTitle>Quick Transcription</DialogTitle>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
-          <div className="flex flex-col items-center gap-3">
-            {isRecording ? (
-              <button
-                onClick={handleStop}
-                className="flex h-14 w-14 items-center justify-center rounded-full bg-destructive text-destructive-foreground animate-pulse transition-all"
-              >
-                <Square className="h-5 w-5" />
-              </button>
-            ) : (
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                <span className="text-xs text-muted-foreground">
-                  {isProcessingTail ? "..." : "Done"}
-                </span>
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">
-              {!activeModel
-                ? "No transcription model loaded. Set up in the Voice tab first."
-                : isRecording
-                  ? "Listening... click the button to stop"
-                  : isProcessingTail
-                    ? "Processing remaining audio..."
-                    : fullTranscript
-                      ? "Recording complete"
-                      : "Starting microphone..."}
+
+        {/* Recording controls */}
+        <div className="flex flex-col items-center gap-3">
+          <RecordingMicButton
+            isRecording={isRecording}
+            isProcessingTail={isProcessingTail}
+            liveRms={liveRms}
+            onToggle={handleToggle}
+            disabled={!canRecord}
+            size="md"
+          />
+          {isRecording && (
+            <RmsLevelBar
+              liveRms={liveRms}
+              height="sm"
+              showDot
+              label={isCalibrating ? "Calibrating mic level…" : "Recording"}
+              detail={selectedDevice ?? undefined}
+            />
+          )}
+          {isProcessingTail && (
+            <p className="text-xs text-amber-500">
+              Finishing transcription of remaining audio…
             </p>
-          </div>
-          <div className="mt-3 max-h-48 min-h-[6rem] overflow-auto rounded-lg border bg-muted/30 p-3">
-            {fullTranscript ? (
-              <p className="text-sm">{fullTranscript}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground italic">
-                {savedText
-                  ? "Transcript copied to clipboard."
-                  : "Your words will appear here as you speak..."}
-              </p>
+          )}
+          {!isRecording && !isProcessingTail && !hasText && !activeModel && (
+            <p className="text-xs text-muted-foreground">
+              No transcription model loaded. Set up in the Voice tab first.
+            </p>
+          )}
+          {!isRecording && !isProcessingTail && !hasText && activeModel && (
+            <p className="text-xs text-muted-foreground">
+              Starting microphone…
+            </p>
+          )}
+        </div>
+
+        {/* Transcript display */}
+        <div className="max-h-48 min-h-[6rem] overflow-auto rounded-lg border bg-muted/30 p-3">
+          {hasText ? (
+            <p className="text-sm whitespace-pre-wrap">{fullTranscript}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground italic">
+              Your words will appear here as you speak…
+            </p>
+          )}
+        </div>
+
+        {/* Post-recording actions */}
+        {(hasText || doneRecording) && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("gap-1.5 text-xs", copiedId && "text-emerald-500")}
+              onClick={handleCopy}
+              disabled={!hasText}
+            >
+              {copiedId ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+              {copiedId ? "Copied!" : "Copy"}
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("gap-1.5 text-xs", pushSuccess && "text-emerald-500")}
+              onClick={handlePushToNote}
+              disabled={pushingNote || !hasText}
+            >
+              {pushingNote ? <Loader2 className="h-3 w-3 animate-spin" /> : pushSuccess ? <Check className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+              {pushSuccess ? "Saved!" : "Save as Note"}
+            </Button>
+
+            {llmRunning && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("gap-1.5 text-xs", polishSuccess && "text-emerald-500")}
+                onClick={handlePolish}
+                disabled={polishing || !hasText}
+              >
+                {polishing ? <Loader2 className="h-3 w-3 animate-spin" /> : polishSuccess ? <Check className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
+                {polishSuccess ? "Polished!" : "AI Polish"}
+              </Button>
+            )}
+
+            {doneRecording && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-xs ml-auto"
+                onClick={handleOpenInVoice}
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open in Voice tab
+              </Button>
             )}
           </div>
-        </div>
-        <DialogFooter className="shrink-0 px-6 py-4 border-t">
-          <Button
-            onClick={handleSave}
-            disabled={!fullTranscript.trim()}
-            size="sm"
-            variant="outline"
-          >
-            Copy to Clipboard
-          </Button>
-        </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );

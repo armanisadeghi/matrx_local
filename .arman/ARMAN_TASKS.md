@@ -1,6 +1,6 @@
 # Arman Tasks — Matrx Local
 
-_Last updated: 2026-03-24_
+_Last updated: 2026-03-25_
 
 > Secrets, accounts, CDN, OS-only steps. Code work → `AGENT_TASKS.md`.
 
@@ -14,6 +14,7 @@ _Last updated: 2026-03-24_
 - [ ] **CDN: GGUF mirrors** — `assets.aimatrx.com/llm-models/` (per prior plan).
 - [ ] **CDN: llama-server binaries** — `assets.aimatrx.com/llama-server/`.
 - [ ] **CDN: Whisper `.bin` models** — `assets.aimatrx.com/whisper-models/`.
+- [ ] **Image gen: FLUX.1 Dev HF gate** — Accept license at `https://huggingface.co/black-forest-labs/FLUX.1-dev` with your HF account so downloads work for gated users.
 
 **GitHub Actions secrets** (if anything missing on new fork): `AIDREAM_SERVER_URL_LIVE`, `VITE_SUPABASE_*`.
 

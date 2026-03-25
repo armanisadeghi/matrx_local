@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { engine } from "@/lib/api";
-import { loadSettings } from "@/lib/settings";
+import { loadSettings, type AppSettings } from "@/lib/settings";
 
 export type NotificationLevel = "info" | "success" | "warning" | "error";
 
@@ -96,10 +96,9 @@ export function useNotifications() {
     setNotifications((prev) => [notif, ...prev].slice(0, 100));
 
     if (soundEnabledRef.current) {
-      // If user chose a specific style, honour it; otherwise use level-based default.
-      const style = soundStyleRef.current !== "chime"
-        ? soundStyleRef.current
-        : soundForLevel(level);
+      // Always honour the user's explicitly chosen sound style.
+      // Only fall back to level-based sounds if no style is set (null/undefined).
+      const style = soundStyleRef.current ?? soundForLevel(level);
       playTone(style);
     }
   }, []);
@@ -152,4 +151,3 @@ export function useNotifications() {
   };
 }
 
-import type { AppSettings } from "@/lib/settings";

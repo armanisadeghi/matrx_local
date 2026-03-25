@@ -6,7 +6,7 @@
 
 ## What is Matrx Local?
 
-Matrx Local is the companion desktop application for **AI Matrx**. It runs on the user's machine and exposes a tool-based API (REST + WebSocket) that the AI Matrx web/mobile apps and AI agents call to interact with the user's local environment: filesystem, shell, browser, clipboard, hardware, and residential IP. It also integrates a production-grade scraping engine for bypassing anti-bot protections using the user's real browser and real IP.
+Matrx Local is the companion desktop application for **AI Matrx**. It runs on the user's machine and exposes a tool-based API (REST + WebSocket) that the AI Matrx web/mobile apps and AI agents call to interact with the user's local environment: filesystem, shell, browser, clipboard, hardware, and residential IP. It integrates a production-grade scraping engine for bypassing anti-bot protections using the user's real browser and real IP. It also runs local AI models (text via llama-server sidecar, image generation via optional diffusers) directly on the user's hardware.
 
 ---
 
@@ -26,9 +26,11 @@ graph TB
     ScraperEngine["Scraper Engine<br/>scraper-service subtree"]
     SyncEngine["Sync Engine<br/>Documents & Settings sync"]
     WSManager["WebSocket Manager<br/>Concurrent sessions"]
+    ImageGenSvc["Image Gen Service<br/>diffusers optional extra"]
     FastAPI --> ToolDispatcher
     FastAPI --> WSManager
     FastAPI --> SyncEngine
+    FastAPI --> ImageGenSvc
     ToolDispatcher --> ScraperEngine
   end
 
@@ -68,9 +70,10 @@ matrx_local/
 │   ├── config.py                   # Env-based configuration
 │   ├── websocket_manager.py        # WS connection handling
 │   ├── api/
-│   │   ├── routes.py               # Legacy HTTP routes
+│   │   ├── routes.py               # Health, version, logs
 │   │   ├── tool_routes.py          # /tools/invoke, /tools/list
-│   │   └── remote_scraper_routes.py # /remote-scraper/* proxy to scraper server
+│   │   ├── remote_scraper_routes.py # /remote-scraper/* proxy to scraper server
+│   │   ├── image_gen_routes.py     # /image-gen/* text-to-image (optional diffusers)
 │   ├── tools/
 │   │   ├── dispatcher.py           # Tool routing (79 tools registered)
 │   │   ├── session.py              # Per-connection state (cwd, bg processes)
@@ -96,9 +99,13 @@ matrx_local/
 │   │       ├── media.py            # ImageOCR, ImageResize, PdfExtract, ArchiveCreate, ArchiveExtract
 │   │       └── wifi_bluetooth.py   # WifiNetworks, BluetoothDevices, ConnectedDevices
 │   ├── services/
-│   │   └── scraper/
-│   │       ├── engine.py           # ScraperEngine bridge to scraper-service
-│   │       └── remote_client.py    # HTTP client for remote scraper server API
+│   │   ├── scraper/
+│   │   │   ├── engine.py           # ScraperEngine bridge to scraper-service
+│   │   │   └── remote_client.py    # HTTP client for remote scraper server API
+│   │   └── image_gen/
+│   │       ├── __init__.py
+│   │       ├── models.py           # Image gen model catalog + workflow presets
+│   │       └── service.py          # ImageGenService singleton (lazy diffusers import)
 │   └── common/
 │       └── system_logger.py        # Rotating file + console logging
 ├── scraper-service/                # Git subtree -- DO NOT EDIT directly
@@ -111,25 +118,42 @@ matrx_local/
 │   │   ├── index.css               # Dark theme (shadcn/ui CSS vars)
 │   │   ├── components/
 │   │   │   ├── layout/             # Sidebar, Header, AppLayout
+│   │   │   ├── llm/                # ModelRepoAnalyzer, LLM-specific components
+│   │   │   ├── documents/          # Document/note editor components
 │   │   │   └── ui/                 # shadcn/ui components (Button, Card, Badge, etc.)
+│   │   ├── contexts/
+│   │   │   └── LlmContext.tsx      # Shared LLM state context (single hook across tabs)
 │   │   ├── pages/
 │   │   │   ├── Dashboard.tsx       # Engine status, system info, browser detection
 │   │   │   ├── Scraping.tsx        # URL input, batch scrape, dual-mode results
 │   │   │   ├── Tools.tsx           # Browse and invoke all 79 tools
 │   │   │   ├── Activity.tsx        # Real-time WebSocket event log
-│   │   │   ├── Settings.tsx        # Engine, scraping, theme, account
+│   │   │   ├── Settings.tsx        # Engine, scraping, theme, account, API keys, hardware
+│   │   │   ├── LocalModels.tsx     # LLM model picker, inference, server, image gen tab
+│   │   │   ├── Voice.tsx           # Whisper transcription + wake word
+│   │   │   ├── Documents.tsx       # Local-first notes with optional Supabase sync
+│   │   │   ├── Chat.tsx            # AI chat (cloud agents or local LLM)
 │   │   │   ├── Login.tsx           # OAuth (Google/GitHub/Apple) + email
 │   │   │   └── AuthCallback.tsx    # OAuth redirect handler
 │   │   ├── hooks/
 │   │   │   ├── use-engine.ts       # Engine auto-discovery, health, WS
 │   │   │   ├── use-auth.ts         # Supabase auth state + OAuth methods
 │   │   │   ├── use-theme.ts        # Dark/light/system theme management
-│   │   │   └── use-tool.ts         # Tool invocation with loading/error
+│   │   │   ├── use-llm.ts          # Local LLM server state + actions
+│   │   │   ├── use-transcription.ts # Whisper transcription state
+│   │   │   ├── use-documents.ts    # Document CRUD + sync
+│   │   │   └── use-auto-update.ts  # Background app update pre-download
 │   │   └── lib/
-│   │       ├── api.ts              # REST + WS client for Python engine
+│   │       ├── api.ts              # REST + WS client for Python engine (incl. image-gen helpers)
 │   │       ├── supabase.ts         # Supabase client singleton
-│   │       ├── sidecar.ts          # Tauri sidecar lifecycle
+│   │       ├── sidecar.ts          # Tauri sidecar lifecycle + port discovery
 │   │       ├── settings.ts         # App settings persistence (localStorage)
+│   │       ├── image-gen/
+│   │       │   ├── api.ts          # Standalone image gen API client
+│   │       │   └── types.ts        # Image gen TypeScript types
+│   │       ├── llm/
+│   │       │   ├── api.ts          # llama-server streaming client
+│   │       │   └── types.ts        # LLM types (LlmModelInfo, LlmTier, variants, etc.)
 │   │       └── utils.ts            # cn(), formatBytes, formatDuration
 │   ├── src-tauri/                  # Rust backend
 │   │   ├── src/lib.rs              # Sidecar spawn/kill, system tray, hide-to-tray
@@ -166,6 +190,8 @@ matrx_local/
 | **Search** | Brave Search API | Optional |
 | **Package Manager (JS)** | pnpm | 10.x |
 | **Package Manager (Python)** | uv | Latest |
+| **Local LLM inference** | llama-server (llama.cpp) sidecar | Bundled binary |
+| **Image generation** | Hugging Face Diffusers (optional extra) | torch + diffusers ≥0.32 |
 
 ---
 
@@ -177,6 +203,13 @@ matrx_local/
 |----------|--------|-------------|
 | `/tools/list` | GET | List all available tools |
 | `/tools/invoke` | POST | Invoke a tool (stateless session) |
+| `/image-gen/status` | GET | Image gen availability + loaded model |
+| `/image-gen/models` | GET | Model catalog (FLUX, HunyuanDiT, SDXL, etc.) |
+| `/image-gen/presets` | GET | Workflow presets (portrait, product, landscape…) |
+| `/image-gen/load` | POST | Load a model into memory (downloads from HF) |
+| `/image-gen/unload` | POST | Unload model, free VRAM |
+| `/image-gen/generate` | POST | Text-to-image → base64 PNG |
+| `/image-gen/generate-workflow` | POST | Fill preset template + generate |
 
 **POST /tools/invoke** body:
 ```json
@@ -670,7 +703,9 @@ The scraper engine uses `asyncpg` (PostgreSQL only). Without `DATABASE_URL`, the
 # Terminal 1: Python engine
 cd /path/to/matrx_local
 cp .env.example .env   # Configure API_KEY, optionally DATABASE_URL
-uv sync
+uv sync                            # base deps only
+# Optional: enable local image generation (large install ~3-8 GB)
+# uv sync --extra image-gen
 uv run playwright install chromium
 API_KEY=local-dev uv run python run.py
 
@@ -752,6 +787,7 @@ Cross-platform builds run via GitHub Actions (see `.github/workflows/build-deskt
 | `MATRX_PORT` | No | `22140` | Force a specific port |
 | `DEBUG` | No | `True` | Debug mode |
 | `LOG_LEVEL` | No | `DEBUG` | Logging level |
+| `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | No | -- | HuggingFace token (required for gated models like FLUX.1 Dev; set in Settings → API Keys) |
 
 ### Desktop Environment Variables (`desktop/.env`)
 

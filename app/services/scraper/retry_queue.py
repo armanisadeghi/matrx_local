@@ -48,36 +48,46 @@ async def _scrape_locally(url: str) -> dict[str, Any] | None:
     """
     try:
         # Import here to avoid circular imports; engine is already running
-        from app.services.scraper.engine import get_scraper_engine
+        from app.services.scraper.engine import get_scraper_engine, _import_scraper
         engine = get_scraper_engine()
         if not engine.is_ready:
+            logger.debug("RetryQueue: engine not ready, skipping local scrape of %s", url)
             return None
 
-        result = await engine.orchestrator.scrape(
-            urls=[url],
+        options_mod = _import_scraper("app.models.options")
+        FetchOptions = options_mod.FetchOptions
+        options = FetchOptions(
             use_cache=False,
-            output_mode="rich",
             get_links=True,
             get_overview=True,
         )
 
-        if not result or not result.get("results"):
+        results = await engine.orchestrator.scrape(urls=[url], options=options)
+
+        if not results:
+            logger.debug("RetryQueue: local scrape of %s returned empty results list", url)
             return None
 
-        page = result["results"][0]
-        if page.get("status") != "success":
+        page = results[0]
+        if page.status != "success":
+            logger.debug(
+                "RetryQueue: local scrape of %s returned status=%s error=%s",
+                url, page.status, getattr(page, "error", None),
+            )
             return None
 
-        content = page.get("content", {})
         # Normalise to the server's expected content schema
         return {
-            "text_data": content.get("text_data") or content.get("text") or "",
-            "ai_research_content": content.get("ai_research_content") or "",
-            "overview": content.get("overview"),
-            "links": content.get("links"),
+            "text_data": page.text_data or "",
+            "ai_research_content": page.ai_research_content or "",
+            "overview": page.overview,
+            "links": page.links,
         }
     except Exception as exc:
-        logger.debug("RetryQueue: local scrape of %s raised: %s", url, exc)
+        logger.error(
+            "RetryQueue: local scrape of %s raised unexpected error: %s",
+            url, exc, exc_info=True,
+        )
         return None
 
 

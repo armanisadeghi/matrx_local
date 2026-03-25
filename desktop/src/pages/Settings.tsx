@@ -77,7 +77,9 @@ import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update
 import {
   loadSettings,
   saveSetting,
+  saveSettings,
   syncAllSettings,
+  broadcastSettingsChanged,
   settingsToCloud,
   type AppSettings,
 } from "@/lib/settings";
@@ -634,9 +636,17 @@ export function Settings({
     try {
       const result = await engine.post(enable ? "/tunnel/start" : "/tunnel/stop", {}) as typeof tunnelStatus;
       setTunnelStatus(result);
-      // Persist preference so the engine auto-starts/stops the tunnel on next boot.
-      await saveSetting("tunnelEnabled", enable);
+      // Persist to localStorage directly (without re-triggering the engine call
+      // that saveSetting would fire via syncSetting("tunnelEnabled")).
+      const current = await loadSettings();
+      const updated = { ...current, tunnelEnabled: enable };
+      await saveSettings(updated);
       setSettings((prev) => prev ? { ...prev, tunnelEnabled: enable } : prev);
+      broadcastSettingsChanged();
+      // Push full settings blob to cloud in the background.
+      syncAllSettings().catch((err) => {
+        console.warn("[Settings] Background cloud sync failed after tunnel toggle:", err);
+      });
     } catch (err) {
       console.error("[Settings] Tunnel toggle failed:", err);
     } finally {

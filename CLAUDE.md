@@ -26,7 +26,7 @@ Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Pytho
 2. **Module isolation** -- The scraper's `app/` is aliased as `scraper_app/` via `sys.modules` in `app/services/scraper/engine.py`. Do not create naming conflicts.
 3. **Graceful degradation** -- The engine works without PostgreSQL (memory cache) or Brave API (search disabled). Never make these hard dependencies. Playwright, psutil, and zeroconf are core dependencies and always available.
 4. **Port 22140** -- Default engine port. Auto-scans 22140-22159. Discovery file at `~/.matrx/local.json`.
-5. **Every Python import must be in `pyproject.toml`** -- If a tool or route imports a package, that package must be listed as a dependency. Never use bare `try/except ImportError` as a substitute for declaring the dependency. When adding a new tool that imports a new package, add it to `pyproject.toml` and run `uv sync` in the same commit. Required packages currently in `pyproject.toml`: fastapi, uvicorn, pydantic, pydantic-settings, python-dotenv, httpx, pyperclip, plyer, pyobjc-framework-Quartz (macOS), pystray, pillow, asyncpg, aiosqlite, curl-cffi, beautifulsoup4, lxml, selectolax, cachetools, tldextract, markdownify, tabulate, PyMuPDF, pytesseract, matrx-utils, matrx-orm, matrx-ai, screeninfo, yt-dlp, imageio-ffmpeg, opencv-python, mss, playwright, psutil, zeroconf, sounddevice, numpy, watchfiles, websockets, pyyaml, concurrent-log-handler, pyinstaller.
+5. **Every Python import must be in `pyproject.toml`** -- If a tool or route imports a package, that package must be listed as a dependency. Never use bare `try/except ImportError` as a substitute for declaring the dependency. When adding a new tool that imports a new package, add it to `pyproject.toml` and run `uv sync` in the same commit. Required packages currently in `pyproject.toml`: fastapi, uvicorn, pydantic, pydantic-settings, python-dotenv, httpx, pyperclip, plyer, pyobjc-framework-Quartz (macOS), pystray, pillow, asyncpg, aiosqlite, curl-cffi, beautifulsoup4, lxml, selectolax, cachetools, tldextract, markdownify, tabulate, PyMuPDF, pytesseract, matrx-utils, matrx-orm, matrx-ai, screeninfo, yt-dlp, imageio-ffmpeg, opencv-python, mss, playwright, psutil, zeroconf, sounddevice, numpy, watchfiles, websockets, pyyaml, concurrent-log-handler, pyinstaller, openwakeword, onnxruntime. **Optional extras:** `[transcription]` = openai-whisper; `[image-gen]` = torch, torchvision, diffusers, transformers, accelerate, sentencepiece, protobuf (install with `uv sync --extra image-gen`; NOT included in `all` due to multi-GB size).
 
 ---
 
@@ -45,7 +45,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 
 ---
 
-## Current State (as of 2026-03-24)
+## Current State (as of 2026-03-25)
 
 ### What Works
 - Python FastAPI engine with 79 tools (REST + WebSocket)
@@ -61,7 +61,9 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - Voice tab (Rust Whisper + wake word); settings include `transcription_auto_init`
 - First-run / setup wizard + capability installs
 - Local Models tab + llama-server sidecar (binaries via `scripts/download-llama-server.sh`; bundle in release pipeline)
-- Settings: hardware inventory tab, forbidden URL list (scraping), API Keys (incl. Hugging Face for GGUF downloads)
+- **Local LLM model catalog** — 22-tier system spanning Tiny→Server-grade; providers: Qwen, Llama, GPT-OSS, Gemma, DeepSeek, Mistral, Phi; multi-variant quant picker per model; server-grade collapsible section; uncensored model support; multi-category star ratings (Text/Code/Vision/Tools); knowledge cutoff column
+- **Image generation engine** — Optional `[image-gen]` extra (`uv sync --extra image-gen`). Routes at `/image-gen/*`. Models: FLUX.1 Schnell, FLUX.1 Dev, HunyuanDiT v1.2, SDXL Turbo. 6 workflow presets (Portrait, Product, Concept Art, UI Mockup, Logo, Landscape). Full generate UI with prompt/steps/guidance sliders, image output, download. Graceful 503 when deps absent.
+- Settings: hardware inventory tab, forbidden URL list (scraping), API Keys (incl. Hugging Face for GGUF + image-gen downloads)
 - Platform context: `use-engine.ts` calls `initPlatformCtx()` after `getPlatformContext()`
 - AiMatrx iframe tab with session handoff
 
@@ -69,10 +71,12 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Voice** — Confirm full record→transcribe UX on hardware you care about; see `AGENT_TASKS.md` P1.
 - **matrx-ai ORM / server DB** — Treat as **P0 ship risk** until client-only path is verified (`AGENT_TASKS.md`).
 - **Custom app icon** — Replace placeholder when branding is ready.
+- **Image gen VRAM gating** — Model picker shows VRAM requirements but doesn't yet cross-reference detected GPU VRAM to mark incompatible models. See `AGENT_TASKS.md` P2.
 
 ### Key Integration Guides
 - **Voice/Whisper:** `whisper-transcription-integration.md` — full Rust architecture, model catalog, download URLs, gotchas
 - **Local LLM:** `local-llm-inference-integration.md` — sidecar architecture, Qwen3 tool calling, binary bundling, all gotchas
+- **Image Generation:** `app/services/image_gen/models.py` (model catalog + workflow presets), `app/api/image_gen_routes.py` (API), `pyproject.toml` `[image-gen]` extra
 - **Local storage:** `docs/local-storage-architecture.md`
 - **Proxy:** `docs/proxy-integration-guide.md`, `docs/proxy-testing-guide.md`
 
@@ -152,6 +156,7 @@ npm run tauri:dev
 | Transcription config | `~/{app_data}/transcription.json` |
 | Whisper models | `~/{app_data}/models/*.bin` |
 | LLM module (Rust) | `desktop/src-tauri/src/llm/*.rs` |
+| LLM model catalog (Rust) | `desktop/src-tauri/src/llm/model_selector.rs` |
 | LLM types (TS) | `desktop/src/lib/llm/types.ts` |
 | LLM API client (TS) | `desktop/src/lib/llm/api.ts` |
 | LLM hook | `desktop/src/hooks/use-llm.ts` |
@@ -159,6 +164,11 @@ npm run tauri:dev
 | LLM config | `~/{app_data}/llm.json` |
 | GGUF models | `~/{app_data}/models/*.gguf` |
 | llama-server binaries | `desktop/src-tauri/binaries/llama-server-*` |
+| Image gen service | `app/services/image_gen/service.py` |
+| Image gen model catalog | `app/services/image_gen/models.py` |
+| Image gen API routes | `app/api/image_gen_routes.py` |
+| Image gen TS client | `desktop/src/lib/image-gen/api.ts` |
+| Image gen TS types | `desktop/src/lib/image-gen/types.ts` |
 | Architecture docs | `ARCHITECTURE.md` |
 | Task tracker | `AGENT_TASKS.md` |
 | Backlog | `BACKLOG.md` |

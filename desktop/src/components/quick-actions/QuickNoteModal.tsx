@@ -7,6 +7,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useDocuments } from "@/hooks/use-documents";
 import type { EngineStatus } from "@/hooks/use-engine";
 
@@ -25,26 +27,32 @@ export function QuickNoteModal({
 }: QuickNoteModalProps) {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [folderId, setFolderId] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const docs = useDocuments(userId, engineStatus);
+  const folders = docs.tree?.folders ?? [];
 
   const handleSave = useCallback(async () => {
     if (!title.trim() && !content.trim()) return;
     setSaving(true);
     try {
+      const folder = folders.find((f) => f.id === folderId);
       await docs.createNote({
         label: title.trim() || "Untitled Note",
         content: content.trim(),
+        folder_name: folder?.name,
+        folder_id: folderId || undefined,
       });
       setTitle("");
       setContent("");
+      setFolderId("");
       onOpenChange(false);
     } catch {
       /* createNote handles its own error state */
     } finally {
       setSaving(false);
     }
-  }, [title, content, docs, onOpenChange]);
+  }, [title, content, folderId, folders, docs, onOpenChange]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -53,7 +61,7 @@ export function QuickNoteModal({
         handleSave();
       }
     },
-    [handleSave]
+    [handleSave],
   );
 
   return (
@@ -63,39 +71,50 @@ export function QuickNoteModal({
         if (!v) {
           setTitle("");
           setContent("");
+          setFolderId("");
         }
         onOpenChange(v);
       }}
     >
-      <DialogContent className="flex max-h-[85vh] max-w-lg flex-col gap-0 p-0" onKeyDown={handleKeyDown}>
-        <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
+      <DialogContent className="max-w-lg" onKeyDown={handleKeyDown}>
+        <DialogHeader>
           <DialogTitle>Quick Note</DialogTitle>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
-          <div className="flex flex-col gap-3">
-            <input
-              type="text"
-              placeholder="Title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-              autoFocus
-            />
-            <textarea
-              placeholder="Write your note..."
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              rows={8}
-              className="w-full resize-none rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
-            />
-          </div>
+        <div className="flex flex-col gap-3">
+          <Input
+            placeholder="Title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            autoFocus
+          />
+          {folders.length > 0 && (
+            <select
+              value={folderId}
+              onChange={(e) => setFolderId(e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="">No folder (unfiled)</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <Textarea
+            placeholder="Write your note…"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            rows={8}
+            className="resize-none"
+          />
         </div>
-        <DialogFooter className="shrink-0 px-6 py-4 border-t">
+        <DialogFooter>
           <span className="text-xs text-muted-foreground">
-            {navigator.platform.includes("Mac") ? "⌘" : "Ctrl"}+Enter to save
+            {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter to save
           </span>
           <Button onClick={handleSave} disabled={saving} size="sm">
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Saving…" : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>

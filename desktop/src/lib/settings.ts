@@ -379,7 +379,14 @@ export function mergeCloudSettings(
     updateCheckInterval: cloud.update_check_interval !== undefined ? Math.max(60, Number(cloud.update_check_interval)) : local.updateCheckInterval,
     // Scraping
     headlessScraping: cloudBool(cloud, "headless_scraping", local.headlessScraping),
-    scrapeDelay: cloudStr(cloud, "scrape_delay", local.scrapeDelay),
+    // Normalize scrape_delay to always have one decimal place (e.g. 1 → "1.0", 0.5 → "0.5")
+    // so the preset dropdown correctly matches stored strings like "1.0", "0.5", etc.
+    scrapeDelay: cloud.scrape_delay !== undefined
+      ? (() => {
+          const n = Number(cloud.scrape_delay);
+          return isNaN(n) ? local.scrapeDelay : (Number.isInteger(n) ? `${n}.0` : String(n));
+        })()
+      : local.scrapeDelay,
     // Proxy
     proxyEnabled: cloudBool(cloud, "proxy_enabled", local.proxyEnabled),
     proxyPort: cloudNum(cloud, "proxy_port", local.proxyPort),

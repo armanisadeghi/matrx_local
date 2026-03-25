@@ -263,6 +263,27 @@ class ScraperEngine:
             logger.info("[scraper/engine.py] ScraperEngine: no BRAVE_API_KEY — search disabled")
 
         orchestrator_mod = _import_scraper("app.core.orchestrator")
+
+        # Patch out the DB-write helpers so they silently no-op when a fetch
+        # fails instead of raising RuntimeError from _NullPool.  The desktop
+        # engine never has a real DB connection; failure logging is handled
+        # by the remote server after the retry-queue poller reports the result.
+        async def _noop_log_failure(*_args: Any, **_kwargs: Any) -> None:
+            logger.debug(
+                "[scraper/engine.py] log_failure suppressed (no-DB mode): url=%s reason=%s",
+                _kwargs.get("target_url", _args[1] if len(_args) > 1 else "?"),
+                _kwargs.get("failure_reason", _args[2] if len(_args) > 2 else "?"),
+            )
+
+        async def _noop_enqueue_retry(*_args: Any, **_kwargs: Any) -> None:
+            logger.debug(
+                "[scraper/engine.py] enqueue_retry suppressed (no-DB mode): url=%s",
+                _kwargs.get("target_url", _args[1] if len(_args) > 1 else "?"),
+            )
+
+        orchestrator_mod.log_failure = _noop_log_failure
+        orchestrator_mod.enqueue_retry = _noop_enqueue_retry
+
         self._orchestrator = orchestrator_mod.ScrapeOrchestrator(
             fetcher=self._fetcher,
             settings=self._settings,
