@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { engine, type SystemInfo, type BrowserStatus } from "@/lib/api";
 import { isTauri, startSidecar, stopSidecar, waitForEngine, discoverEnginePort } from "@/lib/sidecar";
 import { initPlatformCtx } from "@/lib/platformCtx";
-import { syncAllSettings } from "@/lib/settings";
+import { syncAllSettings, hydrateFromEngine } from "@/lib/settings";
 import supabase from "@/lib/supabase";
 import { emitClientLog } from "@/hooks/use-client-log";
 
@@ -250,10 +250,6 @@ export function useEngine(authenticated = true) {
         emitClientLog("warn", `WebSocket connection failed (non-critical): ${err}`, "engine");
       }
 
-      // Sync persisted settings to Tauri + engine.
-      emitClientLog("info", "Syncing settings to engine...", "engine");
-      syncAllSettings().catch(() => {});
-
       // Configure cloud sync + push JWT to Python if already authenticated at connect time.
       // This covers the race where INITIAL_SESSION fired before the engine was discovered.
       try {
@@ -274,6 +270,16 @@ export function useEngine(authenticated = true) {
       } catch {
         emitClientLog("warn", "Cloud sync configuration skipped (non-critical)", "engine");
       }
+
+      // Hydrate localStorage from Python (which may have pulled from cloud),
+      // then push the merged result back to engine + Tauri.
+      try {
+        await hydrateFromEngine();
+        emitClientLog("info", "Settings hydrated from engine", "engine");
+      } catch {
+        // Non-critical — localStorage still has usable settings
+      }
+      syncAllSettings().catch(() => {});
 
       emitClientLog("success", "Engine initialization complete", "engine");
     } finally {

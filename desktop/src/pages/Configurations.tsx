@@ -5,6 +5,10 @@
  * user-configurable option in the app. Each section has its own
  * save/cancel buttons that appear only when that section has unsaved changes.
  * A global floating save bar appears when any section is dirty.
+ *
+ * All enum-like fields use real data: model catalogs from Rust/Tauri,
+ * audio devices from CPAL, system prompts from the prompt library, and
+ * cloud AI models from the engine database.
  */
 
 import { useCallback } from "react";
@@ -23,6 +27,9 @@ import {
   X,
   RotateCcw,
   Loader2,
+  RefreshCw,
+  Star,
+  Cpu,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,7 +43,9 @@ import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -44,6 +53,7 @@ import {
   useConfigurations,
   type ConfigSection,
 } from "@/hooks/use-configurations";
+import { useConfigCatalogs } from "@/hooks/use-config-catalogs";
 import type { AppSettings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 
@@ -144,11 +154,56 @@ function NumberInput({
   );
 }
 
+function SliderRow({
+  label,
+  description,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  decimals = 2,
+}: {
+  label: string;
+  description?: string;
+  value: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+  step: number;
+  decimals?: number;
+}) {
+  return (
+    <SettingRow label={label} description={description}>
+      <div className="flex items-center gap-2">
+        <Slider
+          value={[value]}
+          onValueChange={([v]) => onChange(v)}
+          min={min}
+          max={max}
+          step={step}
+          className="w-24"
+        />
+        <span className="text-xs text-muted-foreground w-8 text-right tabular-nums">
+          {value.toFixed(decimals)}
+        </span>
+      </div>
+    </SettingRow>
+  );
+}
+
+/** Format bytes to human-readable size */
+function fmtSize(gb: number): string {
+  if (gb < 1) return `${Math.round(gb * 1024)} MB`;
+  return `${gb.toFixed(1)} GB`;
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 
 export function Configurations() {
   const [state, actions] = useConfigurations();
   const { draft, sectionDirty, isGlobalDirty, isSaving } = state;
+  const catalogs = useConfigCatalogs();
 
   const set = actions.set;
   const handleSave = useCallback(
@@ -277,13 +332,44 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Default AI model" description="Cloud model used for new conversations">
-                  <Input
-                    value={draft.chatDefaultModel}
-                    onChange={(e) => set("chatDefaultModel", e.target.value)}
-                    className="w-48"
-                    placeholder="claude-sonnet-4-6"
-                  />
+                <SettingRow label="Default AI model" description="Cloud model for new conversations">
+                  <div className="flex items-center gap-1.5">
+                    <Select
+                      value={draft.chatDefaultModel}
+                      onValueChange={(v) => set("chatDefaultModel", v)}
+                    >
+                      <SelectTrigger className="w-52">
+                        <SelectValue placeholder="Select model..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(() => {
+                          // Group models by provider
+                          const groups: Record<string, typeof catalogs.chatModels> = {};
+                          for (const m of catalogs.chatModels) {
+                            const p = m.provider;
+                            if (!groups[p]) groups[p] = [];
+                            groups[p].push(m);
+                          }
+                          return Object.entries(groups).map(([provider, models]) => (
+                            <SelectGroup key={provider}>
+                              <SelectLabel className="capitalize">{provider}</SelectLabel>
+                              {models.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  <span className="flex items-center gap-1.5">
+                                    {m.label}
+                                    {m.is_primary && <Star className="h-3 w-3 text-yellow-500" />}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          ));
+                        })()}
+                      </SelectContent>
+                    </Select>
+                    {catalogs.chatModelsLoading && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
                 </SettingRow>
                 <SettingRow label="Default chat mode">
                   <Select
@@ -308,13 +394,36 @@ export function Configurations() {
                     max={500}
                   />
                 </SettingRow>
-                <SettingRow label="Default system prompt ID" description="Leave empty for built-in assistant">
-                  <Input
-                    value={draft.chatDefaultSystemPromptId}
-                    onChange={(e) => set("chatDefaultSystemPromptId", e.target.value)}
-                    className="w-48"
-                    placeholder="(built-in)"
-                  />
+                <SettingRow label="Default system prompt" description="Personality for new conversations">
+                  <Select
+                    value={draft.chatDefaultSystemPromptId || "__builtin__"}
+                    onValueChange={(v) => set("chatDefaultSystemPromptId", v === "__builtin__" ? "" : v)}
+                  >
+                    <SelectTrigger className="w-52">
+                      <SelectValue placeholder="Built-in Assistant" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__builtin__">
+                        <span className="text-muted-foreground">Default (Built-in Assistant)</span>
+                      </SelectItem>
+                      {catalogs.systemPromptOptions.length > 0 && <Separator className="my-1" />}
+                      {(() => {
+                        const groups: Record<string, typeof catalogs.systemPromptOptions> = {};
+                        for (const p of catalogs.systemPromptOptions) {
+                          if (!groups[p.category]) groups[p.category] = [];
+                          groups[p.category].push(p);
+                        }
+                        return Object.entries(groups).map(([cat, prompts]) => (
+                          <SelectGroup key={cat}>
+                            <SelectLabel>{cat}</SelectLabel>
+                            {prompts.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ));
+                      })()}
+                    </SelectContent>
+                  </Select>
                 </SettingRow>
                 <SectionActions
                   section="chatAi"
@@ -335,13 +444,52 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Default model" description="GGUF filename (empty = auto-detect)">
-                  <Input
-                    value={draft.llmDefaultModel}
-                    onChange={(e) => set("llmDefaultModel", e.target.value)}
-                    className="w-48"
-                    placeholder="(auto)"
-                  />
+                <SettingRow label="Default model" description="Model used when starting the LLM server">
+                  <div className="flex items-center gap-1.5">
+                    <Select
+                      value={draft.llmDefaultModel || "__auto__"}
+                      onValueChange={(v) => set("llmDefaultModel", v === "__auto__" ? "" : v)}
+                    >
+                      <SelectTrigger className="w-56">
+                        <SelectValue placeholder="Auto-detect" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__auto__">
+                          <span className="flex items-center gap-1.5">
+                            <Cpu className="h-3 w-3" />
+                            Auto-detect (hardware-based)
+                          </span>
+                        </SelectItem>
+                        {catalogs.llmModels.length > 0 && <Separator className="my-1" />}
+                        {catalogs.llmModels.map((m) => (
+                          <SelectItem key={m.filename} value={m.filename}>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="flex items-center gap-1.5">
+                                {m.name}
+                                {m.filename === catalogs.llmRecommended && (
+                                  <span className="text-[10px] font-medium bg-primary/15 text-primary px-1.5 py-0.5 rounded">
+                                    Recommended
+                                  </span>
+                                )}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {fmtSize(m.disk_size_gb)} disk
+                                {" / "}
+                                {fmtSize(m.ram_required_gb)} RAM
+                                {" / "}
+                                {m.speed}
+                                {" / "}
+                                Tool calling: {"★".repeat(m.tool_calling_rating)}{"☆".repeat(5 - m.tool_calling_rating)}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {catalogs.llmModelsLoading && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
                 </SettingRow>
                 <SettingRow label="GPU layers" description="-1 = auto-detect based on hardware">
                   <NumberInput
@@ -351,14 +499,24 @@ export function Configurations() {
                     max={999}
                   />
                 </SettingRow>
-                <SettingRow label="Context length">
-                  <NumberInput
-                    value={draft.llmDefaultContextLength}
-                    onChange={(v) => set("llmDefaultContextLength", v)}
-                    min={512}
-                    max={131072}
-                    step={512}
-                  />
+                <SettingRow label="Context length" description="Max tokens per conversation">
+                  <Select
+                    value={String(draft.llmDefaultContextLength)}
+                    onValueChange={(v) => set("llmDefaultContextLength", Number(v))}
+                  >
+                    <SelectTrigger className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="2048">2,048</SelectItem>
+                      <SelectItem value="4096">4,096</SelectItem>
+                      <SelectItem value="8192">8,192</SelectItem>
+                      <SelectItem value="16384">16,384</SelectItem>
+                      <SelectItem value="32768">32,768</SelectItem>
+                      <SelectItem value="65536">65,536</SelectItem>
+                      <SelectItem value="131072">131,072</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </SettingRow>
                 <SettingRow label="Auto-start server" description="Launch LLM server when app starts">
                   <Switch
@@ -370,37 +528,21 @@ export function Configurations() {
                 <Separator className="my-2" />
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Chat Sampling</p>
 
-                <SettingRow label="Temperature">
-                  <div className="flex items-center gap-2">
-                    <Slider
-                      value={[draft.llmChatTemperature]}
-                      onValueChange={([v]) => set("llmChatTemperature", v)}
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      className="w-24"
-                    />
-                    <span className="text-xs text-muted-foreground w-8 text-right">
-                      {draft.llmChatTemperature.toFixed(2)}
-                    </span>
-                  </div>
-                </SettingRow>
-                <SettingRow label="Top P">
-                  <div className="flex items-center gap-2">
-                    <Slider
-                      value={[draft.llmChatTopP]}
-                      onValueChange={([v]) => set("llmChatTopP", v)}
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      className="w-24"
-                    />
-                    <span className="text-xs text-muted-foreground w-8 text-right">
-                      {draft.llmChatTopP.toFixed(2)}
-                    </span>
-                  </div>
-                </SettingRow>
-                <SettingRow label="Top K">
+                <SliderRow
+                  label="Temperature"
+                  description="Higher = more creative, lower = more focused"
+                  value={draft.llmChatTemperature}
+                  onChange={(v) => set("llmChatTemperature", v)}
+                  min={0} max={2} step={0.05}
+                />
+                <SliderRow
+                  label="Top P"
+                  description="Nucleus sampling threshold"
+                  value={draft.llmChatTopP}
+                  onChange={(v) => set("llmChatTopP", v)}
+                  min={0} max={1} step={0.05}
+                />
+                <SettingRow label="Top K" description="Vocabulary filter size">
                   <NumberInput
                     value={draft.llmChatTopK}
                     onChange={(v) => set("llmChatTopK", v)}
@@ -408,7 +550,7 @@ export function Configurations() {
                     max={200}
                   />
                 </SettingRow>
-                <SettingRow label="Max tokens">
+                <SettingRow label="Max tokens" description="Maximum response length">
                   <NumberInput
                     value={draft.llmChatMaxTokens}
                     onChange={(v) => set("llmChatMaxTokens", v)}
@@ -427,70 +569,34 @@ export function Configurations() {
                     onCheckedChange={(v) => set("llmEnableThinking", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Temperature">
-                  <div className="flex items-center gap-2">
-                    <Slider
-                      value={[draft.llmReasoningTemperature]}
-                      onValueChange={([v]) => set("llmReasoningTemperature", v)}
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      className="w-24"
-                    />
-                    <span className="text-xs text-muted-foreground w-8 text-right">
-                      {draft.llmReasoningTemperature.toFixed(2)}
-                    </span>
-                  </div>
-                </SettingRow>
-                <SettingRow label="Top P">
-                  <div className="flex items-center gap-2">
-                    <Slider
-                      value={[draft.llmReasoningTopP]}
-                      onValueChange={([v]) => set("llmReasoningTopP", v)}
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      className="w-24"
-                    />
-                    <span className="text-xs text-muted-foreground w-8 text-right">
-                      {draft.llmReasoningTopP.toFixed(2)}
-                    </span>
-                  </div>
-                </SettingRow>
+                <SliderRow
+                  label="Temperature"
+                  value={draft.llmReasoningTemperature}
+                  onChange={(v) => set("llmReasoningTemperature", v)}
+                  min={0} max={2} step={0.05}
+                />
+                <SliderRow
+                  label="Top P"
+                  value={draft.llmReasoningTopP}
+                  onChange={(v) => set("llmReasoningTopP", v)}
+                  min={0} max={1} step={0.05}
+                />
 
                 <Separator className="my-2" />
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Tool Calling</p>
 
-                <SettingRow label="Temperature">
-                  <div className="flex items-center gap-2">
-                    <Slider
-                      value={[draft.llmToolCallTemperature]}
-                      onValueChange={([v]) => set("llmToolCallTemperature", v)}
-                      min={0}
-                      max={2}
-                      step={0.05}
-                      className="w-24"
-                    />
-                    <span className="text-xs text-muted-foreground w-8 text-right">
-                      {draft.llmToolCallTemperature.toFixed(2)}
-                    </span>
-                  </div>
-                </SettingRow>
-                <SettingRow label="Top P">
-                  <div className="flex items-center gap-2">
-                    <Slider
-                      value={[draft.llmToolCallTopP]}
-                      onValueChange={([v]) => set("llmToolCallTopP", v)}
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      className="w-24"
-                    />
-                    <span className="text-xs text-muted-foreground w-8 text-right">
-                      {draft.llmToolCallTopP.toFixed(2)}
-                    </span>
-                  </div>
-                </SettingRow>
+                <SliderRow
+                  label="Temperature"
+                  value={draft.llmToolCallTemperature}
+                  onChange={(v) => set("llmToolCallTemperature", v)}
+                  min={0} max={2} step={0.05}
+                />
+                <SliderRow
+                  label="Top P"
+                  value={draft.llmToolCallTopP}
+                  onChange={(v) => set("llmToolCallTopP", v)}
+                  min={0} max={1} step={0.05}
+                />
                 <SettingRow label="Top K">
                   <NumberInput
                     value={draft.llmToolCallTopK}
@@ -503,21 +609,13 @@ export function Configurations() {
                 <Separator className="my-2" />
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Other</p>
 
-                <SettingRow label="Structured output temp" description="For JSON schema responses">
-                  <div className="flex items-center gap-2">
-                    <Slider
-                      value={[draft.llmStructuredOutputTemperature]}
-                      onValueChange={([v]) => set("llmStructuredOutputTemperature", v)}
-                      min={0}
-                      max={1}
-                      step={0.05}
-                      className="w-24"
-                    />
-                    <span className="text-xs text-muted-foreground w-8 text-right">
-                      {draft.llmStructuredOutputTemperature.toFixed(2)}
-                    </span>
-                  </div>
-                </SettingRow>
+                <SliderRow
+                  label="Structured output temp"
+                  description="For JSON schema responses"
+                  value={draft.llmStructuredOutputTemperature}
+                  onChange={(v) => set("llmStructuredOutputTemperature", v)}
+                  min={0} max={1} step={0.05}
+                />
                 <SettingRow label="Stream max tokens">
                   <NumberInput
                     value={draft.llmStreamMaxTokens}
@@ -547,13 +645,52 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Default Whisper model" description="Filename (empty = auto-detect)">
-                  <Input
-                    value={draft.transcriptionDefaultModel}
-                    onChange={(e) => set("transcriptionDefaultModel", e.target.value)}
-                    className="w-48"
-                    placeholder="(auto)"
-                  />
+                <SettingRow label="Default Whisper model" description="Speech-to-text model quality">
+                  <div className="flex items-center gap-1.5">
+                    <Select
+                      value={draft.transcriptionDefaultModel || "__auto__"}
+                      onValueChange={(v) => set("transcriptionDefaultModel", v === "__auto__" ? "" : v)}
+                    >
+                      <SelectTrigger className="w-52">
+                        <SelectValue placeholder="Auto-detect" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__auto__">
+                          <span className="flex items-center gap-1.5">
+                            <Cpu className="h-3 w-3" />
+                            Auto-detect (hardware-based)
+                          </span>
+                        </SelectItem>
+                        {catalogs.whisperModels.length > 0 && <Separator className="my-1" />}
+                        {catalogs.whisperModels.map((m) => (
+                          <SelectItem key={m.filename} value={m.filename}>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="flex items-center gap-1.5">
+                                {m.filename.replace("ggml-", "").replace(".bin", "")}
+                                {m.filename === catalogs.whisperRecommended && (
+                                  <span className="text-[10px] font-medium bg-primary/15 text-primary px-1.5 py-0.5 rounded">
+                                    Recommended
+                                  </span>
+                                )}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {m.download_size_mb} MB download
+                                {" / "}
+                                {m.ram_required_mb} MB RAM
+                                {" / "}
+                                {m.relative_speed}
+                                {" / "}
+                                {m.accuracy}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {catalogs.whisperModelsLoading && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
                 </SettingRow>
                 <SettingRow label="Auto-initialize on startup" description="Load transcription model when app starts">
                   <Switch
@@ -561,23 +698,66 @@ export function Configurations() {
                     onCheckedChange={(v) => set("transcriptionAutoInit", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Audio input device" description="Leave empty for system default">
-                  <Input
-                    value={draft.transcriptionAudioDevice}
-                    onChange={(e) => set("transcriptionAudioDevice", e.target.value)}
-                    className="w-48"
-                    placeholder="(system default)"
-                  />
+                <SettingRow label="Audio input device" description="Microphone for voice capture">
+                  <div className="flex items-center gap-1.5">
+                    <Select
+                      value={draft.transcriptionAudioDevice || "__default__"}
+                      onValueChange={(v) => set("transcriptionAudioDevice", v === "__default__" ? "" : v)}
+                    >
+                      <SelectTrigger className="w-52">
+                        <SelectValue placeholder="System default" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__default__">
+                          <span className="text-muted-foreground">System default</span>
+                        </SelectItem>
+                        {catalogs.audioDevices.length > 0 && <Separator className="my-1" />}
+                        {catalogs.audioDevices.map((d) => (
+                          <SelectItem key={d.name} value={d.name}>
+                            <span className="flex items-center gap-1.5">
+                              {d.name}
+                              {d.is_default && (
+                                <span className="text-[10px] font-medium bg-green-500/15 text-green-500 px-1.5 py-0.5 rounded">
+                                  Default
+                                </span>
+                              )}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => catalogs.refreshAudioDevices()}
+                      disabled={catalogs.audioDevicesLoading}
+                      title="Refresh devices"
+                    >
+                      {catalogs.audioDevicesLoading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  </div>
                 </SettingRow>
-                <SettingRow label="Processing timeout (ms)" description="Force-reset if stuck longer than this">
-                  <NumberInput
-                    value={draft.transcriptionProcessingTimeout}
-                    onChange={(v) => set("transcriptionProcessingTimeout", Math.max(1000, v))}
-                    min={1000}
-                    max={60000}
-                    step={1000}
-                    className="w-28"
-                  />
+                <SettingRow label="Processing timeout" description="Force-reset if stuck longer than this">
+                  <Select
+                    value={String(draft.transcriptionProcessingTimeout)}
+                    onValueChange={(v) => set("transcriptionProcessingTimeout", Number(v))}
+                  >
+                    <SelectTrigger className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="5000">5 sec</SelectItem>
+                      <SelectItem value="10000">10 sec</SelectItem>
+                      <SelectItem value="15000">15 sec</SelectItem>
+                      <SelectItem value="30000">30 sec</SelectItem>
+                      <SelectItem value="60000">60 sec</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </SettingRow>
                 <SectionActions
                   section="voice"
@@ -610,17 +790,27 @@ export function Configurations() {
                     onCheckedChange={(v) => set("wakeWordListenOnStartup", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Detection engine">
+                <SettingRow label="Detection engine" description="Whisper = flexible keyword, OWW = trained models">
                   <Select
                     value={draft.wakeWordEngine}
                     onValueChange={(v) => set("wakeWordEngine", v as AppSettings["wakeWordEngine"])}
                   >
-                    <SelectTrigger className="w-32">
+                    <SelectTrigger className="w-44">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="whisper">Whisper</SelectItem>
-                      <SelectItem value="oww">OpenWakeWord</SelectItem>
+                      <SelectItem value="whisper">
+                        <div className="flex flex-col">
+                          <span>Whisper</span>
+                          <span className="text-[10px] text-muted-foreground">Custom keyword phrase</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="oww">
+                        <div className="flex flex-col">
+                          <span>OpenWakeWord</span>
+                          <span className="text-[10px] text-muted-foreground">Trained neural models</span>
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </SettingRow>
@@ -630,33 +820,37 @@ export function Configurations() {
                       value={draft.wakeWordCustomKeyword}
                       onChange={(e) => set("wakeWordCustomKeyword", e.target.value)}
                       className="w-40"
+                      placeholder="hey matrix"
                     />
                   </SettingRow>
                 )}
                 {draft.wakeWordEngine === "oww" && (
                   <>
-                    <SettingRow label="OWW model">
-                      <Input
+                    <SettingRow label="OWW model" description="Pre-trained wake word model">
+                      <Select
                         value={draft.wakeWordOwwModel}
-                        onChange={(e) => set("wakeWordOwwModel", e.target.value)}
-                        className="w-40"
-                      />
+                        onValueChange={(v) => set("wakeWordOwwModel", v)}
+                      >
+                        <SelectTrigger className="w-44">
+                          <SelectValue placeholder="Select model..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="hey_jarvis">Hey Jarvis</SelectItem>
+                          <SelectItem value="hey_mycroft">Hey Mycroft</SelectItem>
+                          <SelectItem value="alexa">Alexa</SelectItem>
+                          <SelectItem value="hey_rhasspy">Hey Rhasspy</SelectItem>
+                          <SelectItem value="timer">Timer</SelectItem>
+                          <SelectItem value="weather">Weather</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </SettingRow>
-                    <SettingRow label="Detection threshold" description="0.0 to 1.0 — higher = fewer false positives">
-                      <div className="flex items-center gap-2">
-                        <Slider
-                          value={[draft.wakeWordOwwThreshold]}
-                          onValueChange={([v]) => set("wakeWordOwwThreshold", v)}
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          className="w-24"
-                        />
-                        <span className="text-xs text-muted-foreground w-8 text-right">
-                          {draft.wakeWordOwwThreshold.toFixed(2)}
-                        </span>
-                      </div>
-                    </SettingRow>
+                    <SliderRow
+                      label="Detection threshold"
+                      description="Higher = fewer false positives"
+                      value={draft.wakeWordOwwThreshold}
+                      onChange={(v) => set("wakeWordOwwThreshold", v)}
+                      min={0} max={1} step={0.05}
+                    />
                   </>
                 )}
                 <SectionActions
@@ -684,16 +878,24 @@ export function Configurations() {
                     onCheckedChange={(v) => set("headlessScraping", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Delay between requests (sec)" description="Wait time between page loads">
-                  <Input
-                    type="number"
+                <SettingRow label="Delay between requests" description="Wait time between page loads">
+                  <Select
                     value={draft.scrapeDelay}
-                    onChange={(e) => set("scrapeDelay", e.target.value)}
-                    min={0}
-                    max={30}
-                    step={0.5}
-                    className="w-24 text-right"
-                  />
+                    onValueChange={(v) => set("scrapeDelay", v)}
+                  >
+                    <SelectTrigger className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">None</SelectItem>
+                      <SelectItem value="0.5">0.5 sec</SelectItem>
+                      <SelectItem value="1.0">1.0 sec</SelectItem>
+                      <SelectItem value="2.0">2.0 sec</SelectItem>
+                      <SelectItem value="3.0">3.0 sec</SelectItem>
+                      <SelectItem value="5.0">5.0 sec</SelectItem>
+                      <SelectItem value="10.0">10 sec</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </SettingRow>
                 <SectionActions
                   section="scraping"

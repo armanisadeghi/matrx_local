@@ -237,14 +237,19 @@ async function syncSetting<K extends keyof AppSettings>(
   }
 }
 
-/** Sync all settings to their native/engine counterparts on startup. */
+/**
+ * Sync ALL settings to their native/engine counterparts.
+ *
+ * Called on engine connect and after every save. Pushes the full settings
+ * blob to Python (which persists to ~/.matrx/settings.json and cloud),
+ * and syncs Tauri-specific settings (autostart, minimize-to-tray).
+ */
 export async function syncAllSettings(): Promise<void> {
   const settings = await loadSettings();
 
-  // Sync minimize-to-tray to Rust.
+  // ── Tauri-side sync ─────────────────────────────────────────────────────
   await setCloseToTray(settings.minimizeToTray);
 
-  // Sync autostart.
   if (isTauri()) {
     try {
       const { enable, disable, isEnabled } = await import(
@@ -258,17 +263,54 @@ export async function syncAllSettings(): Promise<void> {
     }
   }
 
-  // Sync engine settings.
+  // ── Push ALL settings to Python engine ──────────────────────────────────
+  // This ensures Python's settings.json stays in sync with localStorage
+  // and triggers cloud sync (fire-and-forget) on the Python side.
   if (engine.engineUrl) {
+    try {
+      await engine.updateCloudSettings(settingsToCloud(settings));
+    } catch (err) {
+      console.warn("[settings] Failed to push settings to engine:", err);
+    }
+
+    // Also sync engine-specific runtime settings (scraper config)
     try {
       await engine.updateSettings({
         headless_scraping: settings.headlessScraping,
         scrape_delay: parseFloat(settings.scrapeDelay) || 1.0,
       });
     } catch (err) {
-      console.warn("[settings] Failed to sync engine settings:", err);
+      console.warn("[settings] Failed to sync engine runtime settings:", err);
     }
   }
+}
+
+/**
+ * Hydrate localStorage from the Python engine on startup.
+ *
+ * Called once when the engine first connects. Fetches the canonical
+ * settings from Python (which may have been updated by cloud sync)
+ * and merges them into localStorage. Python wins for any key it has.
+ *
+ * Returns the merged settings so the caller can update React state.
+ */
+export async function hydrateFromEngine(): Promise<AppSettings> {
+  const local = await loadSettings();
+
+  if (!engine.engineUrl) return local;
+
+  try {
+    const resp = await engine.getCloudSettings();
+    if (resp?.settings && typeof resp.settings === "object") {
+      const merged = mergeCloudSettings(local, resp.settings);
+      await saveSettings(merged);
+      return merged;
+    }
+  } catch (err) {
+    console.warn("[settings] Failed to hydrate from engine:", err);
+  }
+
+  return local;
 }
 
 /** Helper: pick a cloud value or fall back to local. */
