@@ -744,21 +744,45 @@ pub async fn detect_llm_hardware() -> Result<serde_json::Value, String> {
     let all_models: Vec<serde_json::Value> = model_selector::LLM_MODELS
         .iter()
         .map(|m| {
+            let variants: Vec<serde_json::Value> = m.variants.iter().map(|v| {
+                serde_json::json!({
+                    "label": v.label,
+                    "quant": v.quant,
+                    "filename": v.filename,
+                    "disk_size_gb": v.disk_size_gb,
+                    "ram_required_gb": v.ram_required_gb,
+                    "hf_url": v.hf_url,
+                    "hf_parts": v.hf_parts,
+                    "is_split": v.is_split(),
+                    "all_part_urls": v.all_part_urls(),
+                    "expected_size_bytes": v.expected_size_bytes,
+                })
+            }).collect();
+
             serde_json::json!({
                 "tier": m.tier,
                 "name": m.name,
+                "provider": m.provider,
                 "filename": m.filename,
                 "disk_size_gb": m.disk_size_gb,
                 "ram_required_gb": m.ram_required_gb,
+                "text_rating": m.text_rating,
+                "code_rating": m.code_rating,
+                "vision_rating": m.vision_rating,
                 "tool_calling_rating": m.tool_calling_rating,
                 "speed": m.speed,
                 "description": m.description,
+                "knowledge_cutoff": m.knowledge_cutoff,
+                "hf_model_card_url": m.hf_model_card_url,
+                "is_uncensored": m.is_uncensored,
+                "is_server_grade": m.is_server_grade,
                 "hf_url": m.hf_url,
                 "hf_parts": m.hf_parts,
                 "is_split": m.is_split(),
                 "all_part_urls": m.all_part_urls(),
                 "context_length": m.context_length,
                 "expected_size_bytes": m.expected_size_bytes,
+                "variants": variants,
             })
         })
         .collect();

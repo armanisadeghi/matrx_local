@@ -19,6 +19,10 @@
 
 ### P2 — Features & polish
 
+- [ ] **Image generation engine** — Integrate Python `diffusers` library as a new FastAPI route (`POST /tools/image-gen`). Support HunyuanImage-3.0-Distil (12 GB VRAM) and FLUX.2-klein-4B (8 GB VRAM). Model download to `~/.matrx/image-models/`. Add VRAM detection gating. Frontend: new Image Gen tab in LocalModels with prompt input, parameter controls, download/run/progress UI, result display. See `desktop/src/pages/LocalModels.tsx` `MediaModelsTab` stub for model list.
+- [ ] **Video generation engine** — Integrate Python `diffusers` for Kandinsky-5.0-T2V-Pro and Wan2.2-TI2V-5B. Route: `POST /tools/video-gen`. Similar architecture to image gen. GPU/VRAM requirement is higher (24+ GB for Kandinsky; 8–12 GB for Wan2.2-5B).
+- [ ] **ComfyUI sidecar** — Evaluate embedding ComfyUI as an optional second sidecar for advanced image/video generation workflows. Would replace or augment the Diffusers integration. See `local-llm-inference-integration.md` for sidecar pattern.
+- [ ] **Gemma-3n vision** — Gemma-3n-E4B has native multimodal (text+image+audio) but llama.cpp support is text-only currently. When llama.cpp adds gemma3n vision pipeline, enable vision for this model (update `vision_rating` from 0 to 3 in `model_selector.rs`, add mmproj download).
 - [ ] **Scrape persistence** — Persist completed scrapes (e.g. Supabase `scrapes` table + migration).
 - [ ] **Proxy “full” test (optional)** — Today: `POST /proxy/test` exercises the **local** forward proxy. A true end-to-end test would also hit `MAIN_SERVER` with a callback; needs Arman URL (`MAIN_SERVER`). See `.arman/ARMAN_TASKS.md`.
 - [ ] **Cloud AI relay** — Authenticated relay on AIDream so users need not paste provider keys; matrx-ai must prefer relay when no user key. Coordinate server + client.

@@ -24,6 +24,8 @@ import {
   MessageSquare,
   Wrench,
   Code,
+  Code2,
+  Eye,
   Server,
   Settings,
   X,
@@ -36,6 +38,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   GitFork,
+  Image,
+  Video,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
 import { Button } from "@/components/ui/button";
@@ -82,14 +86,67 @@ function formatBytes(bytes: number): string {
   return `${mb.toFixed(1)} MB`;
 }
 
-function ToolCallRating({ rating }: { rating: number }) {
+// ── Open external URL via Tauri shell ────────────────────────────────────
+
+async function openUrl(url: string) {
+  if (typeof window !== "undefined" && (window as unknown as Record<string, unknown>).__TAURI__) {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(url);
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
+// ── Rating scale description ──────────────────────────────────────────────
+
+const RATING_LABELS: Record<number, string> = {
+  0: "Not recommended",
+  1: "Limited (size/quant compromised)",
+  2: "Good enough",
+  3: "Great — top local",
+  4: "Excellent — top open-source",
+  5: "Near-frontier",
+};
+
+function ratingColor(r: number): string {
+  if (r === 0) return "text-muted-foreground/40";
+  if (r <= 2) return "text-amber-500";
+  if (r <= 4) return "text-blue-500";
+  return "text-green-500";
+}
+
+interface ModelRatingsProps {
+  text: number;
+  code: number;
+  vision: number;
+  tools: number;
+}
+
+function ModelRatings({ text, code, vision, tools }: ModelRatingsProps) {
+  const items = [
+    { icon: MessageSquare, rating: text, label: "Text / Chat" },
+    { icon: Code2, rating: code, label: "Code" },
+    { icon: Eye, rating: vision, label: "Vision" },
+    { icon: Wrench, rating: tools, label: "Tools" },
+  ] as const;
+
   return (
-    <div className="flex gap-0.5">
-      {Array.from({ length: 5 }, (_, i) => (
+    <div className="flex gap-1.5 items-center">
+      {items.map(({ icon: Icon, rating, label }) => (
         <div
-          key={i}
-          className={`h-2 w-2 rounded-full ${i < rating ? "bg-blue-500" : "bg-muted"}`}
-        />
+          key={label}
+          className="relative group"
+          title={`${label}: ${rating}/5 — ${RATING_LABELS[rating] ?? ""}`}
+        >
+          <div className={`relative flex items-center justify-center w-5 h-5 ${ratingColor(rating)}`}>
+            <Icon className="h-3.5 w-3.5" />
+            {rating > 0 && (
+              <span className="absolute -bottom-0.5 -right-0.5 text-[8px] font-bold leading-none">
+                {rating}
+              </span>
+            )}
+          </div>
+        </div>
       ))}
     </div>
   );
@@ -690,6 +747,272 @@ function HuggingFaceTokenSettingsHint() {
   );
 }
 
+// ── Shared row props ──────────────────────────────────────────────────────
+
+interface ModelRowProps {
+  model: LlmModelInfo;
+  downloadedModels: import("@/hooks/use-llm").LlmState["downloadedModels"];
+  isDownloading: boolean;
+  downloadingFilename: string | null;
+  downloadProgress: import("@/hooks/use-llm").LlmState["downloadProgress"] | null;
+  downloadQueue: import("@/hooks/use-llm").LlmState["downloadQueue"];
+  isRunning: boolean;
+  runningModelPath: string;
+  isStarting: boolean;
+  hardwareResult: import("@/lib/llm/types").LlmHardwareResult | null;
+  expandedRow: string | null;
+  setExpandedRow: (f: string | null) => void;
+  onDownload: (model: LlmModelInfo, andRun: boolean) => void;
+  onLoad: (model: LlmModelInfo) => void;
+  onDelete: (filename: string) => void;
+  cancelDownload: () => void;
+}
+
+function ModelRow({
+  model, downloadedModels, isDownloading, downloadingFilename, downloadProgress,
+  downloadQueue, isRunning, runningModelPath, isStarting, hardwareResult,
+  expandedRow, setExpandedRow, onDownload, onLoad, onDelete, cancelDownload,
+}: ModelRowProps) {
+  const isThisRunning = isRunning && runningModelPath.includes(model.filename);
+  const isExpanded = expandedRow === model.filename;
+  const isRecommended = hardwareResult?.recommended_filename === model.filename;
+
+  // For multi-variant models, track which variant the user has selected
+  const [selectedVariantIdx, setSelectedVariantIdx] = useState<number>(0);
+  const hasVariants = model.variants && model.variants.length > 1;
+
+  // Effective filename/url for download (variant override or model default)
+  const effectiveFilename = hasVariants ? model.variants[selectedVariantIdx].filename : model.filename;
+  const effectiveDownloaded = downloadedModels.some((m) => m.filename === effectiveFilename);
+  const effectiveDownloadingThis = isDownloading && downloadingFilename === effectiveFilename;
+  const effectiveQueued = !effectiveDownloadingThis && downloadQueue.some((e) => e.filename === effectiveFilename);
+
+  return (
+    <div className="border-b last:border-b-0">
+      <div
+        className={`grid grid-cols-[1fr_72px_64px_80px_96px_96px] gap-px items-center px-4 py-2.5 text-sm transition-colors hover:bg-muted/20 ${
+          isThisRunning ? "bg-green-500/5" : ""
+        }`}
+      >
+        {/* Name + badges */}
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            className="flex items-center gap-1.5 min-w-0 text-left"
+            onClick={() => setExpandedRow(isExpanded ? null : model.filename)}
+          >
+            <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+            <span className="font-medium truncate">{model.name}</span>
+          </button>
+          {isRecommended && (
+            <Badge className="text-[10px] px-1.5 py-0 bg-blue-500/15 text-blue-600 border-blue-500/30 shrink-0">
+              rec
+            </Badge>
+          )}
+          {model.is_uncensored && (
+            <Badge className="text-[10px] px-1.5 py-0 bg-amber-500/15 text-amber-600 border-amber-500/30 shrink-0">
+              uncensored
+            </Badge>
+          )}
+          {isThisRunning && (
+            <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
+          )}
+          <button
+            className="ml-1 flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors shrink-0"
+            onClick={() => openUrl(model.hf_model_card_url)}
+            title="Open model card on HuggingFace"
+          >
+            <ExternalLink className="h-2.5 w-2.5" />
+            Model Card
+          </button>
+        </div>
+
+        {/* Size */}
+        <span className="text-xs text-muted-foreground text-right tabular-nums">
+          {hasVariants
+            ? `${model.variants[selectedVariantIdx].disk_size_gb.toFixed(1)} GB`
+            : `${model.disk_size_gb.toFixed(1)} GB`}
+        </span>
+
+        {/* RAM */}
+        <span className="text-xs text-muted-foreground text-right tabular-nums">
+          {hasVariants
+            ? `${model.variants[selectedVariantIdx].ram_required_gb.toFixed(0)} GB`
+            : `${model.ram_required_gb.toFixed(0)} GB`}
+        </span>
+
+        {/* Knowledge cutoff */}
+        <span className="text-xs text-muted-foreground text-center" title={`Knowledge cutoff: ${model.knowledge_cutoff}`}>
+          {model.knowledge_cutoff}
+        </span>
+
+        {/* Multi-category ratings */}
+        <div className="flex justify-center">
+          <ModelRatings
+            text={model.text_rating}
+            code={model.code_rating}
+            vision={model.vision_rating}
+            tools={model.tool_calling_rating}
+          />
+        </div>
+
+        {/* Action button */}
+        <div className="flex justify-end">
+          {effectiveDownloadingThis ? (
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive" onClick={cancelDownload}>
+              <X className="h-3 w-3 mr-1" />
+              Cancel
+            </Button>
+          ) : effectiveQueued ? (
+            <span className="text-xs text-muted-foreground flex items-center gap-1 px-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Queued
+            </span>
+          ) : effectiveDownloaded ? (
+            <div className="flex gap-1">
+              {!isThisRunning && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 w-7 p-0"
+                  onClick={() => {
+                    if (hasVariants) {
+                      const v = model.variants[selectedVariantIdx];
+                      onLoad({ ...model, filename: v.filename, hf_url: v.hf_url });
+                    } else {
+                      onLoad(model);
+                    }
+                  }}
+                  disabled={isStarting}
+                  title="Load model"
+                >
+                  <Play className="h-3 w-3" />
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                onClick={() => onDelete(effectiveFilename)}
+                title="Delete model"
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            </div>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs gap-1"
+              onClick={() => {
+                if (hasVariants) {
+                  const v = model.variants[selectedVariantIdx];
+                  onDownload({ ...model, filename: v.filename, hf_url: v.hf_url, hf_parts: v.hf_parts, all_part_urls: v.all_part_urls }, false);
+                } else {
+                  onDownload(model, false);
+                }
+              }}
+            >
+              <Download className="h-3 w-3" />
+              Get
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Download progress bar */}
+      {effectiveDownloadingThis && downloadProgress && (
+        <div className="px-4 pb-2 flex items-center gap-3">
+          <Progress value={downloadProgress.percent} className="h-1 flex-1" />
+          <span className="text-xs text-muted-foreground tabular-nums w-16 text-right">
+            {downloadProgress.percent.toFixed(0)}% · {formatBytes(downloadProgress.bytes_downloaded)}
+          </span>
+        </div>
+      )}
+
+      {/* Expanded detail + variant picker */}
+      {isExpanded && (
+        <div className="px-4 pb-3 pl-9 space-y-2">
+          <p className="text-xs text-muted-foreground leading-relaxed">{model.description}</p>
+          <p className="text-xs text-muted-foreground">
+            {model.provider} · {model.context_length.toLocaleString()} ctx
+            {model.is_split && ` · split (${model.hf_parts.length + 1} parts)`}
+          </p>
+
+          {/* Variant picker for multi-quant models */}
+          {hasVariants && (
+            <div className="mt-2">
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+                Choose size
+              </p>
+              <div className="flex gap-1.5 flex-wrap">
+                {model.variants.map((v, idx) => {
+                  const vDownloaded = downloadedModels.some((d) => d.filename === v.filename);
+                  const isHwRecommended =
+                    hardwareResult &&
+                    v.ram_required_gb <= (hardwareResult.hardware.total_ram_mb / 1024);
+                  return (
+                    <button
+                      key={v.filename}
+                      onClick={() => setSelectedVariantIdx(idx)}
+                      className={`flex flex-col items-start rounded-md border px-2.5 py-1.5 text-left transition-colors text-xs ${
+                        idx === selectedVariantIdx
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-muted/20 hover:bg-muted/40 text-foreground"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium">{v.label}</span>
+                        {isHwRecommended && idx === selectedVariantIdx && (
+                          <span className="text-[9px] bg-green-500/20 text-green-600 rounded px-1 py-0.5">fits</span>
+                        )}
+                        {vDownloaded && (
+                          <CheckCircle2 className="h-3 w-3 text-green-500" />
+                        )}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        {v.disk_size_gb.toFixed(1)} GB · needs {v.ram_required_gb.toFixed(0)} GB RAM
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/60">{v.quant}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Server-grade collapsible section ─────────────────────────────────────
+
+function ServerGradeSection(props: Omit<ModelRowProps, "model"> & { models: LlmModelInfo[] }) {
+  const { models, ...rowProps } = props;
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="border-t">
+      <button
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+        <span className="font-medium">Server-grade models</span>
+        <Badge variant="outline" className="text-[10px] px-1.5 py-0 ml-1">{models.length}</Badge>
+        <span className="ml-2 text-muted-foreground/60">· 40 GB+ VRAM or multi-GPU required</span>
+      </button>
+      {expanded && (
+        <div>
+          {models.map((model) => (
+            <ModelRow key={model.filename} model={model} {...rowProps} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Models Tab ────────────────────────────────────────────────────────────
 
 function ModelsTab() {
@@ -840,12 +1163,17 @@ function ModelsTab() {
       {allModels.length > 0 && (
         <div className="rounded-lg border overflow-hidden">
           {/* Table header */}
-          <div className="grid grid-cols-[1fr_160px_72px_64px_80px_100px] gap-px items-center px-4 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b">
+          <div className="grid grid-cols-[1fr_72px_64px_80px_96px_96px] gap-px items-center px-4 py-2 bg-muted/40 text-xs font-medium text-muted-foreground border-b">
             <span>Model</span>
-            <span className="text-center">Speed</span>
             <span className="text-right">Size</span>
             <span className="text-right">RAM</span>
-            <span className="text-center">Tools</span>
+            <span className="text-center">Cutoff</span>
+            <div className="flex items-center gap-1 justify-center" title="Text · Code · Vision · Tools (0–5)">
+              <MessageSquare className="h-3 w-3" />
+              <Code2 className="h-3 w-3" />
+              <Eye className="h-3 w-3" />
+              <Wrench className="h-3 w-3" />
+            </div>
             <div className="flex items-center justify-end gap-2">
               <span>Action</span>
               {allModels.some((m) => !downloadedModels.some((d) => d.filename === m.filename)) && (
@@ -868,164 +1196,71 @@ function ModelsTab() {
             </div>
           </div>
 
-          {/* Model rows */}
-          {allModels.map((model) => {
-            const isDownloaded = downloadedModels.some((m) => m.filename === model.filename);
-            const isDownloadingThis = isDownloading && downloadingFilename === model.filename;
-            const isQueued = !isDownloadingThis && downloadQueue.some((e) => e.filename === model.filename);
-            const isThisRunning = isRunning && runningModelPath.includes(model.filename);
-            const isExpanded = expandedRow === model.filename;
+          {/* Model rows — consumer models (non-server-grade) */}
+          {allModels.filter((m) => !m.is_server_grade).map((model) => (
+            <ModelRow
+              key={model.filename}
+              model={model}
+              downloadedModels={downloadedModels}
+              isDownloading={isDownloading}
+              downloadingFilename={downloadingFilename ?? null}
+              downloadProgress={downloadProgress ?? null}
+              downloadQueue={downloadQueue}
+              isRunning={isRunning}
+              runningModelPath={runningModelPath}
+              isStarting={isStarting}
+              hardwareResult={hardwareResult ?? null}
+              expandedRow={expandedRow}
+              setExpandedRow={setExpandedRow}
+              onDownload={handleDownload}
+              onLoad={handleLoad}
+              onDelete={handleDelete}
+              cancelDownload={cancelDownload}
+            />
+          ))}
 
-            return (
-              <div key={model.filename} className="border-b last:border-b-0">
-                <div
-                  className={`grid grid-cols-[1fr_160px_72px_64px_80px_100px] gap-px items-center px-4 py-2.5 text-sm transition-colors hover:bg-muted/20 ${
-                    isThisRunning ? "bg-green-500/5" : ""
-                  }`}
-                >
-                  {/* Name + badges */}
-                  <div className="flex items-center gap-2 min-w-0">
-                    <button
-                      className="flex items-center gap-1.5 min-w-0 text-left"
-                      onClick={() => setExpandedRow(isExpanded ? null : model.filename)}
-                    >
-                      <ChevronDown className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
-                      <span className="font-medium truncate">{model.name}</span>
-                    </button>
-                    {model.tier === "Default" && (
-                      <Badge className="text-[10px] px-1.5 py-0 bg-blue-500/15 text-blue-600 border-blue-500/30 shrink-0">
-                        rec
-                      </Badge>
-                    )}
-                    {isThisRunning && (
-                      <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
-                    )}
-                  </div>
-
-                  {/* Speed */}
-                  <span className="text-xs text-muted-foreground text-center min-w-0 truncate" title={model.speed}>
-                    {model.speed}
-                  </span>
-
-                  {/* Size */}
-                  <span className="text-xs text-muted-foreground text-right tabular-nums">
-                    {model.disk_size_gb.toFixed(1)} GB
-                  </span>
-
-                  {/* RAM */}
-                  <span className="text-xs text-muted-foreground text-right tabular-nums">
-                    {model.ram_required_gb.toFixed(0)} GB
-                  </span>
-
-                  {/* Tool calling rating */}
-                  <div className="flex justify-center">
-                    <ToolCallRating rating={model.tool_calling_rating} />
-                  </div>
-
-                  {/* Action button — single context-aware button */}
-                  <div className="flex justify-end">
-                    {isDownloadingThis ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs text-destructive"
-                        onClick={cancelDownload}
-                      >
-                        <X className="h-3 w-3 mr-1" />
-                        Cancel
-                      </Button>
-                    ) : isQueued ? (
-                      <span className="text-xs text-muted-foreground flex items-center gap-1 px-2">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Queued
-                      </span>
-                    ) : isDownloaded ? (
-                      <div className="flex gap-1">
-                        {!isThisRunning && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 px-2 text-xs gap-1"
-                            onClick={() => handleLoad(model)}
-                            disabled={isStarting}
-                          >
-                            <Play className="h-3 w-3" />
-                            Run
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDelete(model.filename)}
-                          title="Delete model"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs gap-1"
-                        onClick={() => handleDownload(model, false)}
-                      >
-                        <Download className="h-3 w-3" />
-                        Get
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Download progress bar — inline beneath the row */}
-                {isDownloadingThis && downloadProgress && (
-                  <div className="px-4 pb-2 flex items-center gap-3">
-                    <Progress value={downloadProgress.percent} className="h-1 flex-1" />
-                    <span className="text-xs text-muted-foreground tabular-nums w-16 text-right">
-                      {downloadProgress.percent.toFixed(0)}% · {formatBytes(downloadProgress.bytes_downloaded)}
-                    </span>
-                  </div>
-                )}
-
-                {/* Expandable description row */}
-                {isExpanded && (
-                  <div className="px-4 pb-3 pl-9">
-                    <p className="text-xs text-muted-foreground leading-relaxed">{model.description}</p>
-                    {model.is_split && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Split into {model.hf_parts.length + 1} parts · {model.context_length.toLocaleString()} context
-                      </p>
-                    )}
-                    {!model.is_split && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {model.context_length.toLocaleString()} context length
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {/* Server-grade models — collapsible section */}
+          {(() => {
+            const serverModels = allModels.filter((m) => m.is_server_grade);
+            if (serverModels.length === 0) return null;
+            return <ServerGradeSection
+              models={serverModels}
+              downloadedModels={downloadedModels}
+              isDownloading={isDownloading}
+              downloadingFilename={downloadingFilename ?? null}
+              downloadProgress={downloadProgress ?? null}
+              downloadQueue={downloadQueue}
+              isRunning={isRunning}
+              runningModelPath={runningModelPath}
+              isStarting={isStarting}
+              hardwareResult={hardwareResult ?? null}
+              expandedRow={expandedRow}
+              setExpandedRow={setExpandedRow}
+              onDownload={handleDownload}
+              onLoad={handleLoad}
+              onDelete={handleDelete}
+              cancelDownload={cancelDownload}
+            />;
+          })()}
 
           {/* Custom models in the same table */}
           {customModels.map((dm) => {
             const isThisRunning = isRunning && runningModelPath.includes(dm.filename);
             return (
-              <div key={dm.filename} className={`grid grid-cols-[1fr_160px_72px_64px_80px_100px] gap-px items-center px-4 py-2.5 text-sm border-b last:border-b-0 ${isThisRunning ? "bg-green-500/5" : ""}`}>
+              <div key={dm.filename} className={`grid grid-cols-[1fr_72px_64px_80px_96px_96px] gap-px items-center px-4 py-2.5 text-sm border-b last:border-b-0 ${isThisRunning ? "bg-green-500/5" : ""}`}>
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-medium truncate pl-5">{dm.name}</span>
                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">custom</Badge>
                   {isThisRunning && <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />}
                 </div>
-                <span className="text-xs text-muted-foreground text-center">—</span>
                 <span className="text-xs text-muted-foreground text-right tabular-nums">{dm.size_gb} GB</span>
                 <span className="text-xs text-muted-foreground text-right">—</span>
                 <span className="text-xs text-muted-foreground text-center">—</span>
+                <span className="text-xs text-muted-foreground text-center">—</span>
                 <div className="flex justify-end gap-1">
                   {!isThisRunning && (
-                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs gap-1" onClick={() => handleLoadCustom(dm.filename)} disabled={isStarting}>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-xs" onClick={() => handleLoadCustom(dm.filename)} disabled={isStarting} title="Load model">
                       <Play className="h-3 w-3" />
-                      Run
                     </Button>
                   )}
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(dm.filename)} title="Delete model">
@@ -2830,6 +3065,142 @@ export function LocalModels() {
   );
 }
 
+// ── Image & Video Models Tab ──────────────────────────────────────────────
+
+const IMAGE_MODELS = [
+  {
+    name: "HunyuanImage 3.0",
+    provider: "Tencent",
+    description: "#1 open-source image generator. 83B parameter native multimodal model. Best quality for text-to-image.",
+    vram: "24–48 GB (FP16) / Distilled: 12 GB",
+    license: "Tencent Hunyuan Community License",
+    url: "https://huggingface.co/tencent/HunyuanImage-3.0",
+    urlDistil: "https://huggingface.co/tencent/HunyuanImage-3.0-Instruct-Distil",
+    arenaRank: "#13 text-to-image (score 1151)",
+    compatible: false,
+    note: "Requires Python Diffusers pipeline",
+  },
+  {
+    name: "FLUX.2-klein-4B",
+    provider: "Black Forest Labs",
+    description: "Lightweight 4B image generator with image editing support. Runs on consumer GPUs (8–12 GB VRAM).",
+    vram: "8–12 GB",
+    license: "Apache 2.0",
+    url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B",
+    arenaRank: "#41 (score 1020)",
+    compatible: false,
+    note: "Requires Python Diffusers pipeline",
+  },
+] as const;
+
+const VIDEO_MODELS = [
+  {
+    name: "Kandinsky 5.0 T2V Pro",
+    provider: "Kandinsky Lab",
+    description: "#1 open-source text-to-video. MIT license. Available in 5s and 10s variants. High quality video generation.",
+    vram: "24+ GB",
+    license: "MIT",
+    url: "https://huggingface.co/kandinskylab/Kandinsky-5.0-T2V-Pro-sft-5s-Diffusers",
+    arenaRank: "#26 text-to-video (score 1179)",
+    compatible: false,
+    note: "Requires Python Diffusers pipeline",
+  },
+  {
+    name: "Wan2.2 T2V 5B",
+    provider: "Alibaba (Wan-AI)",
+    description: "Lightweight text-to-video and image-to-video. 5B model runs on consumer GPUs. Apache 2.0.",
+    vram: "8–12 GB",
+    license: "Apache 2.0",
+    url: "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B",
+    arenaRank: "#30 (score 1130)",
+    compatible: false,
+    note: "Requires Python Diffusers pipeline",
+  },
+] as const;
+
+function MediaModelsTab() {
+  return (
+    <div className="space-y-6 pb-8">
+      {/* Explainer banner */}
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 flex items-start gap-3">
+        <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+        <div className="text-sm space-y-1">
+          <p className="font-medium text-foreground">Image & video generation coming soon</p>
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            Image and video generation models use diffusion pipelines — not llama.cpp/GGUF. They require a separate
+            Python engine (Diffusers / ComfyUI) that is not yet integrated. The models below are the best available
+            open-source options. Click any card to view the model on HuggingFace.
+          </p>
+        </div>
+      </div>
+
+      {/* Image generation */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold flex items-center gap-2">
+          <Image className="h-4 w-4 text-violet-500" />
+          Image Generation
+        </h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {IMAGE_MODELS.map((m) => (
+            <button
+              key={m.name}
+              className="rounded-lg border bg-card p-4 text-left hover:bg-muted/20 transition-colors space-y-2"
+              onClick={() => openUrl(m.url)}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-medium text-sm">{m.name}</p>
+                  <p className="text-xs text-muted-foreground">{m.provider}</p>
+                </div>
+                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
+              <div className="flex flex-wrap gap-2 text-[10px]">
+                <span className="rounded bg-muted px-1.5 py-0.5">VRAM: {m.vram}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5">{m.license}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5">{m.arenaRank}</span>
+              </div>
+              <p className="text-[10px] text-amber-600 dark:text-amber-400">{m.note}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Video generation */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-semibold flex items-center gap-2">
+          <Video className="h-4 w-4 text-blue-500" />
+          Video Generation
+        </h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {VIDEO_MODELS.map((m) => (
+            <button
+              key={m.name}
+              className="rounded-lg border bg-card p-4 text-left hover:bg-muted/20 transition-colors space-y-2"
+              onClick={() => openUrl(m.url)}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-medium text-sm">{m.name}</p>
+                  <p className="text-xs text-muted-foreground">{m.provider}</p>
+                </div>
+                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{m.description}</p>
+              <div className="flex flex-wrap gap-2 text-[10px]">
+                <span className="rounded bg-muted px-1.5 py-0.5">VRAM: {m.vram}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5">{m.license}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5">{m.arenaRank}</span>
+              </div>
+              <p className="text-[10px] text-amber-600 dark:text-amber-400">{m.note}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LocalModelsInner() {
   const [state] = useLlmContext();
   const { serverStatus } = state;
@@ -2887,6 +3258,10 @@ function LocalModelsInner() {
             <Cpu className="h-3.5 w-3.5" />
             Hardware
           </TabsTrigger>
+          <TabsTrigger value="media" className="gap-1.5">
+            <Image className="h-3.5 w-3.5" />
+            Image & Video
+          </TabsTrigger>
         </TabsList>
 
         <div className="flex-1 min-h-0 pt-6 overflow-hidden">
@@ -2904,6 +3279,9 @@ function LocalModelsInner() {
           </TabsContent>
           <TabsContent value="hardware" className="m-0 h-full overflow-auto">
             <HardwareTab />
+          </TabsContent>
+          <TabsContent value="media" className="m-0 h-full overflow-auto">
+            <MediaModelsTab />
           </TabsContent>
         </div>
       </Tabs>

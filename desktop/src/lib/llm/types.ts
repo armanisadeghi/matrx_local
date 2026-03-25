@@ -1,16 +1,72 @@
 // ── LLM Model Types ───────────────────────────────────────────────────────
 
-export type LlmTier = "Low" | "LowAlt" | "Default" | "High" | "HighAlt";
+export type LlmTier =
+  // Tiny / Edge
+  | "LowAlt"    // Phi-4-mini 2.5 GB
+  | "Low"       // Qwen3-4B 2.5 GB
+  | "UltraLow"  // Gemma-3n-E4B 4.5 GB
+  | "Low2"      // DeepSeek-R1-Distill-Llama-8B 4.9 GB
+  | "Low3"      // Llama-3.1-8B 4.9 GB
+  // Mid-range
+  | "Default"   // Qwen3-8B 5.1 GB (auto-selection anchor)
+  | "Mid"       // Gemma-3-12B 7.3 GB
+  | "Mid2"      // Phi-4-Reasoning 9 GB
+  | "High"      // GPT-OSS-20B 12.1 GB
+  | "HighAlt"   // Mistral-Small-3.1-24B 14.4 GB
+  | "High2"     // Qwen3.5-27B (multi-variant)
+  | "High3"     // DeepSeek-R1-Distill-32B 19.85 GB
+  | "High4"     // Gemma-3-27B 16.55 GB
+  | "VHigh"     // Qwen3.5-35B-A3B (multi-variant)
+  // Uncensored
+  | "UncensoredCompact"
+  | "UncensoredBalanced"
+  // Server-grade
+  | "Server"    // Llama-3.3-70B 42.5 GB
+  | "Server2"   // Qwen3.5-122B-A10B 39.1 GB
+  | "Server3"   // Mistral-Small-4-119B 72.6 GB
+  | "Server4"   // Llama-4-Scout-17B-16E 67.5 GB
+  | "Server5"   // GPT-OSS-120B 88 GB
+  | "Server6";  // Qwen3.5-397B-A17B 115 GB
+
+/** A single quantization variant for a model that ships in multiple sizes. */
+export interface LlmModelVariant {
+  /** Human-readable label: "Compact", "Balanced", "Quality". */
+  label: string;
+  /** Technical quant name shown in tooltip: "IQ3_XXS", "Q4_K_M", etc. */
+  quant: string;
+  filename: string;
+  disk_size_gb: number;
+  ram_required_gb: number;
+  hf_url: string;
+  hf_parts: string[];
+  is_split: boolean;
+  all_part_urls: string[];
+  expected_size_bytes: number;
+}
 
 export interface LlmModelInfo {
   tier: LlmTier;
   name: string;
+  /** Provider / organization: "Alibaba", "OpenAI", "Meta", etc. */
+  provider: string;
   filename: string;
   disk_size_gb: number;
   ram_required_gb: number;
+  // ── Ratings (0–5) ────────────────────────────────────────────────────────
+  text_rating: number;
+  code_rating: number;
+  vision_rating: number;
   tool_calling_rating: number;
+  // ── Metadata ──────────────────────────────────────────────────────────────
   speed: string;
   description: string;
+  /** Training data knowledge cutoff, e.g. "Feb 2026". */
+  knowledge_cutoff: string;
+  /** Link to the HuggingFace model card page. */
+  hf_model_card_url: string;
+  is_uncensored: boolean;
+  is_server_grade: boolean;
+  // ── Download URLs ─────────────────────────────────────────────────────────
   hf_url: string;
   /** Additional part URLs for split models (empty for single-file models). */
   hf_parts: string[];
@@ -19,8 +75,11 @@ export interface LlmModelInfo {
   /** All part URLs in download order (hf_url + hf_parts). */
   all_part_urls: string[];
   context_length: number;
-  /** Expected assembled file size in bytes. Used to detect partial downloads. */
+  /** Expected size in bytes. Used to detect partial downloads. */
   expected_size_bytes: number;
+  // ── Quant variants ────────────────────────────────────────────────────────
+  /** Non-empty for models offered in multiple quantization sizes. */
+  variants: LlmModelVariant[];
 }
 
 export interface LlmHardwareResult {
@@ -147,4 +206,31 @@ export interface ChatCompletionResponse {
     };
     finish_reason: string;
   }>;
+}
+
+// ── Rating helpers ────────────────────────────────────────────────────────
+
+export const RATING_SCALE: Record<number, string> = {
+  0: "Not recommended for this task",
+  1: "Limited — compromised by size or quantization",
+  2: "Good enough for basic use",
+  3: "Great — among the best running locally",
+  4: "Excellent — top open-source for this task",
+  5: "Near-frontier — best open-source available",
+};
+
+export const SERVER_GRADE_TIERS = new Set<LlmTier>([
+  "Server", "Server2", "Server3", "Server4", "Server5", "Server6",
+]);
+
+export const UNCENSORED_TIERS = new Set<LlmTier>([
+  "UncensoredCompact", "UncensoredBalanced",
+]);
+
+export function isServerGrade(tier: LlmTier): boolean {
+  return SERVER_GRADE_TIERS.has(tier);
+}
+
+export function isUncensored(tier: LlmTier): boolean {
+  return UNCENSORED_TIERS.has(tier);
 }

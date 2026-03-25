@@ -47,6 +47,14 @@ import {
   Tag,
   RotateCcw as Undo2,
   X,
+  Play,
+  Square,
+  Activity,
+  Radio,
+  Settings2,
+  Waves,
+  AudioLines,
+  CircleDot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emitClientLog } from "@/hooks/use-client-log";
@@ -396,7 +404,7 @@ export function Voice() {
           </div>
         )}
         {tab === "devices" && (
-          <div className="h-full overflow-y-auto p-6">
+          <div className="h-full overflow-hidden">
             <DevicesTab state={state} actions={actions} />
           </div>
         )}
@@ -1798,6 +1806,8 @@ function ModelsTab({
 
 // ── Devices Tab ────────────────────────────────────────────────────────────
 
+type MicTestPhase = "idle" | "testing" | "recorded" | "playing";
+
 function DevicesTab({
   state,
   actions,
@@ -1806,6 +1816,27 @@ function DevicesTab({
   actions: ReturnType<typeof useTranscription>[1];
 }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Mic test state (uses Web Audio API directly — independent of Whisper pipeline)
+  const [micTestPhase, setMicTestPhase] = useState<MicTestPhase>("idle");
+  const [_micTestDevice, setMicTestDevice] = useState<string | null>(null);
+  const [testLevelBars, setTestLevelBars] = useState<number[]>(Array(40).fill(0));
+  const [testPeakDb, setTestPeakDb] = useState<number>(-Infinity);
+  const [testAvgDb, setTestAvgDb] = useState<number>(-Infinity);
+  const [testRecordedBlob, setTestRecordedBlob] = useState<Blob | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [testCountdown, setTestCountdown] = useState(0);
+  const [historyBars, setHistoryBars] = useState<number[]>(Array(80).fill(0));
+
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const playbackAudioRef = useRef<HTMLAudioElement | null>(null);
+  const historyRef = useRef<number[]>(Array(80).fill(0));
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -1818,167 +1849,916 @@ function DevicesTab({
 
   useEffect(() => {
     handleRefresh();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      stopMicTest();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const stopMicTest = useCallback(() => {
+    if (animFrameRef.current !== null) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    if (countdownTimerRef.current !== null) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    mediaRecorderRef.current = null;
+  }, []);
+
+  const startMicTest = useCallback(async (deviceName: string | null) => {
+    setTestError(null);
+    setTestRecordedBlob(null);
+    setTestPeakDb(-Infinity);
+    setTestAvgDb(-Infinity);
+    setTestLevelBars(Array(40).fill(0));
+    historyRef.current = Array(80).fill(0);
+    setHistoryBars(Array(80).fill(0));
+    chunksRef.current = [];
+
+    try {
+      // Attempt to find the browser media device ID matching the CPAL device name.
+      // CPAL uses system device names; browser uses opaque IDs. We match by label.
+      let audioConstraint: MediaTrackConstraints | boolean = true;
+      if (deviceName) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const match = devices.find(
+            (d) => d.kind === "audioinput" && d.label.includes(deviceName.split(" ").slice(0, 3).join(" "))
+          );
+          if (match?.deviceId) {
+            audioConstraint = { deviceId: { exact: match.deviceId } };
+          }
+        } catch {
+          // Fall back to default
+        }
+      }
+      const constraints: MediaStreamConstraints = { audio: audioConstraint };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      mediaStreamRef.current = stream;
+
+      const ctx = new AudioContext({ sampleRate: 48000 });
+      audioContextRef.current = ctx;
+
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.6;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      // MediaRecorder for playback
+      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        setTestRecordedBlob(blob);
+        setMicTestPhase("recorded");
+      };
+      recorder.start();
+
+      setMicTestDevice(deviceName);
+      setMicTestPhase("testing");
+      setTestCountdown(5);
+
+      // 5-second countdown then auto-stop recording (but keep meter running)
+      let secs = 5;
+      countdownTimerRef.current = setInterval(() => {
+        secs -= 1;
+        setTestCountdown(secs);
+        if (secs <= 0) {
+          clearInterval(countdownTimerRef.current!);
+          countdownTimerRef.current = null;
+          if (mediaRecorderRef.current?.state === "recording") {
+            mediaRecorderRef.current.stop();
+          }
+          // Stop stream & context after recorder captures final data
+          setTimeout(() => {
+            if (mediaStreamRef.current) {
+              mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+              mediaStreamRef.current = null;
+            }
+            if (audioContextRef.current) {
+              audioContextRef.current.close().catch(() => {});
+              audioContextRef.current = null;
+            }
+            if (animFrameRef.current !== null) {
+              cancelAnimationFrame(animFrameRef.current);
+              animFrameRef.current = null;
+            }
+          }, 200);
+        }
+      }, 1000);
+
+      // Animate level meter
+      const freqData = new Uint8Array(analyser.frequencyBinCount);
+      let peakDb = -Infinity;
+
+      const animate = () => {
+        analyser.getByteFrequencyData(freqData);
+
+        // Compute RMS from frequency magnitudes
+        let sum = 0;
+        for (let i = 0; i < freqData.length; i++) {
+          const norm = freqData[i] / 255;
+          sum += norm * norm;
+        }
+        const rms = Math.sqrt(sum / freqData.length);
+        const db = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+
+        if (db > peakDb) {
+          peakDb = db;
+          setTestPeakDb(db);
+        }
+        setTestAvgDb(db);
+
+        // 40-bar spectrum
+        const binCount = freqData.length;
+        const barCount = 40;
+        const barsArr: number[] = Array(barCount).fill(0);
+        for (let b = 0; b < barCount; b++) {
+          const startBin = Math.floor((b / barCount) * binCount);
+          const endBin = Math.floor(((b + 1) / barCount) * binCount);
+          let max = 0;
+          for (let k = startBin; k < endBin; k++) {
+            if (freqData[k] > max) max = freqData[k];
+          }
+          barsArr[b] = max / 255;
+        }
+        setTestLevelBars(barsArr);
+
+        // Rolling history
+        historyRef.current.shift();
+        historyRef.current.push(rms);
+        setHistoryBars([...historyRef.current]);
+
+        animFrameRef.current = requestAnimationFrame(animate);
+      };
+      animFrameRef.current = requestAnimationFrame(animate);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setTestError(msg);
+      setMicTestPhase("idle");
+    }
+  }, []);
+
+  const stopMicTestManually = useCallback(() => {
+    if (countdownTimerRef.current !== null) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+    setTimeout(() => {
+      stopMicTest();
+    }, 200);
+  }, [stopMicTest]);
+
+  const playbackRecording = useCallback(() => {
+    if (!testRecordedBlob) return;
+    if (playbackAudioRef.current) {
+      playbackAudioRef.current.pause();
+      URL.revokeObjectURL(playbackAudioRef.current.src);
+    }
+    const url = URL.createObjectURL(testRecordedBlob);
+    const audio = new Audio(url);
+    playbackAudioRef.current = audio;
+    setMicTestPhase("playing");
+    audio.onended = () => {
+      setMicTestPhase("recorded");
+      URL.revokeObjectURL(url);
+    };
+    audio.onerror = () => {
+      setMicTestPhase("recorded");
+    };
+    audio.play().catch(() => setMicTestPhase("recorded"));
+  }, [testRecordedBlob]);
+
+  const stopPlayback = useCallback(() => {
+    if (playbackAudioRef.current) {
+      playbackAudioRef.current.pause();
+      playbackAudioRef.current = null;
+    }
+    setMicTestPhase("recorded");
+  }, []);
+
+  const resetTest = useCallback(() => {
+    stopMicTest();
+    if (playbackAudioRef.current) {
+      playbackAudioRef.current.pause();
+      playbackAudioRef.current = null;
+    }
+    setMicTestPhase("idle");
+    setTestRecordedBlob(null);
+    setTestError(null);
+    setTestPeakDb(-Infinity);
+    setTestAvgDb(-Infinity);
+    setTestLevelBars(Array(40).fill(0));
+    historyRef.current = Array(80).fill(0);
+    setHistoryBars(Array(80).fill(0));
+  }, [stopMicTest]);
+
+  // The "active" device — if user explicitly selected one, use that; else the system default
+  const activeDevice = state.selectedDevice
+    ? state.audioDevices.find((d) => d.name === state.selectedDevice) ?? null
+    : state.audioDevices.find((d) => d.is_default) ?? null;
+
+  const formatDb = (db: number) => {
+    if (!isFinite(db)) return "—";
+    return `${db.toFixed(1)} dB`;
+  };
+
+  const getSignalQuality = (db: number): { label: string; color: string } => {
+    if (!isFinite(db)) return { label: "No signal", color: "text-muted-foreground" };
+    if (db > -10) return { label: "Very loud", color: "text-red-500" };
+    if (db > -20) return { label: "Loud", color: "text-amber-500" };
+    if (db > -35) return { label: "Good", color: "text-emerald-500" };
+    if (db > -50) return { label: "Quiet", color: "text-yellow-500" };
+    return { label: "Very quiet", color: "text-red-400" };
+  };
+
+  const quality = getSignalQuality(testAvgDb);
+
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <div className="rounded-xl border bg-card p-6 space-y-4">
-        <div className="flex items-center justify-between">
+    <div className="h-full flex gap-0 overflow-hidden">
+      {/* ── Left panel: device list ── */}
+      <div className="w-80 shrink-0 border-r flex flex-col h-full">
+        <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
           <div>
-            <h3 className="font-semibold">Audio Input Devices</h3>
+            <h3 className="font-semibold text-sm">Input Devices</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Select which microphone to use for transcription
+              {state.audioDevices.length} device{state.audioDevices.length !== 1 ? "s" : ""} detected
             </p>
           </div>
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={handleRefresh}
             disabled={isRefreshing}
+            className="h-8 w-8 p-0"
+            title="Refresh device list"
           >
             {isRefreshing ? (
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <RefreshCw className="mr-1 h-3 w-3" />
+              <RefreshCw className="h-4 w-4" />
             )}
-            Refresh
           </Button>
         </div>
 
-        {state.selectedDevice && (
-          <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
-            <Mic className="h-4 w-4 text-primary shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-primary">Selected for transcription</p>
-              <p className="text-sm font-semibold truncate">{state.selectedDevice}</p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => actions.setSelectedDevice(null)}
-              className="text-xs text-muted-foreground hover:text-foreground shrink-0"
-            >
-              Use Default
-            </Button>
-          </div>
-        )}
-
-        {!state.selectedDevice && (
-          <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-4 py-3">
-            <Volume2 className="h-4 w-4 text-muted-foreground shrink-0" />
-            <p className="text-xs text-muted-foreground">
-              Using system default microphone. Select a device below to override.
-            </p>
-          </div>
-        )}
-
-        {state.audioDevices.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-8 text-center space-y-2">
-            {isRefreshing ? (
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/30" />
-            ) : (
-              <Volume2 className="h-8 w-8 text-muted-foreground/30" />
+        {/* Auto / System Default option */}
+        <div className="px-3 py-2 border-b shrink-0">
+          <button
+            onClick={() => actions.setSelectedDevice(null)}
+            className={cn(
+              "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors text-left",
+              !state.selectedDevice
+                ? "bg-primary text-primary-foreground"
+                : "hover:bg-muted text-foreground"
             )}
-            <p className="text-sm text-muted-foreground">
-              {isRefreshing
-                ? "Scanning for audio devices…"
-                : "No audio input devices detected."}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {state.audioDevices.map((device, i) => {
-              const isSelected = state.selectedDevice === device.name;
-              const isActiveDefault = !state.selectedDevice && device.is_default;
+          >
+            <div className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-full shrink-0",
+              !state.selectedDevice ? "bg-primary-foreground/20" : "bg-muted"
+            )}>
+              <Settings2 className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium leading-tight">Auto (System Default)</p>
+              <p className={cn(
+                "text-xs leading-tight mt-0.5",
+                !state.selectedDevice ? "text-primary-foreground/70" : "text-muted-foreground"
+              )}>
+                {state.audioDevices.find((d) => d.is_default)?.name ?? "OS picks automatically"}
+              </p>
+            </div>
+            {!state.selectedDevice && (
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-primary-foreground" />
+            )}
+          </button>
+        </div>
+
+        {/* Device list */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {isRefreshing && state.audioDevices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-2">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/40" />
+              <p className="text-xs text-muted-foreground">Scanning…</p>
+            </div>
+          ) : state.audioDevices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-2">
+              <Volume2 className="h-6 w-6 text-muted-foreground/30" />
+              <p className="text-xs text-muted-foreground">No devices detected</p>
+            </div>
+          ) : (
+            state.audioDevices.map((device, i) => {
+              const isExplicitlySelected = state.selectedDevice === device.name;
 
               return (
-                <div
+                <button
                   key={i}
+                  onClick={() => actions.setSelectedDevice(device.name)}
                   className={cn(
-                    "rounded-lg border p-4 transition-colors",
-                    isSelected
-                      ? "border-primary bg-primary/5"
-                      : isActiveDefault
-                      ? "border-emerald-500/30 bg-emerald-500/5"
-                      : "hover:border-primary/30"
+                    "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors text-left",
+                    isExplicitlySelected
+                      ? "bg-primary text-primary-foreground"
+                      : "hover:bg-muted text-foreground"
                   )}
                 >
-                  <div className="flex items-center gap-3">
-                    <Mic
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        isSelected ? "text-primary" : "text-muted-foreground"
+                  <div className={cn(
+                    "flex h-8 w-8 items-center justify-center rounded-full shrink-0",
+                    isExplicitlySelected ? "bg-primary-foreground/20" : "bg-muted"
+                  )}>
+                    <Mic className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-sm font-medium truncate leading-tight">
+                        {device.name}
+                      </span>
+                      {device.is_default && (
+                        <span className={cn(
+                          "text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0",
+                          isExplicitlySelected
+                            ? "bg-primary-foreground/20 text-primary-foreground"
+                            : "bg-muted-foreground/20 text-muted-foreground"
+                        )}>
+                          default
+                        </span>
                       )}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium">{device.name}</span>
-                        {device.is_default && (
-                          <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
-                            System default
-                          </span>
-                        )}
-                        {isSelected && (
-                          <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                            Selected
-                          </span>
-                        )}
-                        {isActiveDefault && !isSelected && (
-                          <span className="text-xs bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full">
-                            Active
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
-                        {device.sample_rates.length > 0 && (
-                          <span>{device.sample_rates.map((r) => `${r / 1000}kHz`).join(", ")}</span>
-                        )}
-                        {device.channels.length > 0 && (
-                          <span>{device.channels.join("/")}ch</span>
-                        )}
-                      </div>
                     </div>
-                    {!isSelected ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => actions.setSelectedDevice(device.name)}
-                        className="shrink-0 text-xs"
-                      >
-                        Select
-                      </Button>
+                    <p className={cn(
+                      "text-xs mt-0.5 truncate",
+                      isExplicitlySelected ? "text-primary-foreground/70" : "text-muted-foreground"
+                    )}>
+                      {device.channels.length > 0 ? `${device.channels[0]}ch` : ""}
+                      {device.sample_rates.length > 0
+                        ? ` · ${(device.sample_rates[0] / 1000).toFixed(0)}kHz`
+                        : ""}
+                    </p>
+                  </div>
+                  {isExplicitlySelected && (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-primary-foreground" />
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        {/* Footer note */}
+        <div className="px-4 py-3 border-t shrink-0">
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            Selection is persisted across sessions. Whisper resamples all input to 16kHz mono automatically.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Right panel: device detail + mic test ── */}
+      <div className="flex-1 flex flex-col h-full overflow-y-auto">
+        {activeDevice ? (
+          <div className="p-6 space-y-6">
+            {/* Device header */}
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shrink-0">
+                  <Mic className="h-7 w-7" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold leading-tight">{activeDevice.name}</h2>
+                  <div className="flex items-center gap-2 mt-1">
+                    {activeDevice.is_default && (
+                      <span className="inline-flex items-center gap-1 text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                        System default
+                      </span>
+                    )}
+                    {state.selectedDevice === activeDevice.name ? (
+                      <span className="inline-flex items-center gap-1 text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Manually selected
+                      </span>
                     ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => actions.setSelectedDevice(null)}
-                        className="shrink-0 text-xs text-muted-foreground"
-                      >
-                        Deselect
-                      </Button>
+                      <span className="inline-flex items-center gap-1 text-xs bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full font-medium">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Auto (system default)
+                      </span>
                     )}
                   </div>
                 </div>
-              );
-            })}
+              </div>
+              {state.selectedDevice && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => actions.setSelectedDevice(null)}
+                  className="shrink-0"
+                >
+                  Reset to Auto
+                </Button>
+              )}
+            </div>
+
+            {/* Specs grid */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="rounded-xl border bg-card p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Activity className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">Sample Rate</span>
+                </div>
+                <p className="text-sm font-semibold">
+                  {activeDevice.sample_rates.length > 0
+                    ? activeDevice.sample_rates.map((r) => `${(r / 1000).toFixed(0)}kHz`).join(", ")
+                    : "—"}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Whisper uses 16kHz</p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <AudioLines className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">Channels</span>
+                </div>
+                <p className="text-sm font-semibold">
+                  {activeDevice.channels.length > 0
+                    ? activeDevice.channels.map((c) => c === 1 ? "Mono" : c === 2 ? "Stereo" : `${c}ch`).join(" / ")
+                    : "—"}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Downmixed to mono</p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Radio className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">Connection</span>
+                </div>
+                <p className="text-sm font-semibold">
+                  {activeDevice.name.toLowerCase().includes("usb") ? "USB" :
+                   activeDevice.name.toLowerCase().includes("bluetooth") || activeDevice.name.toLowerCase().includes("airpod") || activeDevice.name.toLowerCase().includes("headset") ? "Bluetooth" :
+                   activeDevice.name.toLowerCase().includes("built") || activeDevice.name.toLowerCase().includes("internal") ? "Built-in" :
+                   "System"}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Interface type</p>
+              </div>
+              <div className="rounded-xl border bg-card p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Waves className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">Compatibility</span>
+                </div>
+                <p className="text-sm font-semibold text-emerald-500">Supported</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">16kHz resampled</p>
+              </div>
+            </div>
+
+            {/* Microphone Test Section */}
+            <div className="rounded-xl border bg-card overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b">
+                <div>
+                  <h3 className="font-semibold flex items-center gap-2">
+                    <CircleDot className="h-4 w-4 text-primary" />
+                    Microphone Test
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Record 5 seconds of audio and play it back to verify your mic is working
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {micTestPhase === "idle" && (
+                    <Button
+                      onClick={() => startMicTest(state.selectedDevice)}
+                      size="sm"
+                      className="gap-1.5"
+                    >
+                      <CircleDot className="h-3.5 w-3.5" />
+                      Start Test
+                    </Button>
+                  )}
+                  {micTestPhase === "testing" && (
+                    <Button
+                      onClick={stopMicTestManually}
+                      variant="destructive"
+                      size="sm"
+                      className="gap-1.5"
+                    >
+                      <Square className="h-3 w-3 fill-current" />
+                      Stop ({testCountdown}s)
+                    </Button>
+                  )}
+                  {(micTestPhase === "recorded" || micTestPhase === "playing") && (
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={resetTest}
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        Re-test
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-5 space-y-4">
+                {testError && (
+                  <div className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                    <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-500">Microphone access failed</p>
+                      <p className="text-xs text-red-400 mt-0.5">{testError}</p>
+                    </div>
+                  </div>
+                )}
+
+                {micTestPhase === "idle" && !testError && (
+                  <div className="flex flex-col items-center justify-center py-8 gap-3 text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+                      <Mic className="h-8 w-8 text-muted-foreground/50" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Ready to test</p>
+                      <p className="text-xs text-muted-foreground/60 mt-0.5">
+                        Click "Start Test" to record 5 seconds of audio from this microphone
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {micTestPhase === "testing" && (
+                  <div className="space-y-4">
+                    {/* Big animated mic indicator */}
+                    <div className="flex items-center gap-4">
+                      <div
+                        className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500 text-white shrink-0 transition-all duration-75"
+                        style={{
+                          boxShadow: isFinite(testAvgDb)
+                            ? `0 0 ${8 + Math.max(0, (testAvgDb + 60) * 0.8)}px ${4 + Math.max(0, (testAvgDb + 60) * 0.4)}px rgba(239,68,68,${Math.min(0.2 + Math.max(0, (testAvgDb + 60) / 100), 0.7)})`
+                            : undefined
+                        }}
+                      >
+                        <Mic className="h-8 w-8" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                            <span className="text-sm font-semibold">Recording…</span>
+                            <span className="text-sm text-muted-foreground">Speak into your microphone</span>
+                          </div>
+                          <span className="text-2xl font-bold tabular-nums text-red-500">
+                            {testCountdown}s
+                          </span>
+                        </div>
+                        {/* Signal quality badge */}
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className={cn("text-xs font-medium", quality.color)}>
+                            {quality.label}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDb(testAvgDb)} avg · {formatDb(testPeakDb)} peak
+                          </span>
+                        </div>
+                        {/* dB bar */}
+                        <div className="mt-2 h-3 w-full rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={cn(
+                              "h-full rounded-full transition-all duration-75",
+                              !isFinite(testAvgDb) ? "bg-muted-foreground/20" :
+                              testAvgDb > -20 ? "bg-red-500" :
+                              testAvgDb > -35 ? "bg-emerald-500" :
+                              testAvgDb > -50 ? "bg-yellow-500" :
+                              "bg-red-400"
+                            )}
+                            style={{
+                              width: isFinite(testAvgDb)
+                                ? `${Math.max(2, Math.min(100, (testAvgDb + 70) * 1.43))}%`
+                                : "2%"
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Spectrum analyzer */}
+                    <div className="rounded-lg bg-muted/30 border p-3">
+                      <p className="text-xs text-muted-foreground mb-2">Frequency spectrum</p>
+                      <div className="flex items-end gap-0.5 h-16">
+                        {testLevelBars.map((v, i) => (
+                          <div
+                            key={i}
+                            className={cn(
+                              "flex-1 rounded-t transition-all duration-75",
+                              v > 0.7 ? "bg-red-500" :
+                              v > 0.4 ? "bg-amber-500" :
+                              v > 0.1 ? "bg-emerald-500" :
+                              "bg-muted-foreground/20"
+                            )}
+                            style={{ height: `${Math.max(4, v * 100)}%` }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Rolling waveform history */}
+                    <div className="rounded-lg bg-muted/30 border p-3">
+                      <p className="text-xs text-muted-foreground mb-2">Input level history</p>
+                      <div className="flex items-center gap-0.5 h-8">
+                        {historyBars.map((v, i) => (
+                          <div
+                            key={i}
+                            className={cn(
+                              "flex-1 rounded transition-all duration-150",
+                              v > 0.05 ? "bg-primary" : "bg-muted-foreground/15"
+                            )}
+                            style={{ height: `${Math.max(10, v * 200)}%`, maxHeight: "100%" }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Guidance tips */}
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className={cn(
+                        "rounded-lg border px-3 py-2 text-center transition-colors",
+                        isFinite(testAvgDb) && testAvgDb > -50
+                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                          : "border-border text-muted-foreground"
+                      )}>
+                        Signal detected
+                      </div>
+                      <div className={cn(
+                        "rounded-lg border px-3 py-2 text-center transition-colors",
+                        isFinite(testAvgDb) && testAvgDb > -35 && testAvgDb < -10
+                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                          : "border-border text-muted-foreground"
+                      )}>
+                        Good level
+                      </div>
+                      <div className={cn(
+                        "rounded-lg border px-3 py-2 text-center transition-colors",
+                        isFinite(testPeakDb) && testPeakDb < -6
+                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                          : isFinite(testPeakDb) && testPeakDb >= -6
+                          ? "border-red-500/30 bg-red-500/5 text-red-500"
+                          : "border-border text-muted-foreground"
+                      )}>
+                        No clipping
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {(micTestPhase === "recorded" || micTestPhase === "playing") && (
+                  <div className="space-y-4">
+                    {/* Test result summary */}
+                    <div className="flex items-center gap-4 rounded-lg border bg-muted/20 px-4 py-3">
+                      <div className={cn(
+                        "flex h-10 w-10 items-center justify-center rounded-full shrink-0",
+                        isFinite(testPeakDb) && testPeakDb > -50
+                          ? "bg-emerald-500/10 text-emerald-500"
+                          : "bg-amber-500/10 text-amber-500"
+                      )}>
+                        <CheckCircle2 className="h-5 w-5" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold">Recording complete</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Peak: {formatDb(testPeakDb)}
+                          {isFinite(testPeakDb) && testPeakDb > -50
+                            ? " · Microphone is working"
+                            : " · Very low signal — check mic placement or permissions"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Final spectrum snapshot */}
+                    <div className="rounded-lg bg-muted/30 border p-3">
+                      <p className="text-xs text-muted-foreground mb-2">Last recorded spectrum</p>
+                      <div className="flex items-end gap-0.5 h-16">
+                        {testLevelBars.map((v, i) => (
+                          <div
+                            key={i}
+                            className={cn(
+                              "flex-1 rounded-t",
+                              v > 0.7 ? "bg-red-400" :
+                              v > 0.4 ? "bg-amber-400" :
+                              v > 0.1 ? "bg-primary/60" :
+                              "bg-muted-foreground/15"
+                            )}
+                            style={{ height: `${Math.max(4, v * 100)}%` }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Playback control */}
+                    <div className="rounded-xl border bg-card p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold">Listen to Your Recording</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Play back what was captured to verify audio quality
+                          </p>
+                        </div>
+                        {micTestPhase === "playing" ? (
+                          <Button
+                            onClick={stopPlayback}
+                            variant="destructive"
+                            size="sm"
+                            className="gap-1.5"
+                          >
+                            <Square className="h-3 w-3 fill-current" />
+                            Stop
+                          </Button>
+                        ) : (
+                          <Button
+                            onClick={playbackRecording}
+                            size="sm"
+                            className="gap-1.5"
+                          >
+                            <Play className="h-3.5 w-3.5 fill-current" />
+                            Play Back
+                          </Button>
+                        )}
+                      </div>
+
+                      {micTestPhase === "playing" && (
+                        <div className="flex items-center gap-2">
+                          <div className="flex gap-0.5">
+                            {Array.from({ length: 20 }).map((_, i) => (
+                              <div
+                                key={i}
+                                className="w-1 rounded-full bg-primary animate-pulse"
+                                style={{
+                                  height: `${8 + Math.random() * 16}px`,
+                                  animationDelay: `${i * 50}ms`,
+                                  animationDuration: `${600 + Math.random() * 400}ms`,
+                                }}
+                              />
+                            ))}
+                          </div>
+                          <span className="text-xs text-primary font-medium">Playing…</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Level analysis */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="rounded-xl border bg-card p-4 text-center">
+                        <p className="text-xs text-muted-foreground mb-1">Peak Level</p>
+                        <p className={cn(
+                          "text-xl font-bold tabular-nums",
+                          isFinite(testPeakDb) && testPeakDb >= -6 ? "text-red-500" :
+                          isFinite(testPeakDb) && testPeakDb > -20 ? "text-amber-500" :
+                          isFinite(testPeakDb) && testPeakDb > -50 ? "text-emerald-500" :
+                          "text-muted-foreground"
+                        )}>
+                          {formatDb(testPeakDb)}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          {isFinite(testPeakDb) && testPeakDb >= -6 ? "⚠ Clipping risk" :
+                           isFinite(testPeakDb) && testPeakDb > -20 ? "Loud" :
+                           isFinite(testPeakDb) && testPeakDb > -35 ? "Good range" :
+                           isFinite(testPeakDb) && testPeakDb > -50 ? "Quiet" :
+                           "No signal"}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border bg-card p-4 text-center">
+                        <p className="text-xs text-muted-foreground mb-1">Signal Quality</p>
+                        <p className={cn("text-xl font-bold", quality.color)}>
+                          {isFinite(testPeakDb) ? quality.label : "—"}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          {isFinite(testPeakDb) ? "Transcription ready" : "No audio captured"}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border bg-card p-4 text-center">
+                        <p className="text-xs text-muted-foreground mb-1">Recommendation</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          {!isFinite(testPeakDb) ? "Check mic" :
+                           testPeakDb >= -6 ? "Lower gain" :
+                           testPeakDb > -50 ? "Ready to use" :
+                           "Move closer"}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          {!isFinite(testPeakDb) ? "No signal detected" :
+                           testPeakDb >= -6 ? "Reduce microphone volume" :
+                           testPeakDb > -50 ? "Optimal for Whisper" :
+                           "Signal too weak"}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Tips & best practices */}
+            <div className="rounded-xl border bg-card p-5 space-y-4">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <Info className="h-4 w-4 text-muted-foreground" />
+                Best Practices for Whisper
+              </h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">✓</div>
+                    <div>
+                      <p className="text-xs font-medium">Dedicated microphone</p>
+                      <p className="text-xs text-muted-foreground">External USB mics have better noise isolation than built-in laptop mics</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">✓</div>
+                    <div>
+                      <p className="text-xs font-medium">Speak clearly at –20 to –35 dB</p>
+                      <p className="text-xs text-muted-foreground">Whisper performs best with clean, well-leveled audio in this range</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">✓</div>
+                    <div>
+                      <p className="text-xs font-medium">Quiet environment</p>
+                      <p className="text-xs text-muted-foreground">Background noise degrades accuracy significantly; Whisper's VAD helps but silence is better</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-start gap-2.5">
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">✗</div>
+                    <div>
+                      <p className="text-xs font-medium">Avoid clipping (above –6 dB)</p>
+                      <p className="text-xs text-muted-foreground">Clipped audio causes transcription artifacts and distortion</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">✗</div>
+                    <div>
+                      <p className="text-xs font-medium">Avoid Bluetooth for long sessions</p>
+                      <p className="text-xs text-muted-foreground">Bluetooth mics switch to lower-quality SCO mode during recording, increasing latency</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-2.5">
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/10 text-amber-500 text-xs font-bold shrink-0 mt-0.5">!</div>
+                    <div>
+                      <p className="text-xs font-medium">Auto resampling is transparent</p>
+                      <p className="text-xs text-muted-foreground">All input is resampled to 16kHz mono — no manual configuration needed</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center p-12 gap-4 text-center">
+            {isRefreshing ? (
+              <>
+                <Loader2 className="h-10 w-10 animate-spin text-muted-foreground/30" />
+                <p className="text-sm text-muted-foreground">Scanning for audio devices…</p>
+              </>
+            ) : state.audioDevices.length === 0 ? (
+              <>
+                <Volume2 className="h-12 w-12 text-muted-foreground/20" />
+                <h3 className="text-base font-semibold">No Audio Devices Found</h3>
+                <p className="text-sm text-muted-foreground max-w-sm">
+                  No microphones were detected. Make sure your device has a microphone connected and that macOS has granted audio access.
+                </p>
+                <Button onClick={handleRefresh} variant="outline" size="sm" className="gap-1.5">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Scan Again
+                </Button>
+              </>
+            ) : (
+              <>
+                <Mic className="h-12 w-12 text-muted-foreground/20" />
+                <h3 className="text-base font-semibold">Select a Device</h3>
+                <p className="text-sm text-muted-foreground">
+                  Choose a microphone from the list to see details and run a test
+                </p>
+              </>
+            )}
           </div>
         )}
-      </div>
-
-      <div className="rounded-xl border bg-card p-6 space-y-3">
-        <h3 className="font-semibold text-sm">Requirements</h3>
-        <div className="space-y-2 text-xs text-muted-foreground">
-          <p>
-            Whisper requires <strong>16kHz mono</strong> audio input. Most modern microphones support this natively.
-          </p>
-          <p>
-            For best results, use a dedicated microphone. External USB microphones typically have better noise cancellation.
-          </p>
-          <p>
-            Your device selection is remembered across sessions.
-          </p>
-        </div>
       </div>
     </div>
   );
