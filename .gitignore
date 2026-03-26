@@ -21,6 +21,8 @@ build/
 develop-eggs/
 dist/
 downloads/
+!desktop/src/lib/downloads/
+!desktop/src/components/downloads/
 eggs/
 .eggs/
 lib/
