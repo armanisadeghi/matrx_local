@@ -26,7 +26,7 @@ Matrx Local is a **Tauri v2 desktop app** (Rust shell + React UI) with a **Pytho
 2. **Module isolation** -- The scraper's `app/` is aliased as `scraper_app/` via `sys.modules` in `app/services/scraper/engine.py`. Do not create naming conflicts.
 3. **Graceful degradation** -- The engine works without PostgreSQL (memory cache) or Brave API (search disabled). Never make these hard dependencies. Playwright, psutil, and zeroconf are core dependencies and always available.
 4. **Port 22140** -- Default engine port. Auto-scans 22140-22159. Discovery file at `~/.matrx/local.json`.
-5. **Every Python import must be in `pyproject.toml`** -- If a tool or route imports a package, that package must be listed as a dependency. Never use bare `try/except ImportError` as a substitute for declaring the dependency. When adding a new tool that imports a new package, add it to `pyproject.toml` and run `uv sync` in the same commit. Required packages currently in `pyproject.toml`: fastapi, uvicorn, pydantic, pydantic-settings, python-dotenv, httpx, pyperclip, plyer, pyobjc-framework-Quartz (macOS), pystray, pillow, asyncpg, aiosqlite, curl-cffi, beautifulsoup4, lxml, selectolax, cachetools, tldextract, markdownify, tabulate, PyMuPDF, pytesseract, matrx-utils, matrx-orm, matrx-ai, screeninfo, yt-dlp, imageio-ffmpeg, opencv-python, mss, playwright, psutil, zeroconf, sounddevice, numpy, watchfiles, websockets, pyyaml, concurrent-log-handler, pyinstaller, openwakeword, onnxruntime. **Optional extras:** `[transcription]` = openai-whisper; `[image-gen]` = torch, torchvision, diffusers, transformers, accelerate, sentencepiece, protobuf (install with `uv sync --extra image-gen`; NOT included in `all` due to multi-GB size).
+5. **Every Python import must be in `pyproject.toml`** -- If a tool or route imports a package, that package must be listed as a dependency. Never use bare `try/except ImportError` as a substitute for declaring the dependency. When adding a new tool that imports a new package, add it to `pyproject.toml` and run `uv sync` in the same commit. Required packages currently in `pyproject.toml`: fastapi, uvicorn, pydantic, pydantic-settings, python-dotenv, httpx, pyperclip, plyer, pyobjc-framework-Quartz (macOS), pystray, pillow, asyncpg, aiosqlite, curl-cffi, beautifulsoup4, lxml, selectolax, cachetools, tldextract, markdownify, tabulate, PyMuPDF, pytesseract, matrx-utils, matrx-orm, matrx-ai, screeninfo, yt-dlp, imageio-ffmpeg, opencv-python, mss, playwright, psutil, zeroconf, sounddevice, numpy, watchfiles, websockets, pyyaml, concurrent-log-handler, pyinstaller, openwakeword, onnxruntime. **Optional extras:** `[transcription]` = openai-whisper; `[tts]` = kokoro-onnx, soundfile (install with `uv sync --extra tts`); `[image-gen]` = torch, torchvision, diffusers, transformers, accelerate, sentencepiece, protobuf (install with `uv sync --extra image-gen`; NOT included in `all` due to multi-GB size).
 
 ---
 
@@ -63,6 +63,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - Local Models tab + llama-server sidecar (binaries via `scripts/download-llama-server.sh`; bundle in release pipeline)
 - **Local LLM model catalog** — 22-tier system spanning Tiny→Server-grade; providers: Qwen, Llama, GPT-OSS, Gemma, DeepSeek, Mistral, Phi; multi-variant quant picker per model; server-grade collapsible section; uncensored model support; multi-category star ratings (Text/Code/Vision/Tools); knowledge cutoff column
 - **Image generation engine** — Optional `[image-gen]` extra (`uv sync --extra image-gen`). Routes at `/image-gen/*`. Models: FLUX.1 Schnell, FLUX.1 Dev, HunyuanDiT v1.2, SDXL Turbo. 6 workflow presets (Portrait, Product, Concept Art, UI Mockup, Logo, Landscape). Full generate UI with prompt/steps/guidance sliders, image output, download. Graceful 503 when deps absent.
+- **Text-to-Speech (Kokoro TTS)** — Optional `[tts]` extra (`uv sync --extra tts`). Routes at `/tts/*`. Kokoro-82M via ONNX Runtime (no PyTorch), 54 voices across 9 languages, 3-5x real-time on CPU, ~300 MB model auto-download. Full UI with voice selector, speed control, audio playback, voice preview, favorites. Graceful 503 when deps absent.
 - Settings: hardware inventory tab, forbidden URL list (scraping), API Keys (incl. Hugging Face for GGUF + image-gen downloads)
 - Platform context: `use-engine.ts` calls `initPlatformCtx()` after `getPlatformContext()`
 - AiMatrx iframe tab with session handoff
@@ -77,6 +78,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - **Voice/Whisper:** `whisper-transcription-integration.md` — full Rust architecture, model catalog, download URLs, gotchas
 - **Local LLM:** `local-llm-inference-integration.md` — sidecar architecture, Qwen3 tool calling, binary bundling, all gotchas
 - **Image Generation:** `app/services/image_gen/models.py` (model catalog + workflow presets), `app/api/image_gen_routes.py` (API), `pyproject.toml` `[image-gen]` extra
+- **Text-to-Speech:** `app/services/tts/models.py` (voice catalog, 54 voices × 9 langs), `app/services/tts/service.py` (Kokoro ONNX singleton), `app/api/tts_routes.py` (API), `pyproject.toml` `[tts]` extra
 - **Local storage:** `docs/local-storage-architecture.md`
 - **Proxy:** `docs/proxy-integration-guide.md`, `docs/proxy-testing-guide.md`
 
@@ -169,6 +171,14 @@ npm run tauri:dev
 | Image gen API routes | `app/api/image_gen_routes.py` |
 | Image gen TS client | `desktop/src/lib/image-gen/api.ts` |
 | Image gen TS types | `desktop/src/lib/image-gen/types.ts` |
+| TTS service | `app/services/tts/service.py` |
+| TTS voice catalog | `app/services/tts/models.py` |
+| TTS API routes | `app/api/tts_routes.py` |
+| TTS TS types | `desktop/src/lib/tts/types.ts` |
+| TTS TS API client | `desktop/src/lib/tts/api.ts` |
+| TTS hook | `desktop/src/hooks/use-tts.ts` |
+| TTS page | `desktop/src/pages/TextToSpeech.tsx` |
+| TTS models/voices | `~/.matrx/tts/` |
 | Architecture docs | `ARCHITECTURE.md` |
 | Task tracker | `AGENT_TASKS.md` |
 | Backlog | `BACKLOG.md` |

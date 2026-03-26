@@ -81,18 +81,39 @@ pub async fn detect_hardware() -> Result<serde_json::Value, String> {
 // ── Model Download ─────────────────────────────────────────────────────────
 
 /// Download a Whisper model with live progress events.
-/// Emits "whisper-download-progress" events to the frontend.
+/// Emits "whisper-download-progress" (legacy) and "dm-progress" (universal) events.
 #[tauri::command]
 pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<String, String> {
+    use crate::downloads::commands::DownloadManagerState;
+
     let models_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("models");
 
+    // Register with the universal download manager (for progress modal + persistence)
+    let dl_id = format!("whisper-{}", filename);
+    let whisper_url = format!(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
+        filename
+    );
+    if let Some(dm) = app.try_state::<DownloadManagerState>() {
+        dm.register_external(
+            &app,
+            dl_id.clone(),
+            "whisper".to_string(),
+            filename.clone(),
+            format!("Whisper: {}", filename),
+            vec![whisper_url],
+        ).await;
+    }
+
     let app_clone = app.clone();
+    let dl_id_clone = dl_id.clone();
     let fname = filename.clone();
     let dest = downloader::download_model(&fname, &models_dir, move |progress| {
+        // Legacy event (existing listeners)
         let _ = app_clone.emit(
             "whisper-download-progress",
             serde_json::json!({
@@ -102,24 +123,77 @@ pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<
                 "percent": progress.percent,
             }),
         );
+        // Universal dm-progress event
+        let _ = app_clone.emit(
+            "dm-progress",
+            serde_json::json!({
+                "id": dl_id_clone,
+                "category": "whisper",
+                "filename": progress.filename,
+                "display_name": format!("Whisper: {}", progress.filename),
+                "status": "active",
+                "bytes_done": progress.bytes_downloaded,
+                "total_bytes": progress.total_bytes,
+                "percent": progress.percent,
+                "part_current": 1,
+                "part_total": 1,
+                "speed_bps": 0.0,
+                "eta_seconds": null,
+                "error_msg": null,
+            }),
+        );
     })
-    .await?;
+    .await;
 
-    Ok(dest.to_string_lossy().to_string())
+    match dest {
+        Ok(path) => {
+            if let Some(dm) = app.try_state::<DownloadManagerState>() {
+                dm.mark_external_completed(&app, &dl_id, 0).await;
+            }
+            Ok(path.to_string_lossy().to_string())
+        }
+        Err(e) => {
+            if let Some(dm) = app.try_state::<DownloadManagerState>() {
+                dm.mark_external_failed(&app, &dl_id, &e).await;
+            }
+            Err(e)
+        }
+    }
 }
 
 /// Download the VAD model required for streaming transcription.
 #[tauri::command]
 pub async fn download_vad_model(app: AppHandle) -> Result<String, String> {
+    use crate::downloads::commands::DownloadManagerState;
+
     let models_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("models");
 
+    let vad_filename = downloader::VAD_MODEL_FILENAME;
+    let dl_id = format!("whisper-{}", vad_filename);
+
+    if let Some(dm) = app.try_state::<DownloadManagerState>() {
+        let vad_url = format!(
+            "https://huggingface.co/ggml-org/whisper-vad/resolve/main/{}",
+            vad_filename
+        );
+        dm.register_external(
+            &app,
+            dl_id.clone(),
+            "whisper".to_string(),
+            vad_filename.to_string(),
+            format!("VAD: {}", vad_filename),
+            vec![vad_url],
+        ).await;
+    }
+
     let app_clone = app.clone();
+    let dl_id_clone = dl_id.clone();
     let dest = downloader::download_model(
-        downloader::VAD_MODEL_FILENAME,
+        vad_filename,
         &models_dir,
         move |progress| {
             let _ = app_clone.emit(
@@ -131,11 +205,42 @@ pub async fn download_vad_model(app: AppHandle) -> Result<String, String> {
                     "percent": progress.percent,
                 }),
             );
+            let _ = app_clone.emit(
+                "dm-progress",
+                serde_json::json!({
+                    "id": dl_id_clone,
+                    "category": "whisper",
+                    "filename": progress.filename,
+                    "display_name": format!("VAD: {}", progress.filename),
+                    "status": "active",
+                    "bytes_done": progress.bytes_downloaded,
+                    "total_bytes": progress.total_bytes,
+                    "percent": progress.percent,
+                    "part_current": 1,
+                    "part_total": 1,
+                    "speed_bps": 0.0,
+                    "eta_seconds": null,
+                    "error_msg": null,
+                }),
+            );
         },
     )
-    .await?;
+    .await;
 
-    Ok(dest.to_string_lossy().to_string())
+    match dest {
+        Ok(path) => {
+            if let Some(dm) = app.try_state::<DownloadManagerState>() {
+                dm.mark_external_completed(&app, &dl_id, 0).await;
+            }
+            Ok(path.to_string_lossy().to_string())
+        }
+        Err(e) => {
+            if let Some(dm) = app.try_state::<DownloadManagerState>() {
+                dm.mark_external_failed(&app, &dl_id, &e).await;
+            }
+            Err(e)
+        }
+    }
 }
 
 // ── Model Management ───────────────────────────────────────────────────────

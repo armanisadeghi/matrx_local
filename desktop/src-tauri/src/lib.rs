@@ -24,6 +24,9 @@ use transcription::wake_word::WakeWordState; // needed for WakeWordState::new() 
 mod llm;
 use llm::commands::*;
 
+mod downloads;
+use downloads::commands::*;
+
 mod floating_overlay;
 use floating_overlay::*;
 
@@ -995,6 +998,7 @@ pub fn run() {
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
                 as llm::commands::LlmDownloadCancelState,
         )
+        // Universal download manager — initialized in .setup() below after AppHandle is available
         .invoke_handler(tauri::generate_handler![
             start_sidecar,
             stop_sidecar,
@@ -1051,8 +1055,22 @@ pub fn run() {
             // Floating overlay commands
             show_transcript_overlay,
             hide_transcript_overlay,
+            // Universal download manager commands
+            dm_enqueue,
+            dm_cancel,
+            dm_list,
+            dm_get,
         ])
         .setup(|app| {
+            // ── Universal download manager ─────────────────────────────────
+            // Must be initialized here (after AppHandle is available) so the
+            // worker tokio task has a live AppHandle for event emission.
+            {
+                let db_path = downloads::manager::default_db_path(app.handle());
+                let dm = downloads::manager::DownloadManager::new(app.handle().clone(), db_path);
+                app.manage(dm as downloads::commands::DownloadManagerState);
+            }
+
             // ── Auto-initialize transcription model on startup ──────────────
             // If a model was previously set up, load it into memory immediately
             // so the Transcribe tab works without requiring the user to

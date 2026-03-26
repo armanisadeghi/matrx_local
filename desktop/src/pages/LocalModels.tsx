@@ -15,6 +15,7 @@ import type {
   ServerLogLine,
 } from "@/hooks/use-llm";
 import { useLlmApp } from "@/contexts/LlmContext";
+import { useDownloadManager } from "@/contexts/DownloadManagerContext";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -1337,6 +1338,9 @@ interface ModelRowProps {
   onLoad: (model: LlmModelInfo) => void;
   onDelete: (filename: string) => void;
   cancelDownload: () => void;
+  /** Per-model download error message, if the last download attempt for this model failed. */
+  downloadError?: string | null;
+  onClearDownloadError?: (filename: string) => void;
 }
 
 // ── Column layout (shared between header + rows) ──────────────────────────
@@ -1361,6 +1365,8 @@ function ModelRow({
   onLoad,
   onDelete,
   cancelDownload,
+  downloadError,
+  onClearDownloadError,
   rowIndex,
 }: ModelRowProps & { rowIndex: number }) {
   const isThisRunning = isRunning && runningModelPath.includes(model.filename);
@@ -1492,8 +1498,43 @@ function ModelRow({
             <ExternalLink className="h-3.5 w-3.5" />
           </Button>
 
-          {/* Download button — visible when not downloaded; hidden placeholder otherwise */}
-          {!effectiveDownloaded && !effectiveDownloadingThis && !effectiveQueued ? (
+          {/* Download button — 5-state machine: idle | error | downloading | queued | done */}
+          {effectiveDownloadingThis ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-amber-500 hover:text-amber-400"
+              onClick={cancelDownload}
+              title="Downloading — click to cancel"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          ) : effectiveQueued ? (
+            <span className="h-7 w-7 flex items-center justify-center" title="Queued for download — waiting for current download to finish">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+            </span>
+          ) : downloadError && !effectiveDownloaded ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-destructive hover:text-destructive/80"
+              onClick={() => {
+                onClearDownloadError?.(effectiveFilename);
+                if (hasVariants) {
+                  const v = model.variants[selectedVariantIdx];
+                  onDownload(
+                    { ...model, filename: v.filename, hf_url: v.hf_url, hf_parts: v.hf_parts, all_part_urls: v.all_part_urls },
+                    false,
+                  );
+                } else {
+                  onDownload(model, false);
+                }
+              }}
+              title={`Download failed: ${downloadError} — click to retry`}
+            >
+              <AlertCircle className="h-3.5 w-3.5" />
+            </Button>
+          ) : !effectiveDownloaded ? (
             <Button
               size="sm"
               variant="ghost"
@@ -1502,13 +1543,7 @@ function ModelRow({
                 if (hasVariants) {
                   const v = model.variants[selectedVariantIdx];
                   onDownload(
-                    {
-                      ...model,
-                      filename: v.filename,
-                      hf_url: v.hf_url,
-                      hf_parts: v.hf_parts,
-                      all_part_urls: v.all_part_urls,
-                    },
+                    { ...model, filename: v.filename, hf_url: v.hf_url, hf_parts: v.hf_parts, all_part_urls: v.all_part_urls },
                     false,
                   );
                 } else {
@@ -1519,20 +1554,6 @@ function ModelRow({
             >
               <Download className="h-3.5 w-3.5" />
             </Button>
-          ) : effectiveDownloadingThis ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 w-7 p-0 text-destructive"
-              onClick={cancelDownload}
-              title="Cancel download"
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          ) : effectiveQueued ? (
-            <span className="h-7 w-7 flex items-center justify-center" title="Queued for download">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-            </span>
           ) : (
             <div className="h-7 w-7" />
           )}
@@ -1662,12 +1683,13 @@ function ModelRow({
 // ── Server-grade collapsible section ─────────────────────────────────────
 
 function ServerGradeSection(
-  props: Omit<ModelRowProps & { rowIndex: number }, "model" | "rowIndex"> & {
+  props: Omit<ModelRowProps & { rowIndex: number }, "model" | "rowIndex" | "downloadError"> & {
     models: LlmModelInfo[];
     startIndex: number;
+    modelDownloadErrors?: Record<string, string>;
   },
 ) {
-  const { models, startIndex, ...rowProps } = props;
+  const { models, startIndex, modelDownloadErrors, ...rowProps } = props;
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -1695,6 +1717,7 @@ function ServerGradeSection(
               key={model.filename}
               model={model}
               rowIndex={startIndex + idx}
+              downloadError={modelDownloadErrors?.[model.filename] ?? null}
               {...rowProps}
             />
           ))}
@@ -1722,6 +1745,7 @@ function ModelsTab() {
     downloadedModels,
     serverStatus,
     error,
+    downloadCancelled,
   } = state;
   const {
     detectHardware,
@@ -1731,9 +1755,12 @@ function ModelsTab() {
     queueDownload,
     downloadAll,
     listModels,
+    clearError,
   } = actions;
+  const { activeCount: dmActiveCount, openModal: openDownloadModal } = useDownloadManager();
 
   const [localError, setLocalError] = useState<string | null>(null);
+  const [modelDownloadErrors, setModelDownloadErrors] = useState<Record<string, string>>({});
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [expandedCustomRow, setExpandedCustomRow] = useState<string | null>(null);
   const [editingCustomRow, setEditingCustomRow] = useState<string | null>(null);
@@ -1745,6 +1772,22 @@ function ModelsTab() {
       return {};
     }
   });
+
+  // Track last known downloading filename so we can attribute errors to the right model.
+  const lastDownloadingFilenameRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (downloadingFilename) {
+      lastDownloadingFilenameRef.current = downloadingFilename;
+    }
+  }, [downloadingFilename]);
+
+  // When a download error appears, record it against the model that was downloading.
+  useEffect(() => {
+    if (error && lastDownloadingFilenameRef.current) {
+      const failedFilename = lastDownloadingFilenameRef.current;
+      setModelDownloadErrors((prev) => ({ ...prev, [failedFilename]: error }));
+    }
+  }, [error]);
 
   useEffect(() => {
     if (!hardwareResult && !isDetecting) {
@@ -1760,28 +1803,48 @@ function ModelsTab() {
 
   const handleDownload = (model: LlmModelInfo, andRun: boolean) => {
     setLocalError(null);
+    // Clear any prior error for this specific model on a fresh attempt
+    setModelDownloadErrors((prev) => {
+      const next = { ...prev };
+      delete next[model.filename];
+      return next;
+    });
     if (andRun) {
-      // For "download and run" we still need the sequential async flow
       const run = async () => {
         try {
           const hw = await ensureHardware();
           queueDownload(model.filename, model.all_part_urls);
-          // Wait for download to complete then start server
-          const checkAndStart = async () => {
-            const isNowDownloaded = downloadedModels.some(
-              (m) => m.filename === model.filename,
-            );
-            if (isNowDownloaded) {
-              await startServer(
-                model.filename,
-                hw.recommended_gpu_layers,
-                model.context_length,
+          // Poll until the model appears in downloadedModels, then start.
+          // Bail out after 30 min (3600 × 500 ms) to prevent infinite loops.
+          await new Promise<void>((resolve, reject) => {
+            let attempts = 0;
+            const maxAttempts = 3600;
+            const check = () => {
+              const downloaded = downloadedModels.some(
+                (m) => m.filename === model.filename,
               );
-            } else {
-              setTimeout(checkAndStart, 500);
-            }
-          };
-          setTimeout(checkAndStart, 1000);
+              if (downloaded) {
+                resolve();
+                return;
+              }
+              // If an error appeared or download was cancelled, stop waiting.
+              if (error || downloadCancelled) {
+                reject(new Error(error ?? "Download cancelled"));
+                return;
+              }
+              if (++attempts >= maxAttempts) {
+                reject(new Error("Download timed out waiting to complete"));
+                return;
+              }
+              setTimeout(check, 500);
+            };
+            setTimeout(check, 1000);
+          });
+          await startServer(
+            model.filename,
+            hw.recommended_gpu_layers,
+            model.context_length,
+          );
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           if (!msg.toLowerCase().includes("cancel")) setLocalError(msg);
@@ -1826,6 +1889,15 @@ function ModelsTab() {
     }
   };
 
+  const handleClearModelDownloadError = useCallback((filename: string) => {
+    setModelDownloadErrors((prev) => {
+      const next = { ...prev };
+      delete next[filename];
+      return next;
+    });
+    clearError();
+  }, [clearError]);
+
   const handleLoadCustom = async (filename: string) => {
     setLocalError(null);
     try {
@@ -1856,6 +1928,20 @@ function ModelsTab() {
 
   return (
     <div className="space-y-4">
+      {/* Download manager status badge */}
+      {dmActiveCount > 0 && (
+        <button
+          onClick={openDownloadModal}
+          className="flex items-center gap-2 w-full rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary hover:bg-primary/10 transition-colors"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+          <span className="flex-1 text-left font-medium">
+            {dmActiveCount} download{dmActiveCount !== 1 ? "s" : ""} in progress
+          </span>
+          <span className="text-xs text-muted-foreground">View progress →</span>
+        </button>
+      )}
+
       {(error || localError) && (
         <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -1864,7 +1950,7 @@ function ModelsTab() {
           </span>
           <button
             className="text-xs underline shrink-0"
-            onClick={() => setLocalError(null)}
+            onClick={() => { setLocalError(null); clearError(); }}
           >
             Dismiss
           </button>
@@ -1972,6 +2058,8 @@ function ModelsTab() {
                 onLoad={handleLoad}
                 onDelete={handleDelete}
                 cancelDownload={cancelDownload}
+                downloadError={modelDownloadErrors[model.filename] ?? null}
+                onClearDownloadError={handleClearModelDownloadError}
               />
             ));
           })()}
@@ -2002,6 +2090,8 @@ function ModelsTab() {
                 onLoad={handleLoad}
                 onDelete={handleDelete}
                 cancelDownload={cancelDownload}
+                modelDownloadErrors={modelDownloadErrors}
+                onClearDownloadError={handleClearModelDownloadError}
               />
             );
           })()}

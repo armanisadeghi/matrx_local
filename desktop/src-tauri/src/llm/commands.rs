@@ -294,12 +294,37 @@ pub async fn download_llm_model(
     hf_token: Option<String>,
     cancel: State<'_, LlmDownloadCancelState>,
 ) -> Result<String, String> {
+    use crate::downloads::commands::DownloadManagerState;
+
     if urls.is_empty() {
         return Err("No download URLs provided".to_string());
     }
 
     // Reset cancel flag at the start of every new download
     cancel.store(false, Ordering::SeqCst);
+
+    // Register with the universal download manager for tracking/persistence.
+    // The actual HTTP is still done by the code below (preserves XET detection,
+    // GGUF validation, etc.). We just emit dm-progress alongside llm-download-progress.
+    let dm_id = format!("llm-{}", filename);
+    let catalog_display_name = {
+        model_selector::LLM_MODELS
+            .iter()
+            .find(|m| m.filename == filename)
+            .map(|m| m.name.to_string())
+            .unwrap_or_else(|| filename.clone())
+    };
+    let dm_arc = app.try_state::<DownloadManagerState>().map(|s| s.inner().clone());
+    if let Some(ref dm) = dm_arc {
+        dm.register_external(
+            &app,
+            dm_id.clone(),
+            "llm".to_string(),
+            filename.clone(),
+            catalog_display_name,
+            urls.clone(),
+        ).await;
+    }
 
     let dest_dir = app
         .path()
@@ -412,6 +437,9 @@ pub async fn download_llm_model(
             {
                 Ok(_) => {
                     if is_valid_gguf(&dest_path, expected_size) {
+                        if let Some(ref dm) = dm_arc {
+                            dm.mark_external_completed(&app, &dm_id, expected_size.unwrap_or(0)).await;
+                        }
                         return Ok(dest_path.to_string_lossy().to_string());
                     }
                     last_error =
@@ -429,10 +457,11 @@ pub async fn download_llm_model(
                 }
             }
         }
-        return Err(format!(
-            "Download failed after 3 attempts. Last error: {}",
-            last_error
-        ));
+        let err_msg = format!("Download failed after 3 attempts. Last error: {}", last_error);
+        if let Some(ref dm) = dm_arc {
+            dm.mark_external_failed(&app, &dm_id, &err_msg).await;
+        }
+        return Err(err_msg);
     }
 
     // ── Split model: download each part with its original filename ─────────
@@ -561,16 +590,20 @@ pub async fn download_llm_model(
         }
 
         if !success {
-            return Err(format!(
-                "Failed to download part {}/{}: {}",
-                part_num, total_parts, last_error
-            ));
+            let err_msg = format!("Failed to download part {}/{}: {}", part_num, total_parts, last_error);
+            if let Some(ref dm) = dm_arc {
+                dm.mark_external_failed(&app, &dm_id, &err_msg).await;
+            }
+            return Err(err_msg);
         }
 
         bytes_before_this_part += part_sizes[i];
     }
 
-    // All parts downloaded — return the first part path (what llama-server receives)
+    // All parts downloaded — update DM state and return the first part path
+    if let Some(ref dm) = dm_arc {
+        dm.mark_external_completed(&app, &dm_id, grand_total).await;
+    }
     Ok(first_part_path.to_string_lossy().to_string())
 }
 

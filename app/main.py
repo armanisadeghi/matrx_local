@@ -29,8 +29,10 @@ from app.api.wake_word_routes import router as wake_word_router
 from app.api.model_repo_routes import router as model_repo_router
 from app.api.hardware_routes import router as hardware_router, run_initial_detection as run_hardware_detection
 from app.api.image_gen_routes import router as image_gen_router
+from app.api.tts_routes import router as tts_router
 from app.api.hf_token_routes import router as hf_token_router
 from app.api.scrape_routes import router as scrape_router
+from app.services.downloads.routes import router as downloads_router
 from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, MATRX_HOME_DIR, TUNNEL_ENABLED
 from app.common.system_logger import get_logger
 import app.common.access_log as access_log
@@ -242,6 +244,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             exc_info=True,
         )
         print("[phase:database] Local database FAILED (fallbacks active)", flush=True)
+
+    # Phase 0a (post0): Start the universal download manager.
+    # Must run after the database is connected (Phase 0a) because it reads
+    # any incomplete downloads from SQLite on startup for crash recovery.
+    try:
+        from app.services.downloads.manager import get_download_manager
+        dl_manager = get_download_manager()
+        await dl_manager.start()
+        logger.info("[app/main.py] Phase 0a: Download manager started ✓")
+    except Exception:
+        logger.warning("[app/main.py] Phase 0a: Download manager failed to start (non-fatal)", exc_info=True)
 
     # Phase 0a (post): Warm the in-memory JWT cache from SQLite so matrx-ai has
     # the user's token available immediately on first authenticated API call.
@@ -591,6 +604,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.debug("[app/main.py] Browser automation cleanup skipped (no active contexts)")
 
+    # ── Phase S6b: Stop download manager (before SQLite close) ──────────
+    try:
+        from app.services.downloads.manager import get_download_manager
+        await get_download_manager().stop()
+        logger.info("[app/main.py] Download manager stopped ✓")
+    except Exception:
+        logger.debug("[app/main.py] Download manager cleanup skipped")
+
     # ── Phase S7: Close local SQLite database (must be last) ─────────────
     try:
         await get_db().close()
@@ -628,8 +649,10 @@ app.include_router(wake_word_router)
 app.include_router(model_repo_router)
 app.include_router(hardware_router)
 app.include_router(image_gen_router)
+app.include_router(tts_router)
 app.include_router(hf_token_router)
 app.include_router(scrape_router)
+app.include_router(downloads_router)
 
 # NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler
 # (Phase 1b) AFTER initialize_matrx_ai() registers the DB config. Calling it here
@@ -697,8 +720,13 @@ async def _log_requests_dispatch(request: Request, call_next):
         "/capabilities",
         # Hardware polling
         "/hardware/status",
+        # TTS status polling
+        "/tts/status",
         # Scrape sync polling
         "/scrapes/sync-status",
+        # Download manager SSE stream + status polling
+        "/downloads/stream",
+        "/downloads",
     })
 
     # OPTIONS preflights are always silent — they carry no data.

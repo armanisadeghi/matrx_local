@@ -18,6 +18,7 @@ import { AiMatrx } from "@/pages/AiMatrx";
 import { BrowserLab } from "@/pages/BrowserLab";
 import { Voice } from "@/pages/Voice";
 import { LocalModels } from "@/pages/LocalModels";
+import { TextToSpeech } from "@/pages/TextToSpeech";
 import { TranscriptOverlay } from "@/components/TranscriptOverlay";
 import { SystemPrompts } from "@/pages/SystemPrompts";
 import { Configurations } from "@/pages/Configurations";
@@ -44,6 +45,8 @@ import { AudioDevicesProvider } from "@/contexts/AudioDevicesContext";
 import { LlmProvider } from "@/contexts/LlmContext";
 import { WakeWordProvider } from "@/contexts/WakeWordContext";
 import { TranscriptionSessionsProvider } from "@/contexts/TranscriptionSessionsContext";
+import { DownloadManagerProvider } from "@/contexts/DownloadManagerContext";
+import { DownloadManagerModal } from "@/components/downloads/DownloadManagerModal";
 import { engine } from "@/lib/api";
 import { isTauri } from "@/lib/sidecar";
 import { initUnifiedLog, initTauriLogStream, stopEngineStreams, stopTauriStream } from "@/hooks/use-unified-log";
@@ -309,6 +312,7 @@ export default function App() {
       element: <Devices engineStatus={status} engineUrl={url} />,
     },
     { path: "/voice", element: <Voice /> },
+    { path: "/tts", element: <TextToSpeech /> },
     { path: "/local-models", element: <LocalModels /> },
     { path: "/system-prompts", element: <SystemPrompts /> },
     { path: "/aimatrx", element: <AiMatrx /> },
@@ -398,6 +402,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <DevTerminalProvider>
+      <DownloadManagerProvider>
       <LlmProvider>
       <WakeWordProvider>
       <TranscriptionSessionsProvider>
@@ -459,6 +464,7 @@ export default function App() {
         <RestartingOverlay visible={updateState.restarting} />
         <UpdateBanner state={updateState} actions={updateActions} />
         <UpdateDialog state={updateState} actions={updateActions} />
+        <DownloadManagerModal />
         <DevTerminalPanel />
       </TooltipProvider>
       </AudioDevicesProvider>
@@ -466,6 +472,7 @@ export default function App() {
       </TranscriptionSessionsProvider>
       </WakeWordProvider>
       </LlmProvider>
+      </DownloadManagerProvider>
       </DevTerminalProvider>
     </ErrorBoundary>
   );

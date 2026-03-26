@@ -3,6 +3,7 @@ import { AppSidebar } from "./AppSidebar";
 import { StatusBar } from "./StatusBar";
 import { QuickActionBar } from "./QuickActionBar";
 import { useDevTerminalHeight } from "@/components/DevTerminalPanel";
+import { DownloadBadge } from "@/components/downloads/DownloadBadge";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { TranscriptionState, TranscriptionActions } from "@/hooks/use-transcription";
 import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update";
@@ -113,7 +114,7 @@ export function AppLayout({
           onDismissNotification={onDismissNotification}
           onClearAllNotifications={onClearAllNotifications}
         />
-        <main className="flex flex-1 flex-col overflow-hidden">
+        <main className="flex flex-1 flex-col overflow-hidden relative">
           {pages.map(({ path, element }) => (
             <div
               key={path}
@@ -123,6 +124,8 @@ export function AppLayout({
               {element}
             </div>
           ))}
+          {/* Floating download badge — visible on any page when downloads are active */}
+          <DownloadBadge className="absolute bottom-4 right-4 z-30" />
         </main>
         <StatusBar
           engineStatus={engineStatus}

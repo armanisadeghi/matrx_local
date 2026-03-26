@@ -190,16 +190,54 @@ class ImageGenService:
 
     # ── sync internals (run in thread pool) ──────────────────────────────────
 
-    def _load_model_sync(self, model: ImageGenModel) -> dict:
+    def _report_to_dm(self, dl_id: str, model: "ImageGenModel", status: str, percent: float, error_msg: str | None = None) -> None:
+        """Report image-gen model load progress to the universal download manager (best-effort)."""
+        try:
+            import asyncio as _asyncio
+            from app.services.downloads.manager import get_download_manager
+            dm = get_download_manager()
+
+            async def _push() -> None:
+                from app.services.downloads.manager import ProgressEvent
+                evt = ProgressEvent(
+                    id=dl_id,
+                    category="image_gen",
+                    filename=model.model_id,
+                    display_name=model.display_name,
+                    status=status,
+                    bytes_done=0,
+                    total_bytes=0,
+                    percent=percent,
+                    part_current=1,
+                    part_total=1,
+                    error_msg=error_msg,
+                )
+                await dm._broadcast(evt)
+
+            # Try to schedule on the running loop if available
+            try:
+                loop = _asyncio.get_event_loop()
+                if loop.is_running():
+                    _asyncio.run_coroutine_threadsafe(_push(), loop)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _load_model_sync(self, model: "ImageGenModel") -> dict:
         with self._lock:
             if self._loaded_model_id == model.model_id and self._pipeline is not None:
                 return {"success": True, "model_id": model.model_id, "already_loaded": True}
 
             self._is_loading = True
             self._load_progress = 0.0
+            dl_id = f"image_gen-{model.model_id.replace('/', '-')}"
             logger.info("[image_gen] Loading model: %s", model.model_id)
 
             try:
+                # Register with download manager
+                self._report_to_dm(dl_id, model, "active", 0.0)
+
                 # Unload existing pipeline first
                 self._unload_sync_locked()
 
@@ -236,6 +274,7 @@ class ImageGenService:
                     common_kwargs["token"] = hf_token
 
                 self._load_progress = 10.0
+                self._report_to_dm(dl_id, model, "active", 10.0)
 
                 if model.pipeline_type == "flux":
                     pipe = FluxPipeline.from_pretrained(
@@ -255,6 +294,7 @@ class ImageGenService:
                     )
 
                 self._load_progress = 80.0
+                self._report_to_dm(dl_id, model, "active", 80.0)
 
                 pipe.to(device)
 
@@ -267,6 +307,7 @@ class ImageGenService:
                 self._pipeline = pipe
                 self._loaded_model_id = model.model_id
                 self._load_progress = 100.0
+                self._report_to_dm(dl_id, model, "completed", 100.0)
 
                 logger.info(
                     "[image_gen] Model loaded: %s on %s dtype=%s",
@@ -275,6 +316,7 @@ class ImageGenService:
                 return {"success": True, "model_id": model.model_id, "device": device}
 
             except Exception as exc:
+                self._report_to_dm(dl_id, model, "failed", self._load_progress, str(exc))
                 logger.error("[image_gen] Failed to load model %s: %s", model.model_id, exc, exc_info=True)
                 self._pipeline = None
                 self._loaded_model_id = None

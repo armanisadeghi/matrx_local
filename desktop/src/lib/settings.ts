@@ -71,6 +71,12 @@ export interface AppSettings {
   transcriptionAudioDevice: string;     // "" = system default
   transcriptionProcessingTimeout: number; // ms before force-reset
 
+  // ── Text to Speech ──────────────────────────────────────────────────
+  ttsDefaultVoice: string;          // voice_id, default "af_heart"
+  ttsDefaultSpeed: number;          // 0.25-4.0, default 1.0
+  ttsAutoDownloadModel: boolean;    // auto-download on first visit
+  ttsFavoriteVoices: string[];      // pinned voice IDs
+
   // ── UI / Layout ─────────────────────────────────────────────────────
   sidebarCollapsed: boolean;
 }
@@ -142,6 +148,11 @@ const DEFAULTS: AppSettings = {
   transcriptionAutoInit: true,
   transcriptionAudioDevice: "",
   transcriptionProcessingTimeout: 15000,
+  // Text to Speech
+  ttsDefaultVoice: "af_heart",
+  ttsDefaultSpeed: 1.0,
+  ttsAutoDownloadModel: false,
+  ttsFavoriteVoices: [],
   // UI
   sidebarCollapsed: false,
 };
@@ -433,6 +444,11 @@ export function mergeCloudSettings(
     transcriptionAutoInit: cloudBool(cloud, "transcription_auto_init", local.transcriptionAutoInit),
     transcriptionAudioDevice: cloudStr(cloud, "transcription_audio_device", local.transcriptionAudioDevice),
     transcriptionProcessingTimeout: cloudNum(cloud, "transcription_processing_timeout", local.transcriptionProcessingTimeout),
+    // Text to Speech
+    ttsDefaultVoice: cloudStr(cloud, "tts_default_voice", local.ttsDefaultVoice),
+    ttsDefaultSpeed: cloudNum(cloud, "tts_default_speed", local.ttsDefaultSpeed),
+    ttsAutoDownloadModel: cloudBool(cloud, "tts_auto_download_model", local.ttsAutoDownloadModel),
+    ttsFavoriteVoices: Array.isArray(cloud.tts_favorite_voices) ? cloud.tts_favorite_voices as string[] : local.ttsFavoriteVoices,
     // UI
     sidebarCollapsed: cloudBool(cloud, "sidebar_collapsed", local.sidebarCollapsed),
   };
@@ -499,6 +515,11 @@ export function settingsToCloud(settings: AppSettings): Record<string, unknown> 
     transcription_auto_init: settings.transcriptionAutoInit,
     transcription_audio_device: settings.transcriptionAudioDevice,
     transcription_processing_timeout: settings.transcriptionProcessingTimeout,
+    // Text to Speech
+    tts_default_voice: settings.ttsDefaultVoice,
+    tts_default_speed: settings.ttsDefaultSpeed,
+    tts_auto_download_model: settings.ttsAutoDownloadModel,
+    tts_favorite_voices: settings.ttsFavoriteVoices,
     // UI
     sidebar_collapsed: settings.sidebarCollapsed,
   };

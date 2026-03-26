@@ -456,13 +456,19 @@ export function useLlm(): [LlmState, LlmActions] {
   );
 
   const cancelDownload = useCallback(async () => {
-    // Clear the queue too so cancelled state is clean
+    // Clear the queue and force state to idle immediately so UI unblocks
+    // even if the Tauri llm-download-cancelled event never arrives.
     downloadQueueRef.current = [];
     setDownloadQueue([]);
+    setIsDownloading(false);
+    isDownloadingRef.current = false;
+    setDownloadingFilename(null);
+    setDownloadProgress(null);
+    setDownloadCancelled(true);
     try {
       await tauriInvoke("cancel_llm_download");
     } catch {
-      // Ignore errors — the flag is set regardless
+      // Ignore errors — state already cleared above
     }
   }, []);
 

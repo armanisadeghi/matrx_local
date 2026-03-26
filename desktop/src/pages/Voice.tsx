@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useDownloadManager } from "@/contexts/DownloadManagerContext";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscription } from "@/hooks/use-transcription";
@@ -82,6 +83,10 @@ const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const [state, actions] = useTranscription();
+  const { activeCount: dmActiveCount, openModal: openDownloadModal, downloads: dmDownloads } = useDownloadManager();
+  const whisperDownloads = dmDownloads.filter(
+    (d) => (d.category === "whisper") && (d.status === "active" || d.status === "queued"),
+  );
   const { state: sessionsState, actions: sessionsActions } = useSessionsContext();
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -383,7 +388,19 @@ export function Voice() {
       <SubTabBar tabs={TABS} value={tab} onValueChange={setTab} />
       <div className="flex-1 overflow-hidden">
         {tab === "setup" && (
-          <div className="h-full overflow-y-auto p-6">
+          <div className="h-full overflow-y-auto p-6 space-y-4">
+            {whisperDownloads.length > 0 && (
+              <button
+                onClick={openDownloadModal}
+                className="flex items-center gap-2 w-full rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary hover:bg-primary/10 transition-colors"
+              >
+                <span className="h-2 w-2 rounded-full bg-primary animate-pulse shrink-0" />
+                <span className="flex-1 text-left font-medium">
+                  {whisperDownloads.length} model download{whisperDownloads.length !== 1 ? "s" : ""} in progress
+                </span>
+                <span className="text-xs text-muted-foreground">View progress →</span>
+              </button>
+            )}
             <SetupTab state={state} actions={wrappedActions} />
           </div>
         )}

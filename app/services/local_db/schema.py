@@ -408,6 +408,45 @@ CREATE INDEX IF NOT EXISTS idx_scrape_pages_user ON scrape_pages(user_id, is_del
 """
 
 # ------------------------------------------------------------------
+# Migration 9: Universal download manager — persistent download queue
+#
+# Tracks all large file downloads (LLM models, Whisper models, image
+# gen models, future file-sync items) across restarts.
+#
+# status lifecycle:
+#   queued → active → completed
+#                  → failed    (error_msg set)
+#                  → cancelled (user-initiated)
+#
+# category values: 'llm' | 'whisper' | 'image_gen' | 'tts' | 'file_sync'
+# ------------------------------------------------------------------
+
+_V9_DOWNLOADS = """
+CREATE TABLE IF NOT EXISTS downloads (
+    id           TEXT PRIMARY KEY,
+    category     TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    urls         TEXT NOT NULL DEFAULT '[]',
+    total_bytes  INTEGER NOT NULL DEFAULT 0,
+    bytes_done   INTEGER NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL DEFAULT 'queued',
+    error_msg    TEXT,
+    priority     INTEGER NOT NULL DEFAULT 0,
+    part_current INTEGER NOT NULL DEFAULT 1,
+    part_total   INTEGER NOT NULL DEFAULT 1,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT,
+    metadata     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_downloads_status   ON downloads(status);
+CREATE INDEX IF NOT EXISTS idx_downloads_category ON downloads(category);
+CREATE INDEX IF NOT EXISTS idx_downloads_created  ON downloads(created_at DESC)
+"""
+
+# ------------------------------------------------------------------
 # All migrations in order
 # ------------------------------------------------------------------
 
@@ -420,4 +459,5 @@ MIGRATIONS: list[tuple[int, str]] = [
     (6, _V6_NOTES_SYNC_METADATA),
     (7, _V7_LOCAL_NOTE_VERSIONS),
     (8, _V8_SCRAPE_PAGES),
+    (9, _V9_DOWNLOADS),
 ]

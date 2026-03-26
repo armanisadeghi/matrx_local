@@ -49,6 +49,8 @@ _PATH_CATALOG: dict[str, tuple[Path, str, bool]] = {
     # hidden but user-configurable
     "workspaces":  (MATRX_WORKSPACES_DIR, "Agent workspaces",   True),
     "agent_data":  (MATRX_DATA_DIR,       "Agent data",         True),
+    # TTS model and voice files
+    "tts":         (MATRX_HOME_DIR / "tts", "TTS models & voices", False),
     # engine internals — configurable but less prominent
     "matrx_home":  (MATRX_HOME_DIR,       "Matrx home (.matrx)", False),
     "temp":        (TEMP_DIR,             "Temp / cache",        False),
