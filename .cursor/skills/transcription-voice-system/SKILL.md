@@ -185,6 +185,8 @@ Uses **local LLM** (llama-server sidecar), not cloud:
 | Call `useTranscription()` in a page | Duplicate instance, state divergence | Always `useTranscriptionApp()` |
 | Plain object `actions` return | Infinite render loops, API polling floods | `useMemo` wrap — parity tests catch this |
 | `[actions]` in useEffect dep | Re-fires every render | Use specific callback: `[refreshStatus]` |
+| Use `ReturnType<typeof useTranscription>` for prop types | TS2552 / TS2448 — name no longer in scope after context migration | Import `TranscriptionState`, `TranscriptionActions` from `@/hooks/use-transcription` |
+| `useCallback` declared after `useEffect` that references it | TS2448 "used before declaration" — blocks release | Always declare `useCallback` functions **above** any `useEffect` that references them |
 | Drop WhisperContext before joining thread | SIGABRT / macOS crash report | `graceful_shutdown_sync()` joins first |
 | Read localStorage on every render | UI jank with 500 sessions | Derive from React state; debounced writes |
 | Forget `flushNow()` before finalize | Up to 1s of segments lost | `finalizeSession()` calls it internally |
