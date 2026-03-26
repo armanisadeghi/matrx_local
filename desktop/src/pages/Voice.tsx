@@ -83,7 +83,7 @@ const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const [state, actions] = useTranscription();
-  const { activeCount: dmActiveCount, openModal: openDownloadModal, downloads: dmDownloads } = useDownloadManager();
+  const { openModal: openDownloadModal, downloads: dmDownloads } = useDownloadManager();
   const whisperDownloads = dmDownloads.filter(
     (d) => (d.category === "whisper") && (d.status === "active" || d.status === "queued"),
   );
