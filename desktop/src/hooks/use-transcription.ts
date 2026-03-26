@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useContext } from "react";
+import { useState, useEffect, useCallback, useRef, useContext, useMemo } from "react";
 import { isTauri } from "@/lib/sidecar";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
@@ -570,26 +570,48 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     error,
   };
 
-  const actions: TranscriptionActions = {
-    detectHardware,
-    downloadModel,
-    queueDownload,
-    downloadAll,
-    downloadVadModel,
-    initTranscription,
-    startRecording,
-    stopRecording,
-    checkModelExists,
-    listDownloadedModels,
-    deleteModel,
-    refreshSetupStatus,
-    listAudioDevices,
-    setSelectedDevice,
-    clearSegments,
-    clearError,
-    quickSetup,
-    forceReset,
-  };
+  const actions: TranscriptionActions = useMemo(
+    () => ({
+      detectHardware,
+      downloadModel,
+      queueDownload,
+      downloadAll,
+      downloadVadModel,
+      initTranscription,
+      startRecording,
+      stopRecording,
+      checkModelExists,
+      listDownloadedModels,
+      deleteModel,
+      refreshSetupStatus,
+      listAudioDevices,
+      setSelectedDevice,
+      clearSegments,
+      clearError,
+      quickSetup,
+      forceReset,
+    }),
+    [
+      detectHardware,
+      downloadModel,
+      queueDownload,
+      downloadAll,
+      downloadVadModel,
+      initTranscription,
+      startRecording,
+      stopRecording,
+      checkModelExists,
+      listDownloadedModels,
+      deleteModel,
+      refreshSetupStatus,
+      listAudioDevices,
+      setSelectedDevice,
+      clearSegments,
+      clearError,
+      quickSetup,
+      forceReset,
+    ],
+  );
 
   return [state, actions];
 }

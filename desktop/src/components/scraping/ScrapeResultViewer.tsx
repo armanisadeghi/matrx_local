@@ -71,7 +71,7 @@ export function ScrapeResultViewer({
           <XCircle className="h-4 w-4 shrink-0 text-red-400" />
         )}
 
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={displayUrl}>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-foreground/80" title={displayUrl}>
           {displayUrl}
         </span>
 
@@ -118,7 +118,7 @@ export function ScrapeResultViewer({
           <div className="p-4">
             <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
               <p className="mb-2 text-sm font-semibold text-red-400">Scrape failed</p>
-              <pre className="whitespace-pre-wrap font-mono text-xs text-red-300/80 leading-relaxed">
+              <pre className="whitespace-pre-wrap font-mono text-xs text-red-400 dark:text-red-300 leading-relaxed">
                 {result.error}
               </pre>
             </div>
@@ -129,14 +129,14 @@ export function ScrapeResultViewer({
                 <p className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Partial content
                 </p>
-                <pre className="whitespace-pre-wrap font-mono text-xs text-muted-foreground leading-relaxed">
+                <pre className="whitespace-pre-wrap font-mono text-xs text-foreground leading-relaxed">
                   {result.content}
                 </pre>
               </div>
             )}
           </div>
         ) : (
-          <pre className="p-4 font-mono text-xs text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
+          <pre className="p-4 font-mono text-xs text-foreground whitespace-pre-wrap break-words leading-relaxed">
             {result.content || "(no content returned)"}
           </pre>
         )}

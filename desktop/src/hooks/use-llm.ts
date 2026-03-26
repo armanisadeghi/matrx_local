@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { isTauri } from "@/lib/sidecar";
 import { engine } from "@/lib/api";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -670,27 +670,50 @@ export function useLlm(): [LlmState, LlmActions] {
     error,
   };
 
-  const actions: LlmActions = {
-    detectHardware,
-    downloadModel,
-    queueDownload,
-    downloadAll,
-    cancelDownload,
-    importLocalModel,
-    refreshHfTokenConfigured,
-    saveHfTokenAndRetry,
-    dismissXetModal,
-    startServer,
-    stopServer,
-    getServerStatus,
-    healthCheck,
-    checkModelExists,
-    listModels,
-    deleteModel,
-    refreshSetupStatus,
-    quickSetup,
-    clearError,
-  };
+  const actions: LlmActions = useMemo(
+    () => ({
+      detectHardware,
+      downloadModel,
+      queueDownload,
+      downloadAll,
+      cancelDownload,
+      importLocalModel,
+      refreshHfTokenConfigured,
+      saveHfTokenAndRetry,
+      dismissXetModal,
+      startServer,
+      stopServer,
+      getServerStatus,
+      healthCheck,
+      checkModelExists,
+      listModels,
+      deleteModel,
+      refreshSetupStatus,
+      quickSetup,
+      clearError,
+    }),
+    [
+      detectHardware,
+      downloadModel,
+      queueDownload,
+      downloadAll,
+      cancelDownload,
+      importLocalModel,
+      refreshHfTokenConfigured,
+      saveHfTokenAndRetry,
+      dismissXetModal,
+      startServer,
+      stopServer,
+      getServerStatus,
+      healthCheck,
+      checkModelExists,
+      listModels,
+      deleteModel,
+      refreshSetupStatus,
+      quickSetup,
+      clearError,
+    ],
+  );
 
   return [state, actions];
 }

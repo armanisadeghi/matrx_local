@@ -46,6 +46,7 @@ import { LlmProvider } from "@/contexts/LlmContext";
 import { WakeWordProvider } from "@/contexts/WakeWordContext";
 import { TranscriptionSessionsProvider } from "@/contexts/TranscriptionSessionsContext";
 import { DownloadManagerProvider } from "@/contexts/DownloadManagerContext";
+import { TtsProvider } from "@/contexts/TtsContext";
 import { DownloadManagerModal } from "@/components/downloads/DownloadManagerModal";
 import { engine } from "@/lib/api";
 import { isTauri } from "@/lib/sidecar";
@@ -403,6 +404,7 @@ export default function App() {
     <ErrorBoundary>
       <DevTerminalProvider>
       <DownloadManagerProvider>
+      <TtsProvider>
       <LlmProvider>
       <WakeWordProvider>
       <TranscriptionSessionsProvider>
@@ -472,6 +474,7 @@ export default function App() {
       </TranscriptionSessionsProvider>
       </WakeWordProvider>
       </LlmProvider>
+      </TtsProvider>
       </DownloadManagerProvider>
       </DevTerminalProvider>
     </ErrorBoundary>

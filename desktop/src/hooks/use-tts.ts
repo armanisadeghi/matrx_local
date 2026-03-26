@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type { TtsStatus, TtsVoice, TtsLanguageGroup } from "@/lib/tts/types";
 import {
   getTtsStatus,
@@ -95,6 +95,19 @@ export function useTts(): [UseTtsState, UseTtsActions] {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevAudioUrlRef = useRef<string | null>(null);
+
+  // Fetch status and voices once on mount; never re-run on state changes.
+  useEffect(() => {
+    refreshStatus();
+    refreshVoices();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll status every 2 s while a model download is in progress.
+  useEffect(() => {
+    if (!status?.is_downloading) return;
+    const id = setInterval(() => void refreshStatus(), 2000);
+    return () => clearInterval(id);
+  }, [status?.is_downloading, refreshStatus]);
 
   useEffect(() => {
     return () => {
@@ -276,19 +289,34 @@ export function useTts(): [UseTtsState, UseTtsActions] {
     error,
   };
 
-  const actions: UseTtsActions = {
-    refreshStatus,
-    refreshVoices,
-    downloadModel,
-    setSelectedVoice,
-    setSpeed,
-    speak,
-    preview,
-    stopAudio,
-    unload,
-    clearHistory,
-    clearError,
-  };
+  const actions: UseTtsActions = useMemo(
+    () => ({
+      refreshStatus,
+      refreshVoices,
+      downloadModel,
+      setSelectedVoice,
+      setSpeed,
+      speak,
+      preview,
+      stopAudio,
+      unload,
+      clearHistory,
+      clearError,
+    }),
+    [
+      refreshStatus,
+      refreshVoices,
+      downloadModel,
+      setSelectedVoice,
+      setSpeed,
+      speak,
+      preview,
+      stopAudio,
+      unload,
+      clearHistory,
+      clearError,
+    ],
+  );
 
   return [state, actions];
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
+import { useTtsApp } from "@/contexts/TtsContext";
 import { useTts } from "@/hooks/use-tts";
 import type { TtsVoice } from "@/lib/tts/types";
 import type { TtsHistoryEntry } from "@/hooks/use-tts";
@@ -35,20 +36,7 @@ const TABS = [
 
 export function TextToSpeech() {
   const [tab, setTab] = useState("speak");
-  const [state, actions] = useTts();
-
-  useEffect(() => {
-    actions.refreshStatus();
-    actions.refreshVoices();
-  }, [actions]);
-
-  useEffect(() => {
-    if (!state.status) return;
-    if (state.status.is_downloading) {
-      const id = setInterval(() => actions.refreshStatus(), 2000);
-      return () => clearInterval(id);
-    }
-  }, [state.status?.is_downloading, actions]);
+  const [state, actions] = useTtsApp();
 
   return (
     <div className="flex h-full flex-col">
