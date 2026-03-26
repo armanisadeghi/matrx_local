@@ -23,6 +23,8 @@ dist/
 downloads/
 !desktop/src/lib/downloads/
 !desktop/src/components/downloads/
+!desktop/src-tauri/src/downloads/
+!app/services/downloads/
 eggs/
 .eggs/
 lib/
