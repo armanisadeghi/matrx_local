@@ -172,9 +172,13 @@ monitor_build() {
     }
 
     # ── Fetch and print tail logs for a failed job ───────────────────────
+    # Strategy: first failure gets a full 60-line tail (the real diagnostic).
+    # Subsequent failures get only ##[error] lines — if they all fail the same
+    # way (common in matrix builds) this avoids drowning in repeated output.
     fetch_failure_logs() {
         local repo="$1" run_id="$2" jobs_json="$3"
-        local LOG_TAIL=60   # lines per failed job
+        local LOG_TAIL=60
+        local first_failure=true
 
         echo ""
         echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -203,16 +207,29 @@ monitor_build() {
             job_id=$(echo "$jobs_json" | jq -r ".jobs[$job_index].databaseId // .jobs[$job_index].id // \"\"")
             [[ -z "$job_id" ]] && continue
 
-            echo ""
-            echo -e "${BOLD}  ── ${label} (last ${LOG_TAIL} lines) ──────────────────────────────${NC}"
-            echo ""
+            local raw_log
+            raw_log=$(gh run view "$run_id" --repo "$repo" --job "$job_id" --log 2>/dev/null \
+                | sed 's/^[^\t]*\t[^\t]*\t//')
 
-            gh run view "$run_id" --repo "$repo" --job "$job_id" --log 2>/dev/null \
-                | sed 's/^[^\t]*\t[^\t]*\t//' \
-                | tail -"$LOG_TAIL" \
-                | sed "s/^/    /" \
-            || echo -e "    ${YELLOW}(could not fetch logs — check the URL above)${NC}"
-
+            echo ""
+            if $first_failure; then
+                echo -e "${BOLD}  ── ${label} — last ${LOG_TAIL} lines ────────────────────────────${NC}"
+                echo ""
+                echo "$raw_log" | tail -"$LOG_TAIL" | sed "s/^/    /" \
+                    || echo -e "    ${YELLOW}(could not fetch logs — check the URL above)${NC}"
+                first_failure=false
+            else
+                # Extract only error/warning annotation lines for subsequent failures
+                local errors
+                errors=$(echo "$raw_log" | grep -E "##\[error\]|##\[warning\]|^error\[|^\s+error:" | head -20)
+                echo -e "${BOLD}  ── ${label} — errors only (same root cause?) ────────────────${NC}"
+                echo ""
+                if [[ -n "$errors" ]]; then
+                    echo "$errors" | sed "s/^/    /"
+                else
+                    echo "    (no ##[error] lines found — may be same failure as above)"
+                fi
+            fi
             echo ""
         done
 
@@ -378,8 +395,10 @@ monitor_build() {
         echo -e "  ─────────────────────────────────────────────────────────────"
 
         # ── Immediately print logs for newly-detected failures ───────
+        # First new failure: full 60-line tail.  Subsequent ones: errors only.
         if [[ ${#new_failures[@]} -gt 0 ]]; then
             local LOG_TAIL=60
+            local inline_first=true
             for fail_key in "${new_failures[@]}"; do
                 local fail_label="$fail_key"
                 local all_keys=("${PLATFORM_KEYS[@]}" "$POST_JOB_KEY")
@@ -401,18 +420,31 @@ monitor_build() {
                 fail_job_id=$(echo "$jobs_json" | jq -r ".jobs[$fail_job_index].databaseId // .jobs[$fail_job_index].id // \"\"")
                 [[ -z "$fail_job_id" ]] && continue
 
+                local raw_log
+                raw_log=$(gh run view "$run_id" --repo "$repo" --job "$fail_job_id" --log 2>/dev/null \
+                    | sed 's/^[^\t]*\t[^\t]*\t//')
+
                 echo ""
                 echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo -e "${RED}  ❌ ${fail_label} FAILED — tail logs:${NC}"
-                echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-                echo ""
-
-                gh run view "$run_id" --repo "$repo" --job "$fail_job_id" --log 2>/dev/null \
-                    | sed 's/^[^\t]*\t[^\t]*\t//' \
-                    | tail -"$LOG_TAIL" \
-                    | sed "s/^/    /" \
-                || echo -e "    ${YELLOW}(could not fetch logs — check GitHub Actions)${NC}"
-
+                if $inline_first; then
+                    echo -e "${RED}  ❌ ${fail_label} FAILED — last ${LOG_TAIL} lines:${NC}"
+                    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                    echo ""
+                    echo "$raw_log" | tail -"$LOG_TAIL" | sed "s/^/    /" \
+                        || echo -e "    ${YELLOW}(could not fetch logs — check GitHub Actions)${NC}"
+                    inline_first=false
+                else
+                    echo -e "${RED}  ❌ ${fail_label} FAILED — errors only:${NC}"
+                    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                    echo ""
+                    local errs
+                    errs=$(echo "$raw_log" | grep -E "##\[error\]|##\[warning\]" | head -15)
+                    if [[ -n "$errs" ]]; then
+                        echo "$errs" | sed "s/^/    /"
+                    else
+                        echo "    (likely same failure as above)"
+                    fi
+                fi
                 echo ""
                 echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             done
