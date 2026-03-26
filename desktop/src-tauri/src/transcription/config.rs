@@ -5,6 +5,12 @@ use std::path::Path;
 pub struct TranscriptionConfig {
     pub selected_model: Option<String>,
     pub setup_complete: bool,
+    #[serde(default = "default_wake_keyword")]
+    pub wake_keyword: String,
+}
+
+fn default_wake_keyword() -> String {
+    "hey matrix".to_string()
 }
 
 impl TranscriptionConfig {

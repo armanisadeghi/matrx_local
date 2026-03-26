@@ -25,7 +25,7 @@
  *   active     — wake word detected; transcription live; overlay shown
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { isTauri } from "@/lib/sidecar";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
@@ -490,29 +490,35 @@ export function useWakeWord(
 
   const clearError = useCallback(() => setError(null), []);
 
-  // ── Return ────────────────────────────────────────────────────────────
+  // ── Return (stable references — see React Patterns in CLAUDE.md) ────
 
-  const state: WakeWordHookState = {
-    uiMode,
-    engine: activeEngine,
-    listenRms,
-    activeTranscript,
-    kmsModelReady,
-    downloadProgress: null,
-    error,
-  };
+  const state: WakeWordHookState = useMemo(
+    () => ({
+      uiMode,
+      engine: activeEngine,
+      listenRms,
+      activeTranscript,
+      kmsModelReady,
+      downloadProgress: null,
+      error,
+    }),
+    [uiMode, activeEngine, listenRms, activeTranscript, kmsModelReady, error],
+  );
 
-  const actions: WakeWordHookActions = {
-    setup,
-    startListening,
-    stopListening,
-    mute,
-    unmute,
-    dismiss,
-    manualTrigger,
-    setEngine,
-    clearError,
-  };
+  const actions: WakeWordHookActions = useMemo(
+    () => ({
+      setup,
+      startListening,
+      stopListening,
+      mute,
+      unmute,
+      dismiss,
+      manualTrigger,
+      setEngine,
+      clearError,
+    }),
+    [setup, startListening, stopListening, mute, unmute, dismiss, manualTrigger, setEngine, clearError],
+  );
 
   return [state, actions];
 }

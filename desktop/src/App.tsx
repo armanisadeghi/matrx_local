@@ -28,8 +28,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/hooks/use-theme";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useAutoUpdate } from "@/hooks/use-auto-update";
-import { useTranscription } from "@/hooks/use-transcription";
 import { useTranscriptionSessions } from "@/hooks/use-transcription-sessions";
+import { TranscriptionProvider, useTranscriptionApp } from "@/contexts/TranscriptionContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EngineMonitor } from "@/components/EngineRecoveryModal";
 import { UpdateDialog } from "@/components/UpdateDialog";
@@ -88,7 +88,7 @@ export default function App() {
   // Compact recorder mode
   // ---------------------------------------------------------------------------
   const [isCompact, setIsCompact] = useState(false);
-  const [transcriptionState, transcriptionActions] = useTranscription();
+  const { state: transcriptionState, actions: transcriptionActions } = useTranscriptionApp();
   const [, bgSessActions] = useTranscriptionSessions();
 
   const [compactTranscript, setCompactTranscript] = useState("");
@@ -410,6 +410,7 @@ export default function App() {
       <TranscriptionSessionsProvider>
       <PermissionsProvider>
       <AudioDevicesProvider>
+      <TranscriptionProvider>
       <TooltipProvider delayDuration={150}>
         <HashRouter>
           <Routes>
@@ -469,6 +470,7 @@ export default function App() {
         <DownloadManagerModal />
         <DevTerminalPanel />
       </TooltipProvider>
+      </TranscriptionProvider>
       </AudioDevicesProvider>
       </PermissionsProvider>
       </TranscriptionSessionsProvider>

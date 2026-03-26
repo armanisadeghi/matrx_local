@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useDownloadManager } from "@/contexts/DownloadManagerContext";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
-import { useTranscription } from "@/hooks/use-transcription";
+import { useTranscriptionApp } from "@/contexts/TranscriptionContext";
 import { useSessionsContext } from "@/contexts/TranscriptionSessionsContext";
 import type { SessionsState, SessionsActions } from "@/hooks/use-transcription-sessions";
 import { useWakeWord } from "@/hooks/use-wake-word";
@@ -82,7 +82,7 @@ const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
 
 export function Voice() {
   const [tab, setTab] = useState("setup");
-  const [state, actions] = useTranscription();
+  const { state, actions } = useTranscriptionApp();
   const { openModal: openDownloadModal, downloads: dmDownloads } = useDownloadManager();
   const whisperDownloads = dmDownloads.filter(
     (d) => (d.category === "whisper") && (d.status === "active" || d.status === "queued"),

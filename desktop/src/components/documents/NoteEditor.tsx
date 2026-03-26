@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
 import type { DocNote } from "@/lib/api";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useTranscription } from "@/hooks/use-transcription";
+import { useTranscriptionApp } from "@/contexts/TranscriptionContext";
 import { usePermissionsContext } from "@/contexts/PermissionsContext";
 
 interface NoteEditorProps {
@@ -53,7 +53,7 @@ export function NoteEditor({
   // Inline dictation state
   const [showDictation, setShowDictation] = useState(false);
   const [dictationText, setDictationText] = useState("");
-  const [transcriptionState, transcriptionActions] = useTranscription();
+  const { state: transcriptionState, actions: transcriptionActions } = useTranscriptionApp();
   const { check, request } = usePermissionsContext();
   const prevSegmentCountRef = useRef(0);
 

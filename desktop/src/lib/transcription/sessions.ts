@@ -11,6 +11,60 @@ import type { TranscriptionSession, WhisperSegment } from "./types";
 const STORAGE_KEY = "matrx-transcription-sessions";
 const MAX_SESSIONS = 500;
 
+const FLUSH_INTERVAL_MS = 1000;
+const pendingSegments = new Map<string, WhisperSegment[]>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushCallback: (() => void) | null = null;
+
+function scheduleFlush(): void {
+  if (flushTimer !== null) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushPendingSegments();
+  }, FLUSH_INTERVAL_MS);
+}
+
+function flushPendingSegments(): void {
+  if (pendingSegments.size === 0) return;
+  const sessions = loadSessions();
+  let changed = false;
+
+  for (const [sessionId, segs] of pendingSegments) {
+    const idx = sessions.findIndex((s) => s.id === sessionId);
+    if (idx === -1) continue;
+    const session = sessions[idx];
+    session.segments = [...session.segments, ...segs];
+    session.fullText = session.segments
+      .map((s) => s.text)
+      .filter((t) => t.length > 0)
+      .join(" ");
+    session.charCount = session.fullText.length;
+    session.updatedAt = new Date().toISOString();
+    sessions[idx] = session;
+    changed = true;
+  }
+
+  pendingSegments.clear();
+  if (changed) {
+    saveSessions(sessions);
+    flushCallback?.();
+  }
+}
+
+/** Register a callback that fires after each debounced flush to localStorage. */
+export function setFlushCallback(cb: (() => void) | null): void {
+  flushCallback = cb;
+}
+
+/** Force-flush any pending segments immediately. Call before finalize/unmount. */
+export function flushNow(): void {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  flushPendingSegments();
+}
+
 function generateId(): string {
   return `ts_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -58,34 +112,23 @@ export function createSession(opts: {
   return session;
 }
 
-/** Append new segments to an existing session. */
+/** Append new segments to an existing session (debounced write). */
 export function appendSegments(
   sessionId: string,
   newSegments: WhisperSegment[],
-): TranscriptionSession | null {
-  const sessions = loadSessions();
-  const idx = sessions.findIndex((s) => s.id === sessionId);
-  if (idx === -1) return null;
-
-  const session = sessions[idx];
-  session.segments = [...session.segments, ...newSegments];
-  session.fullText = session.segments
-    .map((s) => s.text)
-    .filter((t) => t.length > 0)
-    .join(" ");
-  session.charCount = session.fullText.length;
-  session.updatedAt = new Date().toISOString();
-
-  sessions[idx] = session;
-  saveSessions(sessions);
-  return session;
+): void {
+  const existing = pendingSegments.get(sessionId) ?? [];
+  pendingSegments.set(sessionId, [...existing, ...newSegments]);
+  scheduleFlush();
 }
 
-/** Mark a session as finished with its final duration. */
+/** Mark a session as finished with its final duration.
+ *  Flushes any pending segment writes first to ensure nothing is lost. */
 export function finalizeSession(
   sessionId: string,
   durationSecs: number,
 ): TranscriptionSession | null {
+  flushNow();
   const sessions = loadSessions();
   const idx = sessions.findIndex((s) => s.id === sessionId);
   if (idx === -1) return null;

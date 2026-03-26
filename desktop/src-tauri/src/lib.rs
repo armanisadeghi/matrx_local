@@ -988,6 +988,10 @@ pub fn run() {
         .manage(RecordingState::new())
         .manage(WakeWordAppState(Arc::new(WakeWordState::new())))
         .manage(
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+                as transcription::commands::WhisperDownloadCancelState,
+        )
+        .manage(
             std::sync::Arc::new(tokio::sync::Mutex::new(llm::server::LlmServer::new()))
                 as llm::commands::LlmServerState,
         )
@@ -1017,6 +1021,7 @@ pub fn run() {
             detect_hardware,
             download_whisper_model,
             download_vad_model,
+            cancel_whisper_download,
             init_transcription,
             check_model_exists,
             get_active_model,
@@ -1087,6 +1092,14 @@ pub fn run() {
                         Err(_) => return,
                     };
                     let config = TranscriptionConfig::load(&config_dir);
+
+                    // Apply persisted wake word keyword so the thread uses the
+                    // saved value instead of the hardcoded default.
+                    if !config.wake_keyword.is_empty() {
+                        let ww = handle.state::<WakeWordAppState>();
+                        *ww.0.keyword.lock().unwrap() = config.wake_keyword.clone();
+                    }
+
                     if !config.setup_complete {
                         return;
                     }
@@ -1100,6 +1113,7 @@ pub fn run() {
                         let reset = TranscriptionConfig {
                             setup_complete: false,
                             selected_model: None,
+                            ..config
                         };
                         let _ = reset.save(&config_dir);
                         return;

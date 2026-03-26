@@ -45,7 +45,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 
 ---
 
-## Current State (as of 2026-03-25)
+## Current State (as of 2026-03-26)
 
 ### What Works
 - Python FastAPI engine with 79 tools (REST + WebSocket)
@@ -63,7 +63,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - Local Models tab + llama-server sidecar (binaries via `scripts/download-llama-server.sh`; bundle in release pipeline)
 - **Local LLM model catalog** — 22-tier system spanning Tiny→Server-grade; providers: Qwen, Llama, GPT-OSS, Gemma, DeepSeek, Mistral, Phi; multi-variant quant picker per model; server-grade collapsible section; uncensored model support; multi-category star ratings (Text/Code/Vision/Tools); knowledge cutoff column
 - **Image generation engine** — Optional `[image-gen]` extra (`uv sync --extra image-gen`). Routes at `/image-gen/*`. Models: FLUX.1 Schnell, FLUX.1 Dev, HunyuanDiT v1.2, SDXL Turbo. 6 workflow presets (Portrait, Product, Concept Art, UI Mockup, Logo, Landscape). Full generate UI with prompt/steps/guidance sliders, image output, download. Graceful 503 when deps absent.
-- **Text-to-Speech (Kokoro TTS)** — Optional `[tts]` extra (`uv sync --extra tts`). Routes at `/tts/*`. Kokoro-82M via ONNX Runtime (no PyTorch), 54 voices across 9 languages, 3-5x real-time on CPU, ~300 MB model auto-download. Full UI with voice selector, speed control, audio playback, voice preview, favorites. Graceful 503 when deps absent.
+- **Text-to-Speech (Kokoro TTS)** — Optional `[tts]` extra (`uv sync --extra tts`). Routes at `/tts/*`. Kokoro-82M via ONNX Runtime (no PyTorch), 54 voices across 9 languages, 3-5x real-time on CPU, ~300 MB model auto-download. Full UI with voice selector, speed control, audio playback, voice preview, favorites. Graceful 503 when deps absent. TTS state lives in `TtsContext` (singleton) — see React patterns section before touching this.
 - Settings: hardware inventory tab, forbidden URL list (scraping), API Keys (incl. Hugging Face for GGUF + image-gen downloads)
 - Platform context: `use-engine.ts` calls `initPlatformCtx()` after `getPlatformContext()`
 - AiMatrx iframe tab with session handoff
@@ -94,13 +94,13 @@ uv run python run.py
 
 # React frontend (Terminal 2)
 cd desktop
-npm install
-npm run dev
+pnpm install
+pnpm dev
 # Open http://localhost:1420
 
 # Tauri desktop (requires Rust)
 cd desktop
-npm run tauri:dev
+pnpm tauri:dev
 ```
 
 ---
@@ -154,7 +154,15 @@ npm run tauri:dev
 | Transcription module (Rust) | `desktop/src-tauri/src/transcription/*.rs` |
 | Transcription types (TS) | `desktop/src/lib/transcription/types.ts` |
 | Transcription hook | `desktop/src/hooks/use-transcription.ts` |
+| Transcription context (singleton) | `desktop/src/contexts/TranscriptionContext.tsx` |
+| Transcription sessions hook | `desktop/src/hooks/use-transcription-sessions.ts` |
+| Transcription sessions persistence | `desktop/src/lib/transcription/sessions.ts` |
 | Voice page | `desktop/src/pages/Voice.tsx` |
+| Wake word hook | `desktop/src/hooks/use-wake-word.ts` |
+| Wake word context | `desktop/src/contexts/WakeWordContext.tsx` |
+| Wake word Python service | `app/services/wake_word/service.py` |
+| Wake word Python routes | `app/api/wake_word_routes.py` |
+| Wake word Python models | `app/services/wake_word/models.py` |
 | Transcription config | `~/{app_data}/transcription.json` |
 | Whisper models | `~/{app_data}/models/*.bin` |
 | LLM module (Rust) | `desktop/src-tauri/src/llm/*.rs` |
@@ -177,6 +185,7 @@ npm run tauri:dev
 | TTS TS types | `desktop/src/lib/tts/types.ts` |
 | TTS TS API client | `desktop/src/lib/tts/api.ts` |
 | TTS hook | `desktop/src/hooks/use-tts.ts` |
+| TTS context (singleton) | `desktop/src/contexts/TtsContext.tsx` |
 | TTS page | `desktop/src/pages/TextToSpeech.tsx` |
 | TTS models/voices | `~/.matrx/tts/` |
 | Architecture docs | `ARCHITECTURE.md` |
@@ -247,6 +256,118 @@ Workflow for any schema change:
 5. Update `AGENT_TASKS.md` to record the migration was applied.
 
 A migration file that exists on disk but has not been applied to Supabase is a broken state — it causes runtime errors (like `PGRST204 column not found`) that are hard to trace. If you find an unapplied migration in `migrations/`, apply it immediately before doing anything else.
+
+---
+
+## React Patterns — Critical Rules (Read Before Writing Any Hook or Page)
+
+These rules exist because violations have caused **production outages** (infinite API polling loops that flood the Python engine, causing health checks to time out and the entire app to report "engine offline"). Every rule here maps to a real bug that shipped.
+
+### The `actions` object must always be stable
+
+Every custom hook that returns `[state, actions]` **must** wrap the `actions` object in `useMemo`. A plain object literal `{}` is a new reference on every render. Any `useEffect` or `useCallback` that lists `actions` in its dependency array will re-fire on every render if `actions` is not memoized — creating an infinite loop.
+
+```ts
+// WRONG — new object reference every render, causes infinite loops
+const actions: MyActions = {
+  doThing,
+  doOtherThing,
+};
+
+// CORRECT — stable reference, only changes when the callbacks themselves change
+const actions: MyActions = useMemo(
+  () => ({ doThing, doOtherThing }),
+  [doThing, doOtherThing],
+);
+```
+
+All existing hooks (`use-tts.ts`, `use-llm.ts`, `use-transcription.ts`) already follow this pattern. Any new hook returning an `actions` object must do the same.
+
+### Never use an `actions` object as a `useEffect` dependency
+
+Even with `useMemo`, listing the entire `actions` object in a `useEffect` dependency array is fragile and communicates the wrong intent. Always list the specific function you actually call.
+
+```ts
+// WRONG — depends on entire actions object; loops if actions ever changes
+useEffect(() => {
+  actions.refreshStatus();
+  actions.refreshVoices();
+}, [actions]);
+
+// CORRECT — depends only on the stable callbacks actually called
+useEffect(() => {
+  refreshStatus();
+  refreshVoices();
+}, []); // mount-only: [] is correct when these are stable useCallback fns
+```
+
+### Initialization fetches belong in the hook, not the page
+
+If a page triggers a data fetch on mount, it belongs in a `useEffect([])` inside the hook itself — not in the page component. If the page does it with `[actions]` as a dep, the fetch re-runs every time the hook re-renders, which is every time the fetch completes (state update → re-render → new actions ref → effect re-runs).
+
+```ts
+// WRONG — in the page component; loops because actions is unstable
+useEffect(() => {
+  actions.refreshStatus();
+}, [actions]);
+
+// CORRECT — in the hook; runs once at mount, never again
+useEffect(() => {
+  refreshStatus();
+  refreshVoices();
+}, []); // eslint-disable-line react-hooks/exhaustive-deps
+```
+
+### Persistent state belongs in a Context, not a local hook call
+
+Any state that must survive tab switches, focus/blur events, or window visibility changes must live in a React Context Provider mounted at the app level — not in a per-page `useFoo()` call. A hook called directly in a page component re-initializes every time the page unmounts and remounts.
+
+The pattern used in this codebase (see `LlmContext.tsx`, `TtsContext.tsx`):
+
+```ts
+// context/FooContext.tsx
+export function FooProvider({ children }) {
+  const foo = useFoo(); // hook runs ONCE here, at app startup
+  return <FooContext.Provider value={foo}>{children}</FooContext.Provider>;
+}
+export function useFooApp() {
+  const ctx = useContext(FooContext);
+  if (!ctx) throw new Error("useFooApp must be used within FooProvider");
+  return ctx;
+}
+```
+
+Pages then call `useFooApp()` (reads from context) instead of `useFoo()` (creates new instance). The Provider is registered in `App.tsx`.
+
+**Existing singletons:** `LlmProvider`, `TtsProvider`, `TranscriptionProvider`, `WakeWordProvider`, `TranscriptionSessionsProvider`, `PermissionsProvider`, `AudioDevicesProvider`, `DownloadManagerProvider`. Any new feature with persistent or shared state follows this same pattern.
+
+### Polling intervals must be narrowly gated
+
+A `setInterval` inside `useEffect` is only acceptable when:
+1. It polls a genuinely changing condition (e.g. `is_downloading` status).
+2. The effect dependency is the **specific boolean/value** being watched, not a broad object.
+3. The cleanup (`return () => clearInterval(id)`) is always present.
+
+```ts
+// WRONG — restarts the interval every time actions changes (every render)
+useEffect(() => {
+  if (state.status?.is_downloading) {
+    const id = setInterval(() => actions.refreshStatus(), 2000);
+    return () => clearInterval(id);
+  }
+}, [state.status?.is_downloading, actions]); // actions here is the bug
+
+// CORRECT — interval is controlled only by the boolean that gates it
+useEffect(() => {
+  if (!status?.is_downloading) return;
+  const id = setInterval(() => void refreshStatus(), 2000);
+  return () => clearInterval(id);
+}, [status?.is_downloading, refreshStatus]); // stable deps only
+```
+
+### Focus/visibility handlers must be intentional
+
+`window.addEventListener("focus", ...)` and `document.addEventListener("visibilitychange", ...)` are legitimate only when re-fetching data that the user is likely to have changed in another app (e.g. a HuggingFace token set in a browser). They must **never** be used to re-initialize state that is already alive or to trigger a full data reload. Re-initializing on focus is a common source of loops that are hard to reproduce in dev but happen constantly in production.
 
 ---
 

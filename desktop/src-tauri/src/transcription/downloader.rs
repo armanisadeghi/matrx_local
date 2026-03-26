@@ -1,6 +1,8 @@
 use futures_util::StreamExt;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
 const HF_WHISPER_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
@@ -35,12 +37,13 @@ pub struct DownloadProgress {
     pub percent: f32,
 }
 
-/// Downloads a Whisper model file with progress reporting.
+/// Downloads a Whisper model file with progress reporting and cancellation support.
 /// Tries HuggingFace (canonical source).
 pub async fn download_model(
     filename: &str,
     dest_dir: &Path,
     on_progress: impl Fn(DownloadProgress),
+    cancel: Arc<AtomicBool>,
 ) -> Result<PathBuf, String> {
     let dest_path = dest_dir.join(filename);
 
@@ -73,7 +76,12 @@ pub async fn download_model(
             tokio::time::sleep(delay).await;
         }
 
-        match try_download(&client, &url, &dest_path, filename, &on_progress).await {
+        if cancel.load(Ordering::SeqCst) {
+            let _ = tokio::fs::remove_file(&dest_path).await;
+            return Err("Download cancelled".to_string());
+        }
+
+        match try_download(&client, &url, &dest_path, filename, &on_progress, &cancel).await {
             Ok(_) => {
                 // Validate the downloaded file
                 if is_valid_model(&dest_path) {
@@ -102,6 +110,7 @@ async fn try_download(
     dest: &Path,
     filename: &str,
     on_progress: &impl Fn(DownloadProgress),
+    cancel: &AtomicBool,
 ) -> Result<(), String> {
     let response = client.get(url).send().await.map_err(|e| e.to_string())?;
 
@@ -117,6 +126,11 @@ async fn try_download(
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
+        if cancel.load(Ordering::SeqCst) {
+            drop(file);
+            let _ = tokio::fs::remove_file(dest).await;
+            return Err("Download cancelled".to_string());
+        }
         let chunk = chunk.map_err(|e| e.to_string())?;
         file.write_all(&chunk).await.map_err(|e| e.to_string())?;
         downloaded += chunk.len() as u64;

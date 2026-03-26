@@ -93,6 +93,9 @@ export interface TranscriptionActions {
   /** One-click setup: detect hardware, download recommended model + VAD, init */
   quickSetup: () => Promise<void>;
 
+  /** Cancel an in-flight whisper model download. No-op if nothing is downloading. */
+  cancelDownload: () => Promise<void>;
+
   /**
    * Emergency reset: forcibly clears all in-flight state (isRecording,
    * isProcessingTail, isCalibrating) and tears down all Tauri event listeners.
@@ -479,6 +482,22 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
   const clearSegments = useCallback(() => setSegments([]), []);
   const clearError = useCallback(() => setError(null), []);
 
+  const cancelDownload = useCallback(async () => {
+    if (!isTauri()) return;
+    try {
+      await tauriInvoke("cancel_whisper_download");
+    } catch {
+      // No-op if nothing is downloading
+    }
+    downloadQueueRef.current = [];
+    setDownloadQueue([]);
+    setIsDownloading(false);
+    isDownloadingRef.current = false;
+    setDownloadingFilename(null);
+    downloadingFilenameRef.current = null;
+    setDownloadProgress(null);
+  }, []);
+
   const forceReset = useCallback(() => {
     // Best-effort — don't await, don't throw
     tauriInvoke("stop_transcription").catch(() => {});
@@ -549,26 +568,34 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
     initTranscription,
   ]);
 
-  const state: TranscriptionState = {
-    setupStatus,
-    hardwareResult,
-    downloadProgress,
-    isDetecting,
-    isDownloading,
-    downloadingFilename,
-    downloadQueue,
-    isInitializing,
-    isRecording,
-    isProcessingTail,
-    segments,
-    fullTranscript,
-    activeModel,
-    liveRms,
-    isCalibrating,
-    audioDevices,
-    selectedDevice,
-    error,
-  };
+  const state: TranscriptionState = useMemo(
+    () => ({
+      setupStatus,
+      hardwareResult,
+      downloadProgress,
+      isDetecting,
+      isDownloading,
+      downloadingFilename,
+      downloadQueue,
+      isInitializing,
+      isRecording,
+      isProcessingTail,
+      segments,
+      fullTranscript,
+      activeModel,
+      liveRms,
+      isCalibrating,
+      audioDevices,
+      selectedDevice,
+      error,
+    }),
+    [
+      setupStatus, hardwareResult, downloadProgress, isDetecting, isDownloading,
+      downloadingFilename, downloadQueue, isInitializing, isRecording,
+      isProcessingTail, segments, fullTranscript, activeModel, liveRms,
+      isCalibrating, audioDevices, selectedDevice, error,
+    ],
+  );
 
   const actions: TranscriptionActions = useMemo(
     () => ({
@@ -589,6 +616,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
       clearSegments,
       clearError,
       quickSetup,
+      cancelDownload,
       forceReset,
     }),
     [
@@ -608,6 +636,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
       setSelectedDevice,
       clearSegments,
       clearError,
+      cancelDownload,
       quickSetup,
       forceReset,
     ],

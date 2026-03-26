@@ -183,8 +183,6 @@ fn wake_word_loop(app: tauri::AppHandle, state: Arc<WakeWordState>, device_name:
     let sample_rate = capture.sample_rate(); // always 16_000
     let window_samples = sample_rate as usize * 2; // 2-second window
 
-    let keyword_lower = state.keyword.lock().unwrap().to_lowercase();
-
     // After a trigger, wait COOLDOWN_S before re-arming.
     const COOLDOWN_S: u64 = 3;
     // After dismiss, wait DISMISS_PAUSE_S before re-arming.
@@ -258,6 +256,7 @@ fn wake_word_loop(app: tauri::AppHandle, state: Arc<WakeWordState>, device_name:
                         .join(" ")
                         .to_lowercase();
 
+                    let keyword_lower = state.keyword.lock().unwrap().to_lowercase();
                     if full_text.contains(&keyword_lower) {
                         last_trigger = Instant::now();
                         accumulated.clear(); // discard any buffered audio after trigger

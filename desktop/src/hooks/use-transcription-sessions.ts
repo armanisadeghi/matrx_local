@@ -3,7 +3,7 @@
  * Wraps the sessions persistence layer and exposes reactive state.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import type { TranscriptionSession, WhisperSegment } from "@/lib/transcription/types";
 import {
   loadSessions,
@@ -14,7 +14,8 @@ import {
   updateSessionText,
   polishSession,
   deleteSession,
-  getSession,
+  setFlushCallback,
+  flushNow,
 } from "@/lib/transcription/sessions";
 
 export interface SessionsState {
@@ -63,6 +64,14 @@ export function useTranscriptionSessions(): [SessionsState, SessionsActions] {
     setSessions(loadSessions());
   }, []);
 
+  useEffect(() => {
+    setFlushCallback(() => setSessions(loadSessions()));
+    return () => {
+      flushNow();
+      setFlushCallback(null);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startNew = useCallback(
     (modelUsed: string | null, deviceUsed: string | null): TranscriptionSession => {
       const session = createSession({ modelUsed, deviceUsed });
@@ -75,7 +84,6 @@ export function useTranscriptionSessions(): [SessionsState, SessionsActions] {
 
   const append = useCallback((sessionId: string, segments: WhisperSegment[]) => {
     appendSegments(sessionId, segments);
-    setSessions(loadSessions());
   }, []);
 
   const finalize = useCallback((sessionId: string, durationSecs: number) => {
@@ -125,26 +133,20 @@ export function useTranscriptionSessions(): [SessionsState, SessionsActions] {
     setViewingSessionId(sessionId);
   }, []);
 
-  const viewingSession: TranscriptionSession | null =
-    viewingSessionId ? (getSession(viewingSessionId) ?? null) : null;
+  const viewingSession: TranscriptionSession | null = useMemo(
+    () => (viewingSessionId ? (sessions.find((s) => s.id === viewingSessionId) ?? null) : null),
+    [viewingSessionId, sessions],
+  );
 
-  const state: SessionsState = {
-    sessions,
-    viewingSessionId,
-    viewingSession,
-  };
+  const state: SessionsState = useMemo(
+    () => ({ sessions, viewingSessionId, viewingSession }),
+    [sessions, viewingSessionId, viewingSession],
+  );
 
-  const actions: SessionsActions = {
-    refresh,
-    startNew,
-    append,
-    finalize,
-    rename,
-    updateText,
-    applyPolish,
-    remove,
-    open,
-  };
+  const actions: SessionsActions = useMemo(
+    () => ({ refresh, startNew, append, finalize, rename, updateText, applyPolish, remove, open }),
+    [refresh, startNew, append, finalize, rename, updateText, applyPolish, remove, open],
+  );
 
   return [state, actions];
 }

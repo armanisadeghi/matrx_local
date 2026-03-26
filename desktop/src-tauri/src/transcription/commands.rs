@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -38,6 +39,9 @@ impl RecordingState {
         }
     }
 }
+
+/// Shared atomic flag for cancelling in-flight whisper model downloads.
+pub type WhisperDownloadCancelState = Arc<AtomicBool>;
 
 /// Tauri-managed state for the wake-word subsystem.
 pub struct WakeWordAppState(pub Arc<WakeWordState>);
@@ -83,8 +87,14 @@ pub async fn detect_hardware() -> Result<serde_json::Value, String> {
 /// Download a Whisper model with live progress events.
 /// Emits "whisper-download-progress" (legacy) and "dm-progress" (universal) events.
 #[tauri::command]
-pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<String, String> {
+pub async fn download_whisper_model(
+    app: AppHandle,
+    filename: String,
+    cancel: State<'_, WhisperDownloadCancelState>,
+) -> Result<String, String> {
     use crate::downloads::commands::DownloadManagerState;
+
+    cancel.store(false, Ordering::SeqCst);
 
     let models_dir = app
         .path()
@@ -92,7 +102,6 @@ pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<
         .map_err(|e| e.to_string())?
         .join("models");
 
-    // Register with the universal download manager (for progress modal + persistence)
     let dl_id = format!("whisper-{}", filename);
     let whisper_url = format!(
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
@@ -112,8 +121,8 @@ pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<
     let app_clone = app.clone();
     let dl_id_clone = dl_id.clone();
     let fname = filename.clone();
+    let cancel_flag = Arc::clone(&*cancel);
     let dest = downloader::download_model(&fname, &models_dir, move |progress| {
-        // Legacy event (existing listeners)
         let _ = app_clone.emit(
             "whisper-download-progress",
             serde_json::json!({
@@ -123,7 +132,6 @@ pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<
                 "percent": progress.percent,
             }),
         );
-        // Universal dm-progress event
         let _ = app_clone.emit(
             "dm-progress",
             serde_json::json!({
@@ -142,7 +150,7 @@ pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<
                 "error_msg": null,
             }),
         );
-    })
+    }, cancel_flag)
     .await;
 
     match dest {
@@ -163,7 +171,10 @@ pub async fn download_whisper_model(app: AppHandle, filename: String) -> Result<
 
 /// Download the VAD model required for streaming transcription.
 #[tauri::command]
-pub async fn download_vad_model(app: AppHandle) -> Result<String, String> {
+pub async fn download_vad_model(
+    app: AppHandle,
+    cancel: State<'_, WhisperDownloadCancelState>,
+) -> Result<String, String> {
     use crate::downloads::commands::DownloadManagerState;
 
     let models_dir = app
@@ -192,6 +203,7 @@ pub async fn download_vad_model(app: AppHandle) -> Result<String, String> {
 
     let app_clone = app.clone();
     let dl_id_clone = dl_id.clone();
+    let cancel_flag = Arc::clone(&*cancel);
     let dest = downloader::download_model(
         vad_filename,
         &models_dir,
@@ -224,6 +236,7 @@ pub async fn download_vad_model(app: AppHandle) -> Result<String, String> {
                 }),
             );
         },
+        cancel_flag,
     )
     .await;
 
@@ -241,6 +254,20 @@ pub async fn download_vad_model(app: AppHandle) -> Result<String, String> {
             Err(e)
         }
     }
+}
+
+/// Cancel an in-flight whisper model download. Safe to call at any time.
+#[tauri::command]
+pub fn cancel_whisper_download(
+    app: AppHandle,
+    cancel: State<'_, WhisperDownloadCancelState>,
+) -> Result<(), String> {
+    cancel.store(true, Ordering::SeqCst);
+    let _ = app.emit(
+        "whisper-download-cancelled",
+        serde_json::json!({ "reason": "user_cancelled" }),
+    );
+    Ok(())
 }
 
 // ── Model Management ───────────────────────────────────────────────────────
@@ -272,10 +299,9 @@ pub async fn init_transcription(
 
     // Save selection to config
     let config_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let config = TranscriptionConfig {
-        selected_model: Some(filename),
-        setup_complete: true,
-    };
+    let mut config = TranscriptionConfig::load(&config_dir);
+    config.selected_model = Some(filename);
+    config.setup_complete = true;
     config.save(&config_dir)?;
 
     Ok(())
@@ -740,19 +766,27 @@ pub fn trigger_wake_word(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Update the keyword phrase at runtime.
+/// Update the keyword phrase at runtime and persist to config.
 /// Takes effect on the next detection window.
 #[tauri::command]
 pub fn configure_wake_word(
+    app: tauri::AppHandle,
     ww_state: State<'_, WakeWordAppState>,
     keyword: Option<String>,
     model_filename: Option<String>,
 ) -> Result<(), String> {
-    if let Some(kw) = keyword {
+    if let Some(kw) = &keyword {
         *ww_state.0.keyword.lock().unwrap() = kw.to_lowercase();
     }
     if let Some(fname) = model_filename {
         *ww_state.0.model_filename.lock().unwrap() = fname;
+    }
+    if let Some(kw) = keyword {
+        if let Ok(dir) = app.path().app_data_dir() {
+            let mut config = super::config::TranscriptionConfig::load(&dir);
+            config.wake_keyword = kw.to_lowercase();
+            let _ = config.save(&dir);
+        }
     }
     Ok(())
 }
