@@ -247,6 +247,8 @@ monitor_build() {
     # Track which failed jobs we've already printed logs for so we
     # print each failure exactly once, immediately when detected.
     local reported_failures=""
+    # When true, skip the screen-clear so printed failure logs remain visible.
+    local preserve_screen=false
 
     # ── Poll loop ───────────────────────────────────────────────────────
     local all_done=false
@@ -265,8 +267,16 @@ monitor_build() {
         local job_count
         job_count=$(echo "$jobs_json" | jq '.jobs | length')
 
-        # Clear screen and draw status table
-        printf '\033[2J\033[H'
+        # Clear screen unless we just printed failure logs that the user should keep reading.
+        if ! $preserve_screen; then
+            printf '\033[2J\033[H'
+        else
+            echo ""
+            echo -e "  ${RED}─────────────────────────────────────────────────────────────${NC}"
+            echo -e "  ${RED}  ↑ FAILURE LOGS ABOVE  |  CURRENT STATUS BELOW  ↑${NC}"
+            echo -e "  ${RED}─────────────────────────────────────────────────────────────${NC}"
+        fi
+        preserve_screen=false
         echo ""
         echo -e "${BOLD}  📦 ${PROJECT_NAME} ${version} — Build Monitor${NC}"
         echo -e "  ─────────────────────────────────────────────────────────────"
@@ -451,11 +461,12 @@ monitor_build() {
             fi
             echo ""
         else
-            # If we just printed failure logs, give the user time to read
-            # them before the next screen clear. Otherwise use the standard interval.
+            # If we just printed failure logs, preserve the screen on the next
+            # iteration so the logs remain visible above the refreshed status table.
             if [[ ${#new_failures[@]} -gt 0 ]]; then
+                preserve_screen=true
                 echo ""
-                echo -e "  ${CYAN}Refreshing in 30s (extra time to review failure logs above)...${NC}"
+                echo -e "  ${CYAN}Refreshing in 30s (failure logs above will remain visible)...${NC}"
                 echo -e "  ${CYAN}Press Ctrl-C to stop monitoring.${NC}"
                 echo ""
                 sleep 30
