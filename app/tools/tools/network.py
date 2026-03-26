@@ -351,8 +351,15 @@ async def tool_scrape(
     Cloudflare detection, proxy rotation, content extraction (HTML, PDF, images),
     domain-specific parsing rules, and two-tier caching.
     """
+    call_start = time.monotonic()
+    logger.info(
+        "[tool_scrape] START — urls=%s use_cache=%s output_mode=%s",
+        urls, use_cache, output_mode,
+    )
+
     blocked_urls = [u for u in urls if _check_forbidden(u)]
     if blocked_urls:
+        logger.warning("[tool_scrape] BLOCKED — forbidden URLs: %s", blocked_urls)
         return ToolResult(
             type=ToolResultType.ERROR,
             output=f"The following URLs are blocked by the forbidden URL list: {', '.join(blocked_urls)}",
@@ -360,11 +367,19 @@ async def tool_scrape(
 
     engine = _get_engine()
     if not engine.is_ready:
+        logger.error(
+            "[tool_scrape] FAILED — scraper engine not ready. "
+            "Check engine startup logs for initialization errors. "
+            "is_started=%s, orchestrator=%s",
+            getattr(engine, "_started", "?"),
+            getattr(engine, "_orchestrator", None) is not None,
+        )
         return ToolResult(
             type=ToolResultType.ERROR,
             output="Scraper engine not initialized. Check logs for startup errors.",
         )
 
+    logger.info("[tool_scrape] Engine ready — importing FetchOptions")
     from app.services.scraper.engine import _import_scraper
     options_mod = _import_scraper("app.models.options")
     FetchOptions = options_mod.FetchOptions
@@ -375,20 +390,53 @@ async def tool_scrape(
         get_links=get_links,
         get_overview=get_overview,
     )
+    logger.info("[tool_scrape] FetchOptions built: %s", options.model_dump())
 
     start = time.monotonic()
+    logger.info("[tool_scrape] Calling orchestrator.scrape() for %d URL(s)...", len(urls))
     try:
         results = await engine.orchestrator.scrape(urls, options)
     except Exception as e:
-        logger.exception("Scrape failed")
+        logger.error(
+            "[tool_scrape] orchestrator.scrape() RAISED after %.1fs — %s: %s",
+            time.monotonic() - start, type(e).__name__, e,
+            exc_info=True,
+            extra={
+                "urls": urls,
+                "use_cache": use_cache,
+                "output_mode": output_mode,
+                "elapsed_s": round(time.monotonic() - start, 2),
+            },
+        )
         return ToolResult(type=ToolResultType.ERROR, output=f"Scrape failed: {type(e).__name__}: {e}")
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
+    success_statuses = [getattr(r, "status", "?") for r in results]
+    logger.info(
+        "[tool_scrape] orchestrator.scrape() returned %d result(s) in %dms — statuses=%s",
+        len(results), elapsed_ms, success_statuses,
+    )
+    for i, r in enumerate(results):
+        if getattr(r, "status", None) == "error":
+            logger.warning(
+                "[tool_scrape] result[%d] ERROR: url=%s status_code=%s firewall=%s error=%s",
+                i, getattr(r, "url", "?"), getattr(r, "status_code", "?"),
+                getattr(r, "firewall", "?"), getattr(r, "error", "?"),
+            )
+        else:
+            logger.info(
+                "[tool_scrape] result[%d] OK: url=%s status_code=%s content_type=%s chars=%d",
+                i, getattr(r, "url", "?"), getattr(r, "status_code", "?"),
+                getattr(r, "content_type", "?"),
+                len(getattr(r, "text_data", "") or "") + len(getattr(r, "ai_research_content", "") or ""),
+            )
 
     # Dual-write every successful result: local SQLite + cloud (fire-and-forget).
     # This must happen regardless of how many URLs were scraped.
     user_id = getattr(session, "user_id", "") or ""
+    logger.info("[tool_scrape] Persisting results (fire-and-forget cloud push)...")
     await _persist_scrape_results(results, user_id)
+    logger.info("[tool_scrape] DONE — total elapsed %dms", int((time.monotonic() - call_start) * 1000))
 
     if len(results) == 1:
         r = results[0]

@@ -33,6 +33,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EngineMonitor } from "@/components/EngineRecoveryModal";
 import { UpdateDialog } from "@/components/UpdateDialog";
 import { UpdateBanner } from "@/components/UpdateBanner";
+import { RestartingOverlay } from "@/components/RestartingOverlay";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { StartupScreen } from "@/components/StartupScreen";
 import { FirstRunScreen } from "@/components/FirstRunScreen";
@@ -455,6 +456,7 @@ export default function App() {
           onRestartEngine={restartEngine}
           onRefresh={refresh}
         />
+        <RestartingOverlay visible={updateState.restarting} />
         <UpdateBanner state={updateState} actions={updateActions} />
         <UpdateDialog state={updateState} actions={updateActions} />
         <DevTerminalPanel />

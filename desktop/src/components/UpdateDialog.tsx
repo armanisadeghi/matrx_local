@@ -33,7 +33,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function UpdateDialog({ state, actions }: UpdateDialogProps) {
-  const { status, busy, showDownloadProgress, progress, dialogOpen } = state;
+  const { status, busy, showDownloadProgress, progress, dialogOpen, restarting } = state;
   const isDownloadingUi = showDownloadProgress && status?.status === "downloading";
   const isInstalled = status?.status === "installed";
   const showAsAvailable =
@@ -53,7 +53,7 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
       : "A new version of AI Matrx is available. If you already checked for updates, the download may be running in the background — tap Install to see progress or finish setup.";
 
   return (
-    <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) actions.dismiss(); }}>
+    <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open && !restarting) actions.dismiss(); }}>
       <DialogContent className="flex max-h-[85vh] max-w-md flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 px-6 pt-6 pb-4">
           <DialogTitle className="flex items-center gap-2">
@@ -108,9 +108,13 @@ export function UpdateDialog({ state, actions }: UpdateDialogProps) {
 
         <DialogFooter className="shrink-0 px-6 py-4 border-t">
           {isInstalled ? (
-            <Button onClick={actions.restart} className="gap-2">
-              <RefreshCw className="h-4 w-4" />
-              Restart Now
+            <Button onClick={() => void actions.restart()} disabled={restarting} className="gap-2">
+              {restarting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {restarting ? "Restarting…" : "Restart Now"}
             </Button>
           ) : isDownloadingUi ? (
             <>

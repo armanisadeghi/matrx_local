@@ -513,15 +513,91 @@ class EngineAPI {
 
   /** Invoke a tool via REST (stateless, one-shot). */
   async invokeTool(tool: string, input: Record<string, unknown>): Promise<ToolResult> {
-    if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    const resp = await fetch(`${this.baseUrl}/tools/invoke`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ tool, input }),
+    const callId = `${tool}-${Date.now()}`;
+    const startTs = Date.now();
+
+    if (!this.baseUrl) {
+      console.error(`[api/invokeTool] BLOCKED — engine not discovered`, {
+        callId, tool, input, timestamp: new Date().toISOString(),
+      });
+      throw new Error("Engine not discovered — start the Python engine first");
+    }
+
+    const authHdrs = await this.authHeaders();
+    const hasAuth = Object.keys(authHdrs).length > 0;
+    console.info(`[api/invokeTool] → ${tool}`, {
+      callId,
+      baseUrl: this.baseUrl,
+      hasAuth,
+      inputKeys: Object.keys(input),
+      timestamp: new Date().toISOString(),
     });
-    if (!resp.ok) throw new Error(`Tool invocation failed: ${resp.status}`);
-    return resp.json();
+
+    const headers = { "Content-Type": "application/json", ...authHdrs };
+    const TIMEOUT_MS = 120_000;
+
+    let resp: Response;
+    try {
+      resp = await fetch(`${this.baseUrl}/tools/invoke`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ tool, input }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch (fetchErr) {
+      const elapsed = Date.now() - startTs;
+      const isTimeout = (fetchErr as Error).name === "TimeoutError" || (fetchErr as Error).name === "AbortError";
+      console.error(`[api/invokeTool] FETCH FAILED — ${tool}`, {
+        callId,
+        tool,
+        baseUrl: this.baseUrl,
+        elapsed_ms: elapsed,
+        isTimeout,
+        error: (fetchErr as Error).message,
+        stack: (fetchErr as Error).stack,
+        hint: isTimeout
+          ? `Request timed out after ${TIMEOUT_MS}ms — engine may be overloaded or hung`
+          : "Network error — engine may have crashed or restarted",
+        timestamp: new Date().toISOString(),
+      });
+      throw fetchErr;
+    }
+
+    const elapsed = Date.now() - startTs;
+
+    if (!resp.ok) {
+      let body = "";
+      try { body = await resp.text(); } catch { /* ignore */ }
+      console.error(`[api/invokeTool] HTTP ERROR — ${tool}`, {
+        callId,
+        tool,
+        baseUrl: this.baseUrl,
+        status: resp.status,
+        statusText: resp.statusText,
+        elapsed_ms: elapsed,
+        responseBody: body.slice(0, 1000),
+        hint: resp.status === 401
+          ? "401 Unauthorized — JWT not attached or expired; check auth setup"
+          : resp.status === 404
+            ? `404 Not Found — is the tool name correct? Tool="${tool}"`
+            : resp.status === 422
+              ? "422 Unprocessable Entity — check input shape matches the tool's schema"
+              : resp.status >= 500
+                ? "5xx Server Error — check Python engine logs for the exception"
+                : "Unexpected HTTP error",
+        timestamp: new Date().toISOString(),
+      });
+      throw new Error(`Tool invocation failed: ${resp.status} ${resp.statusText} — ${body.slice(0, 200)}`);
+    }
+
+    const result: ToolResult = await resp.json();
+    console.info(`[api/invokeTool] ✓ ${tool} — ${elapsed}ms`, {
+      callId,
+      resultType: result.type,
+      outputLength: result.output?.length ?? 0,
+      hasMetadata: !!result.metadata,
+    });
+    return result;
   }
 
   /**
@@ -793,14 +869,32 @@ class EngineAPI {
     options?: Record<string, unknown>
   ): Promise<RemoteScrapeResponse> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
+    console.info(`[api/scrapeRemotely] → ${urls.length} URL(s)`, { urls, options });
     const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    const resp = await fetch(`${this.baseUrl}/remote-scraper/scrape`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ urls, options: options ?? {} }),
-    });
-    if (!resp.ok) throw new Error(`Remote scrape failed: ${resp.status}`);
-    return resp.json();
+    let resp: Response;
+    try {
+      resp = await fetch(`${this.baseUrl}/remote-scraper/scrape`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ urls, options: options ?? {} }),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (err) {
+      console.error(`[api/scrapeRemotely] FETCH FAILED`, {
+        urls, options, error: (err as Error).message, stack: (err as Error).stack,
+        timestamp: new Date().toISOString(),
+      });
+      throw err;
+    }
+    if (!resp.ok) {
+      let body = "";
+      try { body = await resp.text(); } catch { /* ignore */ }
+      console.error(`[api/scrapeRemotely] HTTP ${resp.status}`, { urls, status: resp.status, body: body.slice(0, 500) });
+      throw new Error(`Remote scrape failed: ${resp.status} — ${body.slice(0, 200)}`);
+    }
+    const result = await resp.json();
+    console.info(`[api/scrapeRemotely] ✓`, { resultCount: result.results?.length, execution_time_ms: result.execution_time_ms });
+    return result;
   }
 
   // ---- SSE streaming (remote scraper) ----

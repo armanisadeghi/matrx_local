@@ -161,7 +161,7 @@ export function ChatPanel({
   const hasVariables = activeVariables.length > 0;
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       {!compact && (
         <header className="no-select flex h-12 items-center justify-between border-b px-4">
           <div className="flex items-center gap-2">
@@ -218,7 +218,7 @@ export function ChatPanel({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {showWelcome ? (
           <ChatWelcome
             onSuggestionClick={handleSuggestionClick}

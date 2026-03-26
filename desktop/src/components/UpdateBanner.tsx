@@ -19,7 +19,7 @@ interface UpdateBannerProps {
 }
 
 export function UpdateBanner({ state, actions }: UpdateBannerProps) {
-  const { status, busy, showDownloadProgress, progress } = state;
+  const { status, busy, showDownloadProgress, progress, restarting } = state;
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const dismissedVersionRef = useRef<string | null>(null);
@@ -145,11 +145,16 @@ export function UpdateBanner({ state, actions }: UpdateBannerProps) {
         {isInstalled ? (
           <Button
             size="sm"
-            onClick={actions.restart}
+            onClick={() => void actions.restart()}
+            disabled={restarting}
             className="flex-1 gap-1.5 h-8 text-xs"
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Restart Now
+            {restarting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            {restarting ? "Restarting…" : "Restart Now"}
           </Button>
         ) : isDownloadingUi ? (
           <Button

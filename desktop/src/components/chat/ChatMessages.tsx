@@ -201,12 +201,10 @@ export function TypingIndicator() {
 }
 
 export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    bottomRef.current?.scrollIntoView({ behavior: "instant" });
   }, [messages, isStreaming]);
 
   if (messages.length === 0) {
@@ -214,16 +212,15 @@ export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
   }
 
   return (
-    <div ref={scrollRef} className="h-full overflow-y-auto">
-      <div className="py-2">
-        {messages.map((msg) =>
-          msg.role === "user" ? (
-            <UserMessage key={msg.id} message={msg} />
-          ) : (
-            <AssistantMessage key={msg.id} message={msg} />
-          )
-        )}
-      </div>
+    <div className="py-2">
+      {messages.map((msg) =>
+        msg.role === "user" ? (
+          <UserMessage key={msg.id} message={msg} />
+        ) : (
+          <AssistantMessage key={msg.id} message={msg} />
+        )
+      )}
+      <div ref={bottomRef} />
     </div>
   );
 }

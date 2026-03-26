@@ -32,6 +32,8 @@ export interface AutoUpdateState {
   dialogOpen: boolean;
   /** User dismissed the dialog — don't auto-show again for this version */
   dismissed: boolean;
+  /** True while the app restart sequence is in progress */
+  restarting: boolean;
 }
 
 export interface AutoUpdateActions {
@@ -89,6 +91,7 @@ export function useAutoUpdate(): [AutoUpdateState, AutoUpdateActions] {
   const [progress, setProgress] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
   const preDownloadInProgressRef = useRef(false);
@@ -252,7 +255,12 @@ export function useAutoUpdate(): [AutoUpdateState, AutoUpdateActions] {
   }, [status?.status]);
 
   const restart = useCallback(async () => {
+    setRestarting(true);
+    // Brief delay so the UI can render the restarting state before the process exits
+    await new Promise((r) => setTimeout(r, 500));
     await restartApp();
+    // If restartApp doesn't terminate (e.g. dev/browser env), reset after a few seconds
+    setTimeout(() => setRestarting(false), 5000);
   }, []);
 
   const dismiss = useCallback(() => {
@@ -306,6 +314,7 @@ export function useAutoUpdate(): [AutoUpdateState, AutoUpdateActions] {
     progress,
     dialogOpen,
     dismissed,
+    restarting,
   };
 
   const actions: AutoUpdateActions = {

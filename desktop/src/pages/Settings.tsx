@@ -126,7 +126,6 @@ export function Settings({
     return params.get("tab") ?? "general";
   });
   const [restarting, setRestarting] = useState(false);
-  const [updateRestarting, setUpdateRestarting] = useState(false);
 
   // Proxy state
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
@@ -401,6 +400,7 @@ export function Settings({
   const updateStatus = updateState?.status ?? null;
   const checking = updateState?.busy ?? false;
   const updateShowDownloadProgress = updateState?.showDownloadProgress ?? false;
+  const updateRestarting = updateState?.restarting ?? false;
 
   const updateSetting = <K extends keyof AppSettings>(
     key: K,
@@ -2939,11 +2939,7 @@ export function Settings({
                             <Button
                               size="sm"
                               disabled={updateRestarting}
-                              onClick={async () => {
-                                setUpdateRestarting(true);
-                                await new Promise((r) => setTimeout(r, 400));
-                                await updateActions?.restart();
-                              }}
+                              onClick={() => void updateActions?.restart()}
                             >
                               {updateRestarting ? (
                                 <>

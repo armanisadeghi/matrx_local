@@ -7,14 +7,17 @@ with working-directory tracking and background processes, use WebSocket.
 
 from __future__ import annotations
 
+import time
+import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app.tools.dispatcher import TOOL_NAMES, dispatch
 from app.tools.session import ToolSession
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -36,10 +39,36 @@ async def list_tools() -> dict[str, list[str]]:
 
 
 @router.post("/invoke", response_model=ToolResponse)
-async def invoke_tool(req: ToolRequest) -> ToolResponse:
+async def invoke_tool(req: ToolRequest, request: Request) -> ToolResponse:
+    t0 = time.monotonic()
+    client_ip = request.client.host if request.client else "unknown"
+    has_auth = bool(request.headers.get("authorization"))
+
+    logger.info(
+        "[tool_routes/invoke] → %s | client=%s | auth=%s | input_keys=%s",
+        req.tool, client_ip, has_auth, list(req.input.keys()),
+    )
+
     session = ToolSession()
-    result = await dispatch(req.tool, req.input, session)
-    await session.cleanup()
+    try:
+        result = await dispatch(req.tool, req.input, session)
+    except Exception as exc:
+        elapsed = round((time.monotonic() - t0) * 1000)
+        logger.error(
+            "[tool_routes/invoke] EXCEPTION — %s after %dms | %s: %s",
+            req.tool, elapsed, type(exc).__name__, exc,
+            exc_info=True,
+            extra={"tool": req.tool, "input": req.input, "elapsed_ms": elapsed},
+        )
+        raise
+    finally:
+        await session.cleanup()
+
+    elapsed = round((time.monotonic() - t0) * 1000)
+    logger.info(
+        "[tool_routes/invoke] ✓ %s | %dms | type=%s | output_len=%d",
+        req.tool, elapsed, result.type.value, len(result.output or ""),
+    )
 
     return ToolResponse(
         type=result.type.value,

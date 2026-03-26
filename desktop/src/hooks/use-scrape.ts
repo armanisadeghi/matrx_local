@@ -133,12 +133,31 @@ async function executeScrape(
   useCache: boolean,
   signal?: AbortSignal,
 ): Promise<ScrapeResultData> {
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  const t0 = Date.now();
+  console.info(`[use-scrape/executeScrape] START`, { url, method, useCache, timestamp: new Date().toISOString() });
+
+  if (signal?.aborted) {
+    console.warn(`[use-scrape/executeScrape] ABORTED before start`, { url, method });
+    throw new DOMException("Aborted", "AbortError");
+  }
 
   if (method === "local-browser") {
-    const toolResult = await engine.invokeTool("FetchWithBrowser", {
-      url,
-      extract_text: true,
+    console.info(`[use-scrape/executeScrape] → FetchWithBrowser`, { url });
+    let toolResult;
+    try {
+      toolResult = await engine.invokeTool("FetchWithBrowser", {
+        url,
+        extract_text: true,
+      });
+    } catch (err) {
+      console.error(`[use-scrape/executeScrape] FetchWithBrowser THREW`, {
+        url, method, error: (err as Error).message, stack: (err as Error).stack,
+        elapsed_ms: Date.now() - t0, timestamp: new Date().toISOString(),
+      });
+      throw err;
+    }
+    console.info(`[use-scrape/executeScrape] FetchWithBrowser returned`, {
+      url, type: toolResult.type, outputLength: toolResult.output?.length, elapsed_ms: Date.now() - t0,
     });
     const meta = toolResult.metadata ?? {};
     return {
@@ -155,13 +174,34 @@ async function executeScrape(
   }
 
   if (method === "engine") {
-    const toolResult = await engine.invokeTool("Scrape", {
-      urls: [url],
-      use_cache: useCache,
+    console.info(`[use-scrape/executeScrape] → Scrape tool`, { url, useCache });
+    let toolResult;
+    try {
+      toolResult = await engine.invokeTool("Scrape", {
+        urls: [url],
+        use_cache: useCache,
+      });
+    } catch (err) {
+      console.error(`[use-scrape/executeScrape] Scrape tool THREW`, {
+        url, method, useCache,
+        error: (err as Error).message, stack: (err as Error).stack,
+        elapsed_ms: Date.now() - t0, timestamp: new Date().toISOString(),
+      });
+      throw err;
+    }
+    console.info(`[use-scrape/executeScrape] Scrape tool returned`, {
+      url, type: toolResult.type, outputLength: toolResult.output?.length,
+      metadataKeys: toolResult.metadata ? Object.keys(toolResult.metadata) : [],
+      elapsed_ms: Date.now() - t0,
     });
     const meta = toolResult.metadata ?? {};
     const results = meta.results as Record<string, unknown>[] | undefined;
     const r = results?.[0];
+    if (results && results.length > 0) {
+      console.info(`[use-scrape/executeScrape] first result metadata`, {
+        url, status: r?.status, status_code: r?.status_code, has_error: !!r?.error,
+      });
+    }
     return {
       url,
       success: r ? r.status === "success" : toolResult.type === "success",
@@ -176,6 +216,7 @@ async function executeScrape(
   }
 
   // remote — caller handles SSE streaming; this path is never called directly
+  console.error(`[use-scrape/executeScrape] BUG: executeScrape called with method="remote"`, { url });
   throw new Error("Remote streaming must be handled via scrapeMany()");
 }
 
@@ -190,7 +231,14 @@ export function useScrapeOne() {
   const scrape = useCallback(
     async (url: string, method: ScrapeMethod, useCache: boolean) => {
       const normalized = normalizeUrl(url);
-      if (!normalized) return;
+      if (!normalized) {
+        console.warn(`[use-scrape/useScrapeOne] scrape() called with empty URL — ignoring`, { url });
+        return;
+      }
+
+      console.info(`[use-scrape/useScrapeOne] scrape() called`, {
+        url: normalized, method, useCache, timestamp: new Date().toISOString(),
+      });
 
       setLoading(true);
       setResult(null);
@@ -198,8 +246,23 @@ export function useScrapeOne() {
 
       try {
         if (method === "remote") {
+          console.info(`[use-scrape/useScrapeOne] using remote scrapeRemotely()`, { url: normalized });
           // Remote single: use non-streaming endpoint
-          const resp = await engine.scrapeRemotely([normalized], { use_cache: useCache });
+          let resp;
+          try {
+            resp = await engine.scrapeRemotely([normalized], { use_cache: useCache });
+          } catch (remoteErr) {
+            console.error(`[use-scrape/useScrapeOne] scrapeRemotely() THREW`, {
+              url: normalized, method, useCache,
+              error: (remoteErr as Error).message, stack: (remoteErr as Error).stack,
+              timestamp: new Date().toISOString(),
+            });
+            throw remoteErr;
+          }
+          console.info(`[use-scrape/useScrapeOne] scrapeRemotely() returned`, {
+            url: normalized, resultCount: resp.results.length,
+            status: resp.status, execution_time_ms: resp.execution_time_ms,
+          });
           const r = resp.results[0];
           if (!r) throw new Error("No result returned from remote scraper");
 
@@ -236,7 +299,11 @@ export function useScrapeOne() {
           return mapped;
         }
 
+        console.info(`[use-scrape/useScrapeOne] calling executeScrape()`, { url: normalized, method, useCache });
         const res = await executeScrape(normalized, method, useCache);
+        console.info(`[use-scrape/useScrapeOne] executeScrape() returned`, {
+          url: normalized, success: res.success, status_code: res.status_code, elapsed_ms: res.elapsed_ms,
+        });
 
         if (res.success) {
           logSuccess(normalized, res, method);
@@ -259,10 +326,15 @@ export function useScrapeOne() {
         return res;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        console.error(`[use-scrape/useScrapeOne] CAUGHT in scrape()`, {
+          url: normalized, method, useCache,
+          error: message, stack: (err as Error).stack, timestamp: new Date().toISOString(),
+        });
         logFailure(normalized, method, useCache, err);
         setError(message);
         return null;
       } finally {
+        console.info(`[use-scrape/useScrapeOne] finally — setLoading(false)`, { url: normalized });
         setLoading(false);
       }
     },
@@ -334,7 +406,16 @@ export function useScrapeMany() {
   const startScrape = useCallback(
     async (method: ScrapeMethod, useCache: boolean) => {
       const toScrape = entries.filter((e) => e.status === "pending");
-      if (toScrape.length === 0) return;
+      if (toScrape.length === 0) {
+        console.warn(`[use-scrape/useScrapeMany] startScrape() called with no pending entries`);
+        return;
+      }
+
+      console.info(`[use-scrape/useScrapeMany] startScrape() starting`, {
+        method, useCache, urlCount: toScrape.length,
+        urls: toScrape.map((e) => e.url),
+        timestamp: new Date().toISOString(),
+      });
 
       setRunning(true);
       const controller = new AbortController();
@@ -468,6 +549,7 @@ export function useScrapeMany() {
         }
       }
 
+      console.info(`[use-scrape/useScrapeMany] startScrape() complete — setRunning(false)`, { method, useCache });
       setRunning(false);
       abortRef.current = null;
     },
