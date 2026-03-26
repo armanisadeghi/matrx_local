@@ -3,6 +3,7 @@ import { useDownloadManager } from "@/contexts/DownloadManagerContext";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscriptionApp } from "@/contexts/TranscriptionContext";
+import type { TranscriptionState, TranscriptionActions } from "@/hooks/use-transcription";
 import { useSessionsContext } from "@/contexts/TranscriptionSessionsContext";
 import type { SessionsState, SessionsActions } from "@/hooks/use-transcription-sessions";
 import { useWakeWord } from "@/hooks/use-wake-word";
@@ -442,8 +443,8 @@ function SetupTab({
   state,
   actions,
 }: {
-  state: ReturnType<typeof useTranscription>[0];
-  actions: ReturnType<typeof useTranscription>[1];
+  state: TranscriptionState;
+  actions: TranscriptionActions;
 }) {
   const isSetupDone = state.setupStatus?.setup_complete ?? false;
   const isActive = state.isDetecting || state.isDownloading || state.isInitializing;
@@ -567,8 +568,8 @@ function HardwareInfoCard({
   state,
   actions,
 }: {
-  state: ReturnType<typeof useTranscription>[0];
-  actions: ReturnType<typeof useTranscription>[1];
+  state: TranscriptionState;
+  actions: TranscriptionActions;
 }) {
   const hw = state.hardwareResult;
   const didAutoDetect = useRef(false);
@@ -685,11 +686,8 @@ function TranscribeTab({
   activeSessionId,
   onContinueSession,
 }: {
-  state: ReturnType<typeof useTranscription>[0];
-  actions: ReturnType<typeof useTranscription>[1] & {
-    startRecording: () => Promise<void>;
-    stopRecording: () => Promise<void>;
-  };
+  state: TranscriptionState;
+  actions: TranscriptionActions;
   sessionsState: SessionsState;
   sessionsActions: SessionsActions;
   activeSessionId: string | null;
@@ -1576,8 +1574,8 @@ function ModelsTab({
   state,
   actions,
 }: {
-  state: ReturnType<typeof useTranscription>[0];
-  actions: ReturnType<typeof useTranscription>[1];
+  state: TranscriptionState;
+  actions: TranscriptionActions;
 }) {
   const hw = state.hardwareResult;
   const downloaded = state.setupStatus?.downloaded_models ?? [];
@@ -1794,8 +1792,8 @@ function DevicesTab({
   state,
   actions,
 }: {
-  state: ReturnType<typeof useTranscription>[0];
-  actions: ReturnType<typeof useTranscription>[1];
+  state: TranscriptionState;
+  actions: TranscriptionActions;
 }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
 

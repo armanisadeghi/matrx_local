@@ -96,31 +96,6 @@ export function useTts(): [UseTtsState, UseTtsActions] {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevAudioUrlRef = useRef<string | null>(null);
 
-  // Fetch status and voices once on mount; never re-run on state changes.
-  useEffect(() => {
-    refreshStatus();
-    refreshVoices();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Poll status every 2 s while a model download is in progress.
-  useEffect(() => {
-    if (!status?.is_downloading) return;
-    const id = setInterval(() => void refreshStatus(), 2000);
-    return () => clearInterval(id);
-  }, [status?.is_downloading, refreshStatus]);
-
-  useEffect(() => {
-    return () => {
-      if (prevAudioUrlRef.current) {
-        URL.revokeObjectURL(prevAudioUrlRef.current);
-      }
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-    };
-  }, []);
-
   const refreshStatus = useCallback(async () => {
     try {
       const s = await getTtsStatus();
@@ -138,6 +113,29 @@ export function useTts(): [UseTtsState, UseTtsActions] {
     } catch (e) {
       console.warn("[use-tts] Voices fetch failed:", e);
     }
+  }, []);
+
+  useEffect(() => {
+    refreshStatus();
+    refreshVoices();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!status?.is_downloading) return;
+    const id = setInterval(() => void refreshStatus(), 2000);
+    return () => clearInterval(id);
+  }, [status?.is_downloading, refreshStatus]);
+
+  useEffect(() => {
+    return () => {
+      if (prevAudioUrlRef.current) {
+        URL.revokeObjectURL(prevAudioUrlRef.current);
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
   }, []);
 
   const downloadModel = useCallback(async () => {
