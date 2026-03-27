@@ -236,7 +236,8 @@ class TtsService:
                                 last_emit = downloaded
                                 self._emit_dm_progress(dl_id, "Kokoro TTS Model", "active", downloaded, total_bytes)
 
-                tmp.rename(dest)
+                import shutil
+                shutil.move(str(tmp), str(dest))
                 logger.info("[tts] Downloaded %s (%.1f MB)", filename, dest.stat().st_size / 1_048_576)
 
             self._download_progress = 100.0
