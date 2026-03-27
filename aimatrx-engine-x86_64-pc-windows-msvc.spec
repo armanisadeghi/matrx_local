@@ -23,12 +23,23 @@
 #   corrupts dylibs before code signing). Reduces binary size significantly.
 
 import os
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
+# espeak-ng: bundled native library + language dictionaries (required by kokoro-onnx TTS)
+_espeakng_data = collect_data_files('espeakng_loader')
+_espeakng_libs = collect_dynamic_libs('espeakng_loader')
+# soundfile: bundled libsndfile native library
+_soundfile_data = collect_data_files('_soundfile_data')
+_soundfile_libs = collect_dynamic_libs('_soundfile_data')
+# kokoro-onnx: config.json (vocab) must be collected
+_kokoro_data = collect_data_files('kokoro_onnx')
+
 
 a = Analysis(
     ['run.py'],
     pathex=[],
-    binaries=[],
-    datas=[('app', 'app'), ('scraper-service/app', 'scraper-service/app'), ('pyproject.toml', '.')],
+    binaries=_espeakng_libs + _soundfile_libs,
+    datas=[('app', 'app'), ('scraper-service/app', 'scraper-service/app'), ('pyproject.toml', '.')] + _espeakng_data + _soundfile_data + _kokoro_data,
     hiddenimports=[
         'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
         'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto',
@@ -43,6 +54,10 @@ a = Analysis(
         'yt_dlp.postprocessor', 'yt_dlp.utils',
         'imageio_ffmpeg', 'psutil', 'pydantic_settings', 'zeroconf',
         'watchfiles', 'sounddevice', 'soundfile', 'pynput',
+        'kokoro_onnx', 'kokoro_onnx.tokenizer', 'kokoro_onnx.config', 'kokoro_onnx.trim',
+        'phonemizer', 'phonemizer.backend', 'phonemizer.backend.espeak',
+        'phonemizer.backend.espeak.wrapper',
+        'espeakng_loader', '_soundfile_data',
         'app.tools.tools.system', 'app.tools.tools.file_ops',
         'app.tools.tools.clipboard', 'app.tools.tools.execution',
         'app.tools.tools.network', 'app.tools.tools.notify',

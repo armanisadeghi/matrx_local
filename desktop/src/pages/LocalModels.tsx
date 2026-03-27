@@ -1593,13 +1593,27 @@ function ModelRow({
       </div>
 
       {/* Download progress */}
-      {effectiveDownloadingThis && downloadProgress && (
+      {effectiveDownloadingThis && (
         <div className="px-4 pb-2 flex items-center gap-3">
-          <Progress value={downloadProgress.percent} className="h-1.5 flex-1" />
-          <span className="text-xs text-foreground/70 tabular-nums w-24 text-right">
-            {downloadProgress.percent.toFixed(0)}% ·{" "}
-            {formatBytes(downloadProgress.bytes_downloaded)}
-          </span>
+          {downloadProgress ? (
+            <>
+              <Progress value={downloadProgress.percent} className="h-1.5 flex-1" />
+              <span className="text-xs text-foreground/70 tabular-nums w-24 text-right">
+                {downloadProgress.percent.toFixed(0)}% ·{" "}
+                {formatBytes(downloadProgress.bytes_downloaded)}
+              </span>
+            </>
+          ) : (
+            <>
+              <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                <div className="h-full bg-primary/40 rounded-full animate-pulse w-1/3" />
+              </div>
+              <span className="text-xs text-muted-foreground w-24 text-right flex items-center justify-end gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Starting…
+              </span>
+            </>
+          )}
         </div>
       )}
 
@@ -1759,6 +1773,14 @@ function ModelsTab() {
   } = actions;
   const { activeCount: dmActiveCount, openModal: openDownloadModal } = useDownloadManager();
 
+  // Refs for always-fresh values inside async polling callbacks
+  const downloadedModelsRef = useRef(downloadedModels);
+  const errorRef = useRef(error);
+  const downloadCancelledRef = useRef(downloadCancelled);
+  useEffect(() => { downloadedModelsRef.current = downloadedModels; }, [downloadedModels]);
+  useEffect(() => { errorRef.current = error; }, [error]);
+  useEffect(() => { downloadCancelledRef.current = downloadCancelled; }, [downloadCancelled]);
+
   const [localError, setLocalError] = useState<string | null>(null);
   const [modelDownloadErrors, setModelDownloadErrors] = useState<Record<string, string>>({});
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -1815,12 +1837,13 @@ function ModelsTab() {
           const hw = await ensureHardware();
           queueDownload(model.filename, model.all_part_urls);
           // Poll until the model appears in downloadedModels, then start.
+          // Uses refs so callbacks always see latest state, not stale closures.
           // Bail out after 30 min (3600 × 500 ms) to prevent infinite loops.
           await new Promise<void>((resolve, reject) => {
             let attempts = 0;
             const maxAttempts = 3600;
             const check = () => {
-              const downloaded = downloadedModels.some(
+              const downloaded = downloadedModelsRef.current.some(
                 (m) => m.filename === model.filename,
               );
               if (downloaded) {
@@ -1828,8 +1851,8 @@ function ModelsTab() {
                 return;
               }
               // If an error appeared or download was cancelled, stop waiting.
-              if (error || downloadCancelled) {
-                reject(new Error(error ?? "Download cancelled"));
+              if (errorRef.current || downloadCancelledRef.current) {
+                reject(new Error(errorRef.current ?? "Download cancelled"));
                 return;
               }
               if (++attempts >= maxAttempts) {
