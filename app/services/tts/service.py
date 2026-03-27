@@ -1,9 +1,7 @@
 """Kokoro TTS service.
 
-Uses kokoro-onnx for local text-to-speech via ONNX Runtime.  This is an
-OPTIONAL feature — kokoro-onnx and soundfile are declared as [tts] extras
-and are NOT installed by default.  All imports are lazy so that the module
-can be imported and routes registered even when the packages are missing.
+Uses kokoro-onnx for local text-to-speech via ONNX Runtime.  Both
+kokoro-onnx and soundfile are core dependencies — always installed.
 
 The service downloads the ONNX model + voice pack on first use, loads the
 Kokoro instance once, and reuses it for all subsequent synthesis calls.
@@ -43,25 +41,6 @@ TTS_OUTPUT_DIR = TTS_DIR / "output"
 CUSTOM_VOICES_DIR = TTS_DIR / "custom-voices"
 
 PREVIEW_TEXT = "Hello! This is a preview of my voice. I hope you enjoy how I sound."
-
-
-def _check_deps() -> tuple[bool, str]:
-    """Return (available, reason).  Fast — no heavy imports."""
-    missing: list[str] = []
-    for pkg in ("kokoro_onnx", "soundfile"):
-        try:
-            __import__(pkg)
-        except ImportError:
-            missing.append(pkg)
-    if missing:
-        return False, (
-            f"Text-to-speech requires optional packages: {', '.join(missing)}. "
-            "Install with: uv sync --extra tts"
-        )
-    return True, ""
-
-
-DEPS_AVAILABLE, DEPS_REASON = _check_deps()
 
 
 @dataclass
@@ -109,14 +88,6 @@ class TtsService:
         self._download_progress: float = 0.0
 
     @property
-    def available(self) -> bool:
-        return DEPS_AVAILABLE
-
-    @property
-    def unavailable_reason(self) -> str:
-        return DEPS_REASON
-
-    @property
     def model_downloaded(self) -> bool:
         model_path = TTS_DIR / ONNX_MODEL_FILENAME
         voices_path = TTS_DIR / VOICES_BIN_FILENAME
@@ -128,8 +99,6 @@ class TtsService:
 
     def get_status(self) -> dict[str, Any]:
         return {
-            "available": self.available,
-            "unavailable_reason": DEPS_REASON if not self.available else None,
             "model_downloaded": self.model_downloaded,
             "model_loaded": self._model_loaded,
             "is_downloading": self._is_downloading,
@@ -178,9 +147,6 @@ class TtsService:
 
     async def download_model(self) -> dict[str, Any]:
         """Download the ONNX model and voices pack.  Idempotent."""
-        if not self.available:
-            return {"success": False, "error": self.unavailable_reason}
-
         if self.model_downloaded:
             return {"success": True, "already_downloaded": True}
 
@@ -286,9 +252,6 @@ class TtsService:
 
     async def ensure_loaded(self) -> dict[str, Any]:
         """Ensure model is downloaded and loaded.  Returns status dict."""
-        if not self.available:
-            return {"success": False, "error": self.unavailable_reason}
-
         if self._model_loaded and self._kokoro is not None:
             return {"success": True, "already_loaded": True}
 
@@ -333,9 +296,6 @@ class TtsService:
         lang: str | None = None,
     ) -> SynthesisResult:
         """Synthesize speech from text.  Returns WAV bytes."""
-        if not self.available:
-            return SynthesisResult(success=False, error=self.unavailable_reason)
-
         load_result = await self.ensure_loaded()
         if not load_result.get("success"):
             return SynthesisResult(

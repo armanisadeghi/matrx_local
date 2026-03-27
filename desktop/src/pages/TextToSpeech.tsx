@@ -55,14 +55,6 @@ export function TextToSpeech() {
 
 function StatusBadge({ status }: { status: ReturnType<typeof useTts>[0]["status"] }) {
   if (!status) return null;
-  if (!status.available) {
-    return (
-      <span className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-500">
-        <AlertCircle className="h-3 w-3" />
-        Not Installed
-      </span>
-    );
-  }
   if (!status.model_downloaded) {
     return (
       <span className="flex items-center gap-1.5 rounded-full bg-zinc-500/10 px-3 py-1 text-xs font-medium text-zinc-400">
@@ -99,8 +91,8 @@ function SpeakTab({
   const [text, setText] = useState("");
   const textRef = useRef<HTMLTextAreaElement>(null);
 
-  const needsDownload = state.status?.available && !state.status.model_downloaded;
-  const isReady = state.status?.available && state.status.model_downloaded;
+  const needsDownload = state.status && !state.status.model_downloaded;
+  const isReady = state.status?.model_downloaded ?? false;
   const canSpeak = isReady && text.trim().length > 0 && !state.isSynthesizing;
 
   const handleSpeak = useCallback(() => {
@@ -116,10 +108,6 @@ function SpeakTab({
     },
     [handleSpeak],
   );
-
-  if (!state.status?.available) {
-    return <NotInstalledBanner reason={state.status?.unavailable_reason} />;
-  }
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-6">
@@ -423,10 +411,6 @@ function VoicesTab({
 
   const languages = [...new Set(state.voices.map((v) => v.language))];
 
-  if (!state.status?.available) {
-    return <NotInstalledBanner reason={state.status?.unavailable_reason} />;
-  }
-
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 p-6">
       {/* Filters */}
@@ -627,10 +611,6 @@ function SettingsTab({
   state: ReturnType<typeof useTts>[0];
   actions: ReturnType<typeof useTts>[1];
 }) {
-  if (!state.status?.available) {
-    return <NotInstalledBanner reason={state.status?.unavailable_reason} />;
-  }
-
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 p-6">
       {/* Model Status */}
@@ -761,25 +741,6 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 }
 
 // ── Shared Banners ───────────────────────────────────────────────────────────
-
-function NotInstalledBanner({ reason }: { reason?: string | null }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 p-12 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10">
-        <AlertCircle className="h-8 w-8 text-amber-500" />
-      </div>
-      <div className="space-y-1">
-        <h3 className="text-lg font-semibold">TTS Dependencies Not Installed</h3>
-        <p className="max-w-md text-sm text-muted-foreground">
-          {reason || "Install the optional TTS packages to enable text-to-speech."}
-        </p>
-      </div>
-      <code className="rounded-lg bg-muted px-4 py-2 text-sm font-mono">
-        uv sync --extra tts
-      </code>
-    </div>
-  );
-}
 
 function DownloadBanner({
   status,

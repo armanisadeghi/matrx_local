@@ -76,6 +76,10 @@ dependencies = [
     # openwakeword's tflite-runtime Linux dep has no cp313+ wheels; we use ONNX only.
     "openwakeword>=0.6.0",
     "onnxruntime>=1.18.0",
+    # Text-to-speech (Kokoro-82M via ONNX Runtime, ~300 MB model downloaded on first use)
+    # espeak-ng is bundled cross-platform via espeakng-loader (no system install needed)
+    "kokoro-onnx>=0.5.0",
+    "soundfile>=0.13.0",
 ]
 
 [project.optional-dependencies]
@@ -94,19 +98,10 @@ image-gen = [
     "sentencepiece>=0.2.0",
     "protobuf>=3.20.0",
 ]
-tts = [
-    # Kokoro-82M text-to-speech via ONNX Runtime (~300 MB model, CPU-friendly)
-    # Install with: uv sync --extra tts
-    # espeak-ng is bundled via espeakng-loader (no system install needed)
-    "kokoro-onnx>=0.5.0",
-    "soundfile>=0.13.0",
-]
 all = [
     "openai-whisper",
-    # Note: image-gen and tts are NOT included in 'all' intentionally —
-    # they are sizeable optional installs. Enable explicitly with:
-    #   uv sync --extra image-gen
-    #   uv sync --extra tts
+    # Note: image-gen is NOT included in 'all' intentionally — it's a multi-GB
+    # optional install. Enable explicitly with: uv sync --extra image-gen
 ]
 
 [dependency-groups]

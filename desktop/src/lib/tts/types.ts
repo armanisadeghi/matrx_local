@@ -11,8 +11,6 @@ export interface TtsVoice {
 }
 
 export interface TtsStatus {
-  available: boolean;
-  unavailable_reason: string | null;
   model_downloaded: boolean;
   model_loaded: boolean;
   is_downloading: boolean;

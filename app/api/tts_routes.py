@@ -1,10 +1,4 @@
-"""Text-to-speech API routes (Kokoro-82M via ONNX Runtime).
-
-All imports of the optional kokoro-onnx package are behind the service
-boundary — this module is safe to import even when those packages are not
-installed.  Endpoints return HTTP 503 with a clear installation message
-when the optional dependencies are absent.
-"""
+"""Text-to-speech API routes (Kokoro-82M via ONNX Runtime)."""
 
 from __future__ import annotations
 
@@ -20,8 +14,6 @@ router = APIRouter(prefix="/tts", tags=["tts"])
 # ── Request / Response schemas ────────────────────────────────────────────────
 
 class TtsStatusResponse(BaseModel):
-    available: bool
-    unavailable_reason: str | None = None
     model_downloaded: bool
     model_loaded: bool
     is_downloading: bool
@@ -70,14 +62,6 @@ class DownloadResponse(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-def _require_available() -> None:
-    svc = get_tts_service()
-    if not svc.available:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Text-to-speech not available: {svc.unavailable_reason}",
-        )
-
 
 @router.get("/status", response_model=TtsStatusResponse)
 async def tts_status() -> TtsStatusResponse:
@@ -93,7 +77,6 @@ async def list_voices() -> list[TtsVoiceInfo]:
 
 @router.post("/download-model", response_model=DownloadResponse)
 async def download_model() -> DownloadResponse:
-    _require_available()
     svc = get_tts_service()
     result = await svc.download_model()
     return DownloadResponse(**result)
@@ -107,7 +90,6 @@ async def synthesize(req: SynthesizeRequest) -> Response:
     ``audio/wav`` so the browser / frontend can play it with <audio> or
     the Web Audio API.
     """
-    _require_available()
     svc = get_tts_service()
     result = await svc.synthesize(
         text=req.text,
@@ -137,7 +119,6 @@ async def synthesize_json(req: SynthesizeRequest) -> SynthesizeResponse:
     Use /synthesize for actual audio.  This endpoint is for checking
     synthesis feasibility or getting timing data.
     """
-    _require_available()
     svc = get_tts_service()
     result = await svc.synthesize(
         text=req.text,
@@ -158,7 +139,6 @@ async def synthesize_json(req: SynthesizeRequest) -> SynthesizeResponse:
 @router.post("/preview-voice")
 async def preview_voice(req: PreviewVoiceRequest) -> Response:
     """Generate a short preview clip for a given voice."""
-    _require_available()
     svc = get_tts_service()
     result = await svc.preview_voice(req.voice_id)
     if not result.success or result.audio_bytes is None:
