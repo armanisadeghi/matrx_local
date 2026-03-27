@@ -987,10 +987,9 @@ pub fn run() {
         .manage(TranscriptionState(Mutex::new(None)))
         .manage(RecordingState::new())
         .manage(WakeWordAppState(Arc::new(WakeWordState::new())))
-        .manage(
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
-                as transcription::commands::WhisperDownloadCancelState,
-        )
+        .manage(transcription::commands::WhisperDownloadCancelState(
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        ))
         .manage(
             std::sync::Arc::new(tokio::sync::Mutex::new(llm::server::LlmServer::new()))
                 as llm::commands::LlmServerState,
@@ -998,10 +997,9 @@ pub fn run() {
         .manage(std::sync::Arc::new(std::sync::Mutex::new(
             None::<tauri_plugin_shell::process::CommandChild>,
         )) as llm::commands::LlmProcessHandle)
-        .manage(
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
-                as llm::commands::LlmDownloadCancelState,
-        )
+        .manage(llm::commands::LlmDownloadCancelState(
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        ))
         // Universal download manager — initialized in .setup() below after AppHandle is available
         .invoke_handler(tauri::generate_handler![
             start_sidecar,

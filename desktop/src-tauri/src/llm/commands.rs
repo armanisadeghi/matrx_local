@@ -28,7 +28,10 @@ pub type LlmProcessHandle =
 /// Shared atomic flag used to request cancellation of an in-flight download.
 /// Set to true by `cancel_llm_download`; reset to false at the start of each
 /// new `download_llm_model` invocation.
-pub type LlmDownloadCancelState = Arc<AtomicBool>;
+/// Newtype wrapper (not a type alias) so Tauri can manage it as a distinct
+/// state type from WhisperDownloadCancelState, which is also Arc<AtomicBool>.
+/// Tauri keys managed state by TypeId — type aliases share a TypeId, newtypes don't.
+pub struct LlmDownloadCancelState(pub Arc<AtomicBool>);
 
 // ── Server Lifecycle ──────────────────────────────────────────────────────
 
@@ -223,7 +226,7 @@ pub fn cancel_llm_download(
     app: AppHandle,
     cancel: State<'_, LlmDownloadCancelState>,
 ) -> Result<(), String> {
-    cancel.store(true, Ordering::SeqCst);
+    cancel.0.store(true, Ordering::SeqCst);
     let _ = app.emit(
         "llm-download-cancelled",
         serde_json::json!({ "reason": "user_cancelled" }),
@@ -301,7 +304,7 @@ pub async fn download_llm_model(
     }
 
     // Reset cancel flag at the start of every new download
-    cancel.store(false, Ordering::SeqCst);
+    cancel.0.store(false, Ordering::SeqCst);
 
     // Register with the universal download manager for tracking/persistence.
     // The actual HTTP is still done by the code below (preserves XET detection,
@@ -374,7 +377,7 @@ pub async fn download_llm_model(
         .iter()
         .find(|m| m.filename == filename);
 
-    let cancel_ref = cancel.inner().clone();
+    let cancel_ref = cancel.inner().0.clone();
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(7200))

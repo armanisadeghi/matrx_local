@@ -41,7 +41,10 @@ impl RecordingState {
 }
 
 /// Shared atomic flag for cancelling in-flight whisper model downloads.
-pub type WhisperDownloadCancelState = Arc<AtomicBool>;
+/// Newtype wrapper (not a type alias) so Tauri can manage it as a distinct
+/// state type from LlmDownloadCancelState, which is also Arc<AtomicBool>.
+/// Tauri keys managed state by TypeId — type aliases share a TypeId, newtypes don't.
+pub struct WhisperDownloadCancelState(pub Arc<AtomicBool>);
 
 /// Tauri-managed state for the wake-word subsystem.
 pub struct WakeWordAppState(pub Arc<WakeWordState>);
@@ -94,7 +97,7 @@ pub async fn download_whisper_model(
 ) -> Result<String, String> {
     use crate::downloads::commands::DownloadManagerState;
 
-    cancel.store(false, Ordering::SeqCst);
+    cancel.0.store(false, Ordering::SeqCst);
 
     let models_dir = app
         .path()
@@ -121,7 +124,7 @@ pub async fn download_whisper_model(
     let app_clone = app.clone();
     let dl_id_clone = dl_id.clone();
     let fname = filename.clone();
-    let cancel_flag = Arc::clone(&*cancel);
+    let cancel_flag = Arc::clone(&cancel.0);
     let dest = downloader::download_model(&fname, &models_dir, move |progress| {
         let _ = app_clone.emit(
             "whisper-download-progress",
@@ -203,7 +206,7 @@ pub async fn download_vad_model(
 
     let app_clone = app.clone();
     let dl_id_clone = dl_id.clone();
-    let cancel_flag = Arc::clone(&*cancel);
+    let cancel_flag = Arc::clone(&cancel.0);
     let dest = downloader::download_model(
         vad_filename,
         &models_dir,
@@ -262,7 +265,7 @@ pub fn cancel_whisper_download(
     app: AppHandle,
     cancel: State<'_, WhisperDownloadCancelState>,
 ) -> Result<(), String> {
-    cancel.store(true, Ordering::SeqCst);
+    cancel.0.store(true, Ordering::SeqCst);
     let _ = app.emit(
         "whisper-download-cancelled",
         serde_json::json!({ "reason": "user_cancelled" }),
