@@ -57,6 +57,13 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
+  RefreshCw,
+  BookmarkPlus,
+  Folder,
+  FolderPlus,
+  FileText,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
 import { Button } from "@/components/ui/button";
@@ -92,6 +99,7 @@ import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
 import { useNavigate } from "react-router-dom";
 import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
 import type { SystemPrompt } from "@/lib/system-prompts";
+import { usePageRefreshHandler } from "@/hooks/use-page-refresh";
 import { ModelRepoAnalyzer } from "@/components/llm/ModelRepoAnalyzer";
 import {
   engine,
@@ -107,7 +115,12 @@ import type {
   ImageGenModelInfo,
   ImageGenWorkflowPreset,
   ImageGenStatus,
+  DocFolder,
+  DocTree,
 } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
+import { useTtsApp } from "@/contexts/TtsContext";
+import { useChatTts } from "@/hooks/use-chat-tts";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
 
@@ -1510,7 +1523,10 @@ function ModelRow({
               <X className="h-3.5 w-3.5" />
             </Button>
           ) : effectiveQueued ? (
-            <span className="h-7 w-7 flex items-center justify-center" title="Queued for download — waiting for current download to finish">
+            <span
+              className="h-7 w-7 flex items-center justify-center"
+              title="Queued for download — waiting for current download to finish"
+            >
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
             </span>
           ) : downloadError && !effectiveDownloaded ? (
@@ -1523,7 +1539,13 @@ function ModelRow({
                 if (hasVariants) {
                   const v = model.variants[selectedVariantIdx];
                   onDownload(
-                    { ...model, filename: v.filename, hf_url: v.hf_url, hf_parts: v.hf_parts, all_part_urls: v.all_part_urls },
+                    {
+                      ...model,
+                      filename: v.filename,
+                      hf_url: v.hf_url,
+                      hf_parts: v.hf_parts,
+                      all_part_urls: v.all_part_urls,
+                    },
                     false,
                   );
                 } else {
@@ -1543,7 +1565,13 @@ function ModelRow({
                 if (hasVariants) {
                   const v = model.variants[selectedVariantIdx];
                   onDownload(
-                    { ...model, filename: v.filename, hf_url: v.hf_url, hf_parts: v.hf_parts, all_part_urls: v.all_part_urls },
+                    {
+                      ...model,
+                      filename: v.filename,
+                      hf_url: v.hf_url,
+                      hf_parts: v.hf_parts,
+                      all_part_urls: v.all_part_urls,
+                    },
                     false,
                   );
                 } else {
@@ -1573,7 +1601,13 @@ function ModelRow({
               }
             }}
             disabled={!effectiveDownloaded || isThisRunning || isStarting}
-            title={isThisRunning ? "Model is running" : effectiveDownloaded ? "Load and run model" : "Download the model first"}
+            title={
+              isThisRunning
+                ? "Model is running"
+                : effectiveDownloaded
+                  ? "Load and run model"
+                  : "Download the model first"
+            }
           >
             <Play className="h-3.5 w-3.5" />
           </Button>
@@ -1583,9 +1617,13 @@ function ModelRow({
             size="sm"
             variant="ghost"
             className={`h-7 w-7 p-0 ${effectiveDownloaded ? "text-muted-foreground hover:text-destructive" : "text-muted-foreground/20 cursor-not-allowed"}`}
-            onClick={() => { if (effectiveDownloaded) onDelete(effectiveFilename); }}
+            onClick={() => {
+              if (effectiveDownloaded) onDelete(effectiveFilename);
+            }}
             disabled={!effectiveDownloaded}
-            title={effectiveDownloaded ? "Delete model file" : "No file to delete"}
+            title={
+              effectiveDownloaded ? "Delete model file" : "No file to delete"
+            }
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -1597,7 +1635,10 @@ function ModelRow({
         <div className="px-4 pb-2 flex items-center gap-3">
           {downloadProgress ? (
             <>
-              <Progress value={downloadProgress.percent} className="h-1.5 flex-1" />
+              <Progress
+                value={downloadProgress.percent}
+                className="h-1.5 flex-1"
+              />
               <span className="text-xs text-foreground/70 tabular-nums w-24 text-right">
                 {downloadProgress.percent.toFixed(0)}% ·{" "}
                 {formatBytes(downloadProgress.bytes_downloaded)}
@@ -1697,7 +1738,10 @@ function ModelRow({
 // ── Server-grade collapsible section ─────────────────────────────────────
 
 function ServerGradeSection(
-  props: Omit<ModelRowProps & { rowIndex: number }, "model" | "rowIndex" | "downloadError"> & {
+  props: Omit<
+    ModelRowProps & { rowIndex: number },
+    "model" | "rowIndex" | "downloadError"
+  > & {
     models: LlmModelInfo[];
     startIndex: number;
     modelDownloadErrors?: Record<string, string>;
@@ -1771,23 +1815,36 @@ function ModelsTab() {
     listModels,
     clearError,
   } = actions;
-  const { activeCount: dmActiveCount, openModal: openDownloadModal } = useDownloadManager();
+  const { activeCount: dmActiveCount, openModal: openDownloadModal } =
+    useDownloadManager();
 
   // Refs for always-fresh values inside async polling callbacks
   const downloadedModelsRef = useRef(downloadedModels);
   const errorRef = useRef(error);
   const downloadCancelledRef = useRef(downloadCancelled);
-  useEffect(() => { downloadedModelsRef.current = downloadedModels; }, [downloadedModels]);
-  useEffect(() => { errorRef.current = error; }, [error]);
-  useEffect(() => { downloadCancelledRef.current = downloadCancelled; }, [downloadCancelled]);
+  useEffect(() => {
+    downloadedModelsRef.current = downloadedModels;
+  }, [downloadedModels]);
+  useEffect(() => {
+    errorRef.current = error;
+  }, [error]);
+  useEffect(() => {
+    downloadCancelledRef.current = downloadCancelled;
+  }, [downloadCancelled]);
 
   const [localError, setLocalError] = useState<string | null>(null);
-  const [modelDownloadErrors, setModelDownloadErrors] = useState<Record<string, string>>({});
+  const [modelDownloadErrors, setModelDownloadErrors] = useState<
+    Record<string, string>
+  >({});
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
-  const [expandedCustomRow, setExpandedCustomRow] = useState<string | null>(null);
+  const [expandedCustomRow, setExpandedCustomRow] = useState<string | null>(
+    null,
+  );
   const [editingCustomRow, setEditingCustomRow] = useState<string | null>(null);
   const [editingCustomName, setEditingCustomName] = useState("");
-  const [customModelNames, setCustomModelNames] = useState<Record<string, string>>(() => {
+  const [customModelNames, setCustomModelNames] = useState<
+    Record<string, string>
+  >(() => {
     try {
       return JSON.parse(localStorage.getItem("custom-model-names") ?? "{}");
     } catch {
@@ -1912,14 +1969,17 @@ function ModelsTab() {
     }
   };
 
-  const handleClearModelDownloadError = useCallback((filename: string) => {
-    setModelDownloadErrors((prev) => {
-      const next = { ...prev };
-      delete next[filename];
-      return next;
-    });
-    clearError();
-  }, [clearError]);
+  const handleClearModelDownloadError = useCallback(
+    (filename: string) => {
+      setModelDownloadErrors((prev) => {
+        const next = { ...prev };
+        delete next[filename];
+        return next;
+      });
+      clearError();
+    },
+    [clearError],
+  );
 
   const handleLoadCustom = async (filename: string) => {
     setLocalError(null);
@@ -1933,7 +1993,10 @@ function ModelsTab() {
   };
 
   const saveCustomModelName = (filename: string, name: string) => {
-    const updated = { ...customModelNames, [filename]: name.trim() || filename };
+    const updated = {
+      ...customModelNames,
+      [filename]: name.trim() || filename,
+    };
     setCustomModelNames(updated);
     try {
       localStorage.setItem("custom-model-names", JSON.stringify(updated));
@@ -1973,7 +2036,10 @@ function ModelsTab() {
           </span>
           <button
             className="text-xs underline shrink-0"
-            onClick={() => { setLocalError(null); clearError(); }}
+            onClick={() => {
+              setLocalError(null);
+              clearError();
+            }}
           >
             Dismiss
           </button>
@@ -2143,7 +2209,9 @@ function ModelsTab() {
                     <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
                     <button
                       className="flex items-center gap-1 min-w-0 text-left group"
-                      onClick={() => setExpandedCustomRow(isExpanded ? null : dm.filename)}
+                      onClick={() =>
+                        setExpandedCustomRow(isExpanded ? null : dm.filename)
+                      }
                     >
                       <span className="font-medium truncate text-foreground">
                         {displayName}
@@ -2158,17 +2226,29 @@ function ModelsTab() {
                   </div>
 
                   {/* Rating placeholders */}
-                  <span className="text-foreground/30 text-xs text-center">—</span>
-                  <span className="text-foreground/30 text-xs text-center">—</span>
-                  <span className="text-foreground/30 text-xs text-center">—</span>
-                  <span className="text-foreground/30 text-xs text-center">—</span>
+                  <span className="text-foreground/30 text-xs text-center">
+                    —
+                  </span>
+                  <span className="text-foreground/30 text-xs text-center">
+                    —
+                  </span>
+                  <span className="text-foreground/30 text-xs text-center">
+                    —
+                  </span>
+                  <span className="text-foreground/30 text-xs text-center">
+                    —
+                  </span>
 
                   {/* Size */}
                   <span className="text-xs text-foreground/80 text-right tabular-nums">
                     {dm.size_gb} GB
                   </span>
-                  <span className="text-foreground/30 text-xs text-right">—</span>
-                  <span className="text-foreground/30 text-xs text-center">—</span>
+                  <span className="text-foreground/30 text-xs text-right">
+                    —
+                  </span>
+                  <span className="text-foreground/30 text-xs text-center">
+                    —
+                  </span>
 
                   {/* Actions — stable positions */}
                   <div className="flex justify-end items-center">
@@ -2198,9 +2278,15 @@ function ModelsTab() {
                       size="sm"
                       variant="ghost"
                       className={`h-7 w-7 p-0 ${!isThisRunning ? "text-green-500 hover:text-green-400" : "text-muted-foreground/20 cursor-not-allowed"}`}
-                      onClick={() => { if (!isThisRunning) handleLoadCustom(dm.filename); }}
+                      onClick={() => {
+                        if (!isThisRunning) handleLoadCustom(dm.filename);
+                      }}
                       disabled={isThisRunning || isStarting}
-                      title={isThisRunning ? "Model is running" : "Load and run model"}
+                      title={
+                        isThisRunning
+                          ? "Model is running"
+                          : "Load and run model"
+                      }
                     >
                       <Play className="h-3.5 w-3.5" />
                     </Button>
@@ -2260,11 +2346,15 @@ function ModelsTab() {
                 {isExpanded && !isEditing && (
                   <div className="px-4 pb-3 pl-10 space-y-1.5 bg-muted/10 border-t">
                     <p className="text-xs text-foreground/60 pt-2">
-                      <span className="font-medium text-foreground/80">File:</span>{" "}
+                      <span className="font-medium text-foreground/80">
+                        File:
+                      </span>{" "}
                       <span className="font-mono">{dm.filename}</span>
                     </p>
                     <p className="text-xs text-foreground/60">
-                      <span className="font-medium text-foreground/80">Size:</span>{" "}
+                      <span className="font-medium text-foreground/80">
+                        Size:
+                      </span>{" "}
                       {dm.size_gb} GB
                     </p>
                     {isThisRunning && (
@@ -2274,7 +2364,8 @@ function ModelsTab() {
                       </p>
                     )}
                     <p className="text-xs text-muted-foreground">
-                      Custom model — no metadata available. Use the rename button to give it a friendly name.
+                      Custom model — no metadata available. Use the rename
+                      button to give it a friendly name.
                     </p>
                   </div>
                 )}
@@ -2437,26 +2528,57 @@ function SystemPromptSelector({
   const [userPrompts, setUserPrompts] = useState<SystemPrompt[]>(() =>
     systemPrompts.list(),
   );
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const allPrompts = [...BUILTIN_PROMPTS, ...userPrompts];
   const activePrompt = allPrompts.find((p) => p.content === value);
 
-  // Reload when the user returns from the prompts page
-  useEffect(() => {
+  const reload = () => {
     setUserPrompts(systemPrompts.list());
+  };
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    reload();
+    setTimeout(() => setIsRefreshing(false), 600);
+  };
+
+  // Reload on mount and whenever prompts change (cross-tab storage event or same-tab custom event)
+  useEffect(() => {
+    reload();
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "matrx-system-prompts") reload();
+    };
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("matrx-prompts-changed", reload);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("matrx-prompts-changed", reload);
+    };
   }, []);
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label className="text-xs font-medium">System Prompt</Label>
-        <button
-          className="flex items-center gap-1 text-xs text-primary hover:underline"
-          onClick={() => navigate("/system-prompts")}
-          title="Open System Prompts library"
-        >
-          <ExternalLink className="h-3 w-3" />
-          Manage
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleRefresh}
+            title="Refresh prompt list"
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <RefreshCw
+              className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`}
+            />
+          </button>
+          <button
+            className="flex items-center gap-1 text-xs text-primary hover:underline"
+            onClick={() => navigate("/system-prompts")}
+            title="Open System Prompts library"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Manage
+          </button>
+        </div>
       </div>
 
       {/* Prompt picker dropdown */}
@@ -2510,10 +2632,313 @@ function SystemPromptSelector({
   );
 }
 
+// ── Save-to-Note modal ────────────────────────────────────────────────────
+
+type SaveScope = "message" | "conversation";
+
+interface SaveToNoteModalProps {
+  open: boolean;
+  onClose: () => void;
+  scope: SaveScope;
+  content: string; // pre-formatted markdown to save
+  userId: string | null;
+  enginePort: number | null;
+}
+
+function SaveToNoteModal({
+  open,
+  onClose,
+  scope,
+  content,
+  userId,
+  enginePort,
+}: SaveToNoteModalProps) {
+  const [tree, setTree] = useState<DocTree | null>(null);
+  const [loadingTree, setLoadingTree] = useState(false);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [selectedFolderName, setSelectedFolderName] =
+    useState<string>("General");
+  const [noteTitle, setNoteTitle] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [newFolderMode, setNewFolderMode] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
+
+  // Load folder tree when modal opens
+  useEffect(() => {
+    if (!open || !enginePort) return;
+    setSaved(false);
+    setSaveError(null);
+    setNewFolderMode(false);
+    setNewFolderName("");
+    setNoteTitle(
+      scope === "conversation"
+        ? `Conversation — ${new Date().toLocaleDateString()}`
+        : `Note — ${new Date().toLocaleDateString()}`,
+    );
+
+    const uid = userId ?? "local";
+    setLoadingTree(true);
+    engine
+      .getDocTree(uid)
+      .then((t) => {
+        setTree(t);
+        // Pre-select first folder if any
+        if (t.folders.length > 0) {
+          setSelectedFolderId(t.folders[0].id);
+          setSelectedFolderName(t.folders[0].name);
+        } else {
+          setSelectedFolderId(null);
+          setSelectedFolderName("General");
+        }
+      })
+      .catch(() => {
+        setTree({ folders: [], total_notes: 0, unfiled_notes: 0 });
+      })
+      .finally(() => setLoadingTree(false));
+  }, [open, enginePort, userId, scope]);
+
+  const handleFolderSelect = (folder: DocFolder | null) => {
+    setSelectedFolderId(folder?.id ?? null);
+    setSelectedFolderName(folder?.name ?? "General");
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim() || !enginePort) return;
+    setCreatingFolder(true);
+    try {
+      const uid = userId ?? "local";
+      const created = await engine.createFolder(uid, {
+        name: newFolderName.trim(),
+      });
+      setTree((prev) =>
+        prev
+          ? { ...prev, folders: [...prev.folders, created] }
+          : { folders: [created], total_notes: 0, unfiled_notes: 0 },
+      );
+      setSelectedFolderId(created.id);
+      setSelectedFolderName(created.name);
+      setNewFolderMode(false);
+      setNewFolderName("");
+    } catch {
+      // silently ignore — user can retry
+    } finally {
+      setCreatingFolder(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!enginePort || !noteTitle.trim()) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const uid = userId ?? "local";
+      await engine.createNote(uid, {
+        label: noteTitle.trim(),
+        content,
+        folder_name: selectedFolderName,
+        folder_id: selectedFolderId ?? undefined,
+      });
+      setSaved(true);
+      setTimeout(onClose, 900);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Failed to save note.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <BookmarkPlus className="h-4 w-4 text-primary" />
+            Save to Notes
+          </DialogTitle>
+          <DialogDescription className="text-xs">
+            {scope === "message"
+              ? "Save this response as a note."
+              : "Save the full conversation as a note."}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          {/* Note title */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Title</Label>
+            <Input
+              value={noteTitle}
+              onChange={(e) => setNoteTitle(e.target.value)}
+              placeholder="Note title…"
+              className="text-sm"
+              autoFocus
+            />
+          </div>
+
+          {/* Folder picker */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Folder</Label>
+              <button
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setNewFolderMode((v) => !v)}
+              >
+                <FolderPlus className="h-3 w-3" />
+                New folder
+              </button>
+            </div>
+
+            {newFolderMode && (
+              <div className="flex gap-2">
+                <Input
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  placeholder="Folder name…"
+                  className="text-sm h-8"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleCreateFolder();
+                    if (e.key === "Escape") {
+                      setNewFolderMode(false);
+                      setNewFolderName("");
+                    }
+                  }}
+                  autoFocus
+                />
+                <Button
+                  size="sm"
+                  className="h-8 text-xs px-3 shrink-0"
+                  disabled={!newFolderName.trim() || creatingFolder}
+                  onClick={() => void handleCreateFolder()}
+                >
+                  {creatingFolder ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    "Create"
+                  )}
+                </Button>
+              </div>
+            )}
+
+            {loadingTree ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading folders…
+              </div>
+            ) : (
+              <div className="rounded-md border divide-y max-h-48 overflow-y-auto">
+                {/* Unfiled option */}
+                <button
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
+                    selectedFolderId === null
+                      ? "bg-primary/10 text-primary"
+                      : "hover:bg-muted/50"
+                  }`}
+                  onClick={() => handleFolderSelect(null)}
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                  <span className="truncate">Unfiled</span>
+                </button>
+                {(tree?.folders ?? []).map((f) => (
+                  <button
+                    key={f.id}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors ${
+                      selectedFolderId === f.id
+                        ? "bg-primary/10 text-primary"
+                        : "hover:bg-muted/50"
+                    }`}
+                    onClick={() => handleFolderSelect(f)}
+                  >
+                    <Folder className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                    <span className="truncate">{f.name}</span>
+                    {f.note_count !== undefined && (
+                      <span className="ml-auto text-[10px] text-muted-foreground">
+                        {f.note_count}
+                      </span>
+                    )}
+                  </button>
+                ))}
+                {(tree?.folders ?? []).length === 0 && !loadingTree && (
+                  <p className="px-3 py-2 text-xs text-muted-foreground">
+                    No folders yet — note will be saved as Unfiled.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {saveError && (
+            <p className="text-xs text-destructive flex items-center gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              {saveError}
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs"
+              onClick={onClose}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="text-xs min-w-[90px]"
+              disabled={saving || saved || !noteTitle.trim()}
+              onClick={() => void handleSave()}
+            >
+              {saved ? (
+                <>
+                  <Check className="h-3.5 w-3.5 mr-1.5" />
+                  Saved!
+                </>
+              ) : saving ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <BookmarkPlus className="h-3.5 w-3.5 mr-1.5" />
+                  Save Note
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function InferenceTab() {
   const [state, actions] = useLlmContext();
   const { serverStatus, isStarting, hardwareResult, downloadedModels } = state;
   const { startServer, stopServer, detectHardware, listModels } = actions;
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+
+  // ── Prompt list (kept in sync with localStorage) ──────────────────────
+  const [inferenceUserPrompts, setInferenceUserPrompts] = useState<
+    SystemPrompt[]
+  >(() => systemPrompts.list());
+  useEffect(() => {
+    const reloadPrompts = () => setInferenceUserPrompts(systemPrompts.list());
+    reloadPrompts();
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "matrx-system-prompts") reloadPrompts();
+    };
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener("matrx-prompts-changed", reloadPrompts);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("matrx-prompts-changed", reloadPrompts);
+    };
+  }, []);
 
   // ── Conversation list ──────────────────────────────────────────────────
   const [conversations, setConversations] = useState<SavedConversation[]>(() =>
@@ -2531,14 +2956,35 @@ function InferenceTab() {
   const [error, setError] = useState<string | null>(null);
   const stopRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const userScrolledUpRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // ── Message actions state ─────────────────────────────────────────────
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState("");
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [reactions, setReactions] = useState<
     Record<string, "up" | "down" | null>
   >({});
+
+  // ── Save-to-note modal state ──────────────────────────────────────────
+  const [saveNoteOpen, setSaveNoteOpen] = useState(false);
+  const [saveNoteScope, setSaveNoteScope] = useState<SaveScope>("message");
+  const [saveNoteContent, setSaveNoteContent] = useState("");
+
+  // ── TTS read-aloud ────────────────────────────────────────────────────
+  const [readingMsgId, setReadingMsgId] = useState<string | null>(null);
+  let ttsActions = null;
+  try {
+    const [, _actions] = useTtsApp();
+    ttsActions = _actions;
+  } catch {
+    // TtsProvider not in tree — read-aloud silently unavailable
+  }
+  // useChatTts needs the "active" streaming message; for on-demand read-aloud
+  // of complete messages we only use readCompleteMessage / stopReadAloud.
+  const chatTts = useChatTts(ttsActions, null, false);
   const [switchingModel, setSwitchingModel] = useState(false);
   const [showPromptPicker, setShowPromptPicker] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -2552,7 +2998,7 @@ function InferenceTab() {
   );
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(0.8);
-  const [maxTokens, setMaxTokens] = useState(1024);
+  const [maxTokens, setMaxTokens] = useState(8000);
   const [mode, setMode] = useState<InferenceMode>("chat");
 
   // Tool / Raw state
@@ -2616,6 +3062,35 @@ function InferenceTab() {
 
   const port = serverStatus?.running ? serverStatus.port : null;
 
+  // ── Save-to-note helpers ───────────────────────────────────────────────
+  const openSaveNote = (scope: SaveScope, msgContent?: string) => {
+    if (scope === "message" && msgContent !== undefined) {
+      setSaveNoteContent(msgContent);
+    } else {
+      // Format the full conversation as markdown
+      const model = serverStatus?.model_name ?? "Local Model";
+      const lines: string[] = [
+        `# ${activeConv?.title ?? "Conversation"}`,
+        ``,
+        `*Model: ${model} — ${new Date().toLocaleString()}*`,
+        ``,
+        `---`,
+        ``,
+        ...messages.flatMap((m) => [
+          `**${m.role === "user" ? "You" : "Assistant"}:**`,
+          ``,
+          m.content,
+          ``,
+          `---`,
+          ``,
+        ]),
+      ];
+      setSaveNoteContent(lines.join("\n"));
+    }
+    setSaveNoteScope(scope);
+    setSaveNoteOpen(true);
+  };
+
   // ── Conversation helpers ───────────────────────────────────────────────
   const persistConvs = (updated: SavedConversation[]) => {
     setConversations(updated);
@@ -2673,20 +3148,53 @@ function InferenceTab() {
     });
   };
 
-  const scrollToBottom = () => {
+  const scrollToBottom = (force = false) => {
+    if (!force && userScrolledUpRef.current) return;
     setTimeout(
       () => bottomRef.current?.scrollIntoView({ behavior: "smooth" }),
       50,
     );
   };
 
-  // ── Auto-resize textarea ──────────────────────────────────────────────
+  // ── Auto-resize composer textarea ────────────────────────────────────
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
   }, [input]);
+
+  // ── Auto-resize edit textarea (grows to fit full content) ─────────────
+  useEffect(() => {
+    const el = editTextareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [editingContent, editingMsgId]);
+
+  // ── Sync readingMsgId with TTS playing state ──────────────────────────
+  useEffect(() => {
+    if (!chatTts.isReadingAloud && readingMsgId) {
+      setReadingMsgId(null);
+    }
+  }, [chatTts.isReadingAloud, readingMsgId]);
+
+  // ── Detect user scrolling up to pause auto-scroll ─────────────────────
+  useEffect(() => {
+    const root = scrollAreaRef.current;
+    if (!root) return;
+    const viewport = root.querySelector(
+      "[data-radix-scroll-area-viewport]",
+    ) as HTMLElement | null;
+    if (!viewport) return;
+    const onScroll = () => {
+      const distFromBottom =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+      userScrolledUpRef.current = distFromBottom > 80;
+    };
+    viewport.addEventListener("scroll", onScroll, { passive: true });
+    return () => viewport.removeEventListener("scroll", onScroll);
+  }, [mode]); // re-attach when switching to chat mode
 
   // ── Close pickers on outside click ────────────────────────────────────
   useEffect(() => {
@@ -2737,7 +3245,8 @@ function InferenceTab() {
     if (activeConvId) updateMessages(activeConvId, newMessages, systemPrompt);
     setIsGenerating(true);
     stopRef.current = false;
-    scrollToBottom();
+    userScrolledUpRef.current = false;
+    scrollToBottom(true);
 
     const chatMessages: ChatMessage[] = [
       ...(systemPrompt.trim()
@@ -2785,6 +3294,88 @@ function InferenceTab() {
                 ...c,
                 messages: c.messages.map((m) =>
                   m.id === assistantId ? { ...m, isStreaming: false } : m,
+                ),
+              }
+            : c,
+        );
+        saveConversations(updated);
+        return updated;
+      });
+      setIsGenerating(false);
+    }
+  };
+
+  // ── Retry an assistant message (re-run the preceding user turn) ───────
+  const handleRetry = async (assistantMsgId: string) => {
+    if (!port || isGenerating || !activeConvId) return;
+    const msgIndex = messages.findIndex((m) => m.id === assistantMsgId);
+    if (msgIndex === -1) return;
+
+    // Everything before the assistant message — find the preceding user turn
+    const historyBeforeAssistant = messages.slice(0, msgIndex);
+    const precedingUserMsg = [...historyBeforeAssistant]
+      .reverse()
+      .find((m) => m.role === "user");
+    if (!precedingUserMsg) return;
+
+    // History sent to the model: all messages up to (not including) the assistant msg
+    const chatMessages: ChatMessage[] = [
+      ...(systemPrompt.trim()
+        ? [{ role: "system" as const, content: systemPrompt }]
+        : []),
+      ...historyBeforeAssistant.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+    ];
+
+    // Replace the existing assistant message with an empty streaming placeholder
+    const newMessages = messages.map((m) =>
+      m.id === assistantMsgId ? { ...m, content: "", isStreaming: true } : m,
+    );
+    updateMessages(activeConvId, newMessages, systemPrompt);
+    setIsGenerating(true);
+    stopRef.current = false;
+    userScrolledUpRef.current = false;
+    scrollToBottom(true);
+
+    let accumulated = "";
+    try {
+      const stream = streamCompletion(port, chatMessages, {
+        temperature,
+        maxTokens,
+      });
+      for await (const token of stream) {
+        if (stopRef.current) break;
+        accumulated += token;
+        setConversations((prev) => {
+          const updated = prev.map((c) =>
+            c.id === activeConvId
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === assistantMsgId
+                      ? { ...m, content: accumulated }
+                      : m,
+                  ),
+                }
+              : c,
+          );
+          saveConversations(updated);
+          return updated;
+        });
+        scrollToBottom();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConversations((prev) => {
+        const updated = prev.map((c) =>
+          c.id === activeConvId
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === assistantMsgId ? { ...m, isStreaming: false } : m,
                 ),
               }
             : c,
@@ -2857,7 +3448,7 @@ function InferenceTab() {
   };
 
   // Prompt/model display helpers
-  const allPrompts = [...BUILTIN_PROMPTS, ...systemPrompts.list()];
+  const allPrompts = [...BUILTIN_PROMPTS, ...inferenceUserPrompts];
   const activePromptName =
     allPrompts.find((p) => p.content === systemPrompt)?.name ?? null;
   const currentModelName =
@@ -2911,7 +3502,8 @@ function InferenceTab() {
 
     updateMessages(convId, newMessages, systemPrompt);
     setIsGenerating(true);
-    scrollToBottom();
+    userScrolledUpRef.current = false;
+    scrollToBottom(true);
 
     let accumulated = "";
     try {
@@ -3289,7 +3881,7 @@ function InferenceTab() {
         {/* ── Chat mode ── */}
         {mode === "chat" && (
           <>
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1" ref={scrollAreaRef}>
               <div className="p-4 space-y-6 max-w-3xl mx-auto w-full">
                 {messages.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
@@ -3304,19 +3896,18 @@ function InferenceTab() {
                 )}
                 {messages.map((msg) => (
                   <div key={msg.id} className="group/msg">
-                    <div
-                      className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                    >
-                      {msg.role === "assistant" && (
-                        <div className="h-7 w-7 rounded-full bg-primary/15 flex items-center justify-center shrink-0 mt-0.5">
-                          <Cpu className="h-3.5 w-3.5 text-primary" />
-                        </div>
-                      )}
-                      <div className="max-w-[78%] min-w-0">
+                    {msg.role === "assistant" ? (
+                      /* ── Assistant message: full-width, no avatar ── */
+                      <div className="w-full min-w-0">
                         {editingMsgId === msg.id ? (
                           <div className="space-y-2">
                             <textarea
-                              className="w-full min-h-[60px] rounded-xl border bg-background px-4 py-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                              ref={editTextareaRef}
+                              className="w-full rounded-xl border bg-background px-4 py-3 text-[0.9375rem] leading-[1.75] resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary/50"
+                              style={{
+                                fontFamily:
+                                  "'Georgia', 'Charter', 'Palatino Linotype', serif",
+                              }}
                               value={editingContent}
                               onChange={(e) =>
                                 setEditingContent(e.target.value)
@@ -3339,91 +3930,76 @@ function InferenceTab() {
                                 size="sm"
                                 className="h-7 text-xs"
                                 disabled={!editingContent.trim()}
-                                onClick={() => {
-                                  if (msg.role === "user") {
-                                    handleEditAndResend(msg.id, editingContent);
-                                  } else {
-                                    handleEditAssistant(msg.id, editingContent);
-                                  }
-                                }}
+                                onClick={() =>
+                                  handleEditAssistant(msg.id, editingContent)
+                                }
                               >
-                                {msg.role === "user" ? "Save & Resend" : "Save"}
+                                Save
                               </Button>
                             </div>
                           </div>
                         ) : (
-                          <div
-                            className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                              msg.role === "user"
-                                ? "bg-primary text-primary-foreground rounded-tr-sm"
-                                : "bg-muted/60 rounded-tl-sm"
-                            }`}
-                          >
-                            {msg.role === "assistant" ? (
-                              <div className="chat-prose text-sm leading-relaxed">
-                                <ReactMarkdown
-                                  remarkPlugins={[remarkGfm]}
-                                  components={{
-                                    pre: ({ children }) => (
-                                      <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[0.8125rem]">
-                                        {children}
-                                      </pre>
-                                    ),
-                                    code: ({
-                                      className,
-                                      children,
-                                      ...props
-                                    }) => {
-                                      const isInline = !className;
-                                      if (isInline) {
-                                        return (
-                                          <code
-                                            className="rounded bg-muted px-1.5 py-0.5 text-[0.8125rem] font-mono"
-                                            {...props}
-                                          >
-                                            {children}
-                                          </code>
-                                        );
-                                      }
+                          <div className="rounded-xl px-4 py-3 bg-muted/40">
+                            <div
+                              className="chat-prose leading-[1.75]"
+                              style={{
+                                fontFamily:
+                                  "'Georgia', 'Charter', 'Palatino Linotype', serif",
+                                fontSize: "0.9375rem",
+                              }}
+                            >
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  pre: ({ children }) => (
+                                    <pre className="overflow-x-auto rounded-md bg-muted p-3 text-[0.8125rem] font-mono">
+                                      {children}
+                                    </pre>
+                                  ),
+                                  code: ({ className, children, ...props }) => {
+                                    const isInline = !className;
+                                    if (isInline) {
                                       return (
-                                        <code className={className} {...props}>
+                                        <code
+                                          className="rounded bg-muted px-1.5 py-0.5 text-[0.8125rem] font-mono"
+                                          {...props}
+                                        >
                                           {children}
                                         </code>
                                       );
-                                    },
-                                  }}
-                                >
-                                  {msg.content}
-                                </ReactMarkdown>
-                                {msg.isStreaming && (
-                                  <span className="inline-block h-4 w-0.5 bg-primary opacity-70 animate-pulse ml-0.5 align-middle" />
-                                )}
-                              </div>
-                            ) : (
-                              <>
-                                <p className="whitespace-pre-wrap break-words">
-                                  {msg.content}
-                                </p>
-                                {msg.isStreaming && (
-                                  <span className="inline-block h-4 w-0.5 bg-current opacity-70 animate-pulse ml-0.5 align-middle" />
-                                )}
-                              </>
-                            )}
+                                    }
+                                    return (
+                                      <code
+                                        className={`${className ?? ""} font-mono`}
+                                        {...props}
+                                      >
+                                        {children}
+                                      </code>
+                                    );
+                                  },
+                                }}
+                              >
+                                {msg.content}
+                              </ReactMarkdown>
+                              {msg.isStreaming && (
+                                <span className="inline-block h-4 w-0.5 bg-primary opacity-70 animate-pulse ml-0.5 align-middle" />
+                              )}
+                            </div>
                           </div>
                         )}
-
-                        {/* Message action icons — hover row */}
                         {!msg.isStreaming &&
                           editingMsgId !== msg.id &&
                           msg.content && (
-                            <div
-                              className={`flex items-center gap-0.5 mt-1 opacity-0 transition-opacity group-hover/msg:opacity-100 ${
-                                msg.role === "user"
-                                  ? "justify-end"
-                                  : "justify-start"
-                              }`}
-                            >
+                            <div className="flex items-center gap-0.5 mt-1 opacity-0 transition-opacity group-hover/msg:opacity-100 justify-start">
                               <MsgCopyButton text={msg.content} />
+                              <button
+                                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Retry — regenerate this response"
+                                disabled={isGenerating}
+                                onClick={() => handleRetry(msg.id)}
+                              >
+                                <RefreshCw className="h-3.5 w-3.5" />
+                              </button>
                               <button
                                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
                                 title="Edit"
@@ -3434,44 +4010,158 @@ function InferenceTab() {
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
-                              {msg.role === "assistant" && (
-                                <>
-                                  <button
-                                    className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "up" ? "text-green-500" : "text-muted-foreground hover:text-foreground"}`}
-                                    title="Good response"
-                                    onClick={() => toggleReaction(msg.id, "up")}
-                                  >
-                                    <ThumbsUp className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "down" ? "text-red-500" : "text-muted-foreground hover:text-foreground"}`}
-                                    title="Bad response"
-                                    onClick={() =>
-                                      toggleReaction(msg.id, "down")
+                              <button
+                                className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "up" ? "text-green-500" : "text-muted-foreground hover:text-foreground"}`}
+                                title="Good response"
+                                onClick={() => toggleReaction(msg.id, "up")}
+                              >
+                                <ThumbsUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                className={`rounded-md p-1.5 transition-colors ${reactions[msg.id] === "down" ? "text-red-500" : "text-muted-foreground hover:text-foreground"}`}
+                                title="Bad response"
+                                onClick={() => toggleReaction(msg.id, "down")}
+                              >
+                                <ThumbsDown className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                title="Fork conversation from here"
+                                onClick={() => forkFromMessage(msg.id)}
+                              >
+                                <GitFork className="h-3.5 w-3.5" />
+                              </button>
+
+                              {/* Read aloud */}
+                              {ttsActions && (
+                                <button
+                                  className={`rounded-md p-1.5 transition-colors ${
+                                    readingMsgId === msg.id
+                                      ? "text-primary"
+                                      : "text-muted-foreground hover:text-foreground"
+                                  }`}
+                                  title={
+                                    readingMsgId === msg.id
+                                      ? "Stop reading"
+                                      : "Read aloud"
+                                  }
+                                  onClick={() => {
+                                    if (readingMsgId === msg.id) {
+                                      chatTts.stopReadAloud();
+                                      setReadingMsgId(null);
+                                    } else {
+                                      setReadingMsgId(msg.id);
+                                      chatTts.readCompleteMessage(msg.content);
                                     }
-                                  >
-                                    <ThumbsDown className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
-                                    title="Fork conversation from here"
-                                    onClick={() => forkFromMessage(msg.id)}
-                                  >
-                                    <GitFork className="h-3.5 w-3.5" />
-                                  </button>
-                                </>
+                                  }}
+                                >
+                                  {readingMsgId === msg.id ? (
+                                    <VolumeX className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Volume2 className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
                               )}
+
+                              {/* Divider */}
+                              <span className="w-px h-3.5 bg-border mx-0.5 self-center" />
+
+                              {/* Save this response as a note */}
+                              <button
+                                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                title="Save response to Notes"
+                                onClick={() =>
+                                  openSaveNote("message", msg.content)
+                                }
+                              >
+                                <BookmarkPlus className="h-3.5 w-3.5" />
+                              </button>
+
+                              {/* Save full conversation as a note */}
+                              <button
+                                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                title="Save full conversation to Notes"
+                                onClick={() => openSaveNote("conversation")}
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
                             </div>
                           )}
                       </div>
-                      {msg.role === "user" && (
+                    ) : (
+                      /* ── User message: right-aligned bubble with avatar ── */
+                      <div className="flex gap-3 justify-end">
+                        <div className="max-w-[78%] min-w-0">
+                          {editingMsgId === msg.id ? (
+                            <div className="space-y-2">
+                              <textarea
+                                ref={editTextareaRef}
+                                className="w-full rounded-xl border bg-background px-4 py-3 text-[0.9375rem] leading-relaxed resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary/50"
+                                value={editingContent}
+                                onChange={(e) =>
+                                  setEditingContent(e.target.value)
+                                }
+                                autoFocus
+                              />
+                              <div className="flex gap-2 justify-end">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-xs"
+                                  onClick={() => {
+                                    setEditingMsgId(null);
+                                    setEditingContent("");
+                                  }}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  disabled={!editingContent.trim()}
+                                  onClick={() =>
+                                    handleEditAndResend(msg.id, editingContent)
+                                  }
+                                >
+                                  Save & Resend
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="rounded-2xl px-4 py-3 text-[0.9375rem] leading-relaxed bg-primary text-primary-foreground rounded-tr-sm">
+                              <p className="whitespace-pre-wrap break-words">
+                                {msg.content}
+                              </p>
+                              {msg.isStreaming && (
+                                <span className="inline-block h-4 w-0.5 bg-current opacity-70 animate-pulse ml-0.5 align-middle" />
+                              )}
+                            </div>
+                          )}
+                          {!msg.isStreaming &&
+                            editingMsgId !== msg.id &&
+                            msg.content && (
+                              <div className="flex items-center gap-0.5 mt-1 opacity-0 transition-opacity group-hover/msg:opacity-100 justify-end">
+                                <MsgCopyButton text={msg.content} />
+                                <button
+                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                  title="Edit"
+                                  onClick={() => {
+                                    setEditingMsgId(msg.id);
+                                    setEditingContent(msg.content);
+                                  }}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
+                        </div>
                         <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
                           <span className="text-xs font-semibold text-muted-foreground">
                             U
                           </span>
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 ))}
                 <div ref={bottomRef} />
@@ -3869,6 +4559,16 @@ function InferenceTab() {
           </ScrollArea>
         </div>
       )}
+
+      {/* ── Save-to-note modal ── */}
+      <SaveToNoteModal
+        open={saveNoteOpen}
+        onClose={() => setSaveNoteOpen(false)}
+        scope={saveNoteScope}
+        content={saveNoteContent}
+        userId={userId}
+        enginePort={port}
+      />
     </div>
   );
 }
@@ -5187,7 +5887,7 @@ function MediaModelsTab() {
 }
 
 function LocalModelsInner() {
-  const [state] = useLlmContext();
+  const [state, actions] = useLlmContext();
   const { serverStatus } = state;
   const [activeTab, setActiveTab] = useState(() =>
     serverStatus?.running ? "inference" : "setup",
@@ -5198,6 +5898,15 @@ function LocalModelsInner() {
       setActiveTab("inference");
     }
   }, [serverStatus?.running]);
+
+  // Respond to global/tab refresh — reload server status, model list, and prompts
+  const handleRefresh = useCallback(() => {
+    void actions.getServerStatus();
+    void actions.listModels();
+    window.dispatchEvent(new CustomEvent("matrx-prompts-changed"));
+  }, [actions]);
+
+  usePageRefreshHandler("/local-models", handleRefresh);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">

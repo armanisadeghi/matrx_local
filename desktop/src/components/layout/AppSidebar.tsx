@@ -21,6 +21,7 @@ import {
   BrainCircuit,
   BookOpen,
   AudioLines,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -29,10 +30,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { saveSetting, broadcastSettingsChanged } from "@/lib/settings";
+import { triggerPageRefresh } from "@/lib/page-refresh";
 
 interface AppSidebarProps {
   engineStatus: EngineStatus;
@@ -83,9 +89,12 @@ export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
       const raw = localStorage.getItem("matrx-settings");
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.sidebarCollapsed !== undefined) return Boolean(parsed.sidebarCollapsed);
+        if (parsed.sidebarCollapsed !== undefined)
+          return Boolean(parsed.sidebarCollapsed);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     const saved = localStorage.getItem("sidebar-collapsed");
     return saved === "true";
   });
@@ -97,7 +106,9 @@ export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
     // Write through the canonical settings API so the engine + cloud stay in sync.
     // Also write the legacy key for any code that hasn't migrated yet.
     localStorage.setItem("sidebar-collapsed", String(next));
-    saveSetting("sidebarCollapsed", next).then(() => broadcastSettingsChanged());
+    saveSetting("sidebarCollapsed", next).then(() =>
+      broadcastSettingsChanged(),
+    );
   };
 
   const isActive = (to: string) =>
@@ -159,21 +170,39 @@ export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
           return (
             <Tooltip key={to} delayDuration={collapsed ? 0 : 700}>
               <TooltipTrigger asChild>
-                <Link
-                  to={to}
-                  className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors whitespace-nowrap overflow-hidden",
-                    collapsed && "justify-center px-0",
-                    active
-                      ? "bg-sidebar-accent text-sidebar-foreground font-medium"
-                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+                <div className="group relative flex items-center">
+                  <Link
+                    to={to}
+                    className={cn(
+                      "flex flex-1 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors whitespace-nowrap overflow-hidden",
+                      collapsed && "justify-center px-0",
+                      active
+                        ? "bg-sidebar-accent text-sidebar-foreground font-medium"
+                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4 flex-shrink-0" />
+                    {!collapsed && <span className="flex-1">{label}</span>}
+                  </Link>
+                  {/* Per-tab refresh button — only shown on active tab when sidebar is expanded */}
+                  {active && !collapsed && (
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        triggerPageRefresh(to);
+                      }}
+                      title={`Refresh ${label}`}
+                      className="absolute right-2 flex h-5 w-5 items-center justify-center rounded opacity-0 group-hover:opacity-100 text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/70 transition-all"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                    </button>
                   )}
-                >
-                  <Icon className="h-4 w-4 flex-shrink-0" />
-                  {!collapsed && <span>{label}</span>}
-                </Link>
+                </div>
               </TooltipTrigger>
-              {collapsed && <TooltipContent side="right">{label}</TooltipContent>}
+              {collapsed && (
+                <TooltipContent side="right">{label}</TooltipContent>
+              )}
             </Tooltip>
           );
         })}
@@ -193,8 +222,12 @@ export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
                     )}
                   >
                     <Avatar className="h-7 w-7 flex-shrink-0">
-                      {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
-                      <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+                      {avatarUrl && (
+                        <AvatarImage src={avatarUrl} alt={displayName} />
+                      )}
+                      <AvatarFallback className="text-xs">
+                        {initials}
+                      </AvatarFallback>
                     </Avatar>
                     {!collapsed && (
                       <span className="text-xs text-sidebar-foreground/80 truncate flex-1">
@@ -203,19 +236,29 @@ export function AppSidebar({ engineStatus, user, onSignOut }: AppSidebarProps) {
                     )}
                   </div>
                 </TooltipTrigger>
-                {collapsed && <TooltipContent side="right">{displayName}</TooltipContent>}
+                {collapsed && (
+                  <TooltipContent side="right">{displayName}</TooltipContent>
+                )}
               </Tooltip>
             </PopoverTrigger>
             <PopoverContent side="top" align="start" className="w-56">
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <Avatar className="h-8 w-8">
-                    {avatarUrl && <AvatarImage src={avatarUrl} alt={displayName} />}
-                    <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+                    {avatarUrl && (
+                      <AvatarImage src={avatarUrl} alt={displayName} />
+                    )}
+                    <AvatarFallback className="text-xs">
+                      {initials}
+                    </AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{displayName}</p>
-                    <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                    <p className="text-sm font-medium truncate">
+                      {displayName}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {user.email}
+                    </p>
                   </div>
                 </div>
                 <div className="border-t pt-2">

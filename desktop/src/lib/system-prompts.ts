@@ -105,7 +105,10 @@ Rules:
 `;
 // Built-in prompts that ship with the app — always available, not editable.
 // Users can "fork" them into their own library.
-export const BUILTIN_PROMPTS: Omit<SystemPrompt, "createdAt" | "updatedAt" | "isPinned">[] = [
+export const BUILTIN_PROMPTS: Omit<
+  SystemPrompt,
+  "createdAt" | "updatedAt" | "isPinned"
+>[] = [
   {
     id: "builtin-assistant",
     name: "Helpful Assistant",
@@ -158,6 +161,8 @@ function loadAll(): SystemPrompt[] {
 function saveAll(prompts: SystemPrompt[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(prompts));
+    // Notify same-tab listeners (storage event only fires for cross-tab changes)
+    window.dispatchEvent(new CustomEvent("matrx-prompts-changed"));
   } catch {
     // storage full — ignore
   }
@@ -172,7 +177,9 @@ export const systemPrompts = {
   },
 
   /** All built-ins + user prompts, built-ins first. */
-  listAll(): Array<SystemPrompt | Omit<SystemPrompt, "createdAt" | "updatedAt" | "isPinned">> {
+  listAll(): Array<
+    SystemPrompt | Omit<SystemPrompt, "createdAt" | "updatedAt" | "isPinned">
+  > {
     return [...BUILTIN_PROMPTS, ...loadAll()];
   },
 
@@ -207,7 +214,12 @@ export const systemPrompts = {
     return prompt;
   },
 
-  update(id: string, changes: Partial<Pick<SystemPrompt, "name" | "content" | "category" | "isPinned">>): boolean {
+  update(
+    id: string,
+    changes: Partial<
+      Pick<SystemPrompt, "name" | "content" | "category" | "isPinned">
+    >,
+  ): boolean {
     const all = loadAll();
     const idx = all.findIndex((p) => p.id === id);
     if (idx === -1) return false;

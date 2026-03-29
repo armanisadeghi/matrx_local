@@ -17,6 +17,7 @@ import {
   ArrowUpCircle,
   User,
   RotateCcw,
+  RefreshCw,
   LogOut,
   Loader2,
   CircleDot,
@@ -37,10 +38,17 @@ import { useWakeWordContext } from "@/contexts/WakeWordContext";
 import { useServiceStatus } from "@/hooks/use-service-status";
 import type { CloudSyncStatus } from "@/hooks/use-service-status";
 import { isTauri, restartApp } from "@/lib/sidecar";
+import { triggerPageRefresh } from "@/lib/page-refresh";
 import { cn } from "@/lib/utils";
 import type { EngineStatus } from "@/hooks/use-engine";
-import type { TranscriptionState, TranscriptionActions } from "@/hooks/use-transcription";
-import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update";
+import type {
+  TranscriptionState,
+  TranscriptionActions,
+} from "@/hooks/use-transcription";
+import type {
+  AutoUpdateState,
+  AutoUpdateActions,
+} from "@/hooks/use-auto-update";
 import type { AppNotification } from "@/hooks/use-notifications";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
@@ -147,7 +155,10 @@ function cloudSyncDotColor(status: CloudSyncStatus): DotColor {
   }
 }
 
-function cloudSyncTooltip(status: CloudSyncStatus, lastError: string | null): string {
+function cloudSyncTooltip(
+  status: CloudSyncStatus,
+  lastError: string | null,
+): string {
   switch (status) {
     case "synced":
       return "Cloud sync: Up to date";
@@ -202,11 +213,15 @@ export function QuickActionBar(props: QuickActionBarProps) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const [restarting, setRestarting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (!userMenuOpen) return;
     const handle = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(e.target as Node)
+      ) {
         setUserMenuOpen(false);
       }
     };
@@ -239,6 +254,13 @@ export function QuickActionBar(props: QuickActionBarProps) {
       await wwActions.setup();
     }
   }, [wwListening, wwActions]);
+
+  const handleRefreshPageData = useCallback(() => {
+    if (refreshing) return;
+    setRefreshing(true);
+    triggerPageRefresh("*");
+    setTimeout(() => setRefreshing(false), 700);
+  }, [refreshing]);
 
   const handleRestart = useCallback(async () => {
     if (restarting) return;
@@ -303,7 +325,11 @@ export function QuickActionBar(props: QuickActionBarProps) {
       <div className="no-select glass flex h-11 shrink-0 items-center gap-0.5 border-b px-3">
         {/* ═══ GROUP 1: Voice & Audio ═══ */}
         <BarButton
-          tooltip={isRecording ? "Recording (compact mode)... click to enter" : "Compact recording — shrinks the app"}
+          tooltip={
+            isRecording
+              ? "Recording (compact mode)... click to enter"
+              : "Compact recording — shrinks the app"
+          }
           onClick={onRecord}
           active={isRecording}
           dotColor={isRecording ? "green" : "blue"}
@@ -319,7 +345,11 @@ export function QuickActionBar(props: QuickActionBarProps) {
         </BarButton>
 
         <BarButton
-          tooltip={isBackgroundRecording ? "Background recording... click to stop and save" : "Background recording — click and just talk"}
+          tooltip={
+            isBackgroundRecording
+              ? "Background recording... click to stop and save"
+              : "Background recording — click and just talk"
+          }
           onClick={onBackgroundRecord}
           pulseActive={isBackgroundRecording}
           dotColor={isBackgroundRecording ? "green" : "blue"}
@@ -328,7 +358,11 @@ export function QuickActionBar(props: QuickActionBarProps) {
         </BarButton>
 
         <BarButton
-          tooltip={wwListening ? "Wake word: Listening — click to stop" : "Wake word: Click to start listening"}
+          tooltip={
+            wwListening
+              ? "Wake word: Listening — click to stop"
+              : "Wake word: Click to start listening"
+          }
           onClick={handleWwToggle}
           active={wwListening}
           dotColor={wwListening ? "green" : "blue"}
@@ -343,7 +377,15 @@ export function QuickActionBar(props: QuickActionBarProps) {
           tooltip={llmTip}
           onClick={handleLlmToggle}
           active={llmRunning}
-          dotColor={llmStarting ? "amber" : llmRunning ? "green" : llmHasModels ? "blue" : "gray"}
+          dotColor={
+            llmStarting
+              ? "amber"
+              : llmRunning
+                ? "green"
+                : llmHasModels
+                  ? "blue"
+                  : "gray"
+          }
           disabled={llmStarting || (!llmRunning && !llmHasModels)}
         >
           {llmStarting ? (
@@ -399,7 +441,10 @@ export function QuickActionBar(props: QuickActionBarProps) {
           <MessageSquare className="h-4 w-4" />
         </BarButton>
 
-        <BarButton tooltip="Quick local AI chat" onClick={() => setLocalChatOpen(true)}>
+        <BarButton
+          tooltip="Quick local AI chat"
+          onClick={() => setLocalChatOpen(true)}
+        >
           <MessageSquareDashed className="h-4 w-4" />
         </BarButton>
 
@@ -415,6 +460,16 @@ export function QuickActionBar(props: QuickActionBarProps) {
         <div className="flex-1" />
 
         {/* ═══ GROUP 5: System Actions ═══ */}
+        <BarButton
+          tooltip="Refresh page data — reloads data for the current view without restarting"
+          onClick={handleRefreshPageData}
+          disabled={refreshing}
+        >
+          <RefreshCw
+            className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+          />
+        </BarButton>
+
         {hasUpdate && (
           <BarButton
             tooltip={`New version available: ${updateState.status?.version ?? ""}. Click to update.`}
@@ -426,7 +481,7 @@ export function QuickActionBar(props: QuickActionBarProps) {
 
         <div ref={userMenuRef} className="relative">
           <BarButton
-            tooltip={user ? user.email ?? "Account" : "Not signed in"}
+            tooltip={user ? (user.email ?? "Account") : "Not signed in"}
             onClick={() => setUserMenuOpen((v) => !v)}
           >
             <User className="h-4 w-4" />
@@ -463,7 +518,11 @@ export function QuickActionBar(props: QuickActionBarProps) {
 
         {isTauri() && (
           <BarButton
-            tooltip={restarting ? "Restarting everything..." : "Restart entire application"}
+            tooltip={
+              restarting
+                ? "Restarting everything..."
+                : "Restart entire application"
+            }
             onClick={handleRestart}
             disabled={restarting}
           >
