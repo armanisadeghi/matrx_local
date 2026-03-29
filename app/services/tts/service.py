@@ -7,14 +7,22 @@ The service downloads the ONNX model + voice pack on first use, loads the
 Kokoro instance once, and reuses it for all subsequent synthesis calls.
 Synthesis runs in a thread-pool executor to avoid blocking the event loop.
 
-Streaming mode: splits text at sentence boundaries and yields WAV chunks
-as they're generated so the client can start playback almost immediately.
+Streaming mode: uses kokoro-onnx native create_stream() which splits at the
+phoneme-batch level (~510 phonemes, ~2-4 words) and yields chunks immediately.
+
+Voice blending: voices are (510, 1, 256) float32 numpy arrays stored in the
+voices-v1.0.bin NpzFile.  Any weighted linear combination of those arrays is
+itself a valid voice embedding and can be passed directly to create() /
+create_stream() instead of a voice-id string.  Blended voices are saved as
+.npy files in CUSTOM_VOICES_DIR for persistence.
 """
 
 from __future__ import annotations
 
 import asyncio
 import io
+import json
+import re
 import struct
 import threading
 import time
@@ -45,6 +53,15 @@ TTS_OUTPUT_DIR = TTS_DIR / "output"
 CUSTOM_VOICES_DIR = TTS_DIR / "custom-voices"
 
 PREVIEW_TEXT = "Hello! This is a preview of my voice. I hope you enjoy how I sound."
+
+_SAFE_ID_RE = re.compile(r"[^a-z0-9_-]")
+
+
+def _sanitize_voice_id(raw: str) -> str:
+    """Convert arbitrary text to a filesystem-safe voice identifier."""
+    cleaned = raw.lower().strip().replace(" ", "_")
+    cleaned = _SAFE_ID_RE.sub("", cleaned)
+    return cleaned[:64]
 
 
 @dataclass
@@ -130,12 +147,35 @@ class TtsService:
         return voices
 
     def _load_custom_voices(self) -> list[dict[str, Any]]:
-        """Scan custom-voices dir for user-created voice files."""
+        """Scan CUSTOM_VOICES_DIR for .npy blend files and any legacy .bin files."""
         if not CUSTOM_VOICES_DIR.is_dir():
             return []
         result: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        # Primary format: .npy with optional .json sidecar
+        for f in sorted(CUSTOM_VOICES_DIR.glob("*.npy")):
+            vid = f.stem
+            seen.add(vid)
+            meta = self._read_voice_meta(vid)
+            result.append({
+                "voice_id": vid,
+                "name": meta.get("name", vid.replace("_", " ").title()),
+                "gender": meta.get("gender", "female"),
+                "language": meta.get("language", "Custom"),
+                "lang_code": meta.get("lang_code", "a"),
+                "quality_grade": "Custom",
+                "traits": meta.get("traits", ["blended"]),
+                "is_custom": True,
+                "is_default": False,
+                "blend_recipe": meta.get("blend_recipe", []),
+            })
+
+        # Legacy .bin support
         for f in sorted(CUSTOM_VOICES_DIR.glob("*.bin")):
             vid = f.stem
+            if vid in seen:
+                continue
             result.append({
                 "voice_id": vid,
                 "name": vid.replace("_", " ").title(),
@@ -146,8 +186,23 @@ class TtsService:
                 "traits": ["custom"],
                 "is_custom": True,
                 "is_default": False,
+                "blend_recipe": [],
             })
         return result
+
+    def _read_voice_meta(self, voice_id: str) -> dict[str, Any]:
+        meta_path = CUSTOM_VOICES_DIR / f"{voice_id}.json"
+        if meta_path.is_file():
+            try:
+                return json.loads(meta_path.read_text())
+            except Exception:
+                pass
+        return {}
+
+    def _write_voice_meta(self, voice_id: str, meta: dict[str, Any]) -> None:
+        CUSTOM_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        meta_path = CUSTOM_VOICES_DIR / f"{voice_id}.json"
+        meta_path.write_text(json.dumps(meta, indent=2))
 
     async def download_model(self) -> dict[str, Any]:
         """Download the ONNX model and voices pack.  Idempotent."""
@@ -293,6 +348,37 @@ class TtsService:
                 self._model_loaded = False
                 return {"success": False, "error": str(exc)}
 
+    def _resolve_voice_arg(self, voice_id: str):
+        """Return (voice_arg, lang_code) where voice_arg is a str ID or numpy array.
+
+        Builtin voices pass the str ID so kokoro-onnx resolves them from the
+        loaded NpzFile.  Custom .npy voices are loaded as numpy arrays since
+        kokoro-onnx only knows builtin IDs.
+        """
+        voice_info = VOICE_MAP.get(voice_id)
+        if voice_info:
+            lmeta = LANGUAGE_MAP.get(voice_info.lang_code)
+            resolved_lang = lmeta.espeak_fallback if lmeta else "en-us"
+            return voice_id, resolved_lang
+
+        # Try custom .npy
+        npy_path = CUSTOM_VOICES_DIR / f"{voice_id}.npy"
+        if npy_path.is_file():
+            import numpy as np
+            emb = np.load(str(npy_path))
+            meta = self._read_voice_meta(voice_id)
+            lang_code = meta.get("lang_code", "a")
+            lmeta = LANGUAGE_MAP.get(lang_code)
+            resolved_lang = lmeta.espeak_fallback if lmeta else "en-us"
+            return emb, resolved_lang
+
+        # Legacy .bin custom
+        bin_path = CUSTOM_VOICES_DIR / f"{voice_id}.bin"
+        if bin_path.is_file():
+            return voice_id, "en-us"
+
+        return None, "en-us"
+
     async def synthesize(
         self,
         text: str,
@@ -308,36 +394,30 @@ class TtsService:
                 error=load_result.get("error", "Failed to load model"),
             )
 
-        voice_info = VOICE_MAP.get(voice_id)
-        if not voice_info and not (CUSTOM_VOICES_DIR / f"{voice_id}.bin").is_file():
-            return SynthesisResult(
-                success=False,
-                error=f"Unknown voice: {voice_id}",
-            )
-
-        resolved_lang = lang
-        if resolved_lang is None and voice_info:
-            lmeta = LANGUAGE_MAP.get(voice_info.lang_code)
-            resolved_lang = lmeta.espeak_fallback if lmeta else "en-us"
-        elif resolved_lang is None:
-            resolved_lang = "en-us"
+        voice_arg, resolved_lang = self._resolve_voice_arg(voice_id)
+        if voice_arg is None:
+            return SynthesisResult(success=False, error=f"Unknown voice: {voice_id}")
+        if lang is not None:
+            resolved_lang = lang
 
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             self._synthesize_sync,
             text,
-            voice_id,
+            voice_arg,
             speed,
             resolved_lang,
+            voice_id,
         )
 
     def _synthesize_sync(
         self,
         text: str,
-        voice_id: str,
+        voice_arg: Any,  # str ID or numpy array
         speed: float,
         lang: str,
+        voice_id: str = "",
     ) -> SynthesisResult:
         # Grab a reference under lock (does not hold the lock during inference —
         # the ONNX session is thread-safe and create_stream also runs executor
@@ -352,7 +432,7 @@ class TtsService:
 
             samples, sample_rate = kokoro.create(
                 text,
-                voice=voice_id,
+                voice=voice_arg,
                 speed=speed,
                 lang=lang,
             )
@@ -403,6 +483,8 @@ class TtsService:
 
         Each yielded value is a complete, self-contained WAV blob so the client
         can decode and enqueue them independently for gapless playback.
+
+        Supports both builtin voice IDs and custom .npy voices.
         """
         load_result = await self.ensure_loaded()
         if not load_result.get("success"):
@@ -411,13 +493,12 @@ class TtsService:
         if not text.strip():
             return
 
-        voice_info = VOICE_MAP.get(voice_id)
-        resolved_lang = lang
-        if resolved_lang is None and voice_info:
-            lmeta = LANGUAGE_MAP.get(voice_info.lang_code)
-            resolved_lang = lmeta.espeak_fallback if lmeta else "en-us"
-        elif resolved_lang is None:
-            resolved_lang = "en-us"
+        voice_arg, resolved_lang = self._resolve_voice_arg(voice_id)
+        if voice_arg is None:
+            logger.error("[tts] Unknown voice '%s' for streaming", voice_id)
+            return
+        if lang is not None:
+            resolved_lang = lang
 
         with self._lock:
             if self._kokoro is None:
@@ -428,7 +509,7 @@ class TtsService:
         try:
             async for audio_chunk, sample_rate in kokoro.create_stream(
                 text=text,
-                voice=voice_id,
+                voice=voice_arg,
                 speed=speed,
                 lang=resolved_lang,
             ):
@@ -444,6 +525,281 @@ class TtsService:
                 yield wav
         except Exception as exc:
             logger.error("[tts] Stream synthesis error at chunk %d: %s", chunk_index, exc, exc_info=True)
+
+    # ── Voice blending & custom voice management ────────────────────────────
+
+    def _get_builtin_embedding(self, voice_id: str):
+        """Return the raw numpy embedding for a builtin voice from the .bin pack."""
+        import numpy as np
+        voices_path = TTS_DIR / VOICES_BIN_FILENAME
+        if not voices_path.is_file():
+            raise FileNotFoundError("voices.bin not found — download the model first")
+        data = np.load(str(voices_path))
+        if voice_id not in data:
+            raise ValueError(f"Voice '{voice_id}' not found in builtin voices")
+        return data[voice_id].copy()
+
+    def _get_custom_embedding(self, voice_id: str):
+        """Return the numpy embedding for a saved custom (blended) voice."""
+        import numpy as np
+        npy_path = CUSTOM_VOICES_DIR / f"{voice_id}.npy"
+        if npy_path.is_file():
+            return np.load(str(npy_path))
+        raise FileNotFoundError(f"Custom voice '{voice_id}' not found")
+
+    def _resolve_embedding(self, voice_id: str):
+        """Get a voice embedding by ID — tries builtin first, then custom."""
+        import numpy as np
+        voices_path = TTS_DIR / VOICES_BIN_FILENAME
+        if voices_path.is_file():
+            data = np.load(str(voices_path))
+            if voice_id in data:
+                return data[voice_id].copy()
+        return self._get_custom_embedding(voice_id)
+
+    def blend_voices_sync(
+        self,
+        components: list[dict[str, Any]],  # [{"voice_id": str, "weight": float}]
+    ):
+        """Compute a weighted blend of voice embeddings.
+
+        Weights are normalised to sum to 1.0.  Returns the blended numpy array.
+        Each component voice can be a builtin or a previously saved custom voice.
+        """
+        import numpy as np
+
+        if not components:
+            raise ValueError("Need at least one component voice")
+
+        embeddings = []
+        weights = []
+        for c in components:
+            vid = c["voice_id"]
+            w = float(c.get("weight", 1.0))
+            if w <= 0:
+                continue
+            emb = self._resolve_embedding(vid)
+            embeddings.append(emb)
+            weights.append(w)
+
+        if not embeddings:
+            raise ValueError("All weights are zero")
+
+        total = sum(weights)
+        weights = [w / total for w in weights]
+
+        blended = sum(e * w for e, w in zip(embeddings, weights))
+        return blended.astype(np.float32)
+
+    async def blend_and_preview(
+        self,
+        components: list[dict[str, Any]],
+        speed: float = 1.0,
+        lang: str = "en-us",
+    ) -> SynthesisResult:
+        """Blend voices and synthesize a preview clip without saving."""
+        load_result = await self.ensure_loaded()
+        if not load_result.get("success"):
+            return SynthesisResult(success=False, error=load_result.get("error", "Model load failed"))
+
+        loop = asyncio.get_running_loop()
+        try:
+            blended_emb = await loop.run_in_executor(None, self.blend_voices_sync, components)
+        except Exception as exc:
+            return SynthesisResult(success=False, error=str(exc))
+
+        with self._lock:
+            kokoro = self._kokoro
+        if kokoro is None:
+            return SynthesisResult(success=False, error="Model not loaded")
+
+        def _synth():
+            samples, sr = kokoro.create(PREVIEW_TEXT, voice=blended_emb, speed=speed, lang=lang)
+            return samples, sr
+
+        try:
+            samples, sr = await loop.run_in_executor(None, _synth)
+            if samples is None or len(samples) == 0:
+                return SynthesisResult(success=False, error="Empty audio returned")
+            audio_bytes = _wav_bytes(samples, sr)
+            duration = len(samples) / sr
+            return SynthesisResult(
+                success=True,
+                audio_bytes=audio_bytes,
+                sample_rate=sr,
+                duration_seconds=duration,
+                voice_id="blend-preview",
+                elapsed_seconds=0.0,
+            )
+        except Exception as exc:
+            return SynthesisResult(success=False, error=str(exc))
+
+    async def save_blended_voice(
+        self,
+        voice_id: str,
+        name: str,
+        components: list[dict[str, Any]],
+        gender: str = "female",
+        lang_code: str = "a",
+    ) -> dict[str, Any]:
+        """Blend voices and persist the result as a custom voice."""
+        voice_id = _sanitize_voice_id(voice_id)
+        if not voice_id:
+            return {"success": False, "error": "Invalid voice ID"}
+
+        loop = asyncio.get_running_loop()
+        try:
+            blended_emb = await loop.run_in_executor(None, self.blend_voices_sync, components)
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
+        CUSTOM_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        import numpy as np
+        npy_path = CUSTOM_VOICES_DIR / f"{voice_id}.npy"
+        np.save(str(npy_path), blended_emb)
+
+        meta = {
+            "name": name,
+            "gender": gender,
+            "language": "Custom",
+            "lang_code": lang_code,
+            "traits": ["blended"],
+            "blend_recipe": components,
+        }
+        self._write_voice_meta(voice_id, meta)
+        logger.info("[tts] Saved blended voice '%s' (%d components)", voice_id, len(components))
+        return {"success": True, "voice_id": voice_id}
+
+    async def import_voice_file(
+        self,
+        voice_id: str,
+        name: str,
+        data: bytes,
+        file_ext: str,
+        gender: str = "female",
+        lang_code: str = "a",
+    ) -> dict[str, Any]:
+        """Import a voice embedding from uploaded bytes (.npy or .bin format)."""
+        import numpy as np
+
+        voice_id = _sanitize_voice_id(voice_id)
+        if not voice_id:
+            return {"success": False, "error": "Invalid voice ID"}
+
+        CUSTOM_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+
+        try:
+            buf = io.BytesIO(data)
+            if file_ext == ".npy":
+                emb = np.load(buf, allow_pickle=False)
+            elif file_ext in (".bin", ".npz"):
+                # Might be a single-key NpzFile
+                npz = np.load(buf)
+                keys = list(npz.files)
+                if len(keys) == 1:
+                    emb = npz[keys[0]]
+                elif voice_id in npz:
+                    emb = npz[voice_id]
+                else:
+                    emb = npz[keys[0]]
+            else:
+                return {"success": False, "error": f"Unsupported file format: {file_ext}"}
+
+            # Validate shape — expected (510, 1, 256)
+            if emb.ndim != 3 or emb.shape[1] != 1 or emb.shape[2] != 256:
+                return {
+                    "success": False,
+                    "error": f"Unexpected embedding shape {emb.shape}; expected (N, 1, 256)",
+                }
+
+            npy_path = CUSTOM_VOICES_DIR / f"{voice_id}.npy"
+            np.save(str(npy_path), emb.astype(np.float32))
+
+            meta = {
+                "name": name,
+                "gender": gender,
+                "language": "Custom",
+                "lang_code": lang_code,
+                "traits": ["imported"],
+                "blend_recipe": [],
+            }
+            self._write_voice_meta(voice_id, meta)
+            logger.info("[tts] Imported voice '%s' from %s bytes", voice_id, len(data))
+            return {"success": True, "voice_id": voice_id}
+
+        except Exception as exc:
+            logger.error("[tts] Voice import failed: %s", exc, exc_info=True)
+            return {"success": False, "error": str(exc)}
+
+    async def rename_custom_voice(self, voice_id: str, new_name: str) -> dict[str, Any]:
+        """Update the display name for a custom voice."""
+        npy_path = CUSTOM_VOICES_DIR / f"{voice_id}.npy"
+        bin_path = CUSTOM_VOICES_DIR / f"{voice_id}.bin"
+        if not npy_path.is_file() and not bin_path.is_file():
+            return {"success": False, "error": f"Custom voice '{voice_id}' not found"}
+        meta = self._read_voice_meta(voice_id)
+        meta["name"] = new_name
+        self._write_voice_meta(voice_id, meta)
+        return {"success": True}
+
+    async def delete_custom_voice(self, voice_id: str) -> dict[str, Any]:
+        """Delete a custom voice and its metadata."""
+        deleted = False
+        for ext in (".npy", ".bin", ".json"):
+            p = CUSTOM_VOICES_DIR / f"{voice_id}{ext}"
+            if p.is_file():
+                p.unlink()
+                deleted = True
+        if not deleted:
+            return {"success": False, "error": f"Custom voice '{voice_id}' not found"}
+        logger.info("[tts] Deleted custom voice '%s'", voice_id)
+        return {"success": True}
+
+    async def synthesize_with_blend(
+        self,
+        text: str,
+        components: list[dict[str, Any]],
+        speed: float = 1.0,
+        lang: str = "en-us",
+    ) -> SynthesisResult:
+        """Synthesize using a live (unsaved) blend — for one-shot blended playback."""
+        load_result = await self.ensure_loaded()
+        if not load_result.get("success"):
+            return SynthesisResult(success=False, error=load_result.get("error", "Model load failed"))
+
+        loop = asyncio.get_running_loop()
+        try:
+            blended_emb = await loop.run_in_executor(None, self.blend_voices_sync, components)
+        except Exception as exc:
+            return SynthesisResult(success=False, error=str(exc))
+
+        with self._lock:
+            kokoro = self._kokoro
+        if kokoro is None:
+            return SynthesisResult(success=False, error="Model not loaded")
+
+        t0 = time.monotonic()
+
+        def _synth():
+            return kokoro.create(text, voice=blended_emb, speed=speed, lang=lang)
+
+        try:
+            samples, sr = await loop.run_in_executor(None, _synth)
+            if samples is None or len(samples) == 0:
+                return SynthesisResult(success=False, error="Empty audio returned")
+            audio_bytes = _wav_bytes(samples, sr)
+            duration = len(samples) / sr
+            elapsed = time.monotonic() - t0
+            return SynthesisResult(
+                success=True,
+                audio_bytes=audio_bytes,
+                sample_rate=sr,
+                duration_seconds=duration,
+                voice_id="blend",
+                elapsed_seconds=elapsed,
+            )
+        except Exception as exc:
+            return SynthesisResult(success=False, error=str(exc))
 
     async def preview_voice(self, voice_id: str) -> SynthesisResult:
         """Generate a short preview clip for a voice."""

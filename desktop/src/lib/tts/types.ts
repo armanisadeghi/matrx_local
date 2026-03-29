@@ -8,6 +8,7 @@ export interface TtsVoice {
   traits: string[];
   is_custom: boolean;
   is_default: boolean;
+  blend_recipe?: Array<{ voice_id: string; weight: number }>;
 }
 
 export interface TtsStatus {

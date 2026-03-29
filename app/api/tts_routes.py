@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -34,6 +34,7 @@ class TtsVoiceInfo(BaseModel):
     traits: list[str] = []
     is_custom: bool = False
     is_default: bool = False
+    blend_recipe: list[dict] = []
 
 
 class SynthesizeRequest(BaseModel):
@@ -59,6 +60,38 @@ class PreviewVoiceRequest(BaseModel):
 class DownloadResponse(BaseModel):
     success: bool
     already_downloaded: bool = False
+    error: str | None = None
+
+
+# ── Voice blending schemas ─────────────────────────────────────────────────────
+
+class BlendComponent(BaseModel):
+    voice_id: str
+    weight: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class BlendPreviewRequest(BaseModel):
+    components: list[BlendComponent] = Field(..., min_length=1)
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    lang: str = Field(default="en-us")
+
+
+class SaveBlendRequest(BaseModel):
+    voice_id: str = Field(..., min_length=1, max_length=64,
+                          description="Filesystem-safe ID (letters, digits, _ -)")
+    name: str = Field(..., min_length=1, max_length=80)
+    components: list[BlendComponent] = Field(..., min_length=1)
+    gender: str = Field(default="female")
+    lang_code: str = Field(default="a")
+
+
+class RenameVoiceRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+
+
+class ActionResponse(BaseModel):
+    success: bool
+    voice_id: str = ""
     error: str | None = None
 
 
@@ -206,3 +239,90 @@ async def preview_voice(req: PreviewVoiceRequest) -> Response:
 async def unload() -> dict:
     svc = get_tts_service()
     return await svc.unload()
+
+
+# ── Voice blending endpoints ───────────────────────────────────────────────────
+
+
+@router.post("/blend/preview")
+async def blend_preview(req: BlendPreviewRequest) -> Response:
+    """Blend voices and return a preview WAV without saving."""
+    svc = get_tts_service()
+    components = [c.model_dump() for c in req.components]
+    result = await svc.blend_and_preview(components, speed=req.speed, lang=req.lang)
+    if not result.success or result.audio_bytes is None:
+        raise HTTPException(status_code=500, detail=result.error or "Blend preview failed")
+    return Response(
+        content=result.audio_bytes,
+        media_type="audio/wav",
+        headers={
+            "X-TTS-Duration": str(result.duration_seconds),
+            "X-TTS-Voice": "blend-preview",
+        },
+    )
+
+
+@router.post("/blend/save", response_model=ActionResponse)
+async def blend_save(req: SaveBlendRequest) -> ActionResponse:
+    """Blend voices and persist the result as a custom voice."""
+    svc = get_tts_service()
+    components = [c.model_dump() for c in req.components]
+    result = await svc.save_blended_voice(
+        voice_id=req.voice_id,
+        name=req.name,
+        components=components,
+        gender=req.gender,
+        lang_code=req.lang_code,
+    )
+    return ActionResponse(**result)
+
+
+# ── Custom voice management ────────────────────────────────────────────────────
+
+
+@router.get("/custom-voices", response_model=list[TtsVoiceInfo])
+async def list_custom_voices() -> list[TtsVoiceInfo]:
+    """List all custom (blended / imported) voices."""
+    svc = get_tts_service()
+    raw = svc._load_custom_voices()
+    return [TtsVoiceInfo(**v) for v in raw]
+
+
+@router.patch("/custom-voices/{voice_id}", response_model=ActionResponse)
+async def rename_custom_voice(voice_id: str, req: RenameVoiceRequest) -> ActionResponse:
+    """Rename a custom voice."""
+    svc = get_tts_service()
+    result = await svc.rename_custom_voice(voice_id, req.name)
+    return ActionResponse(**result)
+
+
+@router.delete("/custom-voices/{voice_id}", response_model=ActionResponse)
+async def delete_custom_voice(voice_id: str) -> ActionResponse:
+    """Delete a custom voice and its metadata."""
+    svc = get_tts_service()
+    result = await svc.delete_custom_voice(voice_id)
+    return ActionResponse(**result)
+
+
+@router.post("/custom-voices/import", response_model=ActionResponse)
+async def import_voice_file(
+    file: UploadFile = File(...),
+    voice_id: str = Form(...),
+    name: str = Form(...),
+    gender: str = Form(default="female"),
+    lang_code: str = Form(default="a"),
+) -> ActionResponse:
+    """Import a custom voice from an uploaded .npy or .bin file."""
+    svc = get_tts_service()
+    content = await file.read()
+    filename = file.filename or ""
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    result = await svc.import_voice_file(
+        voice_id=voice_id,
+        name=name,
+        data=content,
+        file_ext=ext,
+        gender=gender,
+        lang_code=lang_code,
+    )
+    return ActionResponse(**result)

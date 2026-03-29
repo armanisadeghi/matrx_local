@@ -206,3 +206,141 @@ export async function unloadTts(): Promise<{ success: boolean }> {
     method: "DELETE",
   });
 }
+
+// ── Voice blending ────────────────────────────────────────────────────────────
+
+export interface BlendComponent {
+  voice_id: string;
+  weight: number;
+}
+
+export interface ActionResponse {
+  success: boolean;
+  voice_id?: string;
+  error?: string;
+}
+
+/**
+ * Blend voices on the server and return a preview WAV blob (not saved).
+ */
+export async function blendPreview(
+  components: BlendComponent[],
+  speed = 1.0,
+  lang = "en-us",
+): Promise<{ blob: Blob; duration: number }> {
+  const base = engine.engineUrl;
+  if (!base) throw new Error("Engine not discovered");
+
+  const auth = await authHeaders();
+  const resp = await fetch(ttsUrl(base, "/blend/preview"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...auth },
+    body: JSON.stringify({ components, speed, lang }),
+  });
+
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Blend preview failed (${resp.status}): ${detail}`);
+  }
+
+  const blob = await resp.blob();
+  const duration = parseFloat(resp.headers.get("X-TTS-Duration") ?? "0");
+  return { blob, duration };
+}
+
+/**
+ * Blend voices and save the result as a persistent custom voice.
+ */
+export async function saveBlendedVoice(params: {
+  voice_id: string;
+  name: string;
+  components: BlendComponent[];
+  gender?: string;
+  lang_code?: string;
+}): Promise<ActionResponse> {
+  const base = engine.engineUrl;
+  if (!base) throw new Error("Engine not discovered");
+  return ttsJson<ActionResponse>(ttsUrl(base, "/blend/save"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+}
+
+// ── Custom voice management ───────────────────────────────────────────────────
+
+export interface CustomVoiceInfo {
+  voice_id: string;
+  name: string;
+  gender: string;
+  language: string;
+  lang_code: string;
+  quality_grade: string;
+  traits: string[];
+  is_custom: boolean;
+  is_default: boolean;
+  blend_recipe: BlendComponent[];
+}
+
+export async function listCustomVoices(): Promise<CustomVoiceInfo[]> {
+  const base = engine.engineUrl;
+  if (!base) throw new Error("Engine not discovered");
+  return ttsJson<CustomVoiceInfo[]>(ttsUrl(base, "/custom-voices"));
+}
+
+export async function renameCustomVoice(
+  voiceId: string,
+  name: string,
+): Promise<ActionResponse> {
+  const base = engine.engineUrl;
+  if (!base) throw new Error("Engine not discovered");
+  return ttsJson<ActionResponse>(ttsUrl(base, `/custom-voices/${voiceId}`), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteCustomVoice(
+  voiceId: string,
+): Promise<ActionResponse> {
+  const base = engine.engineUrl;
+  if (!base) throw new Error("Engine not discovered");
+  return ttsJson<ActionResponse>(ttsUrl(base, `/custom-voices/${voiceId}`), {
+    method: "DELETE",
+  });
+}
+
+/**
+ * Import a custom voice from a .npy or .bin file.
+ */
+export async function importVoiceFile(params: {
+  file: File;
+  voice_id: string;
+  name: string;
+  gender?: string;
+  lang_code?: string;
+}): Promise<ActionResponse> {
+  const base = engine.engineUrl;
+  if (!base) throw new Error("Engine not discovered");
+
+  const auth = await authHeaders();
+  const form = new FormData();
+  form.append("file", params.file);
+  form.append("voice_id", params.voice_id);
+  form.append("name", params.name);
+  form.append("gender", params.gender ?? "female");
+  form.append("lang_code", params.lang_code ?? "a");
+
+  const resp = await fetch(ttsUrl(base, "/custom-voices/import"), {
+    method: "POST",
+    headers: auth,
+    body: form,
+  });
+
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Voice import failed (${resp.status}): ${detail}`);
+  }
+  return resp.json();
+}
