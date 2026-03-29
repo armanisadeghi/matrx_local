@@ -527,10 +527,10 @@ export function Settings({
   const handleApiKeySave = useCallback(async (provider: string) => {
     const key = apiKeyInputs[provider]?.trim();
     if (!key) return;
-    if (provider === "huggingface" && !key.startsWith("hf_")) {
+    if (provider === "huggingface" && key.length < 10) {
       setApiKeyMessages(prev => ({
         ...prev,
-        [provider]: { ok: false, text: 'Hugging Face tokens start with "hf_".' },
+        [provider]: { ok: false, text: "That doesn't look like a valid Hugging Face token." },
       }));
       return;
     }
@@ -538,6 +538,12 @@ export function Settings({
     setApiKeyMessages(prev => ({ ...prev, [provider]: undefined as never }));
     try {
       await engine.put(`/settings/api-keys/${provider}`, { key });
+      // For the HF token, also persist to llm.json via Rust so downloads work
+      // even when the Python engine is temporarily unreachable.
+      if (provider === "huggingface") {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("save_hf_token", { token: key }).catch(() => { /* non-fatal */ });
+      }
       setApiKeyProviders(prev =>
         prev.map(p => p.provider === provider ? { ...p, configured: true } : p)
       );

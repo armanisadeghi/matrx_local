@@ -76,7 +76,7 @@ export interface LlmState {
 export interface LlmActions {
   detectHardware: () => Promise<LlmHardwareResult>;
   /** Pass all part URLs in order. Single-file models have one URL; split models have multiple. */
-  downloadModel: (filename: string, urls: string[]) => Promise<void>;
+  downloadModel: (filename: string, urls: string[], overrideHfToken?: string) => Promise<void>;
   /**
    * Add a model to the download queue. If nothing is currently downloading,
    * the download starts immediately. Otherwise it runs after the current one
@@ -339,7 +339,7 @@ export function useLlm(): [LlmState, LlmActions] {
    * by processQueue. Direct callers (quickSetup) can call this directly.
    */
   const downloadModel = useCallback(
-    async (filename: string, urls: string[]) => {
+    async (filename: string, urls: string[], overrideHfToken?: string) => {
       setIsDownloading(true);
       isDownloadingRef.current = true;
       setDownloadingFilename(filename);
@@ -359,11 +359,13 @@ export function useLlm(): [LlmState, LlmActions] {
 
       try {
         await migrateLegacyHfTokenIfNeeded();
-        const hfTok = await engine.getHuggingfaceTokenForDownloads();
+        // Use override token (e.g. freshly entered in wizard) when provided so
+        // we don't race against the async engine fetch which could return null.
+        const hfTok = overrideHfToken?.trim() || await engine.getHuggingfaceTokenForDownloads();
         await tauriInvoke("download_llm_model", {
           filename,
           urls,
-          hfToken: hfTok,
+          hfToken: hfTok ?? null,
         });
         void refreshHfTokenConfigured();
         setDownloadProgress(null);
@@ -593,21 +595,33 @@ export function useLlm(): [LlmState, LlmActions] {
   const saveHfTokenAndRetry = useCallback(
     async (token: string) => {
       const trimmed = token.trim();
-      if (trimmed && engine.engineUrl) {
+      if (!trimmed) return;
+
+      // Save to llm.json via Rust first — this is synchronous, always available,
+      // and ensures the token survives even if the Python engine is unreachable.
+      await tauriInvoke("save_hf_token", { token: trimmed }).catch(() => {
+        /* non-fatal — Rust save may fail in dev browser mode */
+      });
+
+      // Also save to Python engine SQLite so the key appears in Settings → API Keys.
+      if (engine.engineUrl) {
         try {
           await engine.put("/settings/api-keys/huggingface", { key: trimmed });
         } catch {
-          /* best-effort — proceed even if persist fails */
+          /* best-effort — llm.json copy above is the guaranteed fallback */
         }
         await refreshHfTokenConfigured();
       }
+
       const pendingFilename = xetPendingFilename;
       const pendingUrls = xetPendingUrls;
       setXetTokenRequired(false);
       setXetPendingFilename(null);
       setXetPendingUrls([]);
+      // Pass the token directly to the retry so we don't depend on an async
+      // engine fetch that could return null if the engine is momentarily busy.
       if (pendingFilename && pendingUrls.length > 0) {
-        await downloadModel(pendingFilename, pendingUrls);
+        await downloadModel(pendingFilename, pendingUrls, trimmed);
       }
     },
     [xetPendingFilename, xetPendingUrls, refreshHfTokenConfigured, downloadModel]
