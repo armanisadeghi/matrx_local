@@ -11,14 +11,45 @@ _soundfile_data = collect_data_files('_soundfile_data')
 _soundfile_libs = collect_dynamic_libs('_soundfile_data')
 # kokoro-onnx: config.json (vocab) must be collected
 _kokoro_data = collect_data_files('kokoro_onnx')
+# language_tags: JSON registry files required by phonemizer → segments → csvw → language-tags
+_lang_tags_data = collect_data_files('language_tags')
 
 
 a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=_espeakng_libs + _soundfile_libs,
-    datas=[('app', 'app'), ('scraper-service/app', 'scraper-service/app'), ('pyproject.toml', '.')] + _espeakng_data + _soundfile_data + _kokoro_data,
-    hiddenimports=['uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto', 'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan', 'uvicorn.lifespan.on', 'httptools', 'pydantic', 'fastapi', 'websockets', 'httpx', 'curl_cffi', 'bs4', 'lxml', 'selectolax', 'asyncpg', 'cachetools', 'tldextract', 'markdownify', 'tabulate', 'fitz', 'pytesseract', 'playwright', 'playwright.async_api', 'playwright.sync_api', 'playwright._impl._driver', 'yt_dlp', 'yt_dlp.extractor', 'yt_dlp.downloader', 'yt_dlp.postprocessor', 'yt_dlp.utils', 'imageio_ffmpeg', 'psutil', 'pydantic_settings', 'zeroconf', 'watchfiles', 'sounddevice', 'soundfile', 'pynput', 'kokoro_onnx', 'kokoro_onnx.tokenizer', 'kokoro_onnx.config', 'kokoro_onnx.trim', 'phonemizer', 'phonemizer.backend', 'phonemizer.backend.espeak', 'phonemizer.backend.espeak.wrapper', 'espeakng_loader', '_soundfile_data', 'app.tools.tools.system', 'app.tools.tools.file_ops', 'app.tools.tools.clipboard', 'app.tools.tools.execution', 'app.tools.tools.network', 'app.tools.tools.notify', 'app.tools.tools.transfer', 'app.tools.tools.process_manager', 'app.tools.tools.window_manager', 'app.tools.tools.input_automation', 'app.tools.tools.audio', 'app.tools.tools.browser_automation', 'app.tools.tools.network_discovery', 'app.tools.tools.system_monitor', 'app.tools.tools.file_watch', 'app.tools.tools.app_integration', 'app.tools.tools.scheduler', 'app.tools.tools.media', 'app.tools.tools.wifi_bluetooth', 'pydantic_settings'],
+    datas=[('app', 'app'), ('scraper-service/app', 'scraper-service/app'), ('pyproject.toml', '.')] + _espeakng_data + _soundfile_data + _kokoro_data + _lang_tags_data,
+    hiddenimports=[
+        'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
+        'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto',
+        'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto',
+        'uvicorn.lifespan', 'uvicorn.lifespan.on',
+        'httptools', 'pydantic', 'fastapi', 'websockets', 'httpx',
+        'curl_cffi', 'bs4', 'lxml', 'selectolax', 'asyncpg', 'cachetools',
+        'tldextract', 'markdownify', 'tabulate', 'fitz', 'pytesseract',
+        'playwright', 'playwright.async_api', 'playwright.sync_api',
+        'playwright._impl._driver',
+        'yt_dlp', 'yt_dlp.extractor', 'yt_dlp.downloader',
+        'yt_dlp.postprocessor', 'yt_dlp.utils',
+        'imageio_ffmpeg', 'psutil', 'pydantic_settings', 'zeroconf',
+        'watchfiles', 'sounddevice', 'soundfile', 'pynput',
+        'kokoro_onnx', 'kokoro_onnx.tokenizer', 'kokoro_onnx.config', 'kokoro_onnx.trim',
+        'phonemizer', 'phonemizer.backend', 'phonemizer.backend.espeak',
+        'phonemizer.backend.espeak.wrapper',
+        'espeakng_loader', '_soundfile_data',
+        'language_tags', 'language_tags.tags', 'language_tags.Tag', 'language_tags.Subtag',
+        'app.tools.tools.system', 'app.tools.tools.file_ops',
+        'app.tools.tools.clipboard', 'app.tools.tools.execution',
+        'app.tools.tools.network', 'app.tools.tools.notify',
+        'app.tools.tools.transfer', 'app.tools.tools.process_manager',
+        'app.tools.tools.window_manager', 'app.tools.tools.input_automation',
+        'app.tools.tools.audio', 'app.tools.tools.browser_automation',
+        'app.tools.tools.network_discovery', 'app.tools.tools.system_monitor',
+        'app.tools.tools.file_watch', 'app.tools.tools.app_integration',
+        'app.tools.tools.scheduler', 'app.tools.tools.media',
+        'app.tools.tools.wifi_bluetooth',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=['hooks/runtime_hook.py'],

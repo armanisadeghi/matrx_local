@@ -41,7 +41,8 @@ function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
@@ -55,48 +56,79 @@ function formatSpeed(bps: number): string {
 function formatEta(secs: number | null | undefined): string {
   if (!secs || secs <= 0) return "";
   if (secs < 60) return `${Math.round(secs)}s left`;
-  if (secs < 3600) return `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s left`;
+  if (secs < 3600)
+    return `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s left`;
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m left`;
 }
 
 // ── Category helpers ──────────────────────────────────────────────────────
 
-function CategoryIcon({ category, className = "" }: { category: string; className?: string }) {
+function CategoryIcon({
+  category,
+  className = "",
+}: {
+  category: string;
+  className?: string;
+}) {
   switch (category) {
-    case "llm":       return <Cpu className={className} />;
-    case "whisper":   return <Mic className={className} />;
-    case "image_gen": return <ImageIcon className={className} />;
-    case "tts":       return <Volume2 className={className} />;
-    case "file_sync": return <FolderSync className={className} />;
-    default:          return <Download className={className} />;
+    case "llm":
+      return <Cpu className={className} />;
+    case "whisper":
+      return <Mic className={className} />;
+    case "image_gen":
+      return <ImageIcon className={className} />;
+    case "tts":
+      return <Volume2 className={className} />;
+    case "file_sync":
+      return <FolderSync className={className} />;
+    default:
+      return <Download className={className} />;
   }
 }
 
 function categoryLabel(category: string): string {
   switch (category) {
-    case "llm":       return "LLM";
-    case "whisper":   return "Voice";
-    case "image_gen": return "Image Gen";
-    case "tts":       return "TTS";
-    case "file_sync": return "File Sync";
-    default:          return category;
+    case "llm":
+      return "LLM";
+    case "whisper":
+      return "Voice";
+    case "image_gen":
+      return "Image Gen";
+    case "tts":
+      return "TTS";
+    case "file_sync":
+      return "File Sync";
+    default:
+      return category;
   }
 }
 
 function categoryColor(category: string): string {
   switch (category) {
-    case "llm":       return "text-blue-500";
-    case "whisper":   return "text-purple-500";
-    case "image_gen": return "text-rose-500";
-    case "tts":       return "text-amber-500";
-    case "file_sync": return "text-emerald-500";
-    default:          return "text-primary";
+    case "llm":
+      return "text-blue-500";
+    case "whisper":
+      return "text-purple-500";
+    case "image_gen":
+      return "text-rose-500";
+    case "tts":
+      return "text-amber-500";
+    case "file_sync":
+      return "text-emerald-500";
+    default:
+      return "text-primary";
   }
 }
 
 // ── Animated progress bar ─────────────────────────────────────────────────
 
-function ProgressBar({ percent, indeterminate = false }: { percent: number; indeterminate?: boolean }) {
+function ProgressBar({
+  percent,
+  indeterminate = false,
+}: {
+  percent: number;
+  indeterminate?: boolean;
+}) {
   return (
     <div className="w-full h-1 rounded-full bg-muted/50 overflow-hidden">
       {indeterminate ? (
@@ -113,13 +145,20 @@ function ProgressBar({ percent, indeterminate = false }: { percent: number; inde
 
 // ── Active download card ───────────────────────────────────────────────────
 
-function ActiveCard({ entry, onCancel }: { entry: DownloadEntry; onCancel: () => void }) {
+function ActiveCard({
+  entry,
+  onCancel,
+}: {
+  entry: DownloadEntry;
+  onCancel: () => void;
+}) {
   const speed = formatSpeed(entry.speed_bps ?? 0);
   const eta = formatEta(entry.eta_seconds);
   const isStarting = entry.percent === 0 && entry.bytes_done === 0;
-  const partsLabel = entry.part_total > 1
-    ? `Part ${entry.part_current} of ${entry.part_total}`
-    : null;
+  const partsLabel =
+    entry.part_total > 1
+      ? `Part ${entry.part_current} of ${entry.part_total}`
+      : null;
 
   return (
     <div className="rounded-xl border border-border/60 bg-gradient-to-br from-card to-muted/20 p-4 space-y-3 shadow-sm">
@@ -127,10 +166,15 @@ function ActiveCard({ entry, onCancel }: { entry: DownloadEntry; onCancel: () =>
         {/* Circular ring */}
         <div className="shrink-0 relative">
           {isStarting ? (
-            <div className="relative flex items-center justify-center" style={{ width: 72, height: 72 }}>
+            <div
+              className="relative flex items-center justify-center"
+              style={{ width: 72, height: 72 }}
+            >
               <div className="absolute inset-0 rounded-full border-4 border-muted/40" />
               <div className="absolute inset-0 rounded-full border-4 border-t-primary border-r-transparent border-b-transparent border-l-transparent animate-spin" />
-              <span className="text-[10px] font-medium text-muted-foreground">Starting</span>
+              <span className="text-[10px] font-medium text-muted-foreground">
+                Starting
+              </span>
             </div>
           ) : (
             <CircularProgress
@@ -146,7 +190,9 @@ function ActiveCard({ entry, onCancel }: { entry: DownloadEntry; onCancel: () =>
         <div className="flex-1 min-w-0 space-y-1.5 pt-0.5">
           {/* Category + name row */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider ${categoryColor(entry.category)}`}>
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider ${categoryColor(entry.category)}`}
+            >
               <CategoryIcon category={entry.category} className="h-3 w-3" />
               {categoryLabel(entry.category)}
             </span>
@@ -157,7 +203,10 @@ function ActiveCard({ entry, onCancel }: { entry: DownloadEntry; onCancel: () =>
             )}
           </div>
 
-          <p className="font-semibold text-sm leading-tight truncate" title={entry.display_name}>
+          <p
+            className="font-semibold text-sm leading-tight truncate"
+            title={entry.display_name}
+          >
             {entry.display_name}
           </p>
           <p className="text-[11px] text-muted-foreground/70 truncate font-mono">
@@ -183,7 +232,9 @@ function ActiveCard({ entry, onCancel }: { entry: DownloadEntry; onCancel: () =>
         <div className="flex items-center gap-3">
           {entry.total_bytes > 0 && (
             <span>
-              <span className="text-foreground/80 font-medium">{formatBytes(entry.bytes_done)}</span>
+              <span className="text-foreground/80 font-medium">
+                {formatBytes(entry.bytes_done)}
+              </span>
               <span className="mx-1 opacity-50">/</span>
               {formatBytes(entry.total_bytes)}
             </span>
@@ -208,7 +259,11 @@ function ActiveCard({ entry, onCancel }: { entry: DownloadEntry; onCancel: () =>
 
 // ── Queue row ─────────────────────────────────────────────────────────────
 
-function QueueRow({ entry, position, onCancel }: {
+function QueueRow({
+  entry,
+  position,
+  onCancel,
+}: {
   entry: DownloadEntry;
   position: number;
   onCancel: () => void;
@@ -221,9 +276,13 @@ function QueueRow({ entry, position, onCancel }: {
       <Loader2 className="h-3.5 w-3.5 text-muted-foreground/50 animate-spin shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{entry.display_name}</p>
-        <p className="text-[11px] text-muted-foreground/60 truncate font-mono">{entry.filename}</p>
+        <p className="text-[11px] text-muted-foreground/60 truncate font-mono">
+          {entry.filename}
+        </p>
       </div>
-      <span className={`text-[10px] font-semibold uppercase ${categoryColor(entry.category)} shrink-0`}>
+      <span
+        className={`text-[10px] font-semibold uppercase ${categoryColor(entry.category)} shrink-0`}
+      >
         {categoryLabel(entry.category)}
       </span>
       <button
@@ -239,30 +298,47 @@ function QueueRow({ entry, position, onCancel }: {
 
 // ── History row ───────────────────────────────────────────────────────────
 
-function HistoryRow({ entry, onRetry }: { entry: DownloadEntry; onRetry?: () => void }) {
+function HistoryRow({
+  entry,
+  onRetry,
+}: {
+  entry: DownloadEntry;
+  onRetry?: () => void;
+}) {
   const isCompleted = entry.status === "completed";
   const isFailed = entry.status === "failed";
 
   return (
     <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/20 transition-colors rounded-lg group">
       <div className="shrink-0">
-        {isCompleted && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+        {isCompleted && (
+          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+        )}
         {isFailed && <AlertCircle className="h-3.5 w-3.5 text-destructive" />}
-        {!isCompleted && !isFailed && <XCircle className="h-3.5 w-3.5 text-muted-foreground/40" />}
+        {!isCompleted && !isFailed && (
+          <XCircle className="h-3.5 w-3.5 text-muted-foreground/40" />
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm truncate" style={{ opacity: isFailed ? 0.7 : 1 }}>
           {entry.display_name}
         </p>
         {isFailed && entry.error_msg ? (
-          <p className="text-[11px] text-destructive/70 truncate" title={entry.error_msg}>
+          <p
+            className="text-[11px] text-destructive/70 truncate"
+            title={entry.error_msg}
+          >
             {entry.error_msg}
           </p>
         ) : isCompleted && entry.total_bytes > 0 ? (
-          <p className="text-[11px] text-muted-foreground/60">{formatBytes(entry.total_bytes)}</p>
+          <p className="text-[11px] text-muted-foreground/60">
+            {formatBytes(entry.total_bytes)}
+          </p>
         ) : null}
       </div>
-      <span className={`text-[10px] font-semibold uppercase ${categoryColor(entry.category)} shrink-0 opacity-60`}>
+      <span
+        className={`text-[10px] font-semibold uppercase ${categoryColor(entry.category)} shrink-0 opacity-60`}
+      >
         {categoryLabel(entry.category)}
       </span>
       {isFailed && onRetry && (
@@ -281,14 +357,18 @@ function HistoryRow({ entry, onRetry }: { entry: DownloadEntry; onRetry?: () => 
 // ── Modal ─────────────────────────────────────────────────────────────────
 
 export function DownloadManagerModal() {
-  const { downloads, isModalOpen, closeModal, cancel, enqueue } = useDownloadManager();
+  const { downloads, isModalOpen, closeModal, cancel, enqueue } =
+    useDownloadManager();
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const active = downloads.find((d) => d.status === "active");
   const queued = downloads.filter((d) => d.status === "queued");
   const history = downloads.filter(
-    (d) => d.status === "completed" || d.status === "failed" || d.status === "cancelled",
+    (d) =>
+      d.status === "completed" ||
+      d.status === "failed" ||
+      d.status === "cancelled",
   );
 
   const hasActive = active != null;
@@ -307,7 +387,9 @@ export function DownloadManagerModal() {
   }, [isModalOpen, closeModal]);
 
   const handleCancelAll = async () => {
-    const toCancel = downloads.filter((d) => d.status === "active" || d.status === "queued");
+    const toCancel = downloads.filter(
+      (d) => d.status === "active" || d.status === "queued",
+    );
     await Promise.allSettled(toCancel.map((d) => cancel(d.id)));
   };
 
@@ -341,7 +423,6 @@ export function DownloadManagerModal() {
 
       {/* Panel */}
       <div className="relative z-10 w-full sm:w-[440px] max-h-[85dvh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-background border border-border/60 shadow-2xl overflow-hidden">
-
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border/40 shrink-0 bg-muted/20">
           <div className="flex items-center gap-2.5">
@@ -352,7 +433,8 @@ export function DownloadManagerModal() {
               <h2 className="text-sm font-semibold leading-none">Downloads</h2>
               {totalActive > 0 && (
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {totalActive} {totalActive === 1 ? "item" : "items"} in progress
+                  {totalActive} {totalActive === 1 ? "item" : "items"} in
+                  progress
                 </p>
               )}
             </div>
@@ -387,7 +469,6 @@ export function DownloadManagerModal() {
         {/* Content */}
         <ScrollArea className="flex-1 overflow-auto">
           <div className="p-4 space-y-4">
-
             {/* Empty state */}
             {isEmpty && (
               <div className="flex flex-col items-center justify-center py-14 space-y-3 text-center">
@@ -395,7 +476,9 @@ export function DownloadManagerModal() {
                   <Download className="h-7 w-7 text-muted-foreground/40" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">No downloads yet</p>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    No downloads yet
+                  </p>
                   <p className="text-xs text-muted-foreground/60 mt-1">
                     Model and file downloads will appear here in real time.
                   </p>

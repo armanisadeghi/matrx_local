@@ -42,12 +42,16 @@ interface DownloadManagerContextValue {
   cancel: (id: string) => Promise<void>;
 }
 
-const DownloadManagerContext = createContext<DownloadManagerContextValue | null>(null);
+const DownloadManagerContext =
+  createContext<DownloadManagerContextValue | null>(null);
 
 // How long to keep completed/failed/cancelled entries in memory before pruning
 const HISTORY_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function tauriInvoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(cmd, args);
 }
@@ -60,7 +64,10 @@ async function tauriListen(
   return listen(event, (e) => handler(e.payload));
 }
 
-function mergeEntry(prev: Map<string, DownloadEntry>, incoming: Partial<DownloadEntry> & { id: string }): Map<string, DownloadEntry> {
+function mergeEntry(
+  prev: Map<string, DownloadEntry>,
+  incoming: Partial<DownloadEntry> & { id: string },
+): Map<string, DownloadEntry> {
   const next = new Map(prev);
   const existing = next.get(incoming.id);
   next.set(incoming.id, {
@@ -68,7 +75,10 @@ function mergeEntry(prev: Map<string, DownloadEntry>, incoming: Partial<Download
     ...incoming,
     // Keep richer speed/eta from the last progress event
     speed_bps: incoming.speed_bps ?? existing?.speed_bps ?? 0,
-    eta_seconds: incoming.eta_seconds !== undefined ? incoming.eta_seconds : existing?.eta_seconds,
+    eta_seconds:
+      incoming.eta_seconds !== undefined
+        ? incoming.eta_seconds
+        : existing?.eta_seconds,
   } as DownloadEntry);
   return next;
 }
@@ -76,16 +86,24 @@ function mergeEntry(prev: Map<string, DownloadEntry>, incoming: Partial<Download
 function sortedEntries(map: Map<string, DownloadEntry>): DownloadEntry[] {
   const rank = (s: string) => {
     switch (s) {
-      case "active":    return 0;
-      case "queued":    return 1;
-      case "failed":    return 2;
-      case "cancelled": return 3;
-      case "completed": return 4;
-      default:          return 5;
+      case "active":
+        return 0;
+      case "queued":
+        return 1;
+      case "failed":
+        return 2;
+      case "cancelled":
+        return 3;
+      case "completed":
+        return 4;
+      default:
+        return 5;
     }
   };
   return Array.from(map.values()).sort(
-    (a, b) => rank(a.status) - rank(b.status) || a.created_at.localeCompare(b.created_at),
+    (a, b) =>
+      rank(a.status) - rank(b.status) ||
+      a.created_at.localeCompare(b.created_at),
   );
 }
 
@@ -93,14 +111,18 @@ function sortedEntries(map: Map<string, DownloadEntry>): DownloadEntry[] {
 const speedTracker = new Map<string, { bytes: number; time: number }>();
 
 export function DownloadManagerProvider({ children }: { children: ReactNode }) {
-  const [entriesMap, setEntriesMap] = useState<Map<string, DownloadEntry>>(new Map());
+  const [entriesMap, setEntriesMap] = useState<Map<string, DownloadEntry>>(
+    new Map(),
+  );
   const [isModalOpen, setIsModalOpen] = useState(false);
   const sseRef = useRef<EventSource | null>(null);
   const unlistenFns = useRef<Array<() => void>>([]);
 
   // Computed from map
   const downloads = sortedEntries(entriesMap);
-  const activeCount = downloads.filter((d) => d.status === "active" || d.status === "queued").length;
+  const activeCount = downloads.filter(
+    (d) => d.status === "active" || d.status === "queued",
+  ).length;
 
   // Merge a progress event payload into state, computing speed from byte deltas if not provided
   const handleEvent = useCallback((raw: unknown) => {
@@ -133,11 +155,13 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
       if (remaining > 0) eta_seconds = remaining / speed_bps;
     }
 
-    setEntriesMap((prev) => mergeEntry(prev, {
-      ...(payload as DownloadEntry & { id: string }),
-      speed_bps,
-      eta_seconds,
-    }));
+    setEntriesMap((prev) =>
+      mergeEntry(prev, {
+        ...(payload as DownloadEntry & { id: string }),
+        speed_bps,
+        eta_seconds,
+      }),
+    );
   }, []);
 
   // ── Tauri event listeners ────────────────────────────────────────────────
@@ -148,7 +172,13 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
 
     (async () => {
       // Core DM events
-      const coreEvents = ["dm-progress", "dm-queued", "dm-completed", "dm-failed", "dm-cancelled"];
+      const coreEvents = [
+        "dm-progress",
+        "dm-queued",
+        "dm-completed",
+        "dm-failed",
+        "dm-cancelled",
+      ];
       for (const evt of coreEvents) {
         const unlisten = await tauriListen(evt, handleEvent);
         cleanup.push(unlisten);
@@ -185,29 +215,33 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
       cleanup.push(unlistenLlm);
 
       // Bridge whisper-download-progress → dm-progress
-      const unlistenWhisper = await tauriListen("whisper-download-progress", (raw) => {
-        if (!raw || typeof raw !== "object") return;
-        const p = raw as Record<string, unknown>;
-        const filename = (p["filename"] as string | undefined) ?? "whisper-model";
-        const id = `whisper-${filename}`;
-        const bytesDone = (p["bytes_downloaded"] as number | undefined) ?? 0;
-        const totalBytes = (p["total_bytes"] as number | undefined) ?? 0;
-        const percent = (p["percent"] as number | undefined) ?? 0;
-        handleEvent({
-          id,
-          category: "whisper",
-          filename,
-          display_name: filename,
-          status: percent >= 100 ? "completed" : "active",
-          bytes_done: bytesDone,
-          total_bytes: totalBytes,
-          percent,
-          part_current: 1,
-          part_total: 1,
-          speed_bps: 0,
-          eta_seconds: undefined,
-        });
-      });
+      const unlistenWhisper = await tauriListen(
+        "whisper-download-progress",
+        (raw) => {
+          if (!raw || typeof raw !== "object") return;
+          const p = raw as Record<string, unknown>;
+          const filename =
+            (p["filename"] as string | undefined) ?? "whisper-model";
+          const id = `whisper-${filename}`;
+          const bytesDone = (p["bytes_downloaded"] as number | undefined) ?? 0;
+          const totalBytes = (p["total_bytes"] as number | undefined) ?? 0;
+          const percent = (p["percent"] as number | undefined) ?? 0;
+          handleEvent({
+            id,
+            category: "whisper",
+            filename,
+            display_name: filename,
+            status: percent >= 100 ? "completed" : "active",
+            bytes_done: bytesDone,
+            total_bytes: totalBytes,
+            percent,
+            part_current: 1,
+            part_total: 1,
+            speed_bps: 0,
+            eta_seconds: undefined,
+          });
+        },
+      );
       cleanup.push(unlistenWhisper);
 
       unlistenFns.current = cleanup;
@@ -270,68 +304,74 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
 
   // ── Prune old history entries ────────────────────────────────────────────
   useEffect(() => {
-    const interval = setInterval(() => {
-      const cutoff = Date.now() - HISTORY_TTL_MS;
-      setEntriesMap((prev) => {
-        const next = new Map(prev);
-        for (const [id, entry] of next) {
-          if (
-            (entry.status === "completed" || entry.status === "cancelled") &&
-            new Date(entry.updated_at).getTime() < cutoff
-          ) {
-            next.delete(id);
+    const interval = setInterval(
+      () => {
+        const cutoff = Date.now() - HISTORY_TTL_MS;
+        setEntriesMap((prev) => {
+          const next = new Map(prev);
+          for (const [id, entry] of next) {
+            if (
+              (entry.status === "completed" || entry.status === "cancelled") &&
+              new Date(entry.updated_at).getTime() < cutoff
+            ) {
+              next.delete(id);
+            }
           }
-        }
-        return next;
-      });
-    }, 5 * 60 * 1000); // check every 5 min
+          return next;
+        });
+      },
+      5 * 60 * 1000,
+    ); // check every 5 min
     return () => clearInterval(interval);
   }, []);
 
   // ── API ──────────────────────────────────────────────────────────────────
 
-  const enqueue = useCallback(async (opts: EnqueueOptions): Promise<DownloadEntry | null> => {
-    const id = opts.id ?? `${opts.category}-${opts.filename}-${Date.now()}`;
-    try {
-      if (isTauri()) {
-        const entry = await tauriInvoke<DownloadEntry>("dm_enqueue", {
-          id,
-          category: opts.category,
-          filename: opts.filename,
-          displayName: opts.display_name,
-          urls: opts.urls,
-          priority: opts.priority ?? 0,
-          metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,
-        });
-        setEntriesMap((prev) => mergeEntry(prev, entry));
-        return entry;
-      } else {
-        // Browser mode — POST to Python engine
-        const engineUrl = engine.engineUrl;
-        if (!engineUrl) return null;
-        const resp = await fetch(`${engineUrl}/downloads`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            download_id: id,
+  const enqueue = useCallback(
+    async (opts: EnqueueOptions): Promise<DownloadEntry | null> => {
+      const id = opts.id ?? `${opts.category}-${opts.filename}-${Date.now()}`;
+      try {
+        if (isTauri()) {
+          const entry = await tauriInvoke<DownloadEntry>("dm_enqueue", {
+            id,
             category: opts.category,
             filename: opts.filename,
-            display_name: opts.display_name,
+            displayName: opts.display_name,
             urls: opts.urls,
             priority: opts.priority ?? 0,
-            metadata: opts.metadata,
-          }),
-        });
-        if (!resp.ok) return null;
-        const entry: DownloadEntry = await resp.json();
-        setEntriesMap((prev) => mergeEntry(prev, entry));
-        return entry;
+            metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,
+          });
+          setEntriesMap((prev) => mergeEntry(prev, entry));
+          return entry;
+        } else {
+          // Browser mode — POST to Python engine
+          const engineUrl = engine.engineUrl;
+          if (!engineUrl) return null;
+          const resp = await fetch(`${engineUrl}/downloads`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              download_id: id,
+              category: opts.category,
+              filename: opts.filename,
+              display_name: opts.display_name,
+              urls: opts.urls,
+              priority: opts.priority ?? 0,
+              metadata: opts.metadata,
+            }),
+          });
+          if (!resp.ok) return null;
+          const entry: DownloadEntry = await resp.json();
+          setEntriesMap((prev) => mergeEntry(prev, entry));
+          return entry;
+        }
+      } catch (e) {
+        console.error("[DownloadManager] enqueue failed:", e);
+        return null;
       }
-    } catch (e) {
-      console.error("[DownloadManager] enqueue failed:", e);
-      return null;
-    }
-  }, []);
+    },
+    [],
+  );
 
   const cancel = useCallback(async (id: string): Promise<void> => {
     try {
@@ -347,7 +387,11 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
         const next = new Map(prev);
         const entry = next.get(id);
         if (entry && (entry.status === "active" || entry.status === "queued")) {
-          next.set(id, { ...entry, status: "cancelled", updated_at: new Date().toISOString() });
+          next.set(id, {
+            ...entry,
+            status: "cancelled",
+            updated_at: new Date().toISOString(),
+          });
         }
         return next;
       });
@@ -361,7 +405,15 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
 
   return (
     <DownloadManagerContext.Provider
-      value={{ downloads, activeCount, isModalOpen, openModal, closeModal, enqueue, cancel }}
+      value={{
+        downloads,
+        activeCount,
+        isModalOpen,
+        openModal,
+        closeModal,
+        enqueue,
+        cancel,
+      }}
     >
       {children}
     </DownloadManagerContext.Provider>
@@ -371,7 +423,9 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
 export function useDownloadManager(): DownloadManagerContextValue {
   const ctx = useContext(DownloadManagerContext);
   if (!ctx) {
-    throw new Error("useDownloadManager must be used inside <DownloadManagerProvider>");
+    throw new Error(
+      "useDownloadManager must be used inside <DownloadManagerProvider>",
+    );
   }
   return ctx;
 }

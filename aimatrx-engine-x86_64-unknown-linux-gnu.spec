@@ -9,13 +9,15 @@ _soundfile_data = collect_data_files('_soundfile_data')
 _soundfile_libs = collect_dynamic_libs('_soundfile_data')
 # kokoro-onnx: config.json (vocab) must be collected
 _kokoro_data = collect_data_files('kokoro_onnx')
+# language_tags: JSON registry files required by phonemizer → segments → csvw → language-tags
+_lang_tags_data = collect_data_files('language_tags')
 
 
 a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=_espeakng_libs + _soundfile_libs,
-    datas=[('app', 'app'), ('scraper-service/app', 'scraper-service/app'), ('pyproject.toml', '.')] + _espeakng_data + _soundfile_data + _kokoro_data,
+    datas=[('app', 'app'), ('scraper-service/app', 'scraper-service/app'), ('pyproject.toml', '.')] + _espeakng_data + _soundfile_data + _kokoro_data + _lang_tags_data,
     hiddenimports=[
         'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
         'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto',
@@ -34,6 +36,7 @@ a = Analysis(
         'phonemizer', 'phonemizer.backend', 'phonemizer.backend.espeak',
         'phonemizer.backend.espeak.wrapper',
         'espeakng_loader', '_soundfile_data',
+        'language_tags', 'language_tags.tags', 'language_tags.Tag', 'language_tags.Subtag',
         'app.tools.tools.system', 'app.tools.tools.file_ops',
         'app.tools.tools.clipboard', 'app.tools.tools.execution',
         'app.tools.tools.network', 'app.tools.tools.notify',
