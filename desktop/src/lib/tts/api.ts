@@ -147,31 +147,30 @@ export async function* synthesizeStream(
   if (!resp.body) throw new Error("No response body for TTS stream");
 
   const reader = resp.body.getReader();
-  let buffer: ArrayBuffer = new ArrayBuffer(0);
+  let buf = new ArrayBuffer(0);
   let bufLen = 0;
 
-  function append(chunk: Uint8Array) {
-    const next = new Uint8Array(bufLen + chunk.length);
-    next.set(new Uint8Array(buffer, 0, bufLen), 0);
-    next.set(chunk, bufLen);
-    buffer = next.buffer as ArrayBuffer;
-    bufLen += chunk.length;
+  function append(chunk: Uint8Array<ArrayBuffer>) {
+    const next = new ArrayBuffer(bufLen + chunk.byteLength);
+    const dst = new Uint8Array(next);
+    dst.set(new Uint8Array(buf, 0, bufLen), 0);
+    dst.set(chunk, bufLen);
+    buf = next;
+    bufLen += chunk.byteLength;
   }
 
-  function consume(n: number): Uint8Array {
-    const out = new Uint8Array(buffer, 0, n);
-    const copy = new Uint8Array(n);
-    copy.set(out);
+  function consume(n: number): ArrayBuffer {
+    const slice = buf.slice(0, n);
     const remaining = bufLen - n;
     if (remaining > 0) {
-      const rest = new Uint8Array(remaining);
-      rest.set(new Uint8Array(buffer, n, remaining));
-      buffer = rest.buffer as ArrayBuffer;
+      const rest = new ArrayBuffer(remaining);
+      new Uint8Array(rest).set(new Uint8Array(buf, n, remaining));
+      buf = rest;
     } else {
-      buffer = new ArrayBuffer(0);
+      buf = new ArrayBuffer(0);
     }
     bufLen = remaining;
-    return copy;
+    return slice;
   }
 
   try {
@@ -184,7 +183,7 @@ export async function* synthesizeStream(
         if (value) append(value);
       }
 
-      const hdr = consume(4);
+      const hdr = new Uint8Array(consume(4));
       const wavLen = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
 
       while (bufLen < wavLen) {
@@ -193,8 +192,7 @@ export async function* synthesizeStream(
         if (value) append(value);
       }
 
-      const wavData = consume(wavLen);
-      yield new Blob([wavData], { type: "audio/wav" });
+      yield new Blob([consume(wavLen)], { type: "audio/wav" });
     }
   } finally {
     reader.releaseLock();
