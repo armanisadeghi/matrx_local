@@ -19,6 +19,8 @@ import type {
   HardwareDetectionResult,
   AudioDeviceInfo,
 } from "@/lib/transcription/types";
+import type { TtsVoice } from "@/lib/tts/types";
+import { getTtsVoices } from "@/lib/tts/api";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,18 +54,28 @@ export interface ConfigCatalogs {
   /** System prompts (built-in + user-created) */
   systemPromptOptions: SystemPromptOption[];
 
+  /** TTS voices from the Python engine */
+  ttsVoices: TtsVoice[];
+  ttsVoicesLoading: boolean;
+
   /** Refresh functions */
   refreshAudioDevices: () => Promise<void>;
   refreshLlmModels: () => Promise<void>;
   refreshWhisperModels: () => Promise<void>;
   refreshChatModels: () => Promise<void>;
+  refreshTtsVoices: () => Promise<void>;
 }
 
 // ── Tauri invoke helper ──────────────────────────────────────────────────────
 
-let _invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
+let _invoke:
+  | ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>)
+  | null = null;
 
-async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function tauriInvoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   if (!_invoke) {
     const mod = await import("@tauri-apps/api/core");
     _invoke = mod.invoke;
@@ -92,8 +104,14 @@ export function useConfigCatalogs(): ConfigCatalogs {
   const [audioDevices, setAudioDevices] = useState<AudioDeviceInfo[]>([]);
   const [audioDevicesLoading, setAudioDevicesLoading] = useState(false);
 
+  // TTS voices
+  const [ttsVoices, setTtsVoices] = useState<TtsVoice[]>([]);
+  const [ttsVoicesLoading, setTtsVoicesLoading] = useState(false);
+
   // System prompts (sync, no loading state needed)
-  const [systemPromptOptions, setSystemPromptOptions] = useState<SystemPromptOption[]>([]);
+  const [systemPromptOptions, setSystemPromptOptions] = useState<
+    SystemPromptOption[]
+  >([]);
 
   const mountedRef = useRef(true);
 
@@ -105,18 +123,30 @@ export function useConfigCatalogs(): ConfigCatalogs {
       const resp = await fetch(`${engine.engineUrl}/chat/models`);
       if (resp.ok) {
         const data = await resp.json();
-        if (data.models && Array.isArray(data.models) && data.models.length > 0) {
-          const mapped: ModelOption[] = data.models.map((m: {
-            name: string; common_name: string; provider: string;
-            is_primary?: boolean; is_premium?: boolean;
-          }, i: number) => ({
-            id: m.name,
-            label: m.common_name,
-            provider: m.provider,
-            default: i === 0,
-            is_primary: m.is_primary,
-            is_premium: m.is_premium,
-          }));
+        if (
+          data.models &&
+          Array.isArray(data.models) &&
+          data.models.length > 0
+        ) {
+          const mapped: ModelOption[] = data.models.map(
+            (
+              m: {
+                name: string;
+                common_name: string;
+                provider: string;
+                is_primary?: boolean;
+                is_premium?: boolean;
+              },
+              i: number,
+            ) => ({
+              id: m.name,
+              label: m.common_name,
+              provider: m.provider,
+              default: i === 0,
+              is_primary: m.is_primary,
+              is_premium: m.is_premium,
+            }),
+          );
           if (mountedRef.current) setChatModels(mapped);
         }
       }
@@ -132,7 +162,9 @@ export function useConfigCatalogs(): ConfigCatalogs {
     if (!isTauri()) return;
     setLlmModelsLoading(true);
     try {
-      const result = await tauriInvoke<LlmHardwareResult>("detect_llm_hardware");
+      const result = await tauriInvoke<LlmHardwareResult>(
+        "detect_llm_hardware",
+      );
       if (mountedRef.current) {
         setLlmModels(result.all_models);
         setLlmRecommended(result.recommended_filename);
@@ -149,7 +181,8 @@ export function useConfigCatalogs(): ConfigCatalogs {
     if (!isTauri()) return;
     setWhisperModelsLoading(true);
     try {
-      const result = await tauriInvoke<HardwareDetectionResult>("detect_hardware");
+      const result =
+        await tauriInvoke<HardwareDetectionResult>("detect_hardware");
       if (mountedRef.current) {
         setWhisperModels(result.all_models);
         setWhisperRecommended(result.recommended_filename);
@@ -166,12 +199,28 @@ export function useConfigCatalogs(): ConfigCatalogs {
     if (!isTauri()) return;
     setAudioDevicesLoading(true);
     try {
-      const devices = await tauriInvoke<AudioDeviceInfo[]>("list_audio_input_devices");
+      const devices = await tauriInvoke<AudioDeviceInfo[]>(
+        "list_audio_input_devices",
+      );
       if (mountedRef.current) setAudioDevices(devices);
     } catch {
       // Not available
     } finally {
       if (mountedRef.current) setAudioDevicesLoading(false);
+    }
+  }, []);
+
+  // ── Fetch TTS voices from the Python engine ──────────────────────────────
+  const refreshTtsVoices = useCallback(async () => {
+    if (!engine.engineUrl) return;
+    setTtsVoicesLoading(true);
+    try {
+      const voices = await getTtsVoices();
+      if (mountedRef.current) setTtsVoices(voices);
+    } catch {
+      // Engine unreachable or TTS not ready
+    } finally {
+      if (mountedRef.current) setTtsVoicesLoading(false);
     }
   }, []);
 
@@ -193,11 +242,19 @@ export function useConfigCatalogs(): ConfigCatalogs {
     refreshLlmModels();
     refreshWhisperModels();
     refreshAudioDevices();
+    refreshTtsVoices();
     refreshSystemPrompts();
     return () => {
       mountedRef.current = false;
     };
-  }, [refreshChatModels, refreshLlmModels, refreshWhisperModels, refreshAudioDevices, refreshSystemPrompts]);
+  }, [
+    refreshChatModels,
+    refreshLlmModels,
+    refreshWhisperModels,
+    refreshAudioDevices,
+    refreshTtsVoices,
+    refreshSystemPrompts,
+  ]);
 
   return {
     chatModels,
@@ -211,9 +268,12 @@ export function useConfigCatalogs(): ConfigCatalogs {
     audioDevices,
     audioDevicesLoading,
     systemPromptOptions,
+    ttsVoices,
+    ttsVoicesLoading,
     refreshAudioDevices,
     refreshLlmModels,
     refreshWhisperModels,
     refreshChatModels,
+    refreshTtsVoices,
   };
 }

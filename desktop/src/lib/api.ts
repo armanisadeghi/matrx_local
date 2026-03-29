@@ -70,10 +70,10 @@ export interface EngineSettings {
 
 /** A configurable storage path entry from GET /settings/paths */
 export interface StoragePath {
-  name: string;       // e.g. "notes"
-  label: string;      // e.g. "Notes folder"
-  current: string;    // resolved absolute path
-  default: string;    // compiled default path
+  name: string; // e.g. "notes"
+  label: string; // e.g. "Notes folder"
+  current: string; // resolved absolute path
+  default: string; // compiled default path
   is_custom: boolean; // true if user has set a custom path
   user_visible: boolean; // whether to show in Settings UI
 }
@@ -195,7 +195,9 @@ class EngineAPI {
         const data = await resp.json();
         return data.version ?? "";
       }
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
     return "";
   }
 
@@ -211,7 +213,10 @@ class EngineAPI {
   /** Update engine runtime settings. */
   async updateSettings(settings: EngineSettings): Promise<EngineSettings> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/settings`, {
       method: "PUT",
       headers,
@@ -231,7 +236,10 @@ class EngineAPI {
   /** Set a custom path for a named storage location. */
   async setStoragePath(name: string, path: string): Promise<StoragePath> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/settings/paths/${name}`, {
       method: "PUT",
       headers,
@@ -265,7 +273,11 @@ class EngineAPI {
 
   /** Check which AI providers are configured (have API keys) on the engine. */
   async getAiStatus(): Promise<{
-    providers: { available: string[]; missing: string[]; any_available: boolean };
+    providers: {
+      available: string[];
+      missing: string[];
+      any_available: boolean;
+    };
     jwt_validation: { configured: boolean; warning: string | null };
     engine: { initialized: boolean; client_mode: boolean };
     local_llm: {
@@ -297,7 +309,8 @@ class EngineAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ port, model_name: modelName }),
     });
-    if (!resp.ok) throw new Error(`Failed to connect local LLM: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`Failed to connect local LLM: ${resp.status}`);
   }
 
   /**
@@ -311,7 +324,8 @@ class EngineAPI {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     });
-    if (!resp.ok) throw new Error(`Failed to disconnect local LLM: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`Failed to disconnect local LLM: ${resp.status}`);
   }
 
   /** Get the current local LLM registration status from the engine. */
@@ -325,18 +339,22 @@ class EngineAPI {
   }> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const resp = await fetch(`${this.baseUrl}/chat/local-llm/status`);
-    if (!resp.ok) throw new Error(`Failed to get local LLM status: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`Failed to get local LLM status: ${resp.status}`);
     return resp.json();
   }
 
   // ── Wake word settings (SQLite-persisted) ──────────────────────────────
 
   /** Fetch the user's wake word engine preference from the sidecar SQLite store. */
-  async getWakeWordSettings(): Promise<import("./transcription/types").WakeWordSettings> {
+  async getWakeWordSettings(): Promise<
+    import("./transcription/types").WakeWordSettings
+  > {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/settings/wake-word`, { headers });
-    if (!resp.ok) throw new Error(`Failed to get wake word settings: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`Failed to get wake word settings: ${resp.status}`);
     const raw = await resp.json();
     // Convert snake_case → camelCase
     return {
@@ -352,7 +370,10 @@ class EngineAPI {
     settings: import("./transcription/types").WakeWordSettings,
   ): Promise<void> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     // Convert camelCase → snake_case for the Python API
     const body = {
       engine: settings.engine,
@@ -365,7 +386,8 @@ class EngineAPI {
       headers,
       body: JSON.stringify(body),
     });
-    if (!resp.ok) throw new Error(`Failed to save wake word settings: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`Failed to save wake word settings: ${resp.status}`);
   }
 
   // ── openWakeWord engine control ──────────────────────────────────────────
@@ -386,7 +408,10 @@ class EngineAPI {
     deviceName?: string;
   }): Promise<void> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/wake-word/start`, {
       method: "POST",
       headers,
@@ -396,7 +421,8 @@ class EngineAPI {
         device_name: opts?.deviceName ?? null,
       }),
     });
-    if (!resp.ok) throw new Error(`OWW start failed: ${resp.status} ${await resp.text()}`);
+    if (!resp.ok)
+      throw new Error(`OWW start failed: ${resp.status} ${await resp.text()}`);
   }
 
   /** Stop the OWW detection loop entirely. */
@@ -455,7 +481,10 @@ class EngineAPI {
     threshold?: number;
   }): Promise<void> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/wake-word/configure`, {
       method: "POST",
       headers,
@@ -468,7 +497,9 @@ class EngineAPI {
   }
 
   /** List all available OWW models (pre-trained + custom). */
-  async owwListModels(): Promise<import("./transcription/types").OwwModelsResponse> {
+  async owwListModels(): Promise<
+    import("./transcription/types").OwwModelsResponse
+  > {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/wake-word/models`, { headers });
@@ -481,13 +512,19 @@ class EngineAPI {
     name: string,
   ): Promise<import("./transcription/types").OwwModelInfo> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/wake-word/models/download`, {
       method: "POST",
       headers,
       body: JSON.stringify({ model_name: name }),
     });
-    if (!resp.ok) throw new Error(`OWW download failed: ${resp.status} ${await resp.text()}`);
+    if (!resp.ok)
+      throw new Error(
+        `OWW download failed: ${resp.status} ${await resp.text()}`,
+      );
     return resp.json();
   }
 
@@ -512,13 +549,19 @@ class EngineAPI {
   }
 
   /** Invoke a tool via REST (stateless, one-shot). */
-  async invokeTool(tool: string, input: Record<string, unknown>): Promise<ToolResult> {
+  async invokeTool(
+    tool: string,
+    input: Record<string, unknown>,
+  ): Promise<ToolResult> {
     const callId = `${tool}-${Date.now()}`;
     const startTs = Date.now();
 
     if (!this.baseUrl) {
       console.error(`[api/invokeTool] BLOCKED — engine not discovered`, {
-        callId, tool, input, timestamp: new Date().toISOString(),
+        callId,
+        tool,
+        input,
+        timestamp: new Date().toISOString(),
       });
       throw new Error("Engine not discovered — start the Python engine first");
     }
@@ -546,7 +589,9 @@ class EngineAPI {
       });
     } catch (fetchErr) {
       const elapsed = Date.now() - startTs;
-      const isTimeout = (fetchErr as Error).name === "TimeoutError" || (fetchErr as Error).name === "AbortError";
+      const isTimeout =
+        (fetchErr as Error).name === "TimeoutError" ||
+        (fetchErr as Error).name === "AbortError";
       console.error(`[api/invokeTool] FETCH FAILED — ${tool}`, {
         callId,
         tool,
@@ -567,7 +612,11 @@ class EngineAPI {
 
     if (!resp.ok) {
       let body = "";
-      try { body = await resp.text(); } catch { /* ignore */ }
+      try {
+        body = await resp.text();
+      } catch {
+        /* ignore */
+      }
       console.error(`[api/invokeTool] HTTP ERROR — ${tool}`, {
         callId,
         tool,
@@ -576,18 +625,21 @@ class EngineAPI {
         statusText: resp.statusText,
         elapsed_ms: elapsed,
         responseBody: body.slice(0, 1000),
-        hint: resp.status === 401
-          ? "401 Unauthorized — JWT not attached or expired; check auth setup"
-          : resp.status === 404
-            ? `404 Not Found — is the tool name correct? Tool="${tool}"`
-            : resp.status === 422
-              ? "422 Unprocessable Entity — check input shape matches the tool's schema"
-              : resp.status >= 500
-                ? "5xx Server Error — check Python engine logs for the exception"
-                : "Unexpected HTTP error",
+        hint:
+          resp.status === 401
+            ? "401 Unauthorized — JWT not attached or expired; check auth setup"
+            : resp.status === 404
+              ? `404 Not Found — is the tool name correct? Tool="${tool}"`
+              : resp.status === 422
+                ? "422 Unprocessable Entity — check input shape matches the tool's schema"
+                : resp.status >= 500
+                  ? "5xx Server Error — check Python engine logs for the exception"
+                  : "Unexpected HTTP error",
         timestamp: new Date().toISOString(),
       });
-      throw new Error(`Tool invocation failed: ${resp.status} ${resp.statusText} — ${body.slice(0, 200)}`);
+      throw new Error(
+        `Tool invocation failed: ${resp.status} ${resp.statusText} — ${body.slice(0, 200)}`,
+      );
     }
 
     const result: ToolResult = await resp.json();
@@ -604,7 +656,9 @@ class EngineAPI {
    * Maps tool names to the macOS permission keys they require.
    * Used by invokeToolGuarded() to perform pre-flight checks.
    */
-  static readonly TOOL_PERMISSION_REQUIREMENTS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  static readonly TOOL_PERMISSION_REQUIREMENTS: Readonly<
+    Record<string, ReadonlyArray<string>>
+  > = {
     // Audio
     RecordAudio: ["microphone"],
     TranscribeAudio: ["microphone"],
@@ -687,14 +741,22 @@ class EngineAPI {
   async invokeToolGuarded(
     tool: string,
     input: Record<string, unknown>,
-    permissionSnapshot: Map<string, { status: string; label: string; description: string }>,
+    permissionSnapshot: Map<
+      string,
+      { status: string; label: string; description: string }
+    >,
   ): Promise<ToolResult> {
     const required = EngineAPI.TOOL_PERMISSION_REQUIREMENTS[tool];
     if (required) {
       for (const key of required) {
         const state = permissionSnapshot.get(key);
         if (state && state.status !== "granted" && state.status !== "unknown") {
-          throw new PermissionRequiredError(key, state.label, state.description, tool);
+          throw new PermissionRequiredError(
+            key,
+            state.label,
+            state.description,
+            tool,
+          );
         }
       }
     }
@@ -708,7 +770,9 @@ class EngineAPI {
     // WebSocket does not support arbitrary headers in the browser.
     // The server validates auth via a `?token=` query parameter instead.
     const token = this._getAccessToken ? await this._getAccessToken() : null;
-    const url = token ? `${this.wsUrl}?token=${encodeURIComponent(token)}` : this.wsUrl;
+    const url = token
+      ? `${this.wsUrl}?token=${encodeURIComponent(token)}`
+      : this.wsUrl;
 
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(url);
@@ -753,7 +817,7 @@ class EngineAPI {
   /** Invoke a tool via WebSocket (stateful, supports concurrent ops). */
   async invokeToolWs(
     tool: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ): Promise<ToolResult> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket not connected");
@@ -790,8 +854,13 @@ class EngineAPI {
       };
     }
     return {
-      platform: "", architecture: "", python_version: "",
-      hostname: "", username: "", cwd: "", home_dir: "",
+      platform: "",
+      architecture: "",
+      python_version: "",
+      hostname: "",
+      username: "",
+      cwd: "",
+      home_dir: "",
     };
   }
 
@@ -809,68 +878,93 @@ class EngineAPI {
 
   /** Get browser status — returns defaults until a real endpoint is added. */
   async getBrowserStatus(): Promise<BrowserStatus> {
-    if (!this.baseUrl) return {
-      chrome_found: false, chrome_path: null, chrome_version: null,
-      profile_found: false, browser_running: false,
-    };
+    if (!this.baseUrl)
+      return {
+        chrome_found: false,
+        chrome_path: null,
+        chrome_version: null,
+        profile_found: false,
+        browser_running: false,
+      };
     try {
       const result = await this.invokeTool("SystemInfo", {});
       const meta = result.metadata ?? {};
       return {
         chrome_found: Boolean(meta.playwright_available),
         chrome_path: meta.chrome_path ? String(meta.chrome_path) : null,
-        chrome_version: meta.chrome_version ? String(meta.chrome_version) : null,
+        chrome_version: meta.chrome_version
+          ? String(meta.chrome_version)
+          : null,
         profile_found: false,
         browser_running: false,
       };
     } catch {
       return {
-        chrome_found: false, chrome_path: null, chrome_version: null,
-        profile_found: false, browser_running: false,
+        chrome_found: false,
+        chrome_path: null,
+        chrome_version: null,
+        profile_found: false,
+        browser_running: false,
       };
     }
   }
 
   /** Scrape URLs using the engine's multi-strategy scraper. */
-  async scrape(
-    urls: string[],
-    useCache = true
-  ): Promise<ToolResult> {
+  async scrape(urls: string[], useCache = true): Promise<ToolResult> {
     return this.invokeTool("Scrape", { urls, use_cache: useCache });
   }
 
   /** Search the web via the engine. */
-  async search(keywords: string[], count = 10, country = "us"): Promise<ToolResult> {
+  async search(
+    keywords: string[],
+    count = 10,
+    country = "us",
+  ): Promise<ToolResult> {
     return this.invokeTool("Search", { keywords, count, country });
   }
 
   /** Deep research via the engine. */
-  async research(query: string, effort = "medium", country = "us"): Promise<ToolResult> {
+  async research(
+    query: string,
+    effort = "medium",
+    country = "us",
+  ): Promise<ToolResult> {
     return this.invokeTool("Research", { query, effort, country });
   }
 
   // ---- Remote Scraper Server (via /remote-scraper/* proxy) ----
 
   /** Check if the remote scraper server is available. */
-  async remoteScraperStatus(): Promise<{ available: boolean; reason?: string; status?: string }> {
+  async remoteScraperStatus(): Promise<{
+    available: boolean;
+    reason?: string;
+    status?: string;
+  }> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/remote-scraper/status`, {
       headers,
       signal: AbortSignal.timeout(10000),
     });
-    if (!resp.ok) throw new Error(`Remote scraper status failed: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`Remote scraper status failed: ${resp.status}`);
     return resp.json();
   }
 
   /** Scrape URLs via the remote scraper server. */
   async scrapeRemotely(
     urls: string[],
-    options?: Record<string, unknown>
+    options?: Record<string, unknown>,
   ): Promise<RemoteScrapeResponse> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    console.info(`[api/scrapeRemotely] → ${urls.length} URL(s)`, { urls, options });
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    console.info(`[api/scrapeRemotely] → ${urls.length} URL(s)`, {
+      urls,
+      options,
+    });
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     let resp: Response;
     try {
       resp = await fetch(`${this.baseUrl}/remote-scraper/scrape`, {
@@ -881,19 +975,35 @@ class EngineAPI {
       });
     } catch (err) {
       console.error(`[api/scrapeRemotely] FETCH FAILED`, {
-        urls, options, error: (err as Error).message, stack: (err as Error).stack,
+        urls,
+        options,
+        error: (err as Error).message,
+        stack: (err as Error).stack,
         timestamp: new Date().toISOString(),
       });
       throw err;
     }
     if (!resp.ok) {
       let body = "";
-      try { body = await resp.text(); } catch { /* ignore */ }
-      console.error(`[api/scrapeRemotely] HTTP ${resp.status}`, { urls, status: resp.status, body: body.slice(0, 500) });
-      throw new Error(`Remote scrape failed: ${resp.status} — ${body.slice(0, 200)}`);
+      try {
+        body = await resp.text();
+      } catch {
+        /* ignore */
+      }
+      console.error(`[api/scrapeRemotely] HTTP ${resp.status}`, {
+        urls,
+        status: resp.status,
+        body: body.slice(0, 500),
+      });
+      throw new Error(
+        `Remote scrape failed: ${resp.status} — ${body.slice(0, 200)}`,
+      );
     }
     const result = await resp.json();
-    console.info(`[api/scrapeRemotely] ✓`, { resultCount: result.results?.length, execution_time_ms: result.execution_time_ms });
+    console.info(`[api/scrapeRemotely] ✓`, {
+      resultCount: result.results?.length,
+      execution_time_ms: result.execution_time_ms,
+    });
     return result;
   }
 
@@ -913,7 +1023,10 @@ class EngineAPI {
   ): Promise<AbortController> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const controller = new AbortController();
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
 
     const run = async () => {
       try {
@@ -977,7 +1090,9 @@ class EngineAPI {
     return this.streamSSE(
       "/remote-scraper/scrape/stream",
       { urls, options: options ?? {} },
-      onEvent, onDone, onError,
+      onEvent,
+      onDone,
+      onError,
     );
   }
 
@@ -990,7 +1105,10 @@ class EngineAPI {
     country = "US",
   ): Promise<Record<string, unknown>> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/remote-scraper/search`, {
       method: "POST",
       headers,
@@ -1007,13 +1125,24 @@ class EngineAPI {
     options?: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    const resp = await fetch(`${this.baseUrl}/remote-scraper/search-and-scrape`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ keywords, total_results_per_keyword: totalResultsPerKeyword, options: options ?? {} }),
-    });
-    if (!resp.ok) throw new Error(`Remote search-and-scrape failed: ${resp.status}`);
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
+    const resp = await fetch(
+      `${this.baseUrl}/remote-scraper/search-and-scrape`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          keywords,
+          total_results_per_keyword: totalResultsPerKeyword,
+          options: options ?? {},
+        }),
+      },
+    );
+    if (!resp.ok)
+      throw new Error(`Remote search-and-scrape failed: ${resp.status}`);
     return resp.json();
   }
 
@@ -1028,8 +1157,14 @@ class EngineAPI {
   ): Promise<AbortController> {
     return this.streamSSE(
       "/remote-scraper/search-and-scrape/stream",
-      { keywords, total_results_per_keyword: totalResultsPerKeyword, options: options ?? {} },
-      onEvent, onDone, onError,
+      {
+        keywords,
+        total_results_per_keyword: totalResultsPerKeyword,
+        options: options ?? {},
+      },
+      onEvent,
+      onDone,
+      onError,
     );
   }
 
@@ -1040,7 +1175,10 @@ class EngineAPI {
     country = "US",
   ): Promise<Record<string, unknown>> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/remote-scraper/research`, {
       method: "POST",
       headers,
@@ -1062,7 +1200,9 @@ class EngineAPI {
     return this.streamSSE(
       "/remote-scraper/research/stream",
       { query, effort, country },
-      onEvent, onDone, onError,
+      onEvent,
+      onDone,
+      onError,
     );
   }
 
@@ -1079,13 +1219,28 @@ class EngineAPI {
     contentType = "html",
     charCount?: number,
     ttlDays = 30,
-  ): Promise<{ status: string; page_name: string; url: string; domain: string; char_count: number }> {
+  ): Promise<{
+    status: string;
+    page_name: string;
+    url: string;
+    domain: string;
+    char_count: number;
+  }> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/remote-scraper/content/save`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ url, content, content_type: contentType, char_count: charCount, ttl_days: ttlDays }),
+      body: JSON.stringify({
+        url,
+        content,
+        content_type: contentType,
+        char_count: charCount,
+        ttl_days: ttlDays,
+      }),
     });
     if (!resp.ok) throw new Error(`Content save failed: ${resp.status}`);
     return resp.json();
@@ -1097,7 +1252,15 @@ class EngineAPI {
   async queuePending(
     tier: "desktop" | "extension" = "desktop",
     limit = 10,
-  ): Promise<{ items: Array<{ id: string; target_url: string; domain_name: string; failure_reason: string; attempt_count: number }> }> {
+  ): Promise<{
+    items: Array<{
+      id: string;
+      target_url: string;
+      domain_name: string;
+      failure_reason: string;
+      attempt_count: number;
+    }>;
+  }> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
     const resp = await fetch(
@@ -1112,16 +1275,28 @@ class EngineAPI {
   async queueStats(): Promise<Record<string, unknown>> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
-    const resp = await fetch(`${this.baseUrl}/remote-scraper/queue/stats`, { headers });
+    const resp = await fetch(`${this.baseUrl}/remote-scraper/queue/stats`, {
+      headers,
+    });
     if (!resp.ok) throw new Error(`Queue stats failed: ${resp.status}`);
     return resp.json();
   }
 
   /** Local retry queue poller statistics (this engine's activity). */
-  async queuePollerStats(): Promise<{ polled: number; claimed: number; submitted: number; failed: number; running: boolean; client_id: string }> {
+  async queuePollerStats(): Promise<{
+    polled: number;
+    claimed: number;
+    submitted: number;
+    failed: number;
+    running: boolean;
+    client_id: string;
+  }> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
-    const resp = await fetch(`${this.baseUrl}/remote-scraper/queue/poller-stats`, { headers });
+    const resp = await fetch(
+      `${this.baseUrl}/remote-scraper/queue/poller-stats`,
+      { headers },
+    );
     if (!resp.ok) throw new Error(`Queue poller stats failed: ${resp.status}`);
     return resp.json();
   }
@@ -1158,7 +1333,10 @@ class EngineAPI {
         await this.connectWebSocket();
         this.reconnectDelay = 3000; // reset on success
       } catch {
-        this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.MAX_RECONNECT_DELAY);
+        this.reconnectDelay = Math.min(
+          this.reconnectDelay * 2,
+          this.MAX_RECONNECT_DELAY,
+        );
         this.scheduleReconnect();
       }
     }, this.reconnectDelay);
@@ -1199,7 +1377,10 @@ class EngineAPI {
   /** Start the proxy server. */
   async proxyStart(port = 0): Promise<ProxyStatus> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/proxy/start`, {
       method: "POST",
       headers,
@@ -1212,15 +1393,24 @@ class EngineAPI {
   /** Stop the proxy server. */
   async proxyStop(): Promise<void> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     await fetch(`${this.baseUrl}/proxy/stop`, { method: "POST", headers });
   }
 
   /** Test proxy connectivity. */
   async proxyTest(): Promise<ProxyTestResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    const resp = await fetch(`${this.baseUrl}/proxy/test`, { method: "POST", headers });
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
+    const resp = await fetch(`${this.baseUrl}/proxy/test`, {
+      method: "POST",
+      headers,
+    });
     if (!resp.ok) throw new Error(`Proxy test failed: ${resp.status}`);
     return resp.json();
   }
@@ -1228,9 +1418,15 @@ class EngineAPI {
   // ---- Cloud Sync API ----
 
   /** Configure cloud sync with user credentials. */
-  async configureCloudSync(jwt: string, userId: string): Promise<CloudConfigResult> {
+  async configureCloudSync(
+    jwt: string,
+    userId: string,
+  ): Promise<CloudConfigResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/cloud/configure`, {
       method: "POST",
       headers,
@@ -1243,12 +1439,15 @@ class EngineAPI {
   /** Reconfigure cloud sync with fresh JWT. */
   async reconfigureCloudSync(jwt: string, userId: string): Promise<void> {
     if (!this.baseUrl) return;
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     await fetch(`${this.baseUrl}/cloud/reconfigure`, {
       method: "POST",
       headers,
       body: JSON.stringify({ jwt, user_id: userId }),
-    }).catch(() => { });
+    }).catch(() => {});
   }
 
   /** Get cloud-synced settings. */
@@ -1261,23 +1460,35 @@ class EngineAPI {
   }
 
   /** Update cloud-synced settings. */
-  async updateCloudSettings(settings: Record<string, unknown>): Promise<CloudSettingsResponse> {
+  async updateCloudSettings(
+    settings: Record<string, unknown>,
+  ): Promise<CloudSettingsResponse> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     const resp = await fetch(`${this.baseUrl}/cloud/settings`, {
       method: "PUT",
       headers,
       body: JSON.stringify({ settings }),
     });
-    if (!resp.ok) throw new Error(`Cloud settings update failed: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`Cloud settings update failed: ${resp.status}`);
     return resp.json();
   }
 
   /** Trigger a bidirectional sync. */
   async triggerCloudSync(): Promise<CloudSyncResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    const resp = await fetch(`${this.baseUrl}/cloud/sync`, { method: "POST", headers });
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
+    const resp = await fetch(`${this.baseUrl}/cloud/sync`, {
+      method: "POST",
+      headers,
+    });
     if (!resp.ok) throw new Error(`Cloud sync failed: ${resp.status}`);
     return resp.json();
   }
@@ -1285,8 +1496,14 @@ class EngineAPI {
   /** Force push local settings to cloud. */
   async pushCloudSettings(): Promise<CloudSyncResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    const resp = await fetch(`${this.baseUrl}/cloud/sync/push`, { method: "POST", headers });
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
+    const resp = await fetch(`${this.baseUrl}/cloud/sync/push`, {
+      method: "POST",
+      headers,
+    });
     if (!resp.ok) throw new Error(`Cloud push failed: ${resp.status}`);
     return resp.json();
   }
@@ -1294,8 +1511,14 @@ class EngineAPI {
   /** Force pull cloud settings to local. */
   async pullCloudSettings(): Promise<CloudSyncResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    const resp = await fetch(`${this.baseUrl}/cloud/sync/pull`, { method: "POST", headers });
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
+    const resp = await fetch(`${this.baseUrl}/cloud/sync/pull`, {
+      method: "POST",
+      headers,
+    });
     if (!resp.ok) throw new Error(`Cloud pull failed: ${resp.status}`);
     return resp.json();
   }
@@ -1325,9 +1548,15 @@ class EngineAPI {
     const authHdrs = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}${path}`, {
       ...init,
-      headers: { ...authHdrs, ...(init?.headers as Record<string, string> | undefined) },
+      headers: {
+        ...authHdrs,
+        ...(init?.headers as Record<string, string> | undefined),
+      },
     });
-    if (!resp.ok) throw new Error(`${init?.method ?? "GET"} ${path} failed: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(
+        `${init?.method ?? "GET"} ${path} failed: ${resp.status}`,
+      );
     return resp.json();
   }
 
@@ -1363,9 +1592,12 @@ class EngineAPI {
     if (!this.baseUrl) return null;
     try {
       const authHdrs = await this.authHeaders();
-      const resp = await fetch(`${this.baseUrl}/settings/api-keys/huggingface/value`, {
-        headers: authHdrs,
-      });
+      const resp = await fetch(
+        `${this.baseUrl}/settings/api-keys/huggingface/value`,
+        {
+          headers: authHdrs,
+        },
+      );
       if (resp.status === 404) return null;
       if (!resp.ok) return null;
       const data = (await resp.json()) as { key: string };
@@ -1383,11 +1615,19 @@ class EngineAPI {
    *   { status: "opened" }                        — browser opened, user may need to interact
    *   { status: "manual" }                        — Playwright unavailable, show manual steps
    */
-  async hfTokenAssist(hasAccount: boolean): Promise<{ status: "token_ready" | "opened" | "manual"; token?: string }> {
+  async hfTokenAssist(
+    hasAccount: boolean,
+  ): Promise<{ status: "token_ready" | "opened" | "manual"; token?: string }> {
     if (!this.baseUrl) return { status: "manual" };
     try {
-      const resp = await this.post("/hf-token/assist", { has_account: hasAccount }) as { status: string; token?: string };
-      return { status: (resp.status as "token_ready" | "opened" | "manual") ?? "manual", token: resp.token ?? undefined };
+      const resp = (await this.post("/hf-token/assist", {
+        has_account: hasAccount,
+      })) as { status: string; token?: string };
+      return {
+        status:
+          (resp.status as "token_ready" | "opened" | "manual") ?? "manual",
+        token: resp.token ?? undefined,
+      };
     } catch {
       return { status: "manual" };
     }
@@ -1396,7 +1636,10 @@ class EngineAPI {
   /** Update instance display name. */
   async updateInstanceName(name: string): Promise<void> {
     if (!this.baseUrl) return;
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
     await fetch(`${this.baseUrl}/cloud/instance/name`, {
       method: "PUT",
       headers,
@@ -1407,8 +1650,14 @@ class EngineAPI {
   /** Send heartbeat for this instance. */
   async cloudHeartbeat(): Promise<void> {
     if (!this.baseUrl) return;
-    const headers = { "Content-Type": "application/json", ...(await this.authHeaders()) };
-    await fetch(`${this.baseUrl}/cloud/heartbeat`, { method: "POST", headers }).catch(() => { });
+    const headers = {
+      "Content-Type": "application/json",
+      ...(await this.authHeaders()),
+    };
+    await fetch(`${this.baseUrl}/cloud/heartbeat`, {
+      method: "POST",
+      headers,
+    }).catch(() => {});
   }
 
   /**
@@ -1442,7 +1691,9 @@ class EngineAPI {
   /** Clear the stored JWT on logout. */
   async clearPythonToken(): Promise<void> {
     if (!this.baseUrl) return;
-    await fetch(`${this.baseUrl}/auth/token`, { method: "DELETE" }).catch(() => { });
+    await fetch(`${this.baseUrl}/auth/token`, { method: "DELETE" }).catch(
+      () => {},
+    );
   }
 
   // ---- Documents API ----
@@ -1452,6 +1703,7 @@ class EngineAPI {
     path: string,
     body?: unknown,
     userId?: string,
+    timeoutMs = 15_000,
   ): Promise<T> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers: Record<string, string> = {
@@ -1460,15 +1712,32 @@ class EngineAPI {
     };
     if (userId) headers["X-User-Id"] = userId;
 
-    const resp = await fetch(`${this.baseUrl}/notes${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    let resp: Response;
+    try {
+      resp = await fetch(`${this.baseUrl}/notes${path}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw new Error(`Documents API timed out after ${timeoutMs / 1000}s`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
       throw new Error(`Documents API error (${resp.status}): ${text}`);
     }
+    // DELETE responses return JSON but guard against 204 No Content.
+    if (resp.status === 204) return undefined as T;
     return resp.json();
   }
 
@@ -1486,7 +1755,12 @@ class EngineAPI {
     if (opts?.folder_id) params.set("folder_id", opts.folder_id);
     if (opts?.search) params.set("search", opts.search);
     const qs = params.toString();
-    return this.docRequest("GET", `/notes${qs ? `?${qs}` : ""}`, undefined, userId);
+    return this.docRequest(
+      "GET",
+      `/notes${qs ? `?${qs}` : ""}`,
+      undefined,
+      userId,
+    );
   }
 
   /** Get a single note with full content. */
@@ -1525,7 +1799,12 @@ class EngineAPI {
   async updateFolder(
     folderId: string,
     userId: string,
-    data: Partial<{ name: string; parent_id: string; path: string; position: number }>,
+    data: Partial<{
+      name: string;
+      parent_id: string;
+      path: string;
+      position: number;
+    }>,
   ): Promise<DocFolder> {
     return this.docRequest("PUT", `/folders/${folderId}`, data, userId);
   }
@@ -1537,7 +1816,12 @@ class EngineAPI {
 
   /** Get version history for a note. */
   async listVersions(noteId: string, userId: string): Promise<DocVersion[]> {
-    return this.docRequest("GET", `/notes/${noteId}/versions`, undefined, userId);
+    return this.docRequest(
+      "GET",
+      `/notes/${noteId}/versions`,
+      undefined,
+      userId,
+    );
   }
 
   /** Revert a note to a specific version. */
@@ -1560,7 +1844,10 @@ class EngineAPI {
   }
 
   /** Trigger a sync. Mode: "push" | "pull" | "bidirectional" */
-  async triggerSync(userId: string, mode: "push" | "pull" | "bidirectional" = "bidirectional"): Promise<SyncResult> {
+  async triggerSync(
+    userId: string,
+    mode: "push" | "pull" | "bidirectional" = "bidirectional",
+  ): Promise<SyncResult> {
     return this.docRequest("POST", "/sync/trigger", { mode }, userId);
   }
 
@@ -1571,7 +1858,12 @@ class EngineAPI {
 
   /** Pull a single note (after Realtime notification). */
   async pullNote(noteId: string, userId: string): Promise<DocNote> {
-    return this.docRequest("POST", "/sync/pull-note", { note_id: noteId }, userId);
+    return this.docRequest(
+      "POST",
+      "/sync/pull-note",
+      { note_id: noteId },
+      userId,
+    );
   }
 
   /** Register this device for sync. */
@@ -1590,7 +1882,9 @@ class EngineAPI {
   }
 
   /** List conflicts. */
-  async listConflicts(userId: string): Promise<{ conflicts: string[]; count: number }> {
+  async listConflicts(
+    userId: string,
+  ): Promise<{ conflicts: string[]; count: number }> {
     return this.docRequest("GET", "/conflicts", undefined, userId);
   }
 
@@ -1598,7 +1892,13 @@ class EngineAPI {
   async resolveConflict(
     noteId: string,
     userId: string,
-    resolution: "keep_local" | "keep_remote" | "merge" | "append" | "split" | "exclude",
+    resolution:
+      | "keep_local"
+      | "keep_remote"
+      | "merge"
+      | "append"
+      | "split"
+      | "exclude",
     mergedContent?: string,
   ): Promise<void> {
     await this.docRequest(
@@ -1615,8 +1915,17 @@ class EngineAPI {
   }
 
   /** Exclude a note from sync. */
-  async setNoteExcluded(noteId: string, userId: string, excluded: boolean): Promise<void> {
-    await this.docRequest("POST", `/notes/${noteId}/exclude`, { excluded }, userId);
+  async setNoteExcluded(
+    noteId: string,
+    userId: string,
+    excluded: boolean,
+  ): Promise<void> {
+    await this.docRequest(
+      "POST",
+      `/notes/${noteId}/exclude`,
+      { excluded },
+      userId,
+    );
   }
 
   /** List shares. */
@@ -1625,10 +1934,7 @@ class EngineAPI {
   }
 
   /** Create a share. */
-  async createShare(
-    userId: string,
-    data: CreateShareData,
-  ): Promise<DocShare> {
+  async createShare(userId: string, data: CreateShareData): Promise<DocShare> {
     return this.docRequest("POST", "/shares", data, userId);
   }
 
@@ -1760,7 +2066,8 @@ class EngineAPI {
       headers,
       signal: AbortSignal.timeout(10000),
     });
-    if (!resp.ok) throw new Error(`Connected devices check failed: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`Connected devices check failed: ${resp.status}`);
     return resp.json();
   }
 
@@ -1794,7 +2101,9 @@ class EngineAPI {
     return this.request<CapabilitiesResponse>("/capabilities");
   }
 
-  async installCapability(capabilityId: string): Promise<InstallCapabilityResult> {
+  async installCapability(
+    capabilityId: string,
+  ): Promise<InstallCapabilityResult> {
     return this.request<InstallCapabilityResult>("/capabilities/install", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1809,7 +2118,8 @@ class EngineAPI {
       headers,
       signal: AbortSignal.timeout(10000),
     });
-    if (!resp.ok) throw new Error(`System resources check failed: ${resp.status}`);
+    if (!resp.ok)
+      throw new Error(`System resources check failed: ${resp.status}`);
     return resp.json();
   }
 
@@ -1838,13 +2148,18 @@ class EngineAPI {
   }
 
   /** Take a screenshot (optionally for a specific monitor index or "all"/"primary"). */
-  async takeScreenshot(monitor: string | number = "all"): Promise<DeviceProbeResult> {
+  async takeScreenshot(
+    monitor: string | number = "all",
+  ): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
-    const resp = await fetch(`${this.baseUrl}/devices/screenshot?monitor=${encodeURIComponent(String(monitor))}`, {
-      headers,
-      signal: AbortSignal.timeout(15000),
-    });
+    const resp = await fetch(
+      `${this.baseUrl}/devices/screenshot?monitor=${encodeURIComponent(String(monitor))}`,
+      {
+        headers,
+        signal: AbortSignal.timeout(15000),
+      },
+    );
     if (!resp.ok) throw new Error(`Screenshot failed: ${resp.status}`);
     return resp.json();
   }
@@ -1862,7 +2177,10 @@ class EngineAPI {
   }
 
   /** Record audio from microphone and return base64 WAV. */
-  async recordAudio(opts: { device_index?: number; duration_seconds?: number }): Promise<DeviceProbeResult> {
+  async recordAudio(opts: {
+    device_index?: number;
+    duration_seconds?: number;
+  }): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/record-audio`, {
@@ -1876,7 +2194,9 @@ class EngineAPI {
   }
 
   /** Capture a photo from webcam and return base64 JPEG. */
-  async capturePhoto(opts: { device_index?: number }): Promise<DeviceProbeResult> {
+  async capturePhoto(opts: {
+    device_index?: number;
+  }): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/capture-photo`, {
@@ -1890,7 +2210,10 @@ class EngineAPI {
   }
 
   /** Record a short video from webcam and return base64 MP4. */
-  async recordVideo(opts: { device_index?: number; duration_seconds?: number }): Promise<DeviceProbeResult> {
+  async recordVideo(opts: {
+    device_index?: number;
+    duration_seconds?: number;
+  }): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/record-video`, {
@@ -1904,7 +2227,10 @@ class EngineAPI {
   }
 
   /** Record screen video and return base64 MP4. */
-  async recordScreen(opts: { screen_index?: number; duration_seconds?: number }): Promise<DeviceProbeResult> {
+  async recordScreen(opts: {
+    screen_index?: number;
+    duration_seconds?: number;
+  }): Promise<DeviceProbeResult> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
     const resp = await fetch(`${this.baseUrl}/devices/record-screen`, {
@@ -1920,13 +2246,20 @@ class EngineAPI {
   // ── Platform context ───────────────────────────────────────────────────
 
   async getPlatformContext(): Promise<import("./platformCtx").PlatformContext> {
-    return this.request<import("./platformCtx").PlatformContext>("/platform/context");
+    return this.request<import("./platformCtx").PlatformContext>(
+      "/platform/context",
+    );
   }
 
-  async refreshPlatformContext(): Promise<import("./platformCtx").PlatformContext> {
-    return this.request<import("./platformCtx").PlatformContext>("/platform/context/refresh", {
-      method: "POST",
-    });
+  async refreshPlatformContext(): Promise<
+    import("./platformCtx").PlatformContext
+  > {
+    return this.request<import("./platformCtx").PlatformContext>(
+      "/platform/context/refresh",
+      {
+        method: "POST",
+      },
+    );
   }
 
   // ── Setup / First-run ──────────────────────────────────────────────────
@@ -1959,7 +2292,10 @@ class EngineAPI {
       return;
     }
     const reader = resp.body?.getReader();
-    if (!reader) { callbacks.onError("No response body"); return; }
+    if (!reader) {
+      callbacks.onError("No response body");
+      return;
+    }
     const decoder = new TextDecoder();
     let buffer = "";
     let receivedComplete = false;
@@ -1981,16 +2317,27 @@ class EngineAPI {
             else if (eventType === "complete") {
               receivedComplete = true;
               callbacks.onComplete(data as SetupCompleteEvent);
-            }
-            else if (eventType === "cancelled") { receivedComplete = true; callbacks.onError("Setup cancelled"); }
-            else if (eventType === "started") callbacks.onProgress({ component: "_system", status: "installing", message: data.message, percent: 0 });
-          } catch { /* skip malformed */ }
+            } else if (eventType === "cancelled") {
+              receivedComplete = true;
+              callbacks.onError("Setup cancelled");
+            } else if (eventType === "started")
+              callbacks.onProgress({
+                component: "_system",
+                status: "installing",
+                message: data.message,
+                percent: 0,
+              });
+          } catch {
+            /* skip malformed */
+          }
           eventType = "";
         }
       }
     }
     if (!receivedComplete) {
-      callbacks.onError("Setup stream ended without a completion event — check the debug terminal for details");
+      callbacks.onError(
+        "Setup stream ended without a completion event — check the debug terminal for details",
+      );
     }
   }
 
@@ -2001,7 +2348,11 @@ class EngineAPI {
     model: string,
     callbacks: {
       onProgress: (data: SetupProgressEvent) => void;
-      onComplete: (data: { message: string; had_errors?: boolean; errors?: string[] }) => void;
+      onComplete: (data: {
+        message: string;
+        had_errors?: boolean;
+        errors?: string[];
+      }) => void;
       onError: (error: string) => void;
       onRawLine?: (line: string) => void;
       signal?: AbortSignal;
@@ -2016,9 +2367,15 @@ class EngineAPI {
       body: JSON.stringify({ model }),
       signal: callbacks.signal,
     });
-    if (!resp.ok) { callbacks.onError(`Transcription install failed: ${resp.status}`); return; }
+    if (!resp.ok) {
+      callbacks.onError(`Transcription install failed: ${resp.status}`);
+      return;
+    }
     const reader = resp.body?.getReader();
-    if (!reader) { callbacks.onError("No response body"); return; }
+    if (!reader) {
+      callbacks.onError("No response body");
+      return;
+    }
     const decoder = new TextDecoder();
     let buffer = "";
     let receivedComplete = false;
@@ -2037,15 +2394,24 @@ class EngineAPI {
           try {
             const data = JSON.parse(line.slice(6));
             if (eventType === "progress") callbacks.onProgress(data);
-            else if (eventType === "complete") { receivedComplete = true; callbacks.onComplete(data); }
-            else if (eventType === "cancelled") { receivedComplete = true; callbacks.onError("Install cancelled"); }
-          } catch { /* skip malformed */ }
+            else if (eventType === "complete") {
+              receivedComplete = true;
+              callbacks.onComplete(data);
+            } else if (eventType === "cancelled") {
+              receivedComplete = true;
+              callbacks.onError("Install cancelled");
+            }
+          } catch {
+            /* skip malformed */
+          }
           eventType = "";
         }
       }
     }
     if (!receivedComplete) {
-      callbacks.onError("Transcription install stream ended without completion event");
+      callbacks.onError(
+        "Transcription install stream ended without completion event",
+      );
     }
   }
 
@@ -2080,7 +2446,10 @@ class EngineAPI {
           return;
         }
         const reader = resp.body?.getReader();
-        if (!reader) { callbacks.onError?.("No response body"); return; }
+        if (!reader) {
+          callbacks.onError?.("No response body");
+          return;
+        }
         const decoder = new TextDecoder();
         let buffer = "";
         let eventType = "";
@@ -2098,13 +2467,17 @@ class EngineAPI {
               try {
                 const data = JSON.parse(line.slice(6));
                 if (eventType === "log") {
-                  callbacks.onLine(data as { line: string; level: string; timestamp: number });
+                  callbacks.onLine(
+                    data as { line: string; level: string; timestamp: number },
+                  );
                 } else if (eventType === "history_end") {
                   callbacks.onHistoryEnd?.(data.lines_sent ?? 0);
                 } else if (eventType === "connected") {
                   callbacks.onConnected?.(data.log_path ?? "");
                 }
-              } catch { /* skip malformed */ }
+              } catch {
+                /* skip malformed */
+              }
               eventType = "";
             }
           }
@@ -2117,7 +2490,9 @@ class EngineAPI {
     };
 
     run();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }
 
   /** Fetch the full diagnostic snapshot from /setup/debug (no auth required). */
@@ -2406,33 +2781,33 @@ export interface InstallCapabilityResult {
 export interface EnginePaths {
   /** Logical alias → absolute directory path */
   aliases: {
-    "@matrx": string;       // ~/.matrx/ — engine internals
-    "@notes": string;       // ~/Documents/Matrx/Notes/
-    "@files": string;       // ~/Documents/Matrx/Files/
-    "@code": string;        // ~/Documents/Matrx/Code/
-    "@workspaces": string;  // ~/.matrx/workspaces/
-    "@agentdata": string;   // ~/.matrx/data/
-    "@user": string;        // ~/Documents/Matrx/
+    "@matrx": string; // ~/.matrx/ — engine internals
+    "@notes": string; // ~/Documents/Matrx/Notes/
+    "@files": string; // ~/Documents/Matrx/Files/
+    "@code": string; // ~/Documents/Matrx/Code/
+    "@workspaces": string; // ~/.matrx/workspaces/
+    "@agentdata": string; // ~/.matrx/data/
+    "@user": string; // ~/Documents/Matrx/
     "@temp": string;
     "@data": string;
     "@logs": string;
     "@home": string;
-    "@docs": string;        // deprecated alias for @notes
-    [key: string]: string;  // allow future aliases without TS errors
+    "@docs": string; // deprecated alias for @notes
+    [key: string]: string; // allow future aliases without TS errors
   };
   /** Named locations with their full absolute paths. */
   resolved: {
     // Engine internals
-    discovery: string;      // local.json — engine discovery
-    settings: string;       // settings.json
-    instance: string;       // instance.json
-    agent_data: string;     // ~/.matrx/data/
-    workspaces: string;     // ~/.matrx/workspaces/
+    discovery: string; // local.json — engine discovery
+    settings: string; // settings.json
+    instance: string; // instance.json
+    agent_data: string; // ~/.matrx/data/
+    workspaces: string; // ~/.matrx/workspaces/
     // User-visible
-    user_root: string;      // ~/Documents/Matrx/
-    notes: string;          // ~/Documents/Matrx/Notes/
-    files: string;          // ~/Documents/Matrx/Files/
-    code: string;           // ~/Documents/Matrx/Code/
+    user_root: string; // ~/Documents/Matrx/
+    notes: string; // ~/Documents/Matrx/Notes/
+    files: string; // ~/Documents/Matrx/Files/
+    code: string; // ~/Documents/Matrx/Code/
     // Platform cache
     temp: string;
     screenshots: string;
@@ -2449,7 +2824,13 @@ export interface SetupComponentStatus {
   label: string;
   description: string;
   /** "warning" = advisory only (cannot be auto-fixed, e.g. macOS TCC permissions) */
-  status: "ready" | "not_ready" | "installing" | "error" | "skipped" | "warning";
+  status:
+    | "ready"
+    | "not_ready"
+    | "installing"
+    | "error"
+    | "skipped"
+    | "warning";
   detail: string | null;
   optional: boolean;
   size_hint: string | null;
@@ -2510,7 +2891,7 @@ export interface HardwareGpu {
 export interface HardwareRam {
   total_mb: number | null;
   available_mb: number | null;
-  type: string | null;  // 'DDR4', 'DDR5', etc.
+  type: string | null; // 'DDR4', 'DDR5', etc.
   speed_mhz: number | null;
 }
 
@@ -2644,7 +3025,10 @@ function imageGenUrl(baseUrl: string, path: string): string {
   return `${baseUrl}/image-gen${path}`;
 }
 
-async function imageGenFetch<T>(url: string, options?: RequestInit): Promise<T> {
+async function imageGenFetch<T>(
+  url: string,
+  options?: RequestInit,
+): Promise<T> {
   const resp = await fetch(url, {
     headers: { "Content-Type": "application/json" },
     ...options,
@@ -2663,19 +3047,30 @@ async function imageGenFetch<T>(url: string, options?: RequestInit): Promise<T> 
   return resp.json() as Promise<T>;
 }
 
-export async function getImageGenStatus(baseUrl: string): Promise<ImageGenStatus> {
+export async function getImageGenStatus(
+  baseUrl: string,
+): Promise<ImageGenStatus> {
   return imageGenFetch<ImageGenStatus>(imageGenUrl(baseUrl, "/status"));
 }
 
-export async function listImageGenModels(baseUrl: string): Promise<ImageGenModelInfo[]> {
+export async function listImageGenModels(
+  baseUrl: string,
+): Promise<ImageGenModelInfo[]> {
   return imageGenFetch<ImageGenModelInfo[]>(imageGenUrl(baseUrl, "/models"));
 }
 
-export async function listImageGenPresets(baseUrl: string): Promise<ImageGenWorkflowPreset[]> {
-  return imageGenFetch<ImageGenWorkflowPreset[]>(imageGenUrl(baseUrl, "/presets"));
+export async function listImageGenPresets(
+  baseUrl: string,
+): Promise<ImageGenWorkflowPreset[]> {
+  return imageGenFetch<ImageGenWorkflowPreset[]>(
+    imageGenUrl(baseUrl, "/presets"),
+  );
 }
 
-export async function loadImageGenModel(baseUrl: string, model_id: string): Promise<{ success: boolean; error?: string }> {
+export async function loadImageGenModel(
+  baseUrl: string,
+  model_id: string,
+): Promise<{ success: boolean; error?: string }> {
   return imageGenFetch(imageGenUrl(baseUrl, "/load"), {
     method: "POST",
     body: JSON.stringify({ model_id }),
@@ -2697,7 +3092,7 @@ export async function generateImage(
     width?: number;
     height?: number;
     seed?: number;
-  }
+  },
 ): Promise<ImageGenResult> {
   return imageGenFetch<ImageGenResult>(imageGenUrl(baseUrl, "/generate"), {
     method: "POST",
@@ -2712,10 +3107,13 @@ export async function generateImageFromWorkflow(
     subject: string;
     model_id?: string;
     seed?: number;
-  }
+  },
 ): Promise<ImageGenResult> {
-  return imageGenFetch<ImageGenResult>(imageGenUrl(baseUrl, "/generate-workflow"), {
-    method: "POST",
-    body: JSON.stringify(req),
-  });
+  return imageGenFetch<ImageGenResult>(
+    imageGenUrl(baseUrl, "/generate-workflow"),
+    {
+      method: "POST",
+      body: JSON.stringify(req),
+    },
+  );
 }

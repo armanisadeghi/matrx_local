@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseMarkdownToText } from "@/lib/parse-markdown-for-speech";
 import { synthesizeStream } from "@/lib/tts/api";
+import { loadSettings } from "@/lib/settings";
 import type { UseTtsActions } from "./use-tts";
 
 interface ChatMessage {
@@ -46,6 +47,24 @@ export function useChatTts(
   const isPlayingRef = useRef(false);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const prevUrlRef = useRef<string | null>(null);
+  const chatVoiceRef = useRef<string>("");
+  const chatSpeedRef = useRef<number>(0);
+
+  useEffect(() => {
+    loadSettings().then((s) => {
+      chatVoiceRef.current = s.ttsChatVoice || s.ttsDefaultVoice;
+      chatSpeedRef.current = s.ttsChatSpeed || s.ttsDefaultSpeed;
+    });
+    const onChanged = () => {
+      loadSettings().then((s) => {
+        chatVoiceRef.current = s.ttsChatVoice || s.ttsDefaultVoice;
+        chatSpeedRef.current = s.ttsChatSpeed || s.ttsDefaultSpeed;
+      });
+    };
+    window.addEventListener("matrx-settings-changed", onChanged);
+    return () =>
+      window.removeEventListener("matrx-settings-changed", onChanged);
+  }, []);
 
   const _playNextInQueue = useCallback(() => {
     if (isPlayingRef.current) return;
@@ -87,7 +106,14 @@ export function useChatTts(
       if (!speechText.trim()) return;
 
       try {
-        const gen = synthesizeStream({ text: speechText }, signal);
+        const gen = synthesizeStream(
+          {
+            text: speechText,
+            voice_id: chatVoiceRef.current || undefined,
+            speed: chatSpeedRef.current || undefined,
+          },
+          signal,
+        );
         for await (const wavBlob of gen) {
           if (signal.aborted) break;
           audioQueueRef.current.push(wavBlob);
@@ -195,7 +221,12 @@ export function useChatTts(
 
       if (ttsActions) {
         ttsActions
-          .speakText(speechText, undefined, undefined, abort.signal)
+          .speakText(
+            speechText,
+            chatVoiceRef.current || undefined,
+            chatSpeedRef.current || undefined,
+            abort.signal,
+          )
           .finally(() => {
             readAloudActiveRef.current = false;
           });

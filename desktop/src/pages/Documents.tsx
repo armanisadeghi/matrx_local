@@ -3,7 +3,7 @@
  * sync status, version history, sharing, and directory mappings.
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Plus,
   Search,
@@ -48,6 +48,16 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
   const [searchInput, setSearchInput] = useState("");
   const [errorDismissed, setErrorDismissed] = useState(false);
 
+  // Pull stable function refs out of the hook so the Realtime callbacks don't
+  // capture the entire `docs` object (new reference every render → stale closures
+  // and needless re-subscriptions).
+  const { loadTree, loadNotes, selectNote } = docs;
+
+  // Keep the current activeNote ID in a ref so the Realtime callback always
+  // has access to the latest value without being in the dep array.
+  const activeNoteIdRef = useRef<string | null>(docs.activeNote?.id ?? null);
+  activeNoteIdRef.current = docs.activeNote?.id ?? null;
+
   useEffect(() => {
     if (docs.error) setErrorDismissed(false);
   }, [docs.error]);
@@ -57,18 +67,22 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
     enabled: engineStatus === "connected" && !!userId,
     onNoteChange: useCallback(
       (_noteId: string, _eventType: string) => {
-        docs.loadTree();
-        docs.loadNotes();
-        if (docs.activeNote) {
-          docs.selectNote(docs.activeNote.id);
+        loadTree();
+        loadNotes();
+        // Reload the active note if it's the one that changed.
+        const activeId = activeNoteIdRef.current;
+        if (activeId) {
+          selectNote(activeId);
         }
       },
-      [docs],
+      [loadTree, loadNotes, selectNote],
     ),
     onFolderChange: useCallback(() => {
-      docs.loadTree();
-    }, [docs]),
+      loadTree();
+    }, [loadTree]),
   });
+
+  const { updateNote } = docs;
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,20 +103,22 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
 
   const handleContentChange = useCallback(
     (content: string) => {
-      if (docs.activeNote) {
-        docs.updateNote(docs.activeNote.id, { content });
+      const activeId = activeNoteIdRef.current;
+      if (activeId) {
+        updateNote(activeId, { content });
       }
     },
-    [docs],
+    [updateNote],
   );
 
   const handleLabelChange = useCallback(
     (label: string) => {
-      if (docs.activeNote) {
-        docs.updateNote(docs.activeNote.id, { label }, true);
+      const activeId = activeNoteIdRef.current;
+      if (activeId) {
+        updateNote(activeId, { label }, true);
       }
     },
-    [docs],
+    [updateNote],
   );
 
   if (engineStatus !== "connected") {
@@ -230,7 +246,10 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
       ) : (
         <div className="border-b px-4 py-1.5 flex items-center gap-2 text-xs text-muted-foreground">
           <FileText className="h-3.5 w-3.5 shrink-0" />
-          <span>Local mode — files stored on this device. Sign in to enable cloud sync.</span>
+          <span>
+            Local mode — files stored on this device. Sign in to enable cloud
+            sync.
+          </span>
         </div>
       )}
 
@@ -246,7 +265,8 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
           <AlertTriangle className="h-4 w-4" />
           <span>
             {docs.conflicts.length} sync conflict
-            {docs.conflicts.length > 1 ? "s" : ""} detected — click to review and resolve.
+            {docs.conflicts.length > 1 ? "s" : ""} detected — click to review
+            and resolve.
           </span>
         </button>
       )}
@@ -381,13 +401,19 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
                   </div>
                   <div>
                     <span className="text-muted-foreground">Sync: </span>
-                    <span className={cn(
-                      "font-medium",
-                      docs.activeNote.sync_status === "synced" && "text-emerald-500",
-                      docs.activeNote.sync_status === "pending_push" && "text-blue-400",
-                      docs.activeNote.sync_status === "excluded" && "text-red-400",
-                      docs.activeNote.sync_status === "never_synced" && "text-muted-foreground",
-                    )}>
+                    <span
+                      className={cn(
+                        "font-medium",
+                        docs.activeNote.sync_status === "synced" &&
+                          "text-emerald-500",
+                        docs.activeNote.sync_status === "pending_push" &&
+                          "text-blue-400",
+                        docs.activeNote.sync_status === "excluded" &&
+                          "text-red-400",
+                        docs.activeNote.sync_status === "never_synced" &&
+                          "text-muted-foreground",
+                      )}
+                    >
                       {docs.activeNote.sync_status ?? "never_synced"}
                     </span>
                   </div>

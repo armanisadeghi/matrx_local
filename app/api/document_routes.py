@@ -111,10 +111,9 @@ def _fire_and_forget(coro) -> None:
             logger.debug("Background sync task failed (non-critical): %s", exc)
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(_safe())
-    except Exception:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_safe())
+    except RuntimeError:
         pass
 
 
@@ -615,18 +614,24 @@ async def update_note(
     _configure_sync(request)
 
     existing_record: dict[str, Any] | None = None
-    all_files = file_manager.scan_all()
-    for f in all_files:
-        candidate_id = _note_id_for_path(f["file_path"])
-        if candidate_id == note_id:
-            existing_record = _build_note_record(f["file_path"])
-            break
 
+    # Fast path: SQLite is the cheap O(1) lookup — try it first.
+    repo = _get_notes_repo()
+    sqlite_note = await repo.get(note_id)
+    if sqlite_note and sqlite_note.get("file_path"):
+        fp = sqlite_note["file_path"]
+        if file_manager.note_path_from_file_path(fp).is_file():
+            existing_record = _build_note_record(fp)
+
+    # Slow path: walk the filesystem — only needed when SQLite doesn't have a
+    # record yet (e.g. first save after engine restart or db corruption).
     if existing_record is None:
-        repo = _get_notes_repo()
-        sqlite_note = await repo.get(note_id)
-        if sqlite_note and sqlite_note.get("file_path"):
-            existing_record = _build_note_record(sqlite_note["file_path"])
+        all_files = file_manager.scan_all()
+        for f in all_files:
+            candidate_id = _note_id_for_path(f["file_path"])
+            if candidate_id == note_id:
+                existing_record = _build_note_record(f["file_path"])
+                break
 
     if existing_record is None:
         # Non-blocking cloud fallback with short timeout — never blocks local

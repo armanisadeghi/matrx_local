@@ -33,6 +33,7 @@ import {
   AlertCircle,
   CloudOff,
   Cloud,
+  Volume2,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -155,7 +156,13 @@ function SectionActions({
   );
 }
 
-function SyncStatusRow({ result, error }: { result: SyncResult; error: string | null }) {
+function SyncStatusRow({
+  result,
+  error,
+}: {
+  result: SyncResult;
+  error: string | null;
+}) {
   const engineOk = result.engine === "ok";
   const engineSkipped = result.engine === "skipped";
   const cloudOk = result.cloud === "ok";
@@ -183,7 +190,10 @@ function SyncStatusRow({ result, error }: { result: SyncResult; error: string | 
         </span>
       )}
       {!engineOk && !engineSkipped && (
-        <span className="flex items-center gap-1 text-destructive" title={result.engine}>
+        <span
+          className="flex items-center gap-1 text-destructive"
+          title={result.engine}
+        >
           <AlertCircle className="h-3 w-3" />
           Engine error
         </span>
@@ -203,15 +213,16 @@ function SyncStatusRow({ result, error }: { result: SyncResult; error: string | 
         </span>
       )}
       {engineOk && !cloudOk && !cloudSkipped && (
-        <span className="flex items-center gap-1 text-amber-500" title={result.cloud}>
+        <span
+          className="flex items-center gap-1 text-amber-500"
+          title={result.cloud}
+        >
           <AlertCircle className="h-3 w-3" />
           Cloud sync failed
         </span>
       )}
 
-      {error && (
-        <p className="w-full text-destructive">{error}</p>
-      )}
+      {error && <p className="w-full text-destructive">{error}</p>}
     </div>
   );
 }
@@ -325,7 +336,9 @@ const UPDATE_INTERVAL_PRESETS: { label: string; value: number }[] = [
   { label: "Once a day", value: 1440 },
 ];
 
-const PRESET_VALUES = new Set<number>(UPDATE_INTERVAL_PRESETS.map((p) => p.value));
+const PRESET_VALUES = new Set<number>(
+  UPDATE_INTERVAL_PRESETS.map((p) => p.value),
+);
 
 function UpdateIntervalRow({
   value,
@@ -348,7 +361,10 @@ function UpdateIntervalRow({
   const selectValue = isCustom ? "__custom__" : String(value);
 
   return (
-    <SettingRow label="Update check frequency" description="How often the app checks for new updates">
+    <SettingRow
+      label="Update check frequency"
+      description="How often the app checks for new updates"
+    >
       <div className="flex items-center gap-2">
         <Select value={selectValue} onValueChange={handleSelect}>
           <SelectTrigger className="w-44">
@@ -398,7 +414,9 @@ const GPU_LAYERS_PRESETS: { label: string; value: number }[] = [
   { label: "All layers", value: 999 },
 ];
 
-const GPU_PRESET_VALUES = new Set<number>(GPU_LAYERS_PRESETS.map((p) => p.value));
+const GPU_PRESET_VALUES = new Set<number>(
+  GPU_LAYERS_PRESETS.map((p) => p.value),
+);
 
 function GpuLayersRow({
   value,
@@ -470,7 +488,9 @@ const TIMEOUT_PRESETS: { label: string; value: number }[] = [
   { label: "5 minutes", value: 300000 },
 ];
 
-const TIMEOUT_PRESET_VALUES = new Set<number>(TIMEOUT_PRESETS.map((p) => p.value));
+const TIMEOUT_PRESET_VALUES = new Set<number>(
+  TIMEOUT_PRESETS.map((p) => p.value),
+);
 
 function ProcessingTimeoutRow({
   value,
@@ -480,7 +500,9 @@ function ProcessingTimeoutRow({
   onChange: (v: number) => void;
 }) {
   const isCustom = !TIMEOUT_PRESET_VALUES.has(value);
-  const [customInput, setCustomInput] = useState(isCustom ? String(Math.round(value / 1000)) : "");
+  const [customInput, setCustomInput] = useState(
+    isCustom ? String(Math.round(value / 1000)) : "",
+  );
 
   const handleSelect = (v: string) => {
     if (v === "__custom__") {
@@ -493,7 +515,10 @@ function ProcessingTimeoutRow({
   const selectValue = isCustom ? "__custom__" : String(value);
 
   return (
-    <SettingRow label="Processing timeout" description="Force-reset if transcription gets stuck">
+    <SettingRow
+      label="Processing timeout"
+      description="Force-reset if transcription gets stuck"
+    >
       <div className="flex items-center gap-2">
         <Select value={selectValue} onValueChange={handleSelect}>
           <SelectTrigger className="w-36">
@@ -544,7 +569,9 @@ const SCRAPE_DELAY_PRESETS: { label: string; value: string }[] = [
   { label: "30 seconds", value: "30.0" },
 ];
 
-const SCRAPE_PRESET_VALUES = new Set<string>(SCRAPE_DELAY_PRESETS.map((p) => p.value));
+const SCRAPE_PRESET_VALUES = new Set<string>(
+  SCRAPE_DELAY_PRESETS.map((p) => p.value),
+);
 
 function ScrapeDelayRow({
   value,
@@ -567,7 +594,10 @@ function ScrapeDelayRow({
   const selectValue = isCustom ? "__custom__" : value;
 
   return (
-    <SettingRow label="Delay between requests" description="Pause between page loads to avoid getting blocked">
+    <SettingRow
+      label="Delay between requests"
+      description="Pause between page loads to avoid getting blocked"
+    >
       <div className="flex items-center gap-2">
         <Select value={selectValue} onValueChange={handleSelect}>
           <SelectTrigger className="w-40">
@@ -611,17 +641,24 @@ function ScrapeDelayRow({
 
 export function Configurations() {
   const [state, actions] = useConfigurations();
-  const { draft, sectionDirty, isGlobalDirty, isSaving, saveError, lastSyncResult } = state;
+  const {
+    draft,
+    sectionDirty,
+    isGlobalDirty,
+    isSaving,
+    saveError,
+    lastSyncResult,
+  } = state;
   const catalogs = useConfigCatalogs();
 
   const set = actions.set;
   const handleSave = useCallback(
     (s: ConfigSection) => actions.saveSection(s),
-    [actions]
+    [actions],
   );
   const handleCancel = useCallback(
     (s: ConfigSection) => actions.cancelSection(s),
-    [actions]
+    [actions],
   );
 
   // Convenience: common props for every SectionActions instance
@@ -652,7 +689,6 @@ export function Configurations() {
         <div className="p-6">
           {/* 3-column responsive grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-
             {/* ── Application ──────────────────────────────────── */}
             <Card>
               <CardHeader className="pb-3">
@@ -662,7 +698,10 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Computer Name" description="Identify this computer in cloud sync">
+                <SettingRow
+                  label="Computer Name"
+                  description="Identify this computer in cloud sync"
+                >
                   <Input
                     value={draft.instanceName}
                     onChange={(e) => set("instanceName", e.target.value)}
@@ -670,13 +709,19 @@ export function Configurations() {
                   />
                 </SettingRow>
                 <Separator className="my-2" />
-                <SettingRow label="Launch on startup" description="Start the app when your computer boots">
+                <SettingRow
+                  label="Launch on startup"
+                  description="Start the app when your computer boots"
+                >
                   <Switch
                     checked={draft.launchOnStartup}
                     onCheckedChange={(v) => set("launchOnStartup", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Minimize to tray" description="Keep running in system tray when closed">
+                <SettingRow
+                  label="Minimize to tray"
+                  description="Keep running in system tray when closed"
+                >
                   <Switch
                     checked={draft.minimizeToTray}
                     onCheckedChange={(v) => set("minimizeToTray", v)}
@@ -713,7 +758,9 @@ export function Configurations() {
                 <SettingRow label="Theme" description="App color scheme">
                   <Select
                     value={draft.theme}
-                    onValueChange={(v) => set("theme", v as AppSettings["theme"])}
+                    onValueChange={(v) =>
+                      set("theme", v as AppSettings["theme"])
+                    }
                   >
                     <SelectTrigger className="w-32">
                       <SelectValue />
@@ -725,7 +772,10 @@ export function Configurations() {
                     </SelectContent>
                   </Select>
                 </SettingRow>
-                <SettingRow label="Sidebar collapsed by default" description="Start with sidebar minimized">
+                <SettingRow
+                  label="Sidebar collapsed by default"
+                  description="Start with sidebar minimized"
+                >
                   <Switch
                     checked={draft.sidebarCollapsed}
                     onCheckedChange={(v) => set("sidebarCollapsed", v)}
@@ -748,7 +798,10 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Default AI model" description="Cloud model for new conversations">
+                <SettingRow
+                  label="Default AI model"
+                  description="Cloud model for new conversations"
+                >
                   <div className="flex items-center gap-1.5">
                     <Select
                       value={draft.chatDefaultModel}
@@ -764,27 +817,38 @@ export function Configurations() {
                               ? "Loading models…"
                               : "No models available — connect to engine"}
                           </div>
-                        ) : (() => {
-                          const groups: Record<string, typeof catalogs.chatModels> = {};
-                          for (const m of catalogs.chatModels) {
-                            const p = m.provider;
-                            if (!groups[p]) groups[p] = [];
-                            groups[p].push(m);
-                          }
-                          return Object.entries(groups).map(([provider, models]) => (
-                            <SelectGroup key={provider}>
-                              <SelectLabel className="capitalize">{provider}</SelectLabel>
-                              {models.map((m) => (
-                                <SelectItem key={m.id} value={m.id}>
-                                  <span className="flex items-center gap-1.5">
-                                    {m.label}
-                                    {m.is_primary && <Star className="h-3 w-3 text-yellow-500" />}
-                                  </span>
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          ));
-                        })()}
+                        ) : (
+                          (() => {
+                            const groups: Record<
+                              string,
+                              typeof catalogs.chatModels
+                            > = {};
+                            for (const m of catalogs.chatModels) {
+                              const p = m.provider;
+                              if (!groups[p]) groups[p] = [];
+                              groups[p].push(m);
+                            }
+                            return Object.entries(groups).map(
+                              ([provider, models]) => (
+                                <SelectGroup key={provider}>
+                                  <SelectLabel className="capitalize">
+                                    {provider}
+                                  </SelectLabel>
+                                  {models.map((m) => (
+                                    <SelectItem key={m.id} value={m.id}>
+                                      <span className="flex items-center gap-1.5">
+                                        {m.label}
+                                        {m.is_primary && (
+                                          <Star className="h-3 w-3 text-yellow-500" />
+                                        )}
+                                      </span>
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              ),
+                            );
+                          })()
+                        )}
                       </SelectContent>
                     </Select>
                     {catalogs.chatModelsLoading && (
@@ -795,7 +859,12 @@ export function Configurations() {
                 <SettingRow label="Default chat mode">
                   <Select
                     value={draft.chatDefaultMode}
-                    onValueChange={(v) => set("chatDefaultMode", v as AppSettings["chatDefaultMode"])}
+                    onValueChange={(v) =>
+                      set(
+                        "chatDefaultMode",
+                        v as AppSettings["chatDefaultMode"],
+                      )
+                    }
                   >
                     <SelectTrigger className="w-32">
                       <SelectValue />
@@ -807,29 +876,49 @@ export function Configurations() {
                     </SelectContent>
                   </Select>
                 </SettingRow>
-                <SettingRow label="Max conversations" description="Maximum stored chat conversations">
+                <SettingRow
+                  label="Max conversations"
+                  description="Maximum stored chat conversations"
+                >
                   <NumberInput
                     value={draft.chatMaxConversations}
-                    onChange={(v) => set("chatMaxConversations", Math.max(1, v))}
+                    onChange={(v) =>
+                      set("chatMaxConversations", Math.max(1, v))
+                    }
                     min={1}
                     max={500}
                   />
                 </SettingRow>
-                <SettingRow label="System prompt" description="Personality for new conversations">
+                <SettingRow
+                  label="System prompt"
+                  description="Personality for new conversations"
+                >
                   <Select
                     value={draft.chatDefaultSystemPromptId || "__builtin__"}
-                    onValueChange={(v) => set("chatDefaultSystemPromptId", v === "__builtin__" ? "" : v)}
+                    onValueChange={(v) =>
+                      set(
+                        "chatDefaultSystemPromptId",
+                        v === "__builtin__" ? "" : v,
+                      )
+                    }
                   >
                     <SelectTrigger className="w-52">
                       <SelectValue placeholder="Built-in Assistant" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__builtin__">
-                        <span className="text-muted-foreground">Default (Built-in Assistant)</span>
+                        <span className="text-muted-foreground">
+                          Default (Built-in Assistant)
+                        </span>
                       </SelectItem>
-                      {catalogs.systemPromptOptions.length > 0 && <Separator className="my-1" />}
+                      {catalogs.systemPromptOptions.length > 0 && (
+                        <Separator className="my-1" />
+                      )}
                       {(() => {
-                        const groups: Record<string, typeof catalogs.systemPromptOptions> = {};
+                        const groups: Record<
+                          string,
+                          typeof catalogs.systemPromptOptions
+                        > = {};
                         for (const p of catalogs.systemPromptOptions) {
                           if (!groups[p.category]) groups[p.category] = [];
                           groups[p.category].push(p);
@@ -838,7 +927,9 @@ export function Configurations() {
                           <SelectGroup key={cat}>
                             <SelectLabel>{cat}</SelectLabel>
                             {prompts.map((p) => (
-                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                              <SelectItem key={p.id} value={p.id}>
+                                {p.name}
+                              </SelectItem>
                             ))}
                           </SelectGroup>
                         ));
@@ -863,11 +954,16 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Default model" description="Downloaded model used when starting the LLM server">
+                <SettingRow
+                  label="Default model"
+                  description="Downloaded model used when starting the LLM server"
+                >
                   <div className="flex items-center gap-1.5">
                     <Select
                       value={draft.llmDefaultModel || "__auto__"}
-                      onValueChange={(v) => set("llmDefaultModel", v === "__auto__" ? "" : v)}
+                      onValueChange={(v) =>
+                        set("llmDefaultModel", v === "__auto__" ? "" : v)
+                      }
                     >
                       <SelectTrigger className="w-56">
                         <SelectValue placeholder="Auto-detect" />
@@ -879,7 +975,9 @@ export function Configurations() {
                             Auto (recommended for your hardware)
                           </span>
                         </SelectItem>
-                        {catalogs.llmModels.length > 0 && <Separator className="my-1" />}
+                        {catalogs.llmModels.length > 0 && (
+                          <Separator className="my-1" />
+                        )}
                         {catalogs.llmModels.map((m) => (
                           <SelectItem key={m.filename} value={m.filename}>
                             <div className="flex flex-col gap-0.5">
@@ -898,7 +996,9 @@ export function Configurations() {
                                 {" / "}
                                 {m.speed}
                                 {" / "}
-                                Tool calling: {"★".repeat(m.tool_calling_rating)}{"☆".repeat(5 - m.tool_calling_rating)}
+                                Tool calling:{" "}
+                                {"★".repeat(m.tool_calling_rating)}
+                                {"☆".repeat(5 - m.tool_calling_rating)}
                               </span>
                             </div>
                           </SelectItem>
@@ -910,16 +1010,24 @@ export function Configurations() {
                     )}
                   </div>
                 </SettingRow>
-                <SettingRow label="GPU layers" description="How many layers to offload to your GPU">
+                <SettingRow
+                  label="GPU layers"
+                  description="How many layers to offload to your GPU"
+                >
                   <GpuLayersRow
                     value={draft.llmDefaultGpuLayers}
                     onChange={(v) => set("llmDefaultGpuLayers", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Context length" description="Max tokens per conversation">
+                <SettingRow
+                  label="Context length"
+                  description="Max tokens per conversation"
+                >
                   <Select
                     value={String(draft.llmDefaultContextLength)}
-                    onValueChange={(v) => set("llmDefaultContextLength", Number(v))}
+                    onValueChange={(v) =>
+                      set("llmDefaultContextLength", Number(v))
+                    }
                   >
                     <SelectTrigger className="w-28">
                       <SelectValue />
@@ -935,7 +1043,10 @@ export function Configurations() {
                     </SelectContent>
                   </Select>
                 </SettingRow>
-                <SettingRow label="Auto-start server" description="Launch LLM server when app starts">
+                <SettingRow
+                  label="Auto-start server"
+                  description="Launch LLM server when app starts"
+                >
                   <Switch
                     checked={draft.llmAutoStartServer}
                     onCheckedChange={(v) => set("llmAutoStartServer", v)}
@@ -958,21 +1069,27 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Chat</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Chat
+                </p>
 
                 <SliderRow
                   label="Temperature"
                   description="Higher = more creative, lower = more focused"
                   value={draft.llmChatTemperature}
                   onChange={(v) => set("llmChatTemperature", v)}
-                  min={0} max={2} step={0.05}
+                  min={0}
+                  max={2}
+                  step={0.05}
                 />
                 <SliderRow
                   label="Top P"
                   description="Nucleus sampling threshold"
                   value={draft.llmChatTopP}
                   onChange={(v) => set("llmChatTopP", v)}
-                  min={0} max={1} step={0.05}
+                  min={0}
+                  max={1}
+                  step={0.05}
                 />
                 <SettingRow label="Top K" description="Vocabulary filter size">
                   <NumberInput
@@ -982,7 +1099,10 @@ export function Configurations() {
                     max={200}
                   />
                 </SettingRow>
-                <SettingRow label="Max tokens" description="Maximum response length">
+                <SettingRow
+                  label="Max tokens"
+                  description="Maximum response length"
+                >
                   <NumberInput
                     value={draft.llmChatMaxTokens}
                     onChange={(v) => set("llmChatMaxTokens", v)}
@@ -993,9 +1113,14 @@ export function Configurations() {
                 </SettingRow>
 
                 <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Reasoning Mode</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Reasoning Mode
+                </p>
 
-                <SettingRow label="Enable thinking" description="Use extended thinking by default">
+                <SettingRow
+                  label="Enable thinking"
+                  description="Use extended thinking by default"
+                >
                   <Switch
                     checked={draft.llmEnableThinking}
                     onCheckedChange={(v) => set("llmEnableThinking", v)}
@@ -1005,13 +1130,17 @@ export function Configurations() {
                   label="Temperature"
                   value={draft.llmReasoningTemperature}
                   onChange={(v) => set("llmReasoningTemperature", v)}
-                  min={0} max={2} step={0.05}
+                  min={0}
+                  max={2}
+                  step={0.05}
                 />
                 <SliderRow
                   label="Top P"
                   value={draft.llmReasoningTopP}
                   onChange={(v) => set("llmReasoningTopP", v)}
-                  min={0} max={1} step={0.05}
+                  min={0}
+                  max={1}
+                  step={0.05}
                 />
                 <SettingRow label="Top K">
                   <NumberInput
@@ -1021,7 +1150,10 @@ export function Configurations() {
                     max={200}
                   />
                 </SettingRow>
-                <SettingRow label="Max tokens" description="Maximum response length for reasoning">
+                <SettingRow
+                  label="Max tokens"
+                  description="Maximum response length for reasoning"
+                >
                   <NumberInput
                     value={draft.llmReasoningMaxTokens}
                     onChange={(v) => set("llmReasoningMaxTokens", v)}
@@ -1032,19 +1164,25 @@ export function Configurations() {
                 </SettingRow>
 
                 <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Tool Calling</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Tool Calling
+                </p>
 
                 <SliderRow
                   label="Temperature"
                   value={draft.llmToolCallTemperature}
                   onChange={(v) => set("llmToolCallTemperature", v)}
-                  min={0} max={2} step={0.05}
+                  min={0}
+                  max={2}
+                  step={0.05}
                 />
                 <SliderRow
                   label="Top P"
                   value={draft.llmToolCallTopP}
                   onChange={(v) => set("llmToolCallTopP", v)}
-                  min={0} max={1} step={0.05}
+                  min={0}
+                  max={1}
+                  step={0.05}
                 />
                 <SettingRow label="Top K">
                   <NumberInput
@@ -1056,14 +1194,18 @@ export function Configurations() {
                 </SettingRow>
 
                 <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Other</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Other
+                </p>
 
                 <SliderRow
                   label="Structured output temp"
                   description="For JSON schema responses"
                   value={draft.llmStructuredOutputTemperature}
                   onChange={(v) => set("llmStructuredOutputTemperature", v)}
-                  min={0} max={1} step={0.05}
+                  min={0}
+                  max={1}
+                  step={0.05}
                 />
                 <SettingRow label="Stream max tokens">
                   <NumberInput
@@ -1092,11 +1234,19 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Default Whisper model" description="Speech-to-text model quality">
+                <SettingRow
+                  label="Default Whisper model"
+                  description="Speech-to-text model quality"
+                >
                   <div className="flex items-center gap-1.5">
                     <Select
                       value={draft.transcriptionDefaultModel || "__auto__"}
-                      onValueChange={(v) => set("transcriptionDefaultModel", v === "__auto__" ? "" : v)}
+                      onValueChange={(v) =>
+                        set(
+                          "transcriptionDefaultModel",
+                          v === "__auto__" ? "" : v,
+                        )
+                      }
                     >
                       <SelectTrigger className="w-52">
                         <SelectValue placeholder="Auto-detect" />
@@ -1108,12 +1258,16 @@ export function Configurations() {
                             Auto-detect (hardware-based)
                           </span>
                         </SelectItem>
-                        {catalogs.whisperModels.length > 0 && <Separator className="my-1" />}
+                        {catalogs.whisperModels.length > 0 && (
+                          <Separator className="my-1" />
+                        )}
                         {catalogs.whisperModels.map((m) => (
                           <SelectItem key={m.filename} value={m.filename}>
                             <div className="flex flex-col gap-0.5">
                               <span className="flex items-center gap-1.5">
-                                {m.filename.replace("ggml-", "").replace(".bin", "")}
+                                {m.filename
+                                  .replace("ggml-", "")
+                                  .replace(".bin", "")}
                                 {m.filename === catalogs.whisperRecommended && (
                                   <span className="text-[10px] font-medium bg-primary/15 text-primary px-1.5 py-0.5 rounded">
                                     Recommended
@@ -1139,26 +1293,41 @@ export function Configurations() {
                     )}
                   </div>
                 </SettingRow>
-                <SettingRow label="Auto-initialize on startup" description="Load transcription model when app starts">
+                <SettingRow
+                  label="Auto-initialize on startup"
+                  description="Load transcription model when app starts"
+                >
                   <Switch
                     checked={draft.transcriptionAutoInit}
                     onCheckedChange={(v) => set("transcriptionAutoInit", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Audio input device" description="Microphone for voice capture">
+                <SettingRow
+                  label="Audio input device"
+                  description="Microphone for voice capture"
+                >
                   <div className="flex items-center gap-1.5">
                     <Select
                       value={draft.transcriptionAudioDevice || "__default__"}
-                      onValueChange={(v) => set("transcriptionAudioDevice", v === "__default__" ? "" : v)}
+                      onValueChange={(v) =>
+                        set(
+                          "transcriptionAudioDevice",
+                          v === "__default__" ? "" : v,
+                        )
+                      }
                     >
                       <SelectTrigger className="w-52">
                         <SelectValue placeholder="System default" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="__default__">
-                          <span className="text-muted-foreground">System default</span>
+                          <span className="text-muted-foreground">
+                            System default
+                          </span>
                         </SelectItem>
-                        {catalogs.audioDevices.length > 0 && <Separator className="my-1" />}
+                        {catalogs.audioDevices.length > 0 && (
+                          <Separator className="my-1" />
+                        )}
                         {catalogs.audioDevices.map((d) => (
                           <SelectItem key={d.name} value={d.name}>
                             <span className="flex items-center gap-1.5">
@@ -1210,22 +1379,33 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Enabled" description="Master switch for wake word detection">
+                <SettingRow
+                  label="Enabled"
+                  description="Master switch for wake word detection"
+                >
                   <Switch
                     checked={draft.wakeWordEnabled}
                     onCheckedChange={(v) => set("wakeWordEnabled", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Listen on startup" description="Start listening when app launches">
+                <SettingRow
+                  label="Listen on startup"
+                  description="Start listening when app launches"
+                >
                   <Switch
                     checked={draft.wakeWordListenOnStartup}
                     onCheckedChange={(v) => set("wakeWordListenOnStartup", v)}
                   />
                 </SettingRow>
-                <SettingRow label="Detection engine" description="Whisper = flexible keyword, OWW = trained models">
+                <SettingRow
+                  label="Detection engine"
+                  description="Whisper = flexible keyword, OWW = trained models"
+                >
                   <Select
                     value={draft.wakeWordEngine}
-                    onValueChange={(v) => set("wakeWordEngine", v as AppSettings["wakeWordEngine"])}
+                    onValueChange={(v) =>
+                      set("wakeWordEngine", v as AppSettings["wakeWordEngine"])
+                    }
                   >
                     <SelectTrigger className="w-44">
                       <SelectValue />
@@ -1234,23 +1414,32 @@ export function Configurations() {
                       <SelectItem value="whisper">
                         <div className="flex flex-col">
                           <span>Whisper</span>
-                          <span className="text-[10px] text-muted-foreground">Custom keyword phrase</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            Custom keyword phrase
+                          </span>
                         </div>
                       </SelectItem>
                       <SelectItem value="oww">
                         <div className="flex flex-col">
                           <span>OpenWakeWord</span>
-                          <span className="text-[10px] text-muted-foreground">Trained neural models</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            Trained neural models
+                          </span>
                         </div>
                       </SelectItem>
                     </SelectContent>
                   </Select>
                 </SettingRow>
                 {draft.wakeWordEngine === "whisper" && (
-                  <SettingRow label="Custom keyword" description="Phrase that triggers wake word">
+                  <SettingRow
+                    label="Custom keyword"
+                    description="Phrase that triggers wake word"
+                  >
                     <Input
                       value={draft.wakeWordCustomKeyword}
-                      onChange={(e) => set("wakeWordCustomKeyword", e.target.value)}
+                      onChange={(e) =>
+                        set("wakeWordCustomKeyword", e.target.value)
+                      }
                       className="w-40"
                       placeholder="hey matrix"
                     />
@@ -1258,7 +1447,10 @@ export function Configurations() {
                 )}
                 {draft.wakeWordEngine === "oww" && (
                   <>
-                    <SettingRow label="OWW model" description="Pre-trained wake word model">
+                    <SettingRow
+                      label="OWW model"
+                      description="Pre-trained wake word model"
+                    >
                       <Select
                         value={draft.wakeWordOwwModel}
                         onValueChange={(v) => set("wakeWordOwwModel", v)}
@@ -1268,9 +1460,13 @@ export function Configurations() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="hey_jarvis">Hey Jarvis</SelectItem>
-                          <SelectItem value="hey_mycroft">Hey Mycroft</SelectItem>
+                          <SelectItem value="hey_mycroft">
+                            Hey Mycroft
+                          </SelectItem>
                           <SelectItem value="alexa">Alexa</SelectItem>
-                          <SelectItem value="hey_rhasspy">Hey Rhasspy</SelectItem>
+                          <SelectItem value="hey_rhasspy">
+                            Hey Rhasspy
+                          </SelectItem>
                           <SelectItem value="timer">Timer</SelectItem>
                           <SelectItem value="weather">Weather</SelectItem>
                         </SelectContent>
@@ -1281,13 +1477,290 @@ export function Configurations() {
                       description="Higher = fewer false positives"
                       value={draft.wakeWordOwwThreshold}
                       onChange={(v) => set("wakeWordOwwThreshold", v)}
-                      min={0} max={1} step={0.05}
+                      min={0}
+                      max={1}
+                      step={0.05}
                     />
                   </>
                 )}
                 <SectionActions
                   section="wakeWord"
                   dirty={sectionDirty.wakeWord}
+                  {...sectionActionProps}
+                />
+              </CardContent>
+            </Card>
+
+            {/* ── Text to Speech ──────────────────────────────── */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Volume2 className="h-4 w-4" />
+                  Text to Speech
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Defaults
+                </p>
+
+                <SettingRow
+                  label="Default voice"
+                  description="Voice used on the TTS page and as fallback for other systems"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <Select
+                      value={draft.ttsDefaultVoice || "af_heart"}
+                      onValueChange={(v) => set("ttsDefaultVoice", v)}
+                    >
+                      <SelectTrigger className="w-48">
+                        <SelectValue placeholder="Select voice..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {catalogs.ttsVoices.length === 0 ? (
+                          <div className="py-3 px-2 text-center text-xs text-muted-foreground">
+                            {catalogs.ttsVoicesLoading
+                              ? "Loading voices…"
+                              : "No voices — connect to engine"}
+                          </div>
+                        ) : (
+                          (() => {
+                            const groups: Record<
+                              string,
+                              typeof catalogs.ttsVoices
+                            > = {};
+                            for (const v of catalogs.ttsVoices) {
+                              const lang = v.language;
+                              if (!groups[lang]) groups[lang] = [];
+                              groups[lang].push(v);
+                            }
+                            return Object.entries(groups).map(
+                              ([lang, voices]) => (
+                                <SelectGroup key={lang}>
+                                  <SelectLabel>{lang}</SelectLabel>
+                                  {voices.map((v) => (
+                                    <SelectItem
+                                      key={v.voice_id}
+                                      value={v.voice_id}
+                                    >
+                                      <span className="flex items-center gap-1.5">
+                                        {v.name}
+                                        <span className="text-[10px] text-muted-foreground">
+                                          {v.gender} · {v.quality_grade}
+                                        </span>
+                                        {v.is_default && (
+                                          <span className="text-[10px] font-medium bg-primary/15 text-primary px-1.5 py-0.5 rounded">
+                                            Default
+                                          </span>
+                                        )}
+                                      </span>
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              ),
+                            );
+                          })()
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {catalogs.ttsVoicesLoading && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                </SettingRow>
+
+                <SliderRow
+                  label="Default speed"
+                  description="Playback speed (0.25–4.0)"
+                  value={draft.ttsDefaultSpeed}
+                  onChange={(v) => set("ttsDefaultSpeed", v)}
+                  min={0.25}
+                  max={4.0}
+                  step={0.05}
+                />
+
+                <SettingRow
+                  label="Auto-download model"
+                  description="Download TTS model on first visit"
+                >
+                  <Switch
+                    checked={draft.ttsAutoDownloadModel}
+                    onCheckedChange={(v) => set("ttsAutoDownloadModel", v)}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Auto-clean markdown"
+                  description="Strip markdown before speaking on TTS page"
+                >
+                  <Switch
+                    checked={draft.ttsAutoCleanMarkdown}
+                    onCheckedChange={(v) => set("ttsAutoCleanMarkdown", v)}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Streaming threshold"
+                  description="Use streaming for text longer than this (0 = always stream)"
+                >
+                  <NumberInput
+                    value={draft.ttsStreamingThreshold}
+                    onChange={(v) =>
+                      set("ttsStreamingThreshold", Math.max(0, v))
+                    }
+                    min={0}
+                    max={5000}
+                    step={50}
+                  />
+                </SettingRow>
+
+                <Separator className="my-2" />
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Chat Read-Aloud
+                </p>
+
+                <SettingRow
+                  label="Show read-aloud button"
+                  description="Display speaker icon on assistant messages"
+                >
+                  <Switch
+                    checked={draft.ttsReadAloudEnabled}
+                    onCheckedChange={(v) => set("ttsReadAloudEnabled", v)}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Auto-play responses"
+                  description="Automatically read new assistant messages"
+                >
+                  <Switch
+                    checked={draft.ttsReadAloudAutoPlay}
+                    onCheckedChange={(v) => set("ttsReadAloudAutoPlay", v)}
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Chat voice"
+                  description="Voice for chat read-aloud (empty = use default voice)"
+                >
+                  <Select
+                    value={draft.ttsChatVoice || "__default__"}
+                    onValueChange={(v) =>
+                      set("ttsChatVoice", v === "__default__" ? "" : v)
+                    }
+                  >
+                    <SelectTrigger className="w-48">
+                      <SelectValue placeholder="Same as default" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default__">
+                        <span className="text-muted-foreground">
+                          Same as default voice
+                        </span>
+                      </SelectItem>
+                      {catalogs.ttsVoices.length > 0 && (
+                        <Separator className="my-1" />
+                      )}
+                      {(() => {
+                        const groups: Record<
+                          string,
+                          typeof catalogs.ttsVoices
+                        > = {};
+                        for (const v of catalogs.ttsVoices) {
+                          const lang = v.language;
+                          if (!groups[lang]) groups[lang] = [];
+                          groups[lang].push(v);
+                        }
+                        return Object.entries(groups).map(([lang, voices]) => (
+                          <SelectGroup key={lang}>
+                            <SelectLabel>{lang}</SelectLabel>
+                            {voices.map((v) => (
+                              <SelectItem key={v.voice_id} value={v.voice_id}>
+                                <span className="flex items-center gap-1.5">
+                                  {v.name}
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {v.gender}
+                                  </span>
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ));
+                      })()}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+
+                <SliderRow
+                  label="Chat speed"
+                  description="Speed for chat read-aloud (0 = use default speed)"
+                  value={draft.ttsChatSpeed}
+                  onChange={(v) => set("ttsChatSpeed", v)}
+                  min={0}
+                  max={4.0}
+                  step={0.05}
+                />
+
+                <Separator className="my-2" />
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  Notifications
+                </p>
+
+                <SettingRow
+                  label="Notification voice"
+                  description="Voice for spoken notifications (empty = use default voice)"
+                >
+                  <Select
+                    value={draft.ttsNotificationVoice || "__default__"}
+                    onValueChange={(v) =>
+                      set("ttsNotificationVoice", v === "__default__" ? "" : v)
+                    }
+                  >
+                    <SelectTrigger className="w-48">
+                      <SelectValue placeholder="Same as default" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default__">
+                        <span className="text-muted-foreground">
+                          Same as default voice
+                        </span>
+                      </SelectItem>
+                      {catalogs.ttsVoices.length > 0 && (
+                        <Separator className="my-1" />
+                      )}
+                      {(() => {
+                        const groups: Record<
+                          string,
+                          typeof catalogs.ttsVoices
+                        > = {};
+                        for (const v of catalogs.ttsVoices) {
+                          const lang = v.language;
+                          if (!groups[lang]) groups[lang] = [];
+                          groups[lang].push(v);
+                        }
+                        return Object.entries(groups).map(([lang, voices]) => (
+                          <SelectGroup key={lang}>
+                            <SelectLabel>{lang}</SelectLabel>
+                            {voices.map((v) => (
+                              <SelectItem key={v.voice_id} value={v.voice_id}>
+                                <span className="flex items-center gap-1.5">
+                                  {v.name}
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {v.gender}
+                                  </span>
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ));
+                      })()}
+                    </SelectContent>
+                  </Select>
+                </SettingRow>
+
+                <SectionActions
+                  section="tts"
+                  dirty={sectionDirty.tts}
                   {...sectionActionProps}
                 />
               </CardContent>
@@ -1302,7 +1775,10 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Hide scraping browser" description="Run in headless mode — the browser window won't be visible during scraping">
+                <SettingRow
+                  label="Hide scraping browser"
+                  description="Run in headless mode — the browser window won't be visible during scraping"
+                >
                   <Switch
                     checked={draft.headlessScraping}
                     onCheckedChange={(v) => set("headlessScraping", v)}
@@ -1329,7 +1805,10 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Local proxy enabled" description="HTTP proxy at 127.0.0.1">
+                <SettingRow
+                  label="Local proxy enabled"
+                  description="HTTP proxy at 127.0.0.1"
+                >
                   <Switch
                     checked={draft.proxyEnabled}
                     onCheckedChange={(v) => set("proxyEnabled", v)}
@@ -1344,7 +1823,10 @@ export function Configurations() {
                   />
                 </SettingRow>
                 <Separator className="my-2" />
-                <SettingRow label="Remote tunnel" description="Expose this instance via Cloudflare tunnel">
+                <SettingRow
+                  label="Remote tunnel"
+                  description="Expose this instance via Cloudflare tunnel"
+                >
                   <Switch
                     checked={draft.tunnelEnabled}
                     onCheckedChange={(v) => set("tunnelEnabled", v)}
@@ -1367,7 +1849,10 @@ export function Configurations() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1">
-                <SettingRow label="Sound enabled" description="Play sound on notifications">
+                <SettingRow
+                  label="Sound enabled"
+                  description="Play sound on notifications"
+                >
                   <Switch
                     checked={draft.notificationSound}
                     onCheckedChange={(v) => set("notificationSound", v)}
@@ -1376,7 +1861,12 @@ export function Configurations() {
                 <SettingRow label="Sound style">
                   <Select
                     value={draft.notificationSoundStyle}
-                    onValueChange={(v) => set("notificationSoundStyle", v as AppSettings["notificationSoundStyle"])}
+                    onValueChange={(v) =>
+                      set(
+                        "notificationSoundStyle",
+                        v as AppSettings["notificationSoundStyle"],
+                      )
+                    }
                   >
                     <SelectTrigger className="w-32">
                       <SelectValue />
@@ -1396,8 +1886,6 @@ export function Configurations() {
                 />
               </CardContent>
             </Card>
-
-
           </div>
         </div>
       </ScrollArea>

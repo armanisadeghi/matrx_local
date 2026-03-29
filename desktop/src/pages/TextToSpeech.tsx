@@ -99,20 +99,30 @@ function SpeakTab({
 }) {
   const [text, setText] = useState("");
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const [streamThreshold, setStreamThreshold] = useState(200);
+  const [autoClean, setAutoClean] = useState(false);
+
+  useEffect(() => {
+    loadSettings().then((s) => {
+      setStreamThreshold(s.ttsStreamingThreshold);
+      setAutoClean(s.ttsAutoCleanMarkdown);
+    });
+  }, []);
 
   const needsDownload = state.status && !state.status.model_downloaded;
   const isReady = state.status?.model_downloaded ?? false;
   const canSpeak = isReady && text.trim().length > 0 && !state.isSynthesizing;
-  const useStreaming = text.length > 200;
+  const useStreaming = streamThreshold === 0 || text.length > streamThreshold;
 
   const handleSpeak = useCallback(() => {
     if (!canSpeak) return;
+    const spokenText = autoClean ? parseMarkdownToText(text) : text;
     if (useStreaming) {
-      actions.speakStreaming(text);
+      actions.speakStreaming(spokenText);
     } else {
-      actions.speak(text);
+      actions.speak(spokenText);
     }
-  }, [canSpeak, text, actions, useStreaming]);
+  }, [canSpeak, text, actions, useStreaming, autoClean]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

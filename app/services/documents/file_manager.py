@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,27 @@ def _ensure_dirs() -> None:
     notes = _notes_dir()
     (notes / ".sync").mkdir(parents=True, exist_ok=True)
     (notes / ".sync" / "conflicts").mkdir(parents=True, exist_ok=True)
+
+
+def _atomic_write(target: Path, content: str) -> None:
+    """Write *content* to *target* atomically via a sibling temp file + os.replace().
+
+    On all POSIX systems and modern Windows, os.replace() is atomic within the
+    same filesystem, so a crash mid-write leaves either the old file or the new
+    file fully intact — never a partial write.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, target)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _safe_filename(name: str) -> str:
@@ -150,7 +172,10 @@ class DocumentFileManager:
         content: str,
         file_path: str | None = None,
     ) -> str:
-        """Write note content to a .md file.
+        """Write note content to a .md file atomically.
+
+        Uses write-to-temp + os.replace() so a crash or power failure mid-write
+        never leaves the file in a partial/corrupt state.
 
         Returns the relative file_path for storage in the database.
         """
@@ -160,7 +185,7 @@ class DocumentFileManager:
             target = self.note_path(folder_name, label)
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        _atomic_write(target, content)
         return self.relative_path(target)
 
     def read_note(self, file_path: str) -> str | None:
@@ -322,8 +347,9 @@ class DocumentFileManager:
 
     def save_sync_state(self, state: dict[str, Any]) -> None:
         _ensure_dirs()
-        self._state_file().write_text(
-            json.dumps(state, indent=2, default=str), encoding="utf-8"
+        _atomic_write(
+            self._state_file(),
+            json.dumps(state, indent=2, default=str),
         )
 
     def load_local_mappings(self) -> dict[str, list[str]]:
@@ -342,8 +368,9 @@ class DocumentFileManager:
 
     def save_local_mappings(self, mappings: dict[str, list[str]]) -> None:
         _ensure_dirs()
-        self._mappings_file().write_text(
-            json.dumps(mappings, indent=2), encoding="utf-8"
+        _atomic_write(
+            self._mappings_file(),
+            json.dumps(mappings, indent=2),
         )
 
 

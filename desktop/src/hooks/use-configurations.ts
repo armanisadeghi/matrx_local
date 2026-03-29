@@ -84,8 +84,13 @@ const SECTION_KEYS: Record<ConfigSection, (keyof AppSettings)[]> = {
     "ttsDefaultSpeed",
     "ttsAutoDownloadModel",
     "ttsFavoriteVoices",
+    "ttsChatVoice",
+    "ttsChatSpeed",
+    "ttsNotificationVoice",
     "ttsReadAloudEnabled",
     "ttsReadAloudAutoPlay",
+    "ttsStreamingThreshold",
+    "ttsAutoCleanMarkdown",
   ],
   wakeWord: [
     "wakeWordEnabled",

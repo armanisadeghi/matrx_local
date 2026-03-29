@@ -72,12 +72,17 @@ export interface AppSettings {
   transcriptionProcessingTimeout: number; // ms before force-reset
 
   // ── Text to Speech ──────────────────────────────────────────────────
-  ttsDefaultVoice: string; // voice_id, default "af_heart"
+  ttsDefaultVoice: string; // voice_id for the TTS page, default "af_heart"
   ttsDefaultSpeed: number; // 0.25-4.0, default 1.0
   ttsAutoDownloadModel: boolean; // auto-download on first visit
   ttsFavoriteVoices: string[]; // pinned voice IDs
+  ttsChatVoice: string; // voice for chat read-aloud ("" = use ttsDefaultVoice)
+  ttsChatSpeed: number; // speed for chat read-aloud (0 = use ttsDefaultSpeed)
+  ttsNotificationVoice: string; // voice for notification read-aloud ("" = use ttsDefaultVoice)
   ttsReadAloudEnabled: boolean; // show read-aloud button on chat messages
   ttsReadAloudAutoPlay: boolean; // auto-play TTS for new assistant messages
+  ttsStreamingThreshold: number; // char count above which streaming mode is used (0 = always stream)
+  ttsAutoCleanMarkdown: boolean; // auto-clean markdown on TTS page before speaking
 
   // ── UI / Layout ─────────────────────────────────────────────────────
   sidebarCollapsed: boolean;
@@ -155,8 +160,13 @@ const DEFAULTS: AppSettings = {
   ttsDefaultSpeed: 1.0,
   ttsAutoDownloadModel: false,
   ttsFavoriteVoices: [],
+  ttsChatVoice: "",
+  ttsChatSpeed: 0,
+  ttsNotificationVoice: "",
   ttsReadAloudEnabled: true,
   ttsReadAloudAutoPlay: false,
+  ttsStreamingThreshold: 200,
+  ttsAutoCleanMarkdown: false,
   // UI
   sidebarCollapsed: false,
 };
@@ -625,6 +635,33 @@ export function mergeCloudSettings(
     ttsFavoriteVoices: Array.isArray(cloud.tts_favorite_voices)
       ? (cloud.tts_favorite_voices as string[])
       : local.ttsFavoriteVoices,
+    ttsChatVoice: cloudStr(cloud, "tts_chat_voice", local.ttsChatVoice),
+    ttsChatSpeed: cloudNum(cloud, "tts_chat_speed", local.ttsChatSpeed),
+    ttsNotificationVoice: cloudStr(
+      cloud,
+      "tts_notification_voice",
+      local.ttsNotificationVoice,
+    ),
+    ttsReadAloudEnabled: cloudBool(
+      cloud,
+      "tts_read_aloud_enabled",
+      local.ttsReadAloudEnabled,
+    ),
+    ttsReadAloudAutoPlay: cloudBool(
+      cloud,
+      "tts_read_aloud_auto_play",
+      local.ttsReadAloudAutoPlay,
+    ),
+    ttsStreamingThreshold: cloudNum(
+      cloud,
+      "tts_streaming_threshold",
+      local.ttsStreamingThreshold,
+    ),
+    ttsAutoCleanMarkdown: cloudBool(
+      cloud,
+      "tts_auto_clean_markdown",
+      local.ttsAutoCleanMarkdown,
+    ),
     // UI
     sidebarCollapsed: cloudBool(
       cloud,
@@ -702,6 +739,13 @@ export function settingsToCloud(
     tts_default_speed: settings.ttsDefaultSpeed,
     tts_auto_download_model: settings.ttsAutoDownloadModel,
     tts_favorite_voices: settings.ttsFavoriteVoices,
+    tts_chat_voice: settings.ttsChatVoice,
+    tts_chat_speed: settings.ttsChatSpeed,
+    tts_notification_voice: settings.ttsNotificationVoice,
+    tts_read_aloud_enabled: settings.ttsReadAloudEnabled,
+    tts_read_aloud_auto_play: settings.ttsReadAloudAutoPlay,
+    tts_streaming_threshold: settings.ttsStreamingThreshold,
+    tts_auto_clean_markdown: settings.ttsAutoCleanMarkdown,
     // UI
     sidebar_collapsed: settings.sidebarCollapsed,
   };

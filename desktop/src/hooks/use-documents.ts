@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { engine } from "@/lib/api";
+import { markNoteEditing, markNoteIdle } from "@/hooks/use-realtime-sync";
 import type {
   DocTree,
   DocNote,
@@ -59,10 +60,18 @@ const INITIAL_STATE: DocumentsState = {
   lastSyncResult: null,
 };
 
-export function useDocuments(userId: string | null, engineStatus?: EngineStatus) {
+export function useDocuments(
+  userId: string | null,
+  engineStatus?: EngineStatus,
+) {
   const [state, setState] = useState<DocumentsState>(INITIAL_STATE);
   const mountedRef = useRef(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track pending flush so we can await it on unmount and not discard unsaved edits
+  const pendingSaveRef = useRef<{
+    noteId: string;
+    data: Partial<CreateNoteData>;
+  } | null>(null);
 
   const update = useCallback((partial: Partial<DocumentsState>) => {
     if (mountedRef.current) {
@@ -73,7 +82,9 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
   // engineReady is true when: the engine URL is known AND the engine status is
   // "connected" (or not provided — legacy callers that don't pass engineStatus).
   // This ensures the hook re-fires when the engine finishes starting up.
-  const engineReady = !!engine.engineUrl && (engineStatus === undefined || engineStatus === "connected");
+  const engineReady =
+    !!engine.engineUrl &&
+    (engineStatus === undefined || engineStatus === "connected");
 
   // ── Load folder tree — local filesystem, no auth required ───────────────
 
@@ -140,11 +151,14 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
         update({ activeNote: note });
 
         // Load version history — works locally now, no userId required
-        engine.listVersions(noteId, userId ?? "local").then((versions) => {
-          if (mountedRef.current) update({ versions });
-        }).catch(() => {
-          if (mountedRef.current) update({ versions: [] });
-        });
+        engine
+          .listVersions(noteId, userId ?? "local")
+          .then((versions) => {
+            if (mountedRef.current) update({ versions });
+          })
+          .catch(() => {
+            if (mountedRef.current) update({ versions: [] });
+          });
       } catch (err) {
         update({
           error: err instanceof Error ? err.message : "Failed to load note",
@@ -180,7 +194,11 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
   // ── Update note (debounced for content, immediate for metadata) ──────────
 
   const updateNote = useCallback(
-    async (noteId: string, data: Partial<CreateNoteData>, immediate = false) => {
+    async (
+      noteId: string,
+      data: Partial<CreateNoteData>,
+      immediate = false,
+    ) => {
       if (!engineReady) return;
 
       if (data.content !== undefined) {
@@ -192,6 +210,14 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
       }
 
       if (immediate) {
+        // Clear any pending debounced save for this note — the immediate save
+        // supersedes it (e.g. label change after content change).
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = null;
+          pendingSaveRef.current = null;
+          markNoteIdle(noteId);
+        }
         try {
           update({ saving: true });
           await engine.updateNote(noteId, userId ?? "local", data);
@@ -209,8 +235,15 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
         return;
       }
 
+      // Record what's pending so cleanup can flush it before unmounting.
+      pendingSaveRef.current = { noteId, data };
+
+      // Tell Realtime to suppress pulls for this note while we're editing.
+      markNoteEditing(noteId);
+
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(async () => {
+        pendingSaveRef.current = null;
         try {
           update({ saving: true });
           await engine.updateNote(noteId, userId ?? "local", data);
@@ -220,10 +253,21 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
             saving: false,
             error: err instanceof Error ? err.message : "Failed to save",
           });
+        } finally {
+          // Re-enable Realtime pulls now that the local save is complete.
+          markNoteIdle(noteId);
         }
       }, 1000);
     },
-    [engineReady, userId, state.activeNote, state.activeFolderId, update, loadTree, loadNotes],
+    [
+      engineReady,
+      userId,
+      state.activeNote,
+      state.activeFolderId,
+      update,
+      loadTree,
+      loadNotes,
+    ],
   );
 
   // ── Delete note ──────────────────────────────────────────────────────────
@@ -294,7 +338,11 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
     async (noteId: string, versionNumber: number) => {
       if (!engineReady) return;
       try {
-        const note = await engine.revertNote(noteId, userId ?? "local", versionNumber);
+        const note = await engine.revertNote(
+          noteId,
+          userId ?? "local",
+          versionNumber,
+        );
         update({ activeNote: note });
         const versions = await engine.listVersions(noteId, userId ?? "local");
         update({ versions });
@@ -309,24 +357,27 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
 
   // ── Sync operations — require userId ────────────────────────────────────
 
-  const triggerSync = useCallback(async (mode: SyncMode = "bidirectional") => {
-    if (!engineReady || !userId) return null;
-    try {
-      update({ syncing: true, error: null });
-      const result = await engine.triggerSync(userId, mode);
-      await loadTree();
-      await loadNotes(state.activeFolderId);
-      const syncStatus = await engine.getSyncStatus(userId);
-      update({ syncing: false, syncStatus, lastSyncResult: result });
-      return result;
-    } catch (err) {
-      update({
-        syncing: false,
-        error: err instanceof Error ? err.message : "Sync failed",
-      });
-      return null;
-    }
-  }, [engineReady, userId, state.activeFolderId, update, loadTree, loadNotes]);
+  const triggerSync = useCallback(
+    async (mode: SyncMode = "bidirectional") => {
+      if (!engineReady || !userId) return null;
+      try {
+        update({ syncing: true, error: null });
+        const result = await engine.triggerSync(userId, mode);
+        await loadTree();
+        await loadNotes(state.activeFolderId);
+        const syncStatus = await engine.getSyncStatus(userId);
+        update({ syncing: false, syncStatus, lastSyncResult: result });
+        return result;
+      } catch (err) {
+        update({
+          syncing: false,
+          error: err instanceof Error ? err.message : "Sync failed",
+        });
+        return null;
+      }
+    },
+    [engineReady, userId, state.activeFolderId, update, loadTree, loadNotes],
+  );
 
   const loadSyncStatus = useCallback(async () => {
     if (!engineReady || !userId) return;
@@ -351,23 +402,44 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
   const resolveConflict = useCallback(
     async (
       noteId: string,
-      resolution: "keep_local" | "keep_remote" | "merge" | "append" | "split" | "exclude",
+      resolution:
+        | "keep_local"
+        | "keep_remote"
+        | "merge"
+        | "append"
+        | "split"
+        | "exclude",
       mergedContent?: string,
     ) => {
       if (!engineReady) return;
       try {
-        await engine.resolveConflict(noteId, userId ?? "local", resolution, mergedContent);
+        await engine.resolveConflict(
+          noteId,
+          userId ?? "local",
+          resolution,
+          mergedContent,
+        );
         await loadConflicts();
         await loadSyncStatus();
         await loadTree();
         await loadNotes(state.activeFolderId);
       } catch (err) {
         update({
-          error: err instanceof Error ? err.message : "Failed to resolve conflict",
+          error:
+            err instanceof Error ? err.message : "Failed to resolve conflict",
         });
       }
     },
-    [engineReady, userId, state.activeFolderId, update, loadConflicts, loadSyncStatus, loadTree, loadNotes],
+    [
+      engineReady,
+      userId,
+      state.activeFolderId,
+      update,
+      loadConflicts,
+      loadSyncStatus,
+      loadTree,
+      loadNotes,
+    ],
   );
 
   const setNoteExcluded = useCallback(
@@ -378,7 +450,10 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
         await loadNotes(state.activeFolderId);
       } catch (err) {
         update({
-          error: err instanceof Error ? err.message : "Failed to update sync setting",
+          error:
+            err instanceof Error
+              ? err.message
+              : "Failed to update sync setting",
         });
       }
     },
@@ -413,11 +488,40 @@ export function useDocuments(userId: string | null, engineStatus?: EngineStatus)
 
     return () => {
       mountedRef.current = false;
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      // Flush any in-flight debounced save BEFORE clearing the timer.
+      // Without this, navigating away mid-debounce silently discards the user's
+      // last edit — the most frequent real data-loss scenario.
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        const pending = pendingSaveRef.current;
+        if (pending) {
+          pendingSaveRef.current = null;
+          // Fire-and-forget: component is unmounting so we can't await here,
+          // but the save still reaches the engine.
+          engine
+            .updateNote(pending.noteId, userId ?? "local", pending.data)
+            .catch((err) => {
+              console.warn("[docs] Flush-on-unmount save failed:", err);
+            })
+            .finally(() => {
+              markNoteIdle(pending.noteId);
+            });
+        }
+      }
     };
     // engineStatus is intentionally included so the effect re-runs when the
     // engine transitions from "starting"/"discovering" → "connected".
-  }, [engineReady, engineStatus, userId, loadTree, loadNotes, loadSyncStatus, loadConflicts, update]);
+  }, [
+    engineReady,
+    engineStatus,
+    userId,
+    loadTree,
+    loadNotes,
+    loadSyncStatus,
+    loadConflicts,
+    update,
+  ]);
 
   return {
     ...state,
