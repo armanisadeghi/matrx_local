@@ -1,13 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, RotateCcw, ThumbsUp, ThumbsDown } from "lucide-react";
+import {
+  Copy,
+  Check,
+  RotateCcw,
+  ThumbsUp,
+  ThumbsDown,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import type { ChatMessage } from "@/hooks/use-chat";
 import { ChatToolCall } from "./ChatToolCall";
 
 interface ChatMessagesProps {
   messages: ChatMessage[];
   isStreaming: boolean;
+  ttsReadAloudEnabled?: boolean;
+  readingMessageId?: string | null;
+  onReadAloud?: (messageId: string, content: string) => void;
+  onStopReadAloud?: () => void;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -25,15 +37,56 @@ function CopyButton({ text }: { text: string }) {
       className={`rounded-md p-1.5 transition-colors ${copied ? "text-emerald-500" : "text-muted-foreground hover:text-foreground"}`}
       title="Copy"
     >
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? (
+        <Check className="h-3.5 w-3.5" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
     </button>
   );
 }
 
-function MessageActions({ text }: { text: string }) {
+function MessageActions({
+  text,
+  messageId,
+  ttsEnabled,
+  isReading,
+  onReadAloud,
+  onStopReadAloud,
+}: {
+  text: string;
+  messageId: string;
+  ttsEnabled?: boolean;
+  isReading?: boolean;
+  onReadAloud?: (messageId: string, content: string) => void;
+  onStopReadAloud?: () => void;
+}) {
   return (
     <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
       <CopyButton text={text} />
+      {ttsEnabled && (
+        <button
+          onClick={() => {
+            if (isReading) {
+              onStopReadAloud?.();
+            } else {
+              onReadAloud?.(messageId, text);
+            }
+          }}
+          className={`rounded-md p-1.5 transition-colors ${
+            isReading
+              ? "text-primary hover:text-primary/80"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          title={isReading ? "Stop reading" : "Read aloud"}
+        >
+          {isReading ? (
+            <VolumeX className="h-3.5 w-3.5" />
+          ) : (
+            <Volume2 className="h-3.5 w-3.5" />
+          )}
+        </button>
+      )}
       <button
         className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
         title="Good response"
@@ -75,7 +128,19 @@ function UserMessage({ message }: { message: ChatMessage }) {
   );
 }
 
-function AssistantMessage({ message }: { message: ChatMessage }) {
+function AssistantMessage({
+  message,
+  ttsEnabled,
+  isReading,
+  onReadAloud,
+  onStopReadAloud,
+}: {
+  message: ChatMessage;
+  ttsEnabled?: boolean;
+  isReading?: boolean;
+  onReadAloud?: (messageId: string, content: string) => void;
+  onStopReadAloud?: () => void;
+}) {
   return (
     <div className="group py-5 px-4 md:px-0">
       <div className="mx-auto max-w-3xl">
@@ -151,7 +216,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
                 key={tc.id}
                 toolCall={tc}
                 result={message.tool_results?.find(
-                  (r) => r.tool_call_id === tc.id
+                  (r) => r.tool_call_id === tc.id,
                 )}
               />
             ))}
@@ -161,7 +226,14 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
         {/* Action buttons */}
         {!message.isStreaming && message.content && (
           <div className="mt-2">
-            <MessageActions text={message.content} />
+            <MessageActions
+              text={message.content}
+              messageId={message.id}
+              ttsEnabled={ttsEnabled}
+              isReading={isReading}
+              onReadAloud={onReadAloud}
+              onStopReadAloud={onStopReadAloud}
+            />
           </div>
         )}
       </div>
@@ -200,7 +272,14 @@ export function TypingIndicator() {
   );
 }
 
-export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
+export function ChatMessages({
+  messages,
+  isStreaming,
+  ttsReadAloudEnabled,
+  readingMessageId,
+  onReadAloud,
+  onStopReadAloud,
+}: ChatMessagesProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -217,8 +296,15 @@ export function ChatMessages({ messages, isStreaming }: ChatMessagesProps) {
         msg.role === "user" ? (
           <UserMessage key={msg.id} message={msg} />
         ) : (
-          <AssistantMessage key={msg.id} message={msg} />
-        )
+          <AssistantMessage
+            key={msg.id}
+            message={msg}
+            ttsEnabled={ttsReadAloudEnabled}
+            isReading={readingMessageId === msg.id}
+            onReadAloud={onReadAloud}
+            onStopReadAloud={onStopReadAloud}
+          />
+        ),
       )}
       <div ref={bottomRef} />
     </div>

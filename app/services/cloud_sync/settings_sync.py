@@ -106,6 +106,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tts_default_speed": 1.0,
     "tts_auto_download_model": False,
     "tts_favorite_voices": [],
+    "tts_read_aloud_enabled": True,
+    "tts_read_aloud_auto_play": False,
     # UI
     "sidebar_collapsed": False,
 }

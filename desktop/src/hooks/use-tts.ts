@@ -5,6 +5,7 @@ import {
   getTtsVoices,
   downloadTtsModel,
   synthesize,
+  synthesizeStream,
   previewVoice,
   unloadTts,
 } from "@/lib/tts/api";
@@ -44,6 +45,13 @@ export interface UseTtsActions {
   setSelectedVoice: (voiceId: string) => void;
   setSpeed: (speed: number) => void;
   speak: (text: string) => Promise<void>;
+  speakStreaming: (text: string) => Promise<void>;
+  speakText: (
+    text: string,
+    voiceId?: string,
+    speed?: number,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   preview: (voiceId: string) => Promise<void>;
   stopAudio: () => void;
   unload: () => Promise<void>;
@@ -95,6 +103,9 @@ export function useTts(): [UseTtsState, UseTtsActions] {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevAudioUrlRef = useRef<string | null>(null);
+  const audioQueueRef = useRef<Blob[]>([]);
+  const isPlayingQueueRef = useRef(false);
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -162,6 +173,9 @@ export function useTts(): [UseTtsState, UseTtsActions] {
   }, []);
 
   const stopAudio = useCallback(() => {
+    streamAbortRef.current?.abort();
+    audioQueueRef.current = [];
+    isPlayingQueueRef.current = false;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -169,31 +183,57 @@ export function useTts(): [UseTtsState, UseTtsActions] {
     setIsPreviewPlaying(null);
   }, []);
 
-  const playBlob = useCallback(
-    (blob: Blob, onEnd?: () => void): string => {
-      if (prevAudioUrlRef.current) {
-        URL.revokeObjectURL(prevAudioUrlRef.current);
-      }
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
+  const playBlob = useCallback((blob: Blob, onEnd?: () => void): string => {
+    if (prevAudioUrlRef.current) {
+      URL.revokeObjectURL(prevAudioUrlRef.current);
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
 
-      const url = URL.createObjectURL(blob);
-      prevAudioUrlRef.current = url;
+    const url = URL.createObjectURL(blob);
+    prevAudioUrlRef.current = url;
 
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = () => {
-        onEnd?.();
-      };
-      audio.onerror = () => {
-        onEnd?.();
-      };
-      audio.play().catch(() => onEnd?.());
-      return url;
-    },
-    [],
-  );
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.onended = () => {
+      onEnd?.();
+    };
+    audio.onerror = () => {
+      onEnd?.();
+    };
+    audio.play().catch(() => onEnd?.());
+    return url;
+  }, []);
+
+  const _playQueue = useCallback(() => {
+    if (isPlayingQueueRef.current) return;
+    const next = audioQueueRef.current.shift();
+    if (!next) return;
+
+    isPlayingQueueRef.current = true;
+    if (prevAudioUrlRef.current) URL.revokeObjectURL(prevAudioUrlRef.current);
+    if (audioRef.current) audioRef.current.pause();
+
+    const url = URL.createObjectURL(next);
+    prevAudioUrlRef.current = url;
+    setCurrentAudioUrl(url);
+
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.onended = () => {
+      isPlayingQueueRef.current = false;
+      _playQueue();
+    };
+    audio.onerror = () => {
+      isPlayingQueueRef.current = false;
+      _playQueue();
+    };
+    audio.play().catch(() => {
+      isPlayingQueueRef.current = false;
+      _playQueue();
+    });
+  }, []);
 
   const speak = useCallback(
     async (text: string) => {
@@ -233,6 +273,100 @@ export function useTts(): [UseTtsState, UseTtsActions] {
       }
     },
     [selectedVoice, speed, voices, playBlob, stopAudio],
+  );
+
+  const speakStreaming = useCallback(
+    async (text: string) => {
+      if (!text.trim()) return;
+      setIsSynthesizing(true);
+      setError(null);
+      stopAudio();
+      audioQueueRef.current = [];
+      isPlayingQueueRef.current = false;
+
+      streamAbortRef.current?.abort();
+      const abort = new AbortController();
+      streamAbortRef.current = abort;
+
+      const t0 = performance.now();
+
+      try {
+        const gen = synthesizeStream(
+          { text, voice_id: selectedVoice, speed },
+          abort.signal,
+        );
+
+        for await (const wavBlob of gen) {
+          if (abort.signal.aborted) break;
+          audioQueueRef.current.push(wavBlob);
+          _playQueue();
+        }
+
+        const elapsed = (performance.now() - t0) / 1000;
+        setCurrentElapsed(elapsed);
+
+        const voiceObj = voices.find((v) => v.voice_id === selectedVoice);
+        const entry: TtsHistoryEntry = {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          text: text.slice(0, 500),
+          voiceId: selectedVoice,
+          voiceName: voiceObj?.name ?? selectedVoice,
+          duration: 0,
+          elapsed,
+          audioUrl: prevAudioUrlRef.current ?? "",
+          createdAt: Date.now(),
+        };
+        setHistory((prev) => [entry, ...prev].slice(0, MAX_HISTORY));
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        setIsSynthesizing(false);
+      }
+    },
+    [selectedVoice, speed, voices, stopAudio, _playQueue],
+  );
+
+  const speakText = useCallback(
+    async (
+      text: string,
+      voiceId?: string,
+      spd?: number,
+      signal?: AbortSignal,
+    ) => {
+      if (!text.trim()) return;
+      const vid = voiceId ?? selectedVoice;
+      const s = spd ?? speed;
+
+      audioQueueRef.current = [];
+      isPlayingQueueRef.current = false;
+
+      streamAbortRef.current?.abort();
+      const abort = new AbortController();
+      streamAbortRef.current = abort;
+
+      if (signal) {
+        signal.addEventListener("abort", () => abort.abort(), { once: true });
+      }
+
+      try {
+        const gen = synthesizeStream(
+          { text, voice_id: vid, speed: s },
+          abort.signal,
+        );
+        for await (const wavBlob of gen) {
+          if (abort.signal.aborted) break;
+          audioQueueRef.current.push(wavBlob);
+          _playQueue();
+        }
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") {
+          throw e;
+        }
+      }
+    },
+    [selectedVoice, speed, _playQueue],
   );
 
   const preview = useCallback(
@@ -295,6 +429,8 @@ export function useTts(): [UseTtsState, UseTtsActions] {
       setSelectedVoice,
       setSpeed,
       speak,
+      speakStreaming,
+      speakText,
       preview,
       stopAudio,
       unload,
@@ -308,6 +444,8 @@ export function useTts(): [UseTtsState, UseTtsActions] {
       setSelectedVoice,
       setSpeed,
       speak,
+      speakStreaming,
+      speakText,
       preview,
       stopAudio,
       unload,

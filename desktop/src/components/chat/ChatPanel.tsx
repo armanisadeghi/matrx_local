@@ -3,12 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { AlertTriangle, X } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { useAgents } from "@/hooks/use-agents";
+import { useChatTts } from "@/hooks/use-chat-tts";
+import { useTtsApp } from "@/contexts/TtsContext";
 import { ChatMessages } from "@/components/chat/ChatMessages";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatWelcome } from "@/components/chat/ChatWelcome";
 import { GuidedVariableInputs } from "@/components/chat/GuidedVariableInputs";
 import { cn } from "@/lib/utils";
 import { engine as engineAPI } from "@/lib/api";
+import { loadSettings } from "@/lib/settings";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { ActiveAgent, AgentInfo, PromptVariable } from "@/types/agents";
 
@@ -67,7 +70,7 @@ export function ChatPanel({
   const [activeAgent, setActiveAgent] = useState<ActiveAgent | null>(null);
 
   const [variableValues, setVariableValues] = useState<Record<string, string>>(
-    {}
+    {},
   );
   const [activeVariables, setActiveVariables] = useState<PromptVariable[]>([]);
 
@@ -107,6 +110,47 @@ export function ChatPanel({
   const messages = activeConversation?.messages ?? [];
   const hasMessages = messages.length > 0;
 
+  // ── TTS read-aloud integration ──────────────────────────────────────
+  const [ttsReadAloudEnabled, setTtsReadAloudEnabled] = useState(true);
+  const [readingMessageId, setReadingMessageId] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadSettings().then((s) => {
+      setTtsReadAloudEnabled(s.ttsReadAloudEnabled);
+    });
+  }, []);
+
+  let ttsActions = null;
+  try {
+    const [, actions] = useTtsApp();
+    ttsActions = actions;
+  } catch {
+    // TtsProvider not mounted — read-aloud unavailable
+  }
+
+  const lastAssistantMsg =
+    messages.filter((m) => m.role === "assistant").at(-1) ?? null;
+  const chatTts = useChatTts(ttsActions, lastAssistantMsg, isStreaming);
+
+  const handleReadAloud = useCallback(
+    (messageId: string, content: string) => {
+      setReadingMessageId(messageId);
+      chatTts.readCompleteMessage(content);
+    },
+    [chatTts],
+  );
+
+  const handleStopReadAloud = useCallback(() => {
+    setReadingMessageId(null);
+    chatTts.stopReadAloud();
+  }, [chatTts]);
+
+  useEffect(() => {
+    if (!chatTts.isReadingAloud && readingMessageId) {
+      setReadingMessageId(null);
+    }
+  }, [chatTts.isReadingAloud, readingMessageId]);
+
   useEffect(() => {
     if (hasMessages) {
       setActiveVariables([]);
@@ -137,7 +181,7 @@ export function ChatPanel({
     (prompt: string) => {
       sendMessage(prompt);
     },
-    [sendMessage]
+    [sendMessage],
   );
 
   const handleSend = useCallback(
@@ -150,7 +194,7 @@ export function ChatPanel({
         variables: submittedVars,
       });
     },
-    [sendMessage, activeAgent, variableValues]
+    [sendMessage, activeAgent, variableValues],
   );
 
   const handleVariableChange = (name: string, value: string) => {
@@ -225,7 +269,14 @@ export function ChatPanel({
             toolCount={tools.length}
           />
         ) : (
-          <ChatMessages messages={messages} isStreaming={isStreaming} />
+          <ChatMessages
+            messages={messages}
+            isStreaming={isStreaming}
+            ttsReadAloudEnabled={ttsReadAloudEnabled}
+            readingMessageId={readingMessageId}
+            onReadAloud={handleReadAloud}
+            onStopReadAloud={handleStopReadAloud}
+          />
         )}
       </div>
 

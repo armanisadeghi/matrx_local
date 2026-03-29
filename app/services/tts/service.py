@@ -6,15 +6,20 @@ kokoro-onnx and soundfile are core dependencies — always installed.
 The service downloads the ONNX model + voice pack on first use, loads the
 Kokoro instance once, and reuses it for all subsequent synthesis calls.
 Synthesis runs in a thread-pool executor to avoid blocking the event loop.
+
+Streaming mode: splits text at sentence boundaries and yields WAV chunks
+as they're generated so the client can start playback almost immediately.
 """
 
 from __future__ import annotations
 
 import asyncio
 import io
+import re
 import struct
 import threading
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -376,6 +381,73 @@ class TtsService:
             except Exception as exc:
                 logger.error("[tts] Synthesis failed: %s", exc, exc_info=True)
                 return SynthesisResult(success=False, error=str(exc))
+
+    # ── Streaming synthesis ─────────────────────────────────────────────────
+
+    _SENTENCE_RE = re.compile(
+        r'(?<=[.!?;])\s+'          # split after . ! ? ;
+        r'|(?<=\n)\s*'             # or after newlines
+        r'|(?<=[:])(?=\s+[A-Z])'  # or after colon when followed by capital
+    )
+
+    @staticmethod
+    def _split_sentences(text: str, min_len: int = 20, max_len: int = 400) -> list[str]:
+        """Split text into sentence-ish chunks suitable for incremental TTS."""
+        raw_parts = TtsService._SENTENCE_RE.split(text)
+        chunks: list[str] = []
+        buf = ""
+        for part in raw_parts:
+            part = part.strip()
+            if not part:
+                continue
+            candidate = f"{buf} {part}".strip() if buf else part
+            if len(candidate) > max_len and buf:
+                chunks.append(buf)
+                buf = part
+            else:
+                buf = candidate
+            if len(buf) >= min_len and buf[-1] in ".!?;\n":
+                chunks.append(buf)
+                buf = ""
+        if buf.strip():
+            chunks.append(buf.strip())
+        return chunks
+
+    async def synthesize_stream(
+        self,
+        text: str,
+        voice_id: str = DEFAULT_VOICE_ID,
+        speed: float = 1.0,
+        lang: str | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Yield WAV chunks for each sentence.
+
+        Each chunk is a complete, playable WAV so the client can decode
+        and enqueue them independently for gapless playback.
+        """
+        load_result = await self.ensure_loaded()
+        if not load_result.get("success"):
+            return
+
+        voice_info = VOICE_MAP.get(voice_id)
+        resolved_lang = lang
+        if resolved_lang is None and voice_info:
+            lmeta = LANGUAGE_MAP.get(voice_info.lang_code)
+            resolved_lang = lmeta.espeak_fallback if lmeta else "en-us"
+        elif resolved_lang is None:
+            resolved_lang = "en-us"
+
+        chunks = self._split_sentences(text)
+        if not chunks:
+            return
+
+        loop = asyncio.get_running_loop()
+        for chunk_text in chunks:
+            result = await loop.run_in_executor(
+                None, self._synthesize_sync, chunk_text, voice_id, speed, resolved_lang,
+            )
+            if result.success and result.audio_bytes:
+                yield result.audio_bytes
 
     async def preview_voice(self, voice_id: str) -> SynthesisResult:
         """Generate a short preview clip for a voice."""

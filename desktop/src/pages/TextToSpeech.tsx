@@ -8,6 +8,7 @@ import type { TtsHistoryEntry } from "@/hooks/use-tts";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import { parseMarkdownToText } from "@/lib/parse-markdown-for-speech";
 import {
   AudioLines,
   Play,
@@ -25,6 +26,7 @@ import {
   ChevronDown,
   HardDrive,
   RefreshCw,
+  FileText,
 } from "lucide-react";
 import { loadSettings, saveSetting } from "@/lib/settings";
 
@@ -101,10 +103,16 @@ function SpeakTab({
   const needsDownload = state.status && !state.status.model_downloaded;
   const isReady = state.status?.model_downloaded ?? false;
   const canSpeak = isReady && text.trim().length > 0 && !state.isSynthesizing;
+  const useStreaming = text.length > 200;
 
   const handleSpeak = useCallback(() => {
-    if (canSpeak) actions.speak(text);
-  }, [canSpeak, text, actions]);
+    if (!canSpeak) return;
+    if (useStreaming) {
+      actions.speakStreaming(text);
+    } else {
+      actions.speak(text);
+    }
+  }, [canSpeak, text, actions, useStreaming]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -115,6 +123,11 @@ function SpeakTab({
     },
     [handleSpeak],
   );
+
+  const handleCleanMarkdown = useCallback(() => {
+    if (!text.trim()) return;
+    setText(parseMarkdownToText(text));
+  }, [text]);
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 p-6">
@@ -145,9 +158,22 @@ function SpeakTab({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="text-sm font-medium text-foreground">Text</label>
-          <span className="text-xs text-muted-foreground">
-            {text.length.toLocaleString()} characters
-          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-xs text-muted-foreground"
+              onClick={handleCleanMarkdown}
+              disabled={!text.trim()}
+              title="Clean markdown formatting for natural speech"
+            >
+              <FileText className="h-3 w-3" />
+              Clean Markdown
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {text.length.toLocaleString()} characters
+            </span>
+          </div>
         </div>
         <textarea
           ref={textRef}
@@ -210,7 +236,7 @@ function SpeakTab({
           ) : (
             <>
               <AudioLines className="h-4 w-4" />
-              Speak
+              {useStreaming ? "Stream" : "Speak"}
             </>
           )}
         </Button>
@@ -223,7 +249,6 @@ function SpeakTab({
             <audio
               src={state.currentAudioUrl}
               controls
-              autoPlay
               className="h-10 flex-1"
             />
             <div className="flex items-center gap-3 text-xs text-muted-foreground">

@@ -63,7 +63,7 @@ Never let a discovered issue go untracked. If we're in the middle of something e
 - Local Models tab + llama-server sidecar (binaries via `scripts/download-llama-server.sh`; bundle in release pipeline)
 - **Local LLM model catalog** — 22-tier system spanning Tiny→Server-grade; providers: Qwen, Llama, GPT-OSS, Gemma, DeepSeek, Mistral, Phi; multi-variant quant picker per model; server-grade collapsible section; uncensored model support; multi-category star ratings (Text/Code/Vision/Tools); knowledge cutoff column
 - **Image generation engine** — Optional `[image-gen]` extra (`uv sync --extra image-gen`). Routes at `/image-gen/*`. Models: FLUX.1 Schnell, FLUX.1 Dev, HunyuanDiT v1.2, SDXL Turbo. 6 workflow presets (Portrait, Product, Concept Art, UI Mockup, Logo, Landscape). Full generate UI with prompt/steps/guidance sliders, image output, download. Graceful 503 when deps absent.
-- **Text-to-Speech (Kokoro TTS)** — Core bundled feature (kokoro-onnx + soundfile are core dependencies). Routes at `/tts/*`. Kokoro-82M via ONNX Runtime (no PyTorch), 54 voices across 9 languages, 3-5x real-time on CPU, ~300 MB model auto-downloaded on first use. Full UI with voice selector, speed control, audio playback, voice preview, favorites. TTS state lives in `TtsContext` (singleton) — see React patterns section before touching this.
+- **Text-to-Speech (Kokoro TTS)** — Core bundled feature (kokoro-onnx + soundfile are core dependencies). Routes at `/tts/*`. Kokoro-82M via ONNX Runtime (no PyTorch), 54 voices across 9 languages, 3-5x real-time on CPU, ~300 MB model auto-downloaded on first use. Full UI with voice selector, speed control, audio playback, voice preview, favorites. **Streaming synthesis** (`/tts/synthesize-stream`) splits text at sentence boundaries and yields WAV chunks for near-instant playback start. **Chat read-aloud** — read-aloud button on every assistant message in Chat; `useChatTts` hook bridges LLM streaming to TTS with sentence-boundary buffering + `parseMarkdownToText()` for clean speech. TTS state lives in `TtsContext` (singleton) — see React patterns section before touching this.
 - Settings: hardware inventory tab, forbidden URL list (scraping), API Keys (incl. Hugging Face for GGUF + image-gen downloads)
 - Platform context: `use-engine.ts` calls `initPlatformCtx()` after `getPlatformContext()`
 - AiMatrx iframe tab with session handoff
@@ -188,6 +188,8 @@ pnpm tauri:dev
 | TTS context (singleton) | `desktop/src/contexts/TtsContext.tsx` |
 | TTS page | `desktop/src/pages/TextToSpeech.tsx` |
 | TTS models/voices | `~/.matrx/tts/` |
+| Chat TTS bridge hook | `desktop/src/hooks/use-chat-tts.ts` |
+| Markdown-to-speech parser | `desktop/src/lib/parse-markdown-for-speech.ts` |
 | Architecture docs | `ARCHITECTURE.md` |
 | Task tracker | `AGENT_TASKS.md` |
 | Backlog | `BACKLOG.md` |

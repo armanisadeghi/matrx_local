@@ -119,6 +119,80 @@ export async function previewVoice(
   return { blob, duration };
 }
 
+/**
+ * Stream synthesis — returns an async iterator of WAV Blobs, one per sentence.
+ * The server sends length-prefixed WAV chunks so playback can start after the
+ * first sentence is ready instead of waiting for the entire text.
+ */
+export async function synthesizeStream(
+  req: SynthesizeRequest,
+  signal?: AbortSignal,
+): AsyncGenerator<Blob> {
+  const base = engine.engineUrl;
+  if (!base) throw new Error("Engine not discovered");
+
+  const auth = await authHeaders();
+  const resp = await fetch(ttsUrl(base, "/synthesize-stream"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...auth },
+    body: JSON.stringify(req),
+    signal,
+  });
+
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => resp.statusText);
+    throw new Error(`TTS stream failed (${resp.status}): ${detail}`);
+  }
+
+  if (!resp.body) throw new Error("No response body for TTS stream");
+
+  return _readChunkedWav(resp.body, signal);
+}
+
+async function* _readChunkedWav(
+  body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): AsyncGenerator<Blob> {
+  const reader = body.getReader();
+  let buffer = new Uint8Array(0);
+
+  const concat = (a: Uint8Array, b: Uint8Array): Uint8Array => {
+    const result = new Uint8Array(a.length + b.length);
+    result.set(a, 0);
+    result.set(b, a.length);
+    return result;
+  };
+
+  try {
+    while (true) {
+      if (signal?.aborted) break;
+
+      while (buffer.length < 4) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        buffer = concat(buffer, value);
+      }
+
+      const view = new DataView(buffer.buffer, buffer.byteOffset, 4);
+      const wavLen = view.getUint32(0, false); // big-endian
+      buffer = buffer.slice(4);
+
+      while (buffer.length < wavLen) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        buffer = concat(buffer, value);
+      }
+
+      const wavData = buffer.slice(0, wavLen);
+      buffer = buffer.slice(wavLen);
+
+      yield new Blob([wavData], { type: "audio/wav" });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function unloadTts(): Promise<{ success: boolean }> {
   const base = engine.engineUrl;
   if (!base) throw new Error("Engine not discovered");

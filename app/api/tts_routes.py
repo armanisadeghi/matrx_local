@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.tts.service import get_tts_service
@@ -133,6 +135,47 @@ async def synthesize_json(req: SynthesizeRequest) -> SynthesizeResponse:
         elapsed_seconds=result.elapsed_seconds,
         sample_rate=result.sample_rate,
         error=result.error,
+    )
+
+
+@router.post("/synthesize-stream")
+async def synthesize_stream(req: SynthesizeRequest) -> StreamingResponse:
+    """Stream speech as a sequence of WAV chunks separated by a length-prefix.
+
+    Wire format: for each sentence chunk the server sends:
+      4 bytes (big-endian uint32) = length of the following WAV blob
+      N bytes = complete WAV file for that sentence
+
+    The client reads length + blob in a loop until the stream ends.
+    This allows playback to begin after the first sentence is synthesized
+    rather than waiting for the entire text.
+    """
+    import struct as _struct
+
+    svc = get_tts_service()
+
+    load_result = await svc.ensure_loaded()
+    if not load_result.get("success"):
+        raise HTTPException(status_code=500, detail=load_result.get("error", "Failed to load model"))
+
+    async def _generate() -> AsyncIterator[bytes]:
+        async for wav_bytes in svc.synthesize_stream(
+            text=req.text,
+            voice_id=req.voice_id,
+            speed=req.speed,
+            lang=req.lang,
+        ):
+            yield _struct.pack(">I", len(wav_bytes))
+            yield wav_bytes
+
+    return StreamingResponse(
+        _generate(),
+        media_type="application/octet-stream",
+        headers={
+            "X-TTS-Voice": req.voice_id,
+            "X-TTS-Format": "chunked-wav",
+            "Cache-Control": "no-cache",
+        },
     )
 
 

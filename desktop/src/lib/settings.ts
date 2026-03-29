@@ -46,10 +46,10 @@ export interface AppSettings {
   chatDefaultSystemPromptId: string; // "" = use builtin assistant
 
   // ── Local LLM inference ─────────────────────────────────────────────
-  llmDefaultModel: string;           // filename of preferred local model ("" = auto)
-  llmDefaultGpuLayers: number;       // -1 = auto-detect
+  llmDefaultModel: string; // filename of preferred local model ("" = auto)
+  llmDefaultGpuLayers: number; // -1 = auto-detect
   llmDefaultContextLength: number;
-  llmAutoStartServer: boolean;       // start llama-server on app launch
+  llmAutoStartServer: boolean; // start llama-server on app launch
   llmChatTemperature: number;
   llmChatTopP: number;
   llmChatTopK: number;
@@ -58,7 +58,7 @@ export interface AppSettings {
   llmReasoningTopP: number;
   llmReasoningTopK: number;
   llmReasoningMaxTokens: number;
-  llmEnableThinking: boolean;        // default thinking mode for reasoning
+  llmEnableThinking: boolean; // default thinking mode for reasoning
   llmToolCallTemperature: number;
   llmToolCallTopP: number;
   llmToolCallTopK: number;
@@ -66,16 +66,18 @@ export interface AppSettings {
   llmStreamMaxTokens: number;
 
   // ── Transcription / Voice ───────────────────────────────────────────
-  transcriptionDefaultModel: string;    // "" = auto (hardware-recommended)
-  transcriptionAutoInit: boolean;       // auto-initialize on app start
-  transcriptionAudioDevice: string;     // "" = system default
+  transcriptionDefaultModel: string; // "" = auto (hardware-recommended)
+  transcriptionAutoInit: boolean; // auto-initialize on app start
+  transcriptionAudioDevice: string; // "" = system default
   transcriptionProcessingTimeout: number; // ms before force-reset
 
   // ── Text to Speech ──────────────────────────────────────────────────
-  ttsDefaultVoice: string;          // voice_id, default "af_heart"
-  ttsDefaultSpeed: number;          // 0.25-4.0, default 1.0
-  ttsAutoDownloadModel: boolean;    // auto-download on first visit
-  ttsFavoriteVoices: string[];      // pinned voice IDs
+  ttsDefaultVoice: string; // voice_id, default "af_heart"
+  ttsDefaultSpeed: number; // 0.25-4.0, default 1.0
+  ttsAutoDownloadModel: boolean; // auto-download on first visit
+  ttsFavoriteVoices: string[]; // pinned voice IDs
+  ttsReadAloudEnabled: boolean; // show read-aloud button on chat messages
+  ttsReadAloudAutoPlay: boolean; // auto-play TTS for new assistant messages
 
   // ── UI / Layout ─────────────────────────────────────────────────────
   sidebarCollapsed: boolean;
@@ -153,6 +155,8 @@ const DEFAULTS: AppSettings = {
   ttsDefaultSpeed: 1.0,
   ttsAutoDownloadModel: false,
   ttsFavoriteVoices: [],
+  ttsReadAloudEnabled: true,
+  ttsReadAloudAutoPlay: false,
   // UI
   sidebarCollapsed: false,
 };
@@ -165,7 +169,7 @@ export async function loadSettings(): Promise<AppSettings> {
     }
   } catch (err) {
     console.error(
-      "[settings] localStorage key \"matrx-settings\" contains invalid JSON — resetting to defaults.",
+      '[settings] localStorage key "matrx-settings" contains invalid JSON — resetting to defaults.',
       err,
     );
   }
@@ -178,7 +182,7 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
 
 export async function saveSetting<K extends keyof AppSettings>(
   key: K,
-  value: AppSettings[K]
+  value: AppSettings[K],
 ): Promise<void> {
   const current = await loadSettings();
   current[key] = value;
@@ -197,9 +201,8 @@ async function syncSetting<K extends keyof AppSettings>(
     switch (key) {
       case "launchOnStartup":
         if (isTauri()) {
-          const { enable, disable } = await import(
-            "@tauri-apps/plugin-autostart"
-          );
+          const { enable, disable } =
+            await import("@tauri-apps/plugin-autostart");
           if (all.launchOnStartup) {
             await enable();
           } else {
@@ -272,16 +275,19 @@ export interface SyncResult {
  */
 export async function syncAllSettings(): Promise<SyncResult> {
   const settings = await loadSettings();
-  const result: SyncResult = { local: "ok", engine: "skipped", cloud: "skipped" };
+  const result: SyncResult = {
+    local: "ok",
+    engine: "skipped",
+    cloud: "skipped",
+  };
 
   // ── Tauri-side sync ─────────────────────────────────────────────────────
   await setCloseToTray(settings.minimizeToTray);
 
   if (isTauri()) {
     try {
-      const { enable, disable, isEnabled } = await import(
-        "@tauri-apps/plugin-autostart"
-      );
+      const { enable, disable, isEnabled } =
+        await import("@tauri-apps/plugin-autostart");
       const current = await isEnabled();
       if (settings.launchOnStartup && !current) await enable();
       if (!settings.launchOnStartup && current) await disable();
@@ -300,7 +306,9 @@ export async function syncAllSettings(): Promise<SyncResult> {
     const resp = await engine.updateCloudSettings(settingsToCloud(settings));
     result.engine = "ok";
     // The engine's push_result tells us if Supabase was updated
-    const pushResult = (resp as { push_result?: { status?: string; reason?: string } }).push_result;
+    const pushResult = (
+      resp as { push_result?: { status?: string; reason?: string } }
+    ).push_result;
     if (!pushResult) {
       result.cloud = "skipped"; // engine not configured for cloud yet
     } else if (pushResult.status === "pushed" || pushResult.status === "ok") {
@@ -361,13 +369,25 @@ export async function hydrateFromEngine(): Promise<AppSettings> {
 }
 
 /** Helper: pick a cloud value or fall back to local. */
-function cloudBool(cloud: Record<string, unknown>, key: string, fallback: boolean): boolean {
+function cloudBool(
+  cloud: Record<string, unknown>,
+  key: string,
+  fallback: boolean,
+): boolean {
   return cloud[key] !== undefined ? Boolean(cloud[key]) : fallback;
 }
-function cloudNum(cloud: Record<string, unknown>, key: string, fallback: number): number {
+function cloudNum(
+  cloud: Record<string, unknown>,
+  key: string,
+  fallback: number,
+): number {
   return cloud[key] !== undefined ? Number(cloud[key]) : fallback;
 }
-function cloudStr(cloud: Record<string, unknown>, key: string, fallback: string): string {
+function cloudStr(
+  cloud: Record<string, unknown>,
+  key: string,
+  fallback: string,
+): string {
   return cloud[key] !== undefined ? String(cloud[key]) : fallback;
 }
 
@@ -382,22 +402,42 @@ export function mergeCloudSettings(
   return {
     ...local,
     // Application
-    launchOnStartup: cloudBool(cloud, "launch_on_startup", local.launchOnStartup),
+    launchOnStartup: cloudBool(
+      cloud,
+      "launch_on_startup",
+      local.launchOnStartup,
+    ),
     minimizeToTray: cloudBool(cloud, "minimize_to_tray", local.minimizeToTray),
     theme: (cloud.theme as AppSettings["theme"]) || local.theme,
     // Updates
-    autoCheckUpdates: cloudBool(cloud, "auto_check_updates", local.autoCheckUpdates),
-    updateCheckInterval: cloud.update_check_interval !== undefined ? Math.max(60, Number(cloud.update_check_interval)) : local.updateCheckInterval,
+    autoCheckUpdates: cloudBool(
+      cloud,
+      "auto_check_updates",
+      local.autoCheckUpdates,
+    ),
+    updateCheckInterval:
+      cloud.update_check_interval !== undefined
+        ? Math.max(60, Number(cloud.update_check_interval))
+        : local.updateCheckInterval,
     // Scraping
-    headlessScraping: cloudBool(cloud, "headless_scraping", local.headlessScraping),
+    headlessScraping: cloudBool(
+      cloud,
+      "headless_scraping",
+      local.headlessScraping,
+    ),
     // Normalize scrape_delay to always have one decimal place (e.g. 1 → "1.0", 0.5 → "0.5")
     // so the preset dropdown correctly matches stored strings like "1.0", "0.5", etc.
-    scrapeDelay: cloud.scrape_delay !== undefined
-      ? (() => {
-          const n = Number(cloud.scrape_delay);
-          return isNaN(n) ? local.scrapeDelay : (Number.isInteger(n) ? `${n}.0` : String(n));
-        })()
-      : local.scrapeDelay,
+    scrapeDelay:
+      cloud.scrape_delay !== undefined
+        ? (() => {
+            const n = Number(cloud.scrape_delay);
+            return isNaN(n)
+              ? local.scrapeDelay
+              : Number.isInteger(n)
+                ? `${n}.0`
+                : String(n);
+          })()
+        : local.scrapeDelay,
     // Proxy
     proxyEnabled: cloudBool(cloud, "proxy_enabled", local.proxyEnabled),
     proxyPort: cloudNum(cloud, "proxy_port", local.proxyPort),
@@ -406,58 +446,200 @@ export function mergeCloudSettings(
     // Instance
     instanceName: cloudStr(cloud, "instance_name", local.instanceName),
     // Notifications
-    notificationSound: cloudBool(cloud, "notification_sound", local.notificationSound),
-    notificationSoundStyle: (cloud.notification_sound_style as AppSettings["notificationSoundStyle"]) || local.notificationSoundStyle,
+    notificationSound: cloudBool(
+      cloud,
+      "notification_sound",
+      local.notificationSound,
+    ),
+    notificationSoundStyle:
+      (cloud.notification_sound_style as AppSettings["notificationSoundStyle"]) ||
+      local.notificationSoundStyle,
     // Wake word
-    wakeWordEnabled: cloudBool(cloud, "wake_word_enabled", local.wakeWordEnabled),
-    wakeWordListenOnStartup: cloudBool(cloud, "wake_word_listen_on_startup", local.wakeWordListenOnStartup),
-    wakeWordEngine: (cloud.wake_word_engine as AppSettings["wakeWordEngine"]) || local.wakeWordEngine,
-    wakeWordOwwModel: cloudStr(cloud, "wake_word_oww_model", local.wakeWordOwwModel),
-    wakeWordOwwThreshold: cloudNum(cloud, "wake_word_oww_threshold", local.wakeWordOwwThreshold),
-    wakeWordCustomKeyword: cloudStr(cloud, "wake_word_custom_keyword", local.wakeWordCustomKeyword),
+    wakeWordEnabled: cloudBool(
+      cloud,
+      "wake_word_enabled",
+      local.wakeWordEnabled,
+    ),
+    wakeWordListenOnStartup: cloudBool(
+      cloud,
+      "wake_word_listen_on_startup",
+      local.wakeWordListenOnStartup,
+    ),
+    wakeWordEngine:
+      (cloud.wake_word_engine as AppSettings["wakeWordEngine"]) ||
+      local.wakeWordEngine,
+    wakeWordOwwModel: cloudStr(
+      cloud,
+      "wake_word_oww_model",
+      local.wakeWordOwwModel,
+    ),
+    wakeWordOwwThreshold: cloudNum(
+      cloud,
+      "wake_word_oww_threshold",
+      local.wakeWordOwwThreshold,
+    ),
+    wakeWordCustomKeyword: cloudStr(
+      cloud,
+      "wake_word_custom_keyword",
+      local.wakeWordCustomKeyword,
+    ),
     // Chat & AI
-    chatDefaultModel: cloudStr(cloud, "chat_default_model", local.chatDefaultModel),
-    chatDefaultMode: (cloud.chat_default_mode as AppSettings["chatDefaultMode"]) || local.chatDefaultMode,
-    chatMaxConversations: cloudNum(cloud, "chat_max_conversations", local.chatMaxConversations),
-    chatDefaultSystemPromptId: cloudStr(cloud, "chat_default_system_prompt_id", local.chatDefaultSystemPromptId),
+    chatDefaultModel: cloudStr(
+      cloud,
+      "chat_default_model",
+      local.chatDefaultModel,
+    ),
+    chatDefaultMode:
+      (cloud.chat_default_mode as AppSettings["chatDefaultMode"]) ||
+      local.chatDefaultMode,
+    chatMaxConversations: cloudNum(
+      cloud,
+      "chat_max_conversations",
+      local.chatMaxConversations,
+    ),
+    chatDefaultSystemPromptId: cloudStr(
+      cloud,
+      "chat_default_system_prompt_id",
+      local.chatDefaultSystemPromptId,
+    ),
     // Local LLM
-    llmDefaultModel: cloudStr(cloud, "llm_default_model", local.llmDefaultModel),
-    llmDefaultGpuLayers: cloudNum(cloud, "llm_default_gpu_layers", local.llmDefaultGpuLayers),
-    llmDefaultContextLength: cloudNum(cloud, "llm_default_context_length", local.llmDefaultContextLength),
-    llmAutoStartServer: cloudBool(cloud, "llm_auto_start_server", local.llmAutoStartServer),
-    llmChatTemperature: cloudNum(cloud, "llm_chat_temperature", local.llmChatTemperature),
+    llmDefaultModel: cloudStr(
+      cloud,
+      "llm_default_model",
+      local.llmDefaultModel,
+    ),
+    llmDefaultGpuLayers: cloudNum(
+      cloud,
+      "llm_default_gpu_layers",
+      local.llmDefaultGpuLayers,
+    ),
+    llmDefaultContextLength: cloudNum(
+      cloud,
+      "llm_default_context_length",
+      local.llmDefaultContextLength,
+    ),
+    llmAutoStartServer: cloudBool(
+      cloud,
+      "llm_auto_start_server",
+      local.llmAutoStartServer,
+    ),
+    llmChatTemperature: cloudNum(
+      cloud,
+      "llm_chat_temperature",
+      local.llmChatTemperature,
+    ),
     llmChatTopP: cloudNum(cloud, "llm_chat_top_p", local.llmChatTopP),
     llmChatTopK: cloudNum(cloud, "llm_chat_top_k", local.llmChatTopK),
-    llmChatMaxTokens: cloudNum(cloud, "llm_chat_max_tokens", local.llmChatMaxTokens),
-    llmReasoningTemperature: cloudNum(cloud, "llm_reasoning_temperature", local.llmReasoningTemperature),
-    llmReasoningTopP: cloudNum(cloud, "llm_reasoning_top_p", local.llmReasoningTopP),
-    llmReasoningTopK: cloudNum(cloud, "llm_reasoning_top_k", local.llmReasoningTopK),
-    llmReasoningMaxTokens: cloudNum(cloud, "llm_reasoning_max_tokens", local.llmReasoningMaxTokens),
-    llmEnableThinking: cloudBool(cloud, "llm_enable_thinking", local.llmEnableThinking),
-    llmToolCallTemperature: cloudNum(cloud, "llm_tool_call_temperature", local.llmToolCallTemperature),
-    llmToolCallTopP: cloudNum(cloud, "llm_tool_call_top_p", local.llmToolCallTopP),
-    llmToolCallTopK: cloudNum(cloud, "llm_tool_call_top_k", local.llmToolCallTopK),
-    llmStructuredOutputTemperature: cloudNum(cloud, "llm_structured_output_temperature", local.llmStructuredOutputTemperature),
-    llmStreamMaxTokens: cloudNum(cloud, "llm_stream_max_tokens", local.llmStreamMaxTokens),
+    llmChatMaxTokens: cloudNum(
+      cloud,
+      "llm_chat_max_tokens",
+      local.llmChatMaxTokens,
+    ),
+    llmReasoningTemperature: cloudNum(
+      cloud,
+      "llm_reasoning_temperature",
+      local.llmReasoningTemperature,
+    ),
+    llmReasoningTopP: cloudNum(
+      cloud,
+      "llm_reasoning_top_p",
+      local.llmReasoningTopP,
+    ),
+    llmReasoningTopK: cloudNum(
+      cloud,
+      "llm_reasoning_top_k",
+      local.llmReasoningTopK,
+    ),
+    llmReasoningMaxTokens: cloudNum(
+      cloud,
+      "llm_reasoning_max_tokens",
+      local.llmReasoningMaxTokens,
+    ),
+    llmEnableThinking: cloudBool(
+      cloud,
+      "llm_enable_thinking",
+      local.llmEnableThinking,
+    ),
+    llmToolCallTemperature: cloudNum(
+      cloud,
+      "llm_tool_call_temperature",
+      local.llmToolCallTemperature,
+    ),
+    llmToolCallTopP: cloudNum(
+      cloud,
+      "llm_tool_call_top_p",
+      local.llmToolCallTopP,
+    ),
+    llmToolCallTopK: cloudNum(
+      cloud,
+      "llm_tool_call_top_k",
+      local.llmToolCallTopK,
+    ),
+    llmStructuredOutputTemperature: cloudNum(
+      cloud,
+      "llm_structured_output_temperature",
+      local.llmStructuredOutputTemperature,
+    ),
+    llmStreamMaxTokens: cloudNum(
+      cloud,
+      "llm_stream_max_tokens",
+      local.llmStreamMaxTokens,
+    ),
     // Transcription
-    transcriptionDefaultModel: cloudStr(cloud, "transcription_default_model", local.transcriptionDefaultModel),
-    transcriptionAutoInit: cloudBool(cloud, "transcription_auto_init", local.transcriptionAutoInit),
-    transcriptionAudioDevice: cloudStr(cloud, "transcription_audio_device", local.transcriptionAudioDevice),
-    transcriptionProcessingTimeout: cloudNum(cloud, "transcription_processing_timeout", local.transcriptionProcessingTimeout),
+    transcriptionDefaultModel: cloudStr(
+      cloud,
+      "transcription_default_model",
+      local.transcriptionDefaultModel,
+    ),
+    transcriptionAutoInit: cloudBool(
+      cloud,
+      "transcription_auto_init",
+      local.transcriptionAutoInit,
+    ),
+    transcriptionAudioDevice: cloudStr(
+      cloud,
+      "transcription_audio_device",
+      local.transcriptionAudioDevice,
+    ),
+    transcriptionProcessingTimeout: cloudNum(
+      cloud,
+      "transcription_processing_timeout",
+      local.transcriptionProcessingTimeout,
+    ),
     // Text to Speech
-    ttsDefaultVoice: cloudStr(cloud, "tts_default_voice", local.ttsDefaultVoice),
-    ttsDefaultSpeed: cloudNum(cloud, "tts_default_speed", local.ttsDefaultSpeed),
-    ttsAutoDownloadModel: cloudBool(cloud, "tts_auto_download_model", local.ttsAutoDownloadModel),
-    ttsFavoriteVoices: Array.isArray(cloud.tts_favorite_voices) ? cloud.tts_favorite_voices as string[] : local.ttsFavoriteVoices,
+    ttsDefaultVoice: cloudStr(
+      cloud,
+      "tts_default_voice",
+      local.ttsDefaultVoice,
+    ),
+    ttsDefaultSpeed: cloudNum(
+      cloud,
+      "tts_default_speed",
+      local.ttsDefaultSpeed,
+    ),
+    ttsAutoDownloadModel: cloudBool(
+      cloud,
+      "tts_auto_download_model",
+      local.ttsAutoDownloadModel,
+    ),
+    ttsFavoriteVoices: Array.isArray(cloud.tts_favorite_voices)
+      ? (cloud.tts_favorite_voices as string[])
+      : local.ttsFavoriteVoices,
     // UI
-    sidebarCollapsed: cloudBool(cloud, "sidebar_collapsed", local.sidebarCollapsed),
+    sidebarCollapsed: cloudBool(
+      cloud,
+      "sidebar_collapsed",
+      local.sidebarCollapsed,
+    ),
   };
 }
 
 /**
  * Convert local camelCase settings to cloud snake_case format.
  */
-export function settingsToCloud(settings: AppSettings): Record<string, unknown> {
+export function settingsToCloud(
+  settings: AppSettings,
+): Record<string, unknown> {
   return {
     // Application
     launch_on_startup: settings.launchOnStartup,
