@@ -147,38 +147,53 @@ export async function* synthesizeStream(
   if (!resp.body) throw new Error("No response body for TTS stream");
 
   const reader = resp.body.getReader();
-  let buffer = new Uint8Array(0);
+  let buffer: ArrayBuffer = new ArrayBuffer(0);
+  let bufLen = 0;
 
-  const concat = (a: Uint8Array, b: Uint8Array): Uint8Array => {
-    const out = new Uint8Array(a.length + b.length);
-    out.set(a, 0);
-    out.set(b, a.length);
-    return out;
-  };
+  function append(chunk: Uint8Array) {
+    const next = new Uint8Array(bufLen + chunk.length);
+    next.set(new Uint8Array(buffer, 0, bufLen), 0);
+    next.set(chunk, bufLen);
+    buffer = next.buffer as ArrayBuffer;
+    bufLen += chunk.length;
+  }
+
+  function consume(n: number): Uint8Array {
+    const out = new Uint8Array(buffer, 0, n);
+    const copy = new Uint8Array(n);
+    copy.set(out);
+    const remaining = bufLen - n;
+    if (remaining > 0) {
+      const rest = new Uint8Array(remaining);
+      rest.set(new Uint8Array(buffer, n, remaining));
+      buffer = rest.buffer as ArrayBuffer;
+    } else {
+      buffer = new ArrayBuffer(0);
+    }
+    bufLen = remaining;
+    return copy;
+  }
 
   try {
     while (true) {
       if (signal?.aborted) break;
 
-      while (buffer.length < 4) {
+      while (bufLen < 4) {
         const { done, value } = await reader.read();
         if (done) return;
-        if (value) buffer = concat(buffer, new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+        if (value) append(value);
       }
 
-      const view = new DataView(buffer.buffer, buffer.byteOffset, 4);
-      const wavLen = view.getUint32(0, false);
-      buffer = buffer.slice(4);
+      const hdr = consume(4);
+      const wavLen = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
 
-      while (buffer.length < wavLen) {
+      while (bufLen < wavLen) {
         const { done, value } = await reader.read();
         if (done) return;
-        if (value) buffer = concat(buffer, new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+        if (value) append(value);
       }
 
-      const wavData = buffer.slice(0, wavLen);
-      buffer = buffer.slice(wavLen);
-
+      const wavData = consume(wavLen);
       yield new Blob([wavData], { type: "audio/wav" });
     }
   } finally {
