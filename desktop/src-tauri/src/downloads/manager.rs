@@ -714,7 +714,23 @@ impl DownloadManager {
         for row in rows {
             let id = row.id.clone();
 
-            // Reset to queued
+            // LLM and Whisper downloads use `register_external` — their actual
+            // HTTP + file-writing logic lives in the Tauri commands
+            // (`download_llm_model`, `download_whisper_model`), not in this
+            // generic worker. The worker's `run_download` has no file output path
+            // and would silently fail to write anything to disk.
+            // Mark them as failed so the UI re-offers the download on next launch
+            // instead of spinning forever in a "queued" state.
+            if row.category == "llm" || row.category == "whisper" {
+                eprintln!(
+                    "[downloads] resume_incomplete: skipping '{}' (category='{}') — handled by dedicated command, not the generic worker. Marking as failed so UI re-offers the download.",
+                    row.filename, row.category
+                );
+                let _ = db_update_status(&self.db_path, &id, "failed", Some("Interrupted: app was closed mid-download. Please re-download."));
+                continue;
+            }
+
+            // Reset to queued for generic (Python-side) downloads
             let mut entry = row;
             entry.status = DownloadStatus::Queued;
             entry.bytes_done = 0;

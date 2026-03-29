@@ -49,11 +49,13 @@ export function NoteEditor({
   const [label, setLabel] = useState(note.label);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevNoteIdRef = useRef(note.id);
+  const labelDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Inline dictation state
   const [showDictation, setShowDictation] = useState(false);
   const [dictationText, setDictationText] = useState("");
-  const { state: transcriptionState, actions: transcriptionActions } = useTranscriptionApp();
+  const { state: transcriptionState, actions: transcriptionActions } =
+    useTranscriptionApp();
   const { check, request } = usePermissionsContext();
   const prevSegmentCountRef = useRef(0);
 
@@ -61,9 +63,14 @@ export function NoteEditor({
   useEffect(() => {
     if (!showDictation) return;
     if (transcriptionState.segments.length > prevSegmentCountRef.current) {
-      const newSegs = transcriptionState.segments.slice(prevSegmentCountRef.current);
+      const newSegs = transcriptionState.segments.slice(
+        prevSegmentCountRef.current,
+      );
       prevSegmentCountRef.current = transcriptionState.segments.length;
-      const newText = newSegs.map((s) => s.text).filter((t) => t.length > 0).join(" ");
+      const newText = newSegs
+        .map((s) => s.text)
+        .filter((t) => t.length > 0)
+        .join(" ");
       if (newText) {
         setDictationText((prev) => (prev ? prev + " " + newText : newText));
       }
@@ -127,9 +134,15 @@ export function NoteEditor({
     prevSegmentCountRef.current = 0;
   }, [transcriptionState.isRecording, transcriptionActions]);
 
-  // Sync state when note changes
+  // Sync state when the active note switches.
   useEffect(() => {
     if (note.id !== prevNoteIdRef.current) {
+      // Cancel any pending label debounce from the previous note before
+      // switching — we don't want a stale rename firing on the new note.
+      if (labelDebounceRef.current) {
+        clearTimeout(labelDebounceRef.current);
+        labelDebounceRef.current = null;
+      }
       setContent(note.content ?? "");
       setLabel(note.label);
       prevNoteIdRef.current = note.id;
@@ -144,13 +157,31 @@ export function NoteEditor({
     [onChange],
   );
 
+  // Debounced label change — updates local display immediately, but only
+  // propagates to the parent (and therefore to the API) after the user
+  // pauses for 600 ms. This prevents one HTTP PUT per keystroke (the
+  // 21-copies bug) while keeping the title field responsive.
   const handleLabelChange = useCallback(
     (value: string) => {
       setLabel(value);
-      onLabelChange(value);
+      if (labelDebounceRef.current) clearTimeout(labelDebounceRef.current);
+      labelDebounceRef.current = setTimeout(() => {
+        labelDebounceRef.current = null;
+        onLabelChange(value);
+      }, 600);
     },
     [onLabelChange],
   );
+
+  // Fire the rename immediately when the user leaves the title field so
+  // they don't have to wait for the debounce to settle.
+  const handleLabelBlur = useCallback(() => {
+    if (labelDebounceRef.current) {
+      clearTimeout(labelDebounceRef.current);
+      labelDebounceRef.current = null;
+      onLabelChange(label);
+    }
+  }, [label, onLabelChange]);
 
   // Toolbar insert helpers
   const insertMarkdown = useCallback(
@@ -182,21 +213,65 @@ export function NoteEditor({
   );
 
   const toolbarButtons = [
-    { icon: Bold, action: () => insertMarkdown("**", "**", "bold"), title: "Bold" },
-    { icon: Italic, action: () => insertMarkdown("*", "*", "italic"), title: "Italic" },
-    { icon: Code, action: () => insertMarkdown("`", "`", "code"), title: "Inline Code" },
+    {
+      icon: Bold,
+      action: () => insertMarkdown("**", "**", "bold"),
+      title: "Bold",
+    },
+    {
+      icon: Italic,
+      action: () => insertMarkdown("*", "*", "italic"),
+      title: "Italic",
+    },
+    {
+      icon: Code,
+      action: () => insertMarkdown("`", "`", "code"),
+      title: "Inline Code",
+    },
     { type: "separator" as const },
-    { icon: Heading1, action: () => insertMarkdown("# ", "", "Heading"), title: "H1" },
-    { icon: Heading2, action: () => insertMarkdown("## ", "", "Heading"), title: "H2" },
-    { icon: Heading3, action: () => insertMarkdown("### ", "", "Heading"), title: "H3" },
+    {
+      icon: Heading1,
+      action: () => insertMarkdown("# ", "", "Heading"),
+      title: "H1",
+    },
+    {
+      icon: Heading2,
+      action: () => insertMarkdown("## ", "", "Heading"),
+      title: "H2",
+    },
+    {
+      icon: Heading3,
+      action: () => insertMarkdown("### ", "", "Heading"),
+      title: "H3",
+    },
     { type: "separator" as const },
-    { icon: List, action: () => insertMarkdown("- ", "", "item"), title: "Bullet List" },
-    { icon: ListOrdered, action: () => insertMarkdown("1. ", "", "item"), title: "Numbered List" },
-    { icon: Quote, action: () => insertMarkdown("> ", "", "quote"), title: "Quote" },
+    {
+      icon: List,
+      action: () => insertMarkdown("- ", "", "item"),
+      title: "Bullet List",
+    },
+    {
+      icon: ListOrdered,
+      action: () => insertMarkdown("1. ", "", "item"),
+      title: "Numbered List",
+    },
+    {
+      icon: Quote,
+      action: () => insertMarkdown("> ", "", "quote"),
+      title: "Quote",
+    },
     { icon: Minus, action: () => insertMarkdown("\n---\n"), title: "Divider" },
     { type: "separator" as const },
-    { icon: Link, action: () => insertMarkdown("[", "](url)", "text"), title: "Link" },
-    { icon: ImageIcon, action: () => insertMarkdown("![", "](url)", "alt"), title: "Image" },
+    {
+      icon: Link,
+      action: () => insertMarkdown("[", "](url)", "text"),
+      title: "Link",
+    },
+    {
+      icon: ImageIcon,
+      action: () => insertMarkdown("![", "](url)", "alt"),
+      title: "Image",
+    },
     {
       icon: Code,
       action: () => insertMarkdown("\n```\n", "\n```\n", "code"),
@@ -211,6 +286,7 @@ export function NoteEditor({
         <input
           value={label}
           onChange={(e) => handleLabelChange(e.target.value)}
+          onBlur={handleLabelBlur}
           className="flex-1 bg-transparent text-lg font-semibold outline-none"
           placeholder="Note title..."
         />
@@ -291,7 +367,7 @@ export function NoteEditor({
                   "rounded p-1.5 transition-colors",
                   showDictation
                     ? "text-red-500 bg-red-500/10"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent",
                 )}
               >
                 <Mic className="h-3.5 w-3.5" />
@@ -309,25 +385,34 @@ export function NoteEditor({
               isRecording={transcriptionState.isRecording}
               isProcessingTail={transcriptionState.isProcessingTail}
               liveRms={transcriptionState.liveRms}
-              onToggle={transcriptionState.isRecording ? handleStopDictation : handleStartDictation}
+              onToggle={
+                transcriptionState.isRecording
+                  ? handleStopDictation
+                  : handleStartDictation
+              }
               disabled={!transcriptionState.activeModel}
               size="xs"
             />
 
             {transcriptionState.isRecording && (
               <div className="flex-1">
-                <RmsLevelBar liveRms={transcriptionState.liveRms} height="sm" showDot />
+                <RmsLevelBar
+                  liveRms={transcriptionState.liveRms}
+                  height="sm"
+                  showDot
+                />
               </div>
             )}
-            {!transcriptionState.isRecording && !transcriptionState.isProcessingTail && (
-              <span className="text-xs text-muted-foreground flex-1">
-                {transcriptionState.activeModel
-                  ? dictationText
-                    ? "Click the mic to keep recording, or insert below"
-                    : "Click the mic to start dictating"
-                  : "Voice model not loaded. Go to Voice → Setup first."}
-              </span>
-            )}
+            {!transcriptionState.isRecording &&
+              !transcriptionState.isProcessingTail && (
+                <span className="text-xs text-muted-foreground flex-1">
+                  {transcriptionState.activeModel
+                    ? dictationText
+                      ? "Click the mic to keep recording, or insert below"
+                      : "Click the mic to start dictating"
+                    : "Voice model not loaded. Go to Voice → Setup first."}
+                </span>
+              )}
             {transcriptionState.isProcessingTail && (
               <span className="text-xs text-amber-500 flex-1">Finishing…</span>
             )}
@@ -353,7 +438,9 @@ export function NoteEditor({
           {/* Dictation text preview */}
           {dictationText && (
             <div className="rounded-md border bg-background/60 px-3 py-2">
-              <p className="text-sm leading-relaxed text-foreground/90">{dictationText}</p>
+              <p className="text-sm leading-relaxed text-foreground/90">
+                {dictationText}
+              </p>
             </div>
           )}
         </div>

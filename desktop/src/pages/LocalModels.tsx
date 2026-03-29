@@ -1395,11 +1395,29 @@ function ModelRow({
   const effectiveDownloaded = downloadedModels.some(
     (m) => m.filename === effectiveFilename,
   );
+
+  // All filenames that belong to this model (default + all variants).
+  // Used to detect when any variant of this model is currently downloading or
+  // queued so the UI shows the correct button state regardless of which variant
+  // tab the user has currently selected.
+  const allModelFilenames = hasVariants
+    ? model.variants.map((v) => v.filename)
+    : [model.filename];
+
+  // True when the SELECTED variant is actively downloading (shows cancel button).
   const effectiveDownloadingThis =
     isDownloading && downloadingFilename === effectiveFilename;
+
+  // True when ANY variant of this model is actively downloading — used to show
+  // a spinner on the row even if the user has switched to viewing another variant.
+  const anyVariantDownloading =
+    isDownloading &&
+    !!downloadingFilename &&
+    allModelFilenames.includes(downloadingFilename);
+
   const effectiveQueued =
-    !effectiveDownloadingThis &&
-    downloadQueue.some((e) => e.filename === effectiveFilename);
+    !anyVariantDownloading &&
+    downloadQueue.some((e) => allModelFilenames.includes(e.filename));
 
   // Row background: running > alternating stripes
   const stripeBg = rowIndex % 2 === 0 ? "" : "bg-muted/20";
@@ -1513,6 +1531,7 @@ function ModelRow({
 
           {/* Download button — 5-state machine: idle | error | downloading | queued | done */}
           {effectiveDownloadingThis ? (
+            // This exact variant is downloading — show cancel X
             <Button
               size="sm"
               variant="ghost"
@@ -1522,6 +1541,14 @@ function ModelRow({
             >
               <X className="h-3.5 w-3.5" />
             </Button>
+          ) : anyVariantDownloading ? (
+            // A different variant of this model is downloading — show spinner (no cancel, switch variant tab to cancel)
+            <span
+              className="h-7 w-7 flex items-center justify-center"
+              title={`Downloading ${downloadingFilename} — switch to that variant to cancel`}
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+            </span>
           ) : effectiveQueued ? (
             <span
               className="h-7 w-7 flex items-center justify-center"
@@ -1630,11 +1657,20 @@ function ModelRow({
         </div>
       </div>
 
-      {/* Download progress */}
-      {effectiveDownloadingThis && (
+      {/* Download progress — show for the active variant or any variant of this model */}
+      {anyVariantDownloading && (
         <div className="px-4 pb-2 flex items-center gap-3">
           {downloadProgress ? (
             <>
+              {anyVariantDownloading &&
+                !effectiveDownloadingThis &&
+                downloadProgress.filename && (
+                  <span className="text-xs text-amber-400/80 tabular-nums shrink-0">
+                    {downloadProgress.filename
+                      .replace(/\.gguf$/, "")
+                      .slice(-20)}
+                  </span>
+                )}
               <Progress
                 value={downloadProgress.percent}
                 className="h-1.5 flex-1"

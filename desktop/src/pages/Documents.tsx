@@ -115,7 +115,10 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
     (label: string) => {
       const activeId = activeNoteIdRef.current;
       if (activeId) {
-        updateNote(activeId, { label }, true);
+        // NoteEditor already debounces label changes internally; pass through
+        // without the immediate flag so the rename goes through the same
+        // debounce path as content edits (and is protected by flush-on-unmount).
+        updateNote(activeId, { label });
       }
     },
     [updateNote],

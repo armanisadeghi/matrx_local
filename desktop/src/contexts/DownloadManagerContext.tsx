@@ -73,6 +73,9 @@ function mergeEntry(
   next.set(incoming.id, {
     ...existing,
     ...incoming,
+    // Preserve created_at from the existing entry — progress events don't include it
+    created_at:
+      incoming.created_at ?? existing?.created_at ?? new Date().toISOString(),
     // Keep richer speed/eta from the last progress event
     speed_bps: incoming.speed_bps ?? existing?.speed_bps ?? 0,
     eta_seconds:
@@ -103,7 +106,7 @@ function sortedEntries(map: Map<string, DownloadEntry>): DownloadEntry[] {
   return Array.from(map.values()).sort(
     (a, b) =>
       rank(a.status) - rank(b.status) ||
-      a.created_at.localeCompare(b.created_at),
+      (a.created_at ?? "").localeCompare(b.created_at ?? ""),
   );
 }
 

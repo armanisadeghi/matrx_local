@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
+import { emitClientLog } from "@/hooks/use-unified-log";
 
 interface Props {
   children: ReactNode;
@@ -19,6 +20,12 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("ErrorBoundary caught:", error, info.componentStack);
+    const stack = info.componentStack?.trim().split("\n")[0] ?? "";
+    emitClientLog(
+      "error",
+      `React render crash: ${error.message}${stack ? ` — ${stack.trim()}` : ""}`,
+      "client",
+    );
   }
 
   handleReset = () => {

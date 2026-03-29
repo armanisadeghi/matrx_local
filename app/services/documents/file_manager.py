@@ -203,12 +203,35 @@ class DocumentFileManager:
         return False
 
     def rename_note(self, old_file_path: str, new_folder: str, new_label: str) -> str:
-        """Move/rename a note file. Returns the new relative file_path."""
+        """Move/rename a note file atomically. Returns the new relative file_path.
+
+        If the desired target path already exists (and is a *different* file than
+        the source), a numeric suffix is appended to avoid silently overwriting
+        another note.
+        """
         old_target = self.note_path_from_file_path(old_file_path)
         new_target = self.note_path(new_folder, new_label)
         new_target.parent.mkdir(parents=True, exist_ok=True)
-        if old_target.is_file():
-            old_target.rename(new_target)
+
+        if not old_target.is_file():
+            # Source is gone — just return the intended target path.
+            return self.relative_path(new_target)
+
+        # If target exists and is a different file, find a non-colliding name.
+        if new_target.exists() and not old_target.samefile(new_target):
+            safe_label = _safe_filename(new_label)
+            folder_dir = self.folder_path(new_folder)
+            for n in range(2, 100):
+                candidate = folder_dir / f"{safe_label}_{n}.md"
+                if not candidate.exists():
+                    new_target = candidate
+                    break
+            else:
+                from datetime import datetime, timezone as _tz
+                ts = datetime.now(_tz.utc).strftime("%Y%m%d_%H%M%S")
+                new_target = folder_dir / f"{safe_label}_{ts}.md"
+
+        os.replace(old_target, new_target)
         return self.relative_path(new_target)
 
     def note_hash(self, file_path: str) -> str | None:

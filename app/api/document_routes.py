@@ -27,7 +27,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from app.services.documents.file_manager import file_manager, content_hash
+from app.services.documents.file_manager import file_manager, content_hash, _safe_filename
 from app.services.documents.supabase_client import supabase_docs
 from app.services.documents.sync_engine import sync_engine
 from app.services.local_db.repositories import NotesRepo, NoteVersionsRepo
@@ -201,7 +201,40 @@ def _folder_id_for_name(name: str) -> str:
 
 
 def _note_id_for_path(file_path: str) -> str:
+    """Legacy: derive a deterministic UUID5 from a file path.
+
+    Only used as a fallback to look up pre-existing notes that were created
+    before the UUID4 migration. New notes always get a random UUID4 stored in
+    SQLite, so their ID never changes when the file is renamed.
+    """
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"matrx-note:{file_path}"))
+
+
+def _unique_file_path(folder_name: str, label: str) -> str:
+    """Return a relative file_path that does not yet exist on disk.
+
+    If ``folder/label.md`` is taken, appends _2, _3 … _99, then falls back to
+    a short UTC timestamp suffix to guarantee uniqueness.
+
+    Returns the *relative* path string (e.g. ``"General/My_Note.md"``).
+    """
+    base_path = file_manager.note_path(folder_name, label)
+    if not base_path.exists():
+        return file_manager.relative_path(base_path)
+
+    safe_label = _safe_filename(label)
+    folder_dir = file_manager.folder_path(folder_name)
+    folder_dir.mkdir(parents=True, exist_ok=True)
+
+    for n in range(2, 100):
+        candidate = folder_dir / f"{safe_label}_{n}.md"
+        if not candidate.exists():
+            return file_manager.relative_path(candidate)
+
+    # Ultimate fallback: append a compact UTC timestamp
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    candidate = folder_dir / f"{safe_label}_{ts}.md"
+    return file_manager.relative_path(candidate)
 
 
 def _local_folder_tree() -> dict[str, Any]:
@@ -478,14 +511,25 @@ async def list_notes(
 
         p = Path(f["file_path"])
         folder_name = p.parts[0] if len(p.parts) > 1 else "General"
-        note_id = _note_id_for_path(f["file_path"])
 
-        sqlite_note = await repo.get(note_id)
+        # SQLite is the canonical ID store for new notes (UUID4).  For legacy
+        # notes (created before the UUID4 migration) the SQLite row may not exist
+        # yet — fall back to the deterministic UUID5 so old IDs stay stable.
+        sqlite_note = await repo.get_by_file_path(f["file_path"])
+        if sqlite_note is None:
+            legacy_id = _note_id_for_path(f["file_path"])
+            sqlite_note = await repo.get(legacy_id)
+        note_id = sqlite_note["id"] if sqlite_note else _note_id_for_path(f["file_path"])
+
+        # Use the label stored in SQLite (reflects renames) when available;
+        # otherwise fall back to the filename stem.
+        label = (sqlite_note.get("label") or sqlite_note.get("title") or f["label"]) if sqlite_note else f["label"]
+
         created_at, updated_at = _file_timestamps(f["file_path"])
 
         results.append({
             "id": note_id,
-            "label": f["label"],
+            "label": label,
             "folder_name": folder_name,
             "folder_id": _folder_id_for_name(folder_name),
             "file_path": f["file_path"],
@@ -503,36 +547,42 @@ async def list_notes(
     return results
 
 
+def _enrich_record_from_sqlite(record: dict[str, Any], sqlite_note: dict[str, Any]) -> dict[str, Any]:
+    """Overlay SQLite metadata (tags, sync status, canonical label) onto a file record."""
+    record["tags"] = sqlite_note.get("tags", [])
+    record["metadata"] = sqlite_note.get("metadata", {})
+    record["sync_status"] = sqlite_note.get("sync_status", "never_synced")
+    record["sync_enabled"] = sqlite_note.get("sync_enabled", True)
+    record["created_at"] = sqlite_note.get("created_at", record.get("created_at", ""))
+    # Use the SQLite label (reflects renames) rather than the filename stem.
+    stored_label = sqlite_note.get("label") or sqlite_note.get("title")
+    if stored_label:
+        record["label"] = stored_label
+    return record
+
+
 @router.get("/notes/{note_id}")
 async def get_note(note_id: str, request: Request) -> dict[str, Any]:
     _configure_sync(request)
-
-    # Primary: local filesystem lookup
-    for f in file_manager.scan_all():
-        if _note_id_for_path(f["file_path"]) == note_id:
-            record = _build_note_record(f["file_path"])
-            if record:
-                repo = _get_notes_repo()
-                sqlite_note = await repo.get(note_id)
-                if sqlite_note:
-                    record["tags"] = sqlite_note.get("tags", [])
-                    record["metadata"] = sqlite_note.get("metadata", {})
-                    record["sync_status"] = sqlite_note.get("sync_status", "never_synced")
-                    record["sync_enabled"] = sqlite_note.get("sync_enabled", True)
-                    record["created_at"] = sqlite_note.get("created_at", record.get("created_at", ""))
-                return record
-
-    # Secondary: check SQLite (note might have been soft-deleted from FS but still in DB)
     repo = _get_notes_repo()
+
+    # Primary: SQLite has the canonical note_id → file_path mapping for new notes.
     sqlite_note = await repo.get(note_id)
     if sqlite_note and sqlite_note.get("file_path"):
         record = _build_note_record(sqlite_note["file_path"])
         if record:
-            record["tags"] = sqlite_note.get("tags", [])
-            record["metadata"] = sqlite_note.get("metadata", {})
-            record["sync_status"] = sqlite_note.get("sync_status", "never_synced")
-            record["sync_enabled"] = sqlite_note.get("sync_enabled", True)
-            return record
+            record["id"] = note_id  # preserve the canonical ID, not the UUID5 from the file path
+            return _enrich_record_from_sqlite(record, sqlite_note)
+
+    # Secondary: filesystem scan — catches legacy notes (UUID5 IDs) not yet in SQLite.
+    for f in file_manager.scan_all():
+        if _note_id_for_path(f["file_path"]) == note_id:
+            record = _build_note_record(f["file_path"])
+            if record:
+                sqlite_note2 = await repo.get(note_id)
+                if sqlite_note2:
+                    return _enrich_record_from_sqlite(record, sqlite_note2)
+                return record
 
     # Tertiary: non-blocking cloud fallback with short timeout
     if sync_engine.is_configured:
@@ -552,8 +602,11 @@ async def create_note(req: CreateNoteRequest, request: Request) -> dict[str, Any
     _configure_sync(request)
     user_id = _get_user_id_optional(request)
 
-    file_path = file_manager.write_note(req.folder_name, req.label, req.content)
-    note_id = _note_id_for_path(file_path)
+    # UUID4 — stable identifier that never changes when the file is renamed.
+    note_id = str(uuid.uuid4())
+    # Resolve a collision-free file path before writing.
+    file_path = _unique_file_path(req.folder_name, req.label)
+    file_manager.write_note(req.folder_name, req.label, req.content, file_path)
     c_hash = content_hash(req.content)
     now = _now()
 
@@ -653,7 +706,39 @@ async def update_note(
     metadata = req.metadata if req.metadata is not None else existing_record.get("metadata", {})
 
     old_file_path = existing_record.get("file_path", "")
-    file_path = file_manager.write_note(folder_name, label, content, old_file_path if old_file_path else None)
+    old_label = existing_record.get("label", "")
+
+    # If the label or folder changed AND we have a valid file on disk, rename the
+    # file atomically so the filename stays in sync with the user-facing label.
+    # The note_id is unchanged — only the on-disk path moves.
+    label_changed = label != old_label
+    folder_changed = (
+        req.folder_name is not None
+        and req.folder_name != existing_record.get("folder_name", "General")
+    )
+
+    if old_file_path and (label_changed or folder_changed):
+        # rename_note does os.rename (atomic on same filesystem).
+        try:
+            file_path = file_manager.rename_note(old_file_path, folder_name, label)
+        except Exception:
+            # If rename fails (e.g. target already exists), fall back to writing
+            # to the old path so content is never lost.
+            logger.warning(
+                "[update_note] rename_note failed for %s → %s/%s; writing in place",
+                old_file_path, folder_name, label,
+            )
+            file_path = file_manager.write_note(folder_name, label, content, old_file_path)
+        else:
+            # Rename moved the file; now write the (possibly updated) content.
+            file_manager.write_note(folder_name, label, content, file_path)
+    elif old_file_path:
+        # Content-only save — preserve the existing file path.
+        file_path = file_manager.write_note(folder_name, label, content, old_file_path)
+    else:
+        # No existing file path — shouldn't happen for a PUT, but safe fallback.
+        file_path = file_manager.write_note(folder_name, label, content)
+
     c_hash = content_hash(content)
     now = _now()
 
@@ -701,13 +786,19 @@ async def update_note(
 @router.delete("/notes/{note_id}")
 async def delete_note(note_id: str, request: Request) -> dict[str, str]:
     _configure_sync(request)
-
-    for f in file_manager.scan_all():
-        if _note_id_for_path(f["file_path"]) == note_id:
-            file_manager.delete_note(f["file_path"])
-            break
-
     repo = _get_notes_repo()
+
+    # Primary: SQLite knows the exact file_path — no scan needed.
+    sqlite_note = await repo.get(note_id)
+    if sqlite_note and sqlite_note.get("file_path"):
+        file_manager.delete_note(sqlite_note["file_path"])
+    else:
+        # Legacy fallback: scan for a UUID5-matched file.
+        for f in file_manager.scan_all():
+            if _note_id_for_path(f["file_path"]) == note_id:
+                file_manager.delete_note(f["file_path"])
+                break
+
     await repo.soft_delete(note_id)
 
     if sync_engine.is_configured:

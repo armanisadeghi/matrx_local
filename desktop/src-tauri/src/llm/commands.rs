@@ -300,8 +300,16 @@ pub async fn download_llm_model(
     use crate::downloads::commands::DownloadManagerState;
 
     if urls.is_empty() {
+        eprintln!("[llm] download_llm_model ERROR: no URLs provided for '{}'", filename);
         return Err("No download URLs provided".to_string());
     }
+
+    eprintln!(
+        "[llm] download_llm_model START: '{}' — {} part(s), HF token: {}",
+        filename,
+        urls.len(),
+        if hf_token.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false) { "provided" } else { "not set (public repo assumed)" }
+    );
 
     // Reset cancel flag at the start of every new download
     cancel.0.store(false, Ordering::SeqCst);
@@ -372,8 +380,16 @@ pub async fn download_llm_model(
         let dest_path = dest_dir.join(&filename);
         let expected_size = catalog_entry.map(|m| m.expected_size_bytes);
 
+        eprintln!(
+            "[llm] download '{}': single-file, dest='{}', expected_size={:?}",
+            filename,
+            dest_path.display(),
+            expected_size
+        );
+
         // Skip if already fully downloaded
         if is_valid_gguf(&dest_path, expected_size) {
+            eprintln!("[llm] download '{}': already complete (valid GGUF on disk), skipping", filename);
             let _ = app.emit(
                 "llm-download-progress",
                 serde_json::json!({
@@ -399,10 +415,15 @@ pub async fn download_llm_model(
         let mut last_error = String::new();
         for attempt in 0..3u32 {
             if cancel_ref.load(Ordering::SeqCst) {
+                eprintln!("[llm] download '{}': cancelled by user before attempt {}", filename, attempt + 1);
                 return Err("Download cancelled by user".to_string());
             }
             if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
+                let wait = 2u64.pow(attempt);
+                eprintln!("[llm] download '{}': retrying in {}s (attempt {}/3)", filename, wait, attempt + 1);
+                tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            } else {
+                eprintln!("[llm] download '{}': starting attempt 1/3 from '{}'", filename, url);
             }
             match try_download_part(
                 &client,
@@ -420,28 +441,35 @@ pub async fn download_llm_model(
             .await
             {
                 Ok(_) => {
+                    eprintln!("[llm] download '{}': attempt {} HTTP stream complete, validating…", filename, attempt + 1);
                     if is_valid_gguf(&dest_path, expected_size) {
+                        eprintln!("[llm] download '{}': SUCCESS — validation passed", filename);
                         if let Some(ref dm) = dm_arc {
                             dm.mark_external_completed(&app, &dm_id, expected_size.unwrap_or(0)).await;
                         }
                         return Ok(dest_path.to_string_lossy().to_string());
                     }
+                    // is_valid_gguf already logged the specific reason
                     last_error =
                         "Downloaded file failed validation (size mismatch or bad magic bytes)"
                             .to_string();
+                    eprintln!("[llm] download '{}': attempt {} validation FAILED — deleting partial file", filename, attempt + 1);
                     let _ = tokio::fs::remove_file(&dest_path).await;
                 }
                 Err(e) if e.contains("cancelled") => {
+                    eprintln!("[llm] download '{}': cancelled during download", filename);
                     let _ = tokio::fs::remove_file(&dest_path).await;
                     return Err("Download cancelled by user".to_string());
                 }
                 Err(e) => {
                     last_error = format!("Attempt {}: {}", attempt + 1, e);
+                    eprintln!("[llm] download '{}': attempt {} FAILED — {}", filename, attempt + 1, e);
                     let _ = tokio::fs::remove_file(&dest_path).await;
                 }
             }
         }
         let err_msg = format!("Download failed after 3 attempts. Last error: {}", last_error);
+        eprintln!("[llm] download '{}': FINAL FAILURE — {}", filename, err_msg);
         if let Some(ref dm) = dm_arc {
             dm.mark_external_failed(&app, &dm_id, &err_msg).await;
         }
@@ -451,6 +479,8 @@ pub async fn download_llm_model(
     // ── Split model: download each part with its original filename ─────────
     // llama.cpp loads split GGUF files natively when given the first part path.
     // We must preserve the `-00001-of-N` filenames — DO NOT concatenate.
+
+    eprintln!("[llm] download '{}': split model — {} parts", filename, total_parts);
 
     // Build per-part expected sizes from catalog (index 0 = first part)
     let part_expected_sizes: Vec<Option<u64>> = (0..total_parts)
@@ -495,8 +525,14 @@ pub async fn download_llm_model(
         let part_path = dest_dir.join(&part_filename);
         let expected = part_expected_sizes[i];
 
+        eprintln!(
+            "[llm] download '{}': part {}/{} — file='{}', expected_size={:?}",
+            filename, part_num, total_parts, part_filename, expected
+        );
+
         // Skip if already fully downloaded
         if is_valid_gguf(&part_path, expected) {
+            eprintln!("[llm] download '{}': part {}/{} already complete, skipping", filename, part_num, total_parts);
             let already = part_sizes[i];
             let overall = bytes_before_this_part + already;
             let pct = if grand_total > 0 {
@@ -532,11 +568,16 @@ pub async fn download_llm_model(
 
         for attempt in 0..3u32 {
             if cancel_ref.load(Ordering::SeqCst) {
+                eprintln!("[llm] download '{}': cancelled before part {}/{} attempt {}", filename, part_num, total_parts, attempt + 1);
                 let _ = tokio::fs::remove_file(&part_path).await;
                 return Err("Download cancelled by user".to_string());
             }
             if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
+                let wait = 2u64.pow(attempt);
+                eprintln!("[llm] download '{}': retrying part {}/{} in {}s (attempt {}/3)", filename, part_num, total_parts, wait, attempt + 1);
+                tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            } else {
+                eprintln!("[llm] download '{}': starting part {}/{} attempt 1/3", filename, part_num, total_parts);
             }
 
             match try_download_part(
@@ -555,19 +596,25 @@ pub async fn download_llm_model(
             .await
             {
                 Ok(_) => {
+                    eprintln!("[llm] download '{}': part {}/{} attempt {} HTTP stream complete, validating…", filename, part_num, total_parts, attempt + 1);
                     if is_valid_gguf(&part_path, expected) {
+                        eprintln!("[llm] download '{}': part {}/{} SUCCESS", filename, part_num, total_parts);
                         success = true;
                         break;
                     }
+                    // is_valid_gguf already logged the specific reason
                     last_error = format!("Part {} failed validation after download", part_num);
+                    eprintln!("[llm] download '{}': part {}/{} attempt {} validation FAILED — deleting partial file", filename, part_num, total_parts, attempt + 1);
                     let _ = tokio::fs::remove_file(&part_path).await;
                 }
                 Err(e) if e.contains("cancelled") => {
+                    eprintln!("[llm] download '{}': cancelled during part {}/{}", filename, part_num, total_parts);
                     let _ = tokio::fs::remove_file(&part_path).await;
                     return Err("Download cancelled by user".to_string());
                 }
                 Err(e) => {
                     last_error = format!("Part {} attempt {}: {}", part_num, attempt + 1, e);
+                    eprintln!("[llm] download '{}': part {}/{} attempt {} FAILED — {}", filename, part_num, total_parts, attempt + 1, e);
                     let _ = tokio::fs::remove_file(&part_path).await;
                 }
             }
@@ -575,6 +622,7 @@ pub async fn download_llm_model(
 
         if !success {
             let err_msg = format!("Failed to download part {}/{}: {}", part_num, total_parts, last_error);
+            eprintln!("[llm] download '{}': FINAL FAILURE at part {}/{} — {}", filename, part_num, total_parts, err_msg);
             if let Some(ref dm) = dm_arc {
                 dm.mark_external_failed(&app, &dm_id, &err_msg).await;
             }
@@ -585,6 +633,7 @@ pub async fn download_llm_model(
     }
 
     // All parts downloaded — update DM state and return the first part path
+    eprintln!("[llm] download '{}': ALL {} part(s) complete — SUCCESS", filename, total_parts);
     if let Some(ref dm) = dm_arc {
         dm.mark_external_completed(&app, &dm_id, grand_total).await;
     }
@@ -624,8 +673,11 @@ pub fn list_llm_models(app: AppHandle) -> Vec<serde_json::Value> {
         .unwrap_or_default();
 
     let mut results: Vec<serde_json::Value> = Vec::new();
+    // Track filenames we've already emitted to avoid duplicates
+    let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // First pass: catalog models — emit one entry per catalog model if its first part is present
+    // First pass: catalog models (default filename per entry) —
+    // emit one entry per catalog model if its first part is present and valid.
     for catalog in model_selector::LLM_MODELS {
         if !on_disk.contains(catalog.filename) {
             continue;
@@ -666,24 +718,79 @@ pub fn list_llm_models(app: AppHandle) -> Vec<serde_json::Value> {
             "all_parts_present": all_parts_present,
             "total_parts": catalog.all_part_filenames().len(),
         }));
+        emitted.insert(catalog.filename.to_string());
     }
 
-    // Second pass: custom models not in catalog
-    let catalog_filenames: std::collections::HashSet<&str> = model_selector::LLM_MODELS
-        .iter()
-        .flat_map(|m| m.all_part_filenames())
-        .map(|_| "") // placeholder — we need to collect actual filenames
-        .collect();
-    // Rebuild properly
-    let catalog_part_filenames: std::collections::HashSet<String> = model_selector::LLM_MODELS
-        .iter()
-        .flat_map(|m| m.all_part_filenames())
-        .collect();
-    let _ = catalog_filenames; // drop placeholder
+    // Second pass: catalog variant filenames.
+    // Models with multiple quant variants (e.g. Qwen3.5-27B) ship as separate
+    // single files. A user may download the non-default variant (e.g. Q4_K_M
+    // instead of IQ3_XXS). These variant files must be listed as proper catalog
+    // entries, NOT as "Custom Models".
+    for catalog in model_selector::LLM_MODELS {
+        for variant in catalog.variants {
+            if emitted.contains(variant.filename) {
+                continue; // already listed (unlikely but safe)
+            }
+            if !on_disk.contains(variant.filename) {
+                continue;
+            }
+            let part_path = models_dir.join(variant.filename);
+            if !is_valid_gguf(&part_path, Some(variant.expected_size_bytes)) {
+                continue;
+            }
 
+            // For split variants (rare), check all parts
+            let part_filenames = variant.all_part_filenames();
+            let all_parts_present = part_filenames.iter().all(|pf| on_disk.contains(pf.as_str()));
+
+            let total_size_bytes: u64 = part_filenames
+                .iter()
+                .filter_map(|pf| std::fs::metadata(models_dir.join(pf)).ok().map(|m| m.len()))
+                .sum();
+            let size_gb = total_size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+
+            let display_name = format!("{} ({})", catalog.name, variant.label);
+            results.push(serde_json::json!({
+                "filename": variant.filename,
+                "size_bytes": total_size_bytes,
+                "size_gb": format!("{:.1}", size_gb),
+                "name": display_name,
+                "tier": catalog.tier,
+                "is_custom": false,
+                "is_split": variant.is_split(),
+                "all_parts_present": all_parts_present,
+                "total_parts": part_filenames.len(),
+            }));
+            emitted.insert(variant.filename.to_string());
+        }
+    }
+
+    // Build the complete set of all catalog-known filenames (default + all variants + all parts)
+    // so the custom-model pass can correctly exclude them.
+    let catalog_part_filenames: std::collections::HashSet<String> = {
+        let mut set = std::collections::HashSet::new();
+        for catalog in model_selector::LLM_MODELS {
+            // Default filename and all split parts
+            for pf in catalog.all_part_filenames() {
+                set.insert(pf);
+            }
+            // Variant filenames and their split parts
+            for variant in catalog.variants {
+                for pf in variant.all_part_filenames() {
+                    set.insert(pf);
+                }
+            }
+        }
+        set
+    };
+
+    // Third pass: genuinely custom models — GGUF files not known to the catalog at all.
     for fname in &on_disk {
         if catalog_part_filenames.contains(fname) {
-            continue; // already handled above
+            continue; // known catalog file — handled above
+        }
+        if emitted.contains(fname) {
+            continue;
         }
         let path = models_dir.join(fname);
         if !is_valid_gguf(&path, None) {
@@ -876,8 +983,9 @@ fn resolve_model_path(app: &AppHandle, filename: &str) -> Result<String, String>
 /// Checks:
 ///   1. File exists and is at least 10 MB
 ///   2. Magic bytes match "GGUF" (0x47 0x47 0x55 0x46)
-///   3. If `expected_bytes` is provided, actual size must be ≥ 95% of expected
-///      (5% tolerance for metadata differences between catalog measurements and reality)
+///   3. If `expected_bytes` is provided, actual size must be ≥ 90% of expected
+///      (10% tolerance — HuggingFace occasionally updates quantizations with slightly
+///      different byte counts and our catalog values are estimates, not live HEAD queries)
 fn is_valid_gguf(path: &std::path::Path, expected_bytes: Option<u64>) -> bool {
     if !path.exists() {
         return false;
@@ -890,30 +998,67 @@ fn is_valid_gguf(path: &std::path::Path, expected_bytes: Option<u64>) -> bool {
 
     // Minimum sanity check — all real models are much larger than this
     if actual_size < 10_000_000 {
+        eprintln!(
+            "[llm] is_valid_gguf FAIL (too small): {} — actual {} bytes < 10 MB minimum",
+            path.display(),
+            actual_size
+        );
         return false;
     }
 
-    // Size validation against expected — catches partial assemblies
+    // Size validation against expected — catches partial assemblies.
+    // Tolerance widened to 10% (was 5%) because catalog sizes are estimates and HF
+    // sometimes updates model files. We log a warning when size diverges so it's
+    // visible in the sidecar IPC log / issue report without blocking a valid download.
     if let Some(expected) = expected_bytes {
         if expected > 0 {
-            let min_acceptable = (expected as f64 * 0.95) as u64;
+            let min_acceptable = (expected as f64 * 0.90) as u64;
             if actual_size < min_acceptable {
+                eprintln!(
+                    "[llm] is_valid_gguf FAIL (size mismatch): {} — actual {} bytes is < 90% of expected {} bytes",
+                    path.display(),
+                    actual_size,
+                    expected
+                );
                 return false;
+            }
+            // Log divergence even when within tolerance so we can update catalog values
+            let divergence_pct = ((actual_size as f64 - expected as f64) / expected as f64 * 100.0).abs();
+            if divergence_pct > 2.0 {
+                eprintln!(
+                    "[llm] is_valid_gguf WARNING (size divergence {:.1}%): {} — actual {} vs expected {} bytes (within tolerance, file accepted)",
+                    divergence_pct,
+                    path.display(),
+                    actual_size,
+                    expected
+                );
             }
         }
     }
 
-    // Magic bytes check
+    // Magic bytes check — hard failure, always logged
     let mut file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return false,
+        Err(e) => {
+            eprintln!("[llm] is_valid_gguf FAIL (cannot open): {} — {}", path.display(), e);
+            return false;
+        }
     };
     let mut magic = [0u8; 4];
     use std::io::Read;
     if file.read_exact(&mut magic).is_err() {
+        eprintln!("[llm] is_valid_gguf FAIL (cannot read magic bytes): {}", path.display());
         return false;
     }
-    magic == [0x47, 0x47, 0x55, 0x46]
+    let valid = magic == [0x47, 0x47, 0x55, 0x46];
+    if !valid {
+        eprintln!(
+            "[llm] is_valid_gguf FAIL (bad magic bytes): {} — got {:02X} {:02X} {:02X} {:02X}, expected 47 47 55 46",
+            path.display(),
+            magic[0], magic[1], magic[2], magic[3]
+        );
+    }
+    valid
 }
 
 fn extract_stem(filename: &str) -> String {
@@ -973,13 +1118,25 @@ async fn try_download_part(
     if let Some(token) = hf_token {
         req = req.header("Authorization", format!("Bearer {}", token));
     }
-    let response = req.send().await.map_err(|e| e.to_string())?;
+    let response = req.send().await.map_err(|e| {
+        eprintln!("[llm] try_download_part '{}' part {}/{}: connection error — {}", filename, part, total_parts, e);
+        e.to_string()
+    })?;
 
     if !response.status().is_success() {
-        return Err(format!("HTTP {} for {}", response.status(), url));
+        let status = response.status();
+        eprintln!(
+            "[llm] try_download_part '{}' part {}/{}: HTTP {} for {}",
+            filename, part, total_parts, status, url
+        );
+        return Err(format!("HTTP {} for {}", status, url));
     }
 
     let part_total = response.content_length().unwrap_or(0);
+    eprintln!(
+        "[llm] try_download_part '{}' part {}/{}: HTTP 200, content-length={} bytes",
+        filename, part, total_parts, part_total
+    );
     let mut part_downloaded: u64 = 0;
 
     let mut file = tokio::fs::File::create(dest)
@@ -1001,18 +1158,25 @@ async fn try_download_part(
         match chunk_result {
             Err(_) => {
                 // Timed out — no data received in 60s, treat as stall
-                return Err(format!(
+                let msg = format!(
                     "Stalled: no data received for {}s on part {}/{}",
                     idle_timeout.as_secs(),
                     part,
                     total_parts
-                ));
+                );
+                eprintln!("[llm] try_download_part '{}': {}", filename, msg);
+                return Err(msg);
             }
             Ok(None) => {
                 // Stream ended cleanly
+                eprintln!(
+                    "[llm] try_download_part '{}' part {}/{}: stream complete, {} bytes written",
+                    filename, part, total_parts, part_downloaded
+                );
                 break;
             }
             Ok(Some(Err(e))) => {
+                eprintln!("[llm] try_download_part '{}' part {}/{}: stream error — {}", filename, part, total_parts, e);
                 return Err(format!("Stream error: {}", e));
             }
             Ok(Some(Ok(chunk))) => {

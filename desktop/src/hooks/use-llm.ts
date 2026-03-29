@@ -322,9 +322,8 @@ export function useLlm(): [LlmState, LlmActions] {
             isDownloadingRef.current = false;
             setDownloadingFilename(null);
             setDownloadProgress(null);
-            // Clear queue on cancellation so the user starts fresh
-            downloadQueueRef.current = [];
-            setDownloadQueue([]);
+            // Do NOT clear the queue — remaining downloads should continue
+            // after the cancelled one. processQueue() is called by cancelDownload().
           }
         },
       );
@@ -436,6 +435,20 @@ export function useLlm(): [LlmState, LlmActions] {
           // Don't set error — the modal handles this gracefully
         } else if (!msg.toLowerCase().includes("cancel")) {
           setError(msg);
+          // Forward the error to the Python engine log so it appears in the
+          // "Copy Issue Report" output. Rust eprintln! covers the sidecar IPC
+          // channel; this covers the engine SSE log channel.
+          if (engine.engineUrl) {
+            engine
+              .post("/log", {
+                level: "error",
+                source: "llm-download",
+                message: `LLM download failed for '${filename}': ${msg}`,
+              })
+              .catch(() => {
+                /* best-effort — don't cascade if engine is offline */
+              });
+          }
         }
         throw e;
       } finally {
@@ -524,10 +537,10 @@ export function useLlm(): [LlmState, LlmActions] {
   );
 
   const cancelDownload = useCallback(async () => {
-    // Clear the queue and force state to idle immediately so UI unblocks
-    // even if the Tauri llm-download-cancelled event never arrives.
-    downloadQueueRef.current = [];
-    setDownloadQueue([]);
+    // Cancel only the CURRENT active download — do NOT wipe the queue.
+    // The remaining queued items will continue after the cancelled download settles.
+    // Force state to idle immediately so UI unblocks even if the Tauri
+    // llm-download-cancelled event never arrives.
     setIsDownloading(false);
     isDownloadingRef.current = false;
     setDownloadingFilename(null);
@@ -538,7 +551,10 @@ export function useLlm(): [LlmState, LlmActions] {
     } catch {
       // Ignore errors — state already cleared above
     }
-  }, []);
+    // Resume processing any remaining queued items after a short delay
+    // so the Rust cancellation has time to settle before the next download starts.
+    setTimeout(() => void processQueue(), 500);
+  }, [processQueue]);
 
   const importLocalModel = useCallback(
     async (sourcePath: string, destFilename = "") => {
