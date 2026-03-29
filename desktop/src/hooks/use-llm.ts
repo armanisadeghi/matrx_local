@@ -11,12 +11,18 @@ import type {
   DownloadedLlmModel,
 } from "@/lib/llm/types";
 
-async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function tauriInvoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(cmd, args);
 }
 
-async function tauriListen<T>(event: string, handler: (e: { payload: T }) => void): Promise<UnlistenFn> {
+async function tauriListen<T>(
+  event: string,
+  handler: (e: { payload: T }) => void,
+): Promise<UnlistenFn> {
   const { listen } = await import("@tauri-apps/api/event");
   return listen<T>(event, handler);
 }
@@ -76,7 +82,11 @@ export interface LlmState {
 export interface LlmActions {
   detectHardware: () => Promise<LlmHardwareResult>;
   /** Pass all part URLs in order. Single-file models have one URL; split models have multiple. */
-  downloadModel: (filename: string, urls: string[], overrideHfToken?: string) => Promise<void>;
+  downloadModel: (
+    filename: string,
+    urls: string[],
+    overrideHfToken?: string,
+  ) => Promise<void>;
   /**
    * Add a model to the download queue. If nothing is currently downloading,
    * the download starts immediately. Otherwise it runs after the current one
@@ -95,7 +105,10 @@ export interface LlmActions {
    * Copy a local GGUF file into the app's models directory.
    * Returns the final filename it was saved as.
    */
-  importLocalModel: (sourcePath: string, destFilename?: string) => Promise<string>;
+  importLocalModel: (
+    sourcePath: string,
+    destFilename?: string,
+  ) => Promise<string>;
   /** Re-read whether a Hugging Face token is configured (after changing Settings). */
   refreshHfTokenConfigured: () => Promise<void>;
   /** Save a new HF token and immediately retry the pending XET download. */
@@ -105,7 +118,7 @@ export interface LlmActions {
   startServer: (
     modelFilename: string,
     gpuLayers: number,
-    contextLength?: number
+    contextLength?: number,
   ) => Promise<LlmServerStatus>;
   stopServer: () => Promise<void>;
   getServerStatus: () => Promise<LlmServerStatus>;
@@ -126,15 +139,22 @@ export function useLlm(): [LlmState, LlmActions] {
     useState<LlmDownloadProgress | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [downloadingFilename, setDownloadingFilename] = useState<string | null>(null);
-  const [downloadQueue, setDownloadQueue] = useState<LlmDownloadQueueEntry[]>([]);
+  const [downloadingFilename, setDownloadingFilename] = useState<string | null>(
+    null,
+  );
+  const [downloadQueue, setDownloadQueue] = useState<LlmDownloadQueueEntry[]>(
+    [],
+  );
   const [isStarting, setIsStarting] = useState(false);
-  const [startingModelName, setStartingModelName] = useState<string | null>(null);
-  const [serverStartProgress, setServerStartProgress] = useState<ServerStartProgress | null>(null);
+  const [startingModelName, setStartingModelName] = useState<string | null>(
+    null,
+  );
+  const [serverStartProgress, setServerStartProgress] =
+    useState<ServerStartProgress | null>(null);
   const [serverLogs, setServerLogs] = useState<ServerLogLine[]>([]);
   const [downloadCancelled, setDownloadCancelled] = useState(false);
   const [serverStatus, setServerStatus] = useState<LlmServerStatus | null>(
-    null
+    null,
   );
   const [downloadedModels, setDownloadedModels] = useState<
     DownloadedLlmModel[]
@@ -142,7 +162,9 @@ export function useLlm(): [LlmState, LlmActions] {
   const [error, setError] = useState<string | null>(null);
   const [hfTokenConfigured, setHfTokenConfigured] = useState(false);
   const [xetTokenRequired, setXetTokenRequired] = useState(false);
-  const [xetPendingFilename, setXetPendingFilename] = useState<string | null>(null);
+  const [xetPendingFilename, setXetPendingFilename] = useState<string | null>(
+    null,
+  );
   const [xetPendingUrls, setXetPendingUrls] = useState<string[]>([]);
 
   const unlistenRef = useRef<UnlistenFn[]>([]);
@@ -152,19 +174,28 @@ export function useLlm(): [LlmState, LlmActions] {
 
   const migrateLegacyHfTokenIfNeeded = useCallback(async () => {
     if (!isTauri()) return;
-    if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(HF_MIGRATION_SESSION_KEY) === "1") {
+    if (
+      typeof sessionStorage !== "undefined" &&
+      sessionStorage.getItem(HF_MIGRATION_SESSION_KEY) === "1"
+    ) {
       return;
     }
-    const legacy = await tauriInvoke<string | null>("get_hf_token").catch(() => null);
+    const legacy = await tauriInvoke<string | null>("get_hf_token").catch(
+      () => null,
+    );
     if (!legacy?.trim()) {
-      if (typeof sessionStorage !== "undefined") sessionStorage.setItem(HF_MIGRATION_SESSION_KEY, "1");
+      if (typeof sessionStorage !== "undefined")
+        sessionStorage.setItem(HF_MIGRATION_SESSION_KEY, "1");
       return;
     }
     if (!engine.engineUrl) return;
     try {
-      await engine.put("/settings/api-keys/huggingface", { key: legacy.trim() });
+      await engine.put("/settings/api-keys/huggingface", {
+        key: legacy.trim(),
+      });
       await tauriInvoke("save_hf_token", { token: "" });
-      if (typeof sessionStorage !== "undefined") sessionStorage.setItem(HF_MIGRATION_SESSION_KEY, "1");
+      if (typeof sessionStorage !== "undefined")
+        sessionStorage.setItem(HF_MIGRATION_SESSION_KEY, "1");
     } catch {
       /* engine offline or unauthenticated — retry later */
     }
@@ -190,7 +221,9 @@ export function useLlm(): [LlmState, LlmActions] {
     } catch {
       /* fall through to legacy */
     }
-    const legacy = await tauriInvoke<string | null>("get_hf_token").catch(() => null);
+    const legacy = await tauriInvoke<string | null>("get_hf_token").catch(
+      () => null,
+    );
     setHfTokenConfigured(!!legacy?.trim());
   }, [migrateLegacyHfTokenIfNeeded]);
 
@@ -220,30 +253,35 @@ export function useLlm(): [LlmState, LlmActions] {
             setServerStartProgress(null);
             setServerLogs([]);
             // Notify Python engine so agents can route to the local model.
-            engine.connectLocalLlm(
-              event.payload.port,
-              event.payload.model_name ?? "",
-            ).catch((err) => {
-              console.warn("[use-llm] Failed to notify engine of local LLM start:", err);
-            });
+            engine
+              .connectLocalLlm(
+                event.payload.port,
+                event.payload.model_name ?? "",
+              )
+              .catch((err) => {
+                console.warn(
+                  "[use-llm] Failed to notify engine of local LLM start:",
+                  err,
+                );
+              });
           }
-        }
+        },
       );
-      const unlistenStarting = await tauriListen<{ model_filename: string; port: number }>(
-        "llm-server-starting",
-        (event) => {
-          if (mounted) {
-            setStartingModelName(event.payload.model_filename);
-            setServerStartProgress(null);
-            setServerLogs([]);
-          }
+      const unlistenStarting = await tauriListen<{
+        model_filename: string;
+        port: number;
+      }>("llm-server-starting", (event) => {
+        if (mounted) {
+          setStartingModelName(event.payload.model_filename);
+          setServerStartProgress(null);
+          setServerLogs([]);
         }
-      );
+      });
       const unlistenProgress = await tauriListen<ServerStartProgress>(
         "llm-server-progress",
         (event) => {
           if (mounted) setServerStartProgress(event.payload);
-        }
+        },
       );
       const unlistenLog = await tauriListen<ServerLogLine>(
         "llm-server-log",
@@ -254,21 +292,27 @@ export function useLlm(): [LlmState, LlmActions] {
             // Keep last 50 lines
             return next.length > 50 ? next.slice(next.length - 50) : next;
           });
-        }
+        },
       );
-      const unlistenStopped = await tauriListen<void>("llm-server-stopped", () => {
-        if (mounted) {
-          setServerStatus((prev) =>
-            prev ? { ...prev, running: false, port: 0 } : null
-          );
-          setStartingModelName(null);
-          setServerStartProgress(null);
-          // Notify Python engine so it deregisters the local model.
-          engine.disconnectLocalLlm().catch((err) => {
-            console.warn("[use-llm] Failed to notify engine of local LLM stop:", err);
-          });
-        }
-      });
+      const unlistenStopped = await tauriListen<void>(
+        "llm-server-stopped",
+        () => {
+          if (mounted) {
+            setServerStatus((prev) =>
+              prev ? { ...prev, running: false, port: 0 } : null,
+            );
+            setStartingModelName(null);
+            setServerStartProgress(null);
+            // Notify Python engine so it deregisters the local model.
+            engine.disconnectLocalLlm().catch((err) => {
+              console.warn(
+                "[use-llm] Failed to notify engine of local LLM stop:",
+                err,
+              );
+            });
+          }
+        },
+      );
       const unlistenCancelled = await tauriListen<LlmDownloadCancelledEvent>(
         "llm-download-cancelled",
         () => {
@@ -282,11 +326,15 @@ export function useLlm(): [LlmState, LlmActions] {
             downloadQueueRef.current = [];
             setDownloadQueue([]);
           }
-        }
+        },
       );
       unlistenRef.current.push(
-        unlistenReady, unlistenStarting, unlistenProgress, unlistenLog,
-        unlistenStopped, unlistenCancelled
+        unlistenReady,
+        unlistenStarting,
+        unlistenProgress,
+        unlistenLog,
+        unlistenStopped,
+        unlistenCancelled,
       );
     };
     setupListeners();
@@ -322,7 +370,9 @@ export function useLlm(): [LlmState, LlmActions] {
     setIsDetecting(true);
     setError(null);
     try {
-      const result = await tauriInvoke<LlmHardwareResult>("detect_llm_hardware");
+      const result = await tauriInvoke<LlmHardwareResult>(
+        "detect_llm_hardware",
+      );
       setHardwareResult(result);
       return result;
     } catch (e) {
@@ -354,14 +404,16 @@ export function useLlm(): [LlmState, LlmActions] {
         "llm-download-progress",
         (event) => {
           setDownloadProgress(event.payload);
-        }
+        },
       );
 
       try {
         await migrateLegacyHfTokenIfNeeded();
         // Use override token (e.g. freshly entered in wizard) when provided so
         // we don't race against the async engine fetch which could return null.
-        const hfTok = overrideHfToken?.trim() || await engine.getHuggingfaceTokenForDownloads();
+        const hfTok =
+          overrideHfToken?.trim() ||
+          (await engine.getHuggingfaceTokenForDownloads());
         await tauriInvoke("download_llm_model", {
           filename,
           urls,
@@ -369,11 +421,15 @@ export function useLlm(): [LlmState, LlmActions] {
         });
         void refreshHfTokenConfigured();
         setDownloadProgress(null);
-        const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
+        const models =
+          await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
         setDownloadedModels(models);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        if (msg.startsWith("XET_TOKEN_REQUIRED") || msg.startsWith("XET_TOKEN_INVALID")) {
+        if (
+          msg.startsWith("XET_TOKEN_REQUIRED") ||
+          msg.startsWith("XET_TOKEN_INVALID")
+        ) {
           setXetTokenRequired(true);
           setXetPendingFilename(filename);
           setXetPendingUrls(urls);
@@ -389,7 +445,7 @@ export function useLlm(): [LlmState, LlmActions] {
         setDownloadingFilename(null);
       }
     },
-    [migrateLegacyHfTokenIfNeeded, refreshHfTokenConfigured]
+    [migrateLegacyHfTokenIfNeeded, refreshHfTokenConfigured],
   );
 
   /**
@@ -415,31 +471,41 @@ export function useLlm(): [LlmState, LlmActions] {
   const queueDownload = useCallback(
     (filename: string, urls: string[]) => {
       // Skip if already downloaded
-      const alreadyDownloaded = downloadedModels.some((m) => m.filename === filename);
+      const alreadyDownloaded = downloadedModels.some(
+        (m) => m.filename === filename,
+      );
       if (alreadyDownloaded) return;
       // Skip if already queued
-      const alreadyQueued = downloadQueueRef.current.some((e) => e.filename === filename);
+      const alreadyQueued = downloadQueueRef.current.some(
+        (e) => e.filename === filename,
+      );
       if (alreadyQueued) return;
       // Skip if currently downloading this exact file
       if (isDownloadingRef.current && downloadingFilename === filename) return;
 
       if (!isDownloadingRef.current) {
         // Nothing active — start immediately
-        void downloadModel(filename, urls).then(() => void processQueue()).catch(() => void processQueue());
+        void downloadModel(filename, urls)
+          .then(() => void processQueue())
+          .catch(() => void processQueue());
       } else {
         // Something is active — push to queue
         downloadQueueRef.current.push({ filename, urls });
         setDownloadQueue([...downloadQueueRef.current]);
       }
     },
-    [downloadModel, downloadedModels, downloadingFilename, processQueue]
+    [downloadModel, downloadedModels, downloadingFilename, processQueue],
   );
 
   const downloadAll = useCallback(
     (models: LlmDownloadQueueEntry[]) => {
       const downloadedSet = new Set(downloadedModels.map((m) => m.filename));
-      const queuedSet = new Set(downloadQueueRef.current.map((e) => e.filename));
-      const activeFilename = isDownloadingRef.current ? downloadingFilename : null;
+      const queuedSet = new Set(
+        downloadQueueRef.current.map((e) => e.filename),
+      );
+      const activeFilename = isDownloadingRef.current
+        ? downloadingFilename
+        : null;
 
       for (const m of models) {
         if (downloadedSet.has(m.filename)) continue;
@@ -454,7 +520,7 @@ export function useLlm(): [LlmState, LlmActions] {
         void processQueue();
       }
     },
-    [downloadedModels, downloadingFilename, processQueue]
+    [downloadedModels, downloadingFilename, processQueue],
   );
 
   const cancelDownload = useCallback(async () => {
@@ -483,7 +549,8 @@ export function useLlm(): [LlmState, LlmActions] {
           destFilename,
         });
         // Refresh the model list so the new model appears immediately
-        const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
+        const models =
+          await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
         setDownloadedModels(models);
         return filename;
       } catch (e) {
@@ -492,14 +559,14 @@ export function useLlm(): [LlmState, LlmActions] {
         throw e;
       }
     },
-    []
+    [],
   );
 
   const startServer = useCallback(
     async (
       modelFilename: string,
       gpuLayers: number,
-      contextLength?: number
+      contextLength?: number,
     ) => {
       setIsStarting(true);
       setStartingModelName(modelFilename);
@@ -524,7 +591,7 @@ export function useLlm(): [LlmState, LlmActions] {
         setServerStartProgress(null);
       }
     },
-    []
+    [],
   );
 
   const stopServer = useCallback(async () => {
@@ -532,7 +599,7 @@ export function useLlm(): [LlmState, LlmActions] {
     try {
       await tauriInvoke("stop_llm_server");
       setServerStatus((prev) =>
-        prev ? { ...prev, running: false, port: 0 } : null
+        prev ? { ...prev, running: false, port: 0 } : null,
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -550,10 +617,13 @@ export function useLlm(): [LlmState, LlmActions] {
     return tauriInvoke<boolean>("check_llm_server_health");
   }, []);
 
-  const checkModelExists = useCallback((filename: string): boolean => {
-    // Synchronous check against downloaded models list (already loaded from Rust)
-    return downloadedModels.some((m) => m.filename === filename);
-  }, [downloadedModels]);
+  const checkModelExists = useCallback(
+    (filename: string): boolean => {
+      // Synchronous check against downloaded models list (already loaded from Rust)
+      return downloadedModels.some((m) => m.filename === filename);
+    },
+    [downloadedModels],
+  );
 
   const listModels = useCallback(async () => {
     const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
@@ -566,7 +636,8 @@ export function useLlm(): [LlmState, LlmActions] {
       setError(null);
       try {
         await tauriInvoke("delete_llm_model", { filename });
-        const models = await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
+        const models =
+          await tauriInvoke<DownloadedLlmModel[]>("list_llm_models");
         setDownloadedModels(models);
         await refreshSetupStatus();
       } catch (e) {
@@ -575,7 +646,7 @@ export function useLlm(): [LlmState, LlmActions] {
         throw e;
       }
     },
-    [refreshSetupStatus]
+    [refreshSetupStatus],
   );
 
   const clearError = useCallback(() => {
@@ -624,7 +695,12 @@ export function useLlm(): [LlmState, LlmActions] {
         await downloadModel(pendingFilename, pendingUrls, trimmed);
       }
     },
-    [xetPendingFilename, xetPendingUrls, refreshHfTokenConfigured, downloadModel]
+    [
+      xetPendingFilename,
+      xetPendingUrls,
+      refreshHfTokenConfigured,
+      downloadModel,
+    ],
   );
 
   // One-click setup: detect hardware, download recommended model, start server
@@ -634,15 +710,15 @@ export function useLlm(): [LlmState, LlmActions] {
       const hw = await detectHardware();
 
       const alreadyDownloaded = downloadedModels.some(
-        (m) => m.filename === hw.recommended_filename
+        (m) => m.filename === hw.recommended_filename,
       );
       if (!alreadyDownloaded) {
         const modelInfo = hw.all_models.find(
-          (m) => m.filename === hw.recommended_filename
+          (m) => m.filename === hw.recommended_filename,
         );
         if (!modelInfo) {
           throw new Error(
-            `Model info not found for ${hw.recommended_filename}`
+            `Model info not found for ${hw.recommended_filename}`,
           );
         }
         await downloadModel(hw.recommended_filename, modelInfo.all_part_urls);
@@ -651,7 +727,7 @@ export function useLlm(): [LlmState, LlmActions] {
       await startServer(
         hw.recommended_filename,
         hw.recommended_gpu_layers,
-        8192
+        8192,
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

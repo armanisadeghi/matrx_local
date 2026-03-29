@@ -67,13 +67,21 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useLocation } from "react-router-dom";
 import type { EngineStatus } from "@/hooks/use-engine";
 import { engine } from "@/lib/api";
-import type { ProxyStatus, InstanceInfo, Capability, HardwareProfile } from "@/lib/api";
+import type {
+  ProxyStatus,
+  InstanceInfo,
+  Capability,
+  HardwareProfile,
+} from "@/lib/api";
 import type { useAuth } from "@/hooks/use-auth";
 import type { Theme } from "@/hooks/use-theme";
 
 declare const __APP_VERSION__: string;
 import { isTauri } from "@/lib/sidecar";
-import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update";
+import type {
+  AutoUpdateState,
+  AutoUpdateActions,
+} from "@/hooks/use-auto-update";
 import {
   loadSettings,
   saveSetting,
@@ -142,7 +150,9 @@ export function Settings({
   // Capabilities state
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [installingId, setInstallingId] = useState<string | null>(null);
-  const [installResult, setInstallResult] = useState<Record<string, { success: boolean; message: string }>>({});
+  const [installResult, setInstallResult] = useState<
+    Record<string, { success: boolean; message: string }>
+  >({});
 
   // Tunnel / remote access state
   const [tunnelStatus, setTunnelStatus] = useState<{
@@ -163,25 +173,36 @@ export function Settings({
 
   // Storage paths state
   const [storagePaths, setStoragePaths] = useState<StoragePath[]>([]);
-  const [pathEditing, setPathEditing] = useState<string | null>(null);  // name of path being edited
+  const [pathEditing, setPathEditing] = useState<string | null>(null); // name of path being edited
   const [pathEditValue, setPathEditValue] = useState("");
   const [pathSaving, setPathSaving] = useState<string | null>(null);
   const [pathError, setPathError] = useState<string | null>(null);
-  const [pathStats, setPathStats] = useState<Record<string, StoragePathStats>>({});
+  const [pathStats, setPathStats] = useState<Record<string, StoragePathStats>>(
+    {},
+  );
   const [statsLoading, setStatsLoading] = useState<Record<string, boolean>>({});
   const [newForbiddenUrl, setNewForbiddenUrl] = useState("");
   const [forbiddenSaving, setForbiddenSaving] = useState(false);
 
   // API key state
-  const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProviderStatus[]>([]);
+  const [apiKeyProviders, setApiKeyProviders] = useState<
+    ApiKeyProviderStatus[]
+  >([]);
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({});
-  const [apiKeyVisible, setApiKeyVisible] = useState<Record<string, boolean>>({});
+  const [apiKeyVisible, setApiKeyVisible] = useState<Record<string, boolean>>(
+    {},
+  );
   const [apiKeySaving, setApiKeySaving] = useState<Record<string, boolean>>({});
-  const [apiKeyDeleting, setApiKeyDeleting] = useState<Record<string, boolean>>({});
-  const [apiKeyMessages, setApiKeyMessages] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [apiKeyDeleting, setApiKeyDeleting] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [apiKeyMessages, setApiKeyMessages] = useState<
+    Record<string, { ok: boolean; text: string }>
+  >({});
 
   // Hardware profile state
-  const [hardwareProfile, setHardwareProfile] = useState<HardwareProfile | null>(null);
+  const [hardwareProfile, setHardwareProfile] =
+    useState<HardwareProfile | null>(null);
   const [hardwareLoading, setHardwareLoading] = useState(false);
   const [hardwareError, setHardwareError] = useState<string | null>(null);
 
@@ -191,16 +212,26 @@ export function Settings({
   const [bulkParsed, setBulkParsed] = useState<ParsedEnvEntry[]>([]);
   const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
   const [bulkSaving, setBulkSaving] = useState(false);
-  const [bulkResult, setBulkResult] = useState<{ saved: string[]; skipped: string[]; errors: Record<string, string> } | null>(null);
+  const [bulkResult, setBulkResult] = useState<{
+    saved: string[];
+    skipped: string[];
+    errors: Record<string, string>;
+  } | null>(null);
   // Per-entry editable values, custom provider mappings, and value visibility
-  const [bulkEditedValues, setBulkEditedValues] = useState<Record<string, string>>({});
-  const [bulkCustomMapping, setBulkCustomMapping] = useState<Record<string, string>>({});
-  const [bulkShowValues, setBulkShowValues] = useState<Record<string, boolean>>({});
+  const [bulkEditedValues, setBulkEditedValues] = useState<
+    Record<string, string>
+  >({});
+  const [bulkCustomMapping, setBulkCustomMapping] = useState<
+    Record<string, string>
+  >({});
+  const [bulkShowValues, setBulkShowValues] = useState<Record<string, boolean>>(
+    {},
+  );
 
   useEffect(() => {
     loadSettings().then(setSettings);
     loadForbiddenUrls();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Reload settings when another part of the app (e.g. Configurations page) saves changes.
@@ -211,8 +242,9 @@ export function Settings({
       if (engineStatus === "connected") loadInstanceInfo();
     };
     window.addEventListener("matrx-settings-changed", onChanged);
-    return () => window.removeEventListener("matrx-settings-changed", onChanged);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () =>
+      window.removeEventListener("matrx-settings-changed", onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineStatus]);
 
   useEffect(() => {
@@ -229,7 +261,7 @@ export function Settings({
     loadInstanceInfo();
     const retry = setTimeout(() => loadInstanceInfo(), 4000);
     return () => clearTimeout(retry);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineStatus]);
 
   // Re-load remote tab data whenever the user navigates to it.
@@ -238,15 +270,19 @@ export function Settings({
       loadTunnelStatus();
       loadInstanceInfo();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   // Load hardware profile when the system tab becomes active.
   useEffect(() => {
-    if (activeTab === "system" && engineStatus === "connected" && !hardwareProfile) {
+    if (
+      activeTab === "system" &&
+      engineStatus === "connected" &&
+      !hardwareProfile
+    ) {
       loadHardwareProfile();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, engineStatus]);
 
   const loadHardwareProfile = useCallback(async () => {
@@ -306,9 +342,13 @@ export function Settings({
   const loadForbiddenUrls = useCallback(async () => {
     if (engineStatus !== "connected") return;
     try {
-      const data = await engine.get("/settings/forbidden-urls") as { urls?: string[] };
+      const data = (await engine.get("/settings/forbidden-urls")) as {
+        urls?: string[];
+      };
       setForbiddenUrls(data?.urls ?? []);
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
   }, [engineStatus]);
 
   const loadStoragePaths = useCallback(async () => {
@@ -316,25 +356,30 @@ export function Settings({
     try {
       const paths = await engine.getStoragePaths();
       setStoragePaths(paths);
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
   }, [engineStatus]);
 
-  const loadPathStats = useCallback(async (names: string[]) => {
-    if (engineStatus !== "connected") return;
-    setStatsLoading(Object.fromEntries(names.map((n) => [n, true])));
-    await Promise.all(
-      names.map(async (name) => {
-        try {
-          const stats = await engine.getStoragePathStats(name);
-          setPathStats((prev) => ({ ...prev, [name]: stats }));
-        } catch {
-          // non-critical
-        } finally {
-          setStatsLoading((prev) => ({ ...prev, [name]: false }));
-        }
-      }),
-    );
-  }, [engineStatus]);
+  const loadPathStats = useCallback(
+    async (names: string[]) => {
+      if (engineStatus !== "connected") return;
+      setStatsLoading(Object.fromEntries(names.map((n) => [n, true])));
+      await Promise.all(
+        names.map(async (name) => {
+          try {
+            const stats = await engine.getStoragePathStats(name);
+            setPathStats((prev) => ({ ...prev, [name]: stats }));
+          } catch {
+            // non-critical
+          } finally {
+            setStatsLoading((prev) => ({ ...prev, [name]: false }));
+          }
+        }),
+      );
+    },
+    [engineStatus],
+  );
 
   const startEditPath = useCallback((p: StoragePath) => {
     setPathEditing(p.name);
@@ -348,26 +393,33 @@ export function Settings({
     setPathError(null);
   }, []);
 
-  const savePathEdit = useCallback(async (name: string) => {
-    setPathSaving(name);
-    setPathError(null);
-    try {
-      const updated = await engine.setStoragePath(name, pathEditValue);
-      setStoragePaths(prev => prev.map(p => p.name === name ? updated : p));
-      setPathEditing(null);
-    } catch (err) {
-      setPathError(err instanceof Error ? err.message : "Failed to set path");
-    } finally {
-      setPathSaving(null);
-    }
-  }, [pathEditValue]);
+  const savePathEdit = useCallback(
+    async (name: string) => {
+      setPathSaving(name);
+      setPathError(null);
+      try {
+        const updated = await engine.setStoragePath(name, pathEditValue);
+        setStoragePaths((prev) =>
+          prev.map((p) => (p.name === name ? updated : p)),
+        );
+        setPathEditing(null);
+      } catch (err) {
+        setPathError(err instanceof Error ? err.message : "Failed to set path");
+      } finally {
+        setPathSaving(null);
+      }
+    },
+    [pathEditValue],
+  );
 
   const resetPathToDefault = useCallback(async (name: string) => {
     setPathSaving(name);
     setPathError(null);
     try {
       const updated = await engine.resetStoragePath(name);
-      setStoragePaths(prev => prev.map(p => p.name === name ? updated : p));
+      setStoragePaths((prev) =>
+        prev.map((p) => (p.name === name ? updated : p)),
+      );
     } catch (err) {
       setPathError(err instanceof Error ? err.message : "Failed to reset path");
     } finally {
@@ -380,19 +432,28 @@ export function Settings({
     if (!url) return;
     setForbiddenSaving(true);
     try {
-      const data = await engine.post("/settings/forbidden-urls", { url }) as { urls?: string[] };
+      const data = (await engine.post("/settings/forbidden-urls", { url })) as {
+        urls?: string[];
+      };
       setForbiddenUrls(data?.urls ?? []);
       setNewForbiddenUrl("");
-    } catch { /* ignore */ }
-    finally { setForbiddenSaving(false); }
+    } catch {
+      /* ignore */
+    } finally {
+      setForbiddenSaving(false);
+    }
   }, [newForbiddenUrl]);
 
   const removeForbiddenUrl = useCallback(async (url: string) => {
     try {
       const encoded = encodeURIComponent(url);
-      const data = await engine.delete(`/settings/forbidden-urls/${encoded}`) as { urls?: string[] };
+      const data = (await engine.delete(
+        `/settings/forbidden-urls/${encoded}`,
+      )) as { urls?: string[] };
       setForbiddenUrls(data?.urls ?? []);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   // Update state is now managed by the useAutoUpdate hook in App.tsx.
@@ -404,7 +465,7 @@ export function Settings({
 
   const updateSetting = <K extends keyof AppSettings>(
     key: K,
-    value: AppSettings[K]
+    value: AppSettings[K],
   ) => {
     // Optimistic local state update — instant
     setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -413,7 +474,10 @@ export function Settings({
       // Fire-and-forget full sync to engine + cloud in the background.
       // Errors are logged by syncAllSettings; they don't block the UI.
       syncAllSettings().catch((err) => {
-        console.warn("[Settings] Background sync failed after updateSetting:", err);
+        console.warn(
+          "[Settings] Background sync failed after updateSetting:",
+          err,
+        );
       });
     });
   };
@@ -481,7 +545,8 @@ export function Settings({
       // Detect engine crash / network failure during install — previously
       // the engine would get SIGKILL'd by macOS watchdog mid-install and
       // the request would hang or fail with a generic network error.
-      const engineCrashed = errMsg.includes("fetch") ||
+      const engineCrashed =
+        errMsg.includes("fetch") ||
         errMsg.includes("network") ||
         errMsg.includes("Failed to fetch") ||
         errMsg.includes("Load failed") ||
@@ -505,7 +570,9 @@ export function Settings({
     if (engineStatus !== "connected") return;
     setTunnelFetching(true);
     try {
-      const status = await engine.get("/tunnel/status") as typeof tunnelStatus;
+      const status = (await engine.get(
+        "/tunnel/status",
+      )) as typeof tunnelStatus;
       setTunnelStatus(status);
     } catch {
       // Non-critical
@@ -517,73 +584,110 @@ export function Settings({
   const loadApiKeyStatus = useCallback(async () => {
     if (engineStatus !== "connected") return;
     try {
-      const data = await engine.get("/settings/api-keys") as { providers: ApiKeyProviderStatus[] };
+      const data = (await engine.get("/settings/api-keys")) as {
+        providers: ApiKeyProviderStatus[];
+      };
       setApiKeyProviders(data?.providers ?? []);
     } catch {
       // Non-critical
     }
   }, [engineStatus]);
 
-  const handleApiKeySave = useCallback(async (provider: string) => {
-    const key = apiKeyInputs[provider]?.trim();
-    if (!key) return;
-    if (provider === "huggingface" && key.length < 10) {
-      setApiKeyMessages(prev => ({
-        ...prev,
-        [provider]: { ok: false, text: "That doesn't look like a valid Hugging Face token." },
-      }));
-      return;
-    }
-    setApiKeySaving(prev => ({ ...prev, [provider]: true }));
-    setApiKeyMessages(prev => ({ ...prev, [provider]: undefined as never }));
-    try {
-      await engine.put(`/settings/api-keys/${provider}`, { key });
-      // For the HF token, also persist to llm.json via Rust so downloads work
-      // even when the Python engine is temporarily unreachable.
-      if (provider === "huggingface") {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("save_hf_token", { token: key }).catch(() => { /* non-fatal */ });
+  const handleApiKeySave = useCallback(
+    async (provider: string) => {
+      const key = apiKeyInputs[provider]?.trim();
+      if (!key) return;
+      if (provider === "huggingface" && key.length < 10) {
+        setApiKeyMessages((prev) => ({
+          ...prev,
+          [provider]: {
+            ok: false,
+            text: "That doesn't look like a valid Hugging Face token.",
+          },
+        }));
+        return;
       }
-      setApiKeyProviders(prev =>
-        prev.map(p => p.provider === provider ? { ...p, configured: true } : p)
-      );
-      setApiKeyInputs(prev => ({ ...prev, [provider]: "" }));
-      setApiKeyMessages(prev => ({ ...prev, [provider]: { ok: true, text: "Key saved" } }));
-      setTimeout(() => setApiKeyMessages(prev => {
-        const next = { ...prev };
-        delete next[provider];
-        return next;
-      }), 3000);
-    } catch (err) {
-      setApiKeyMessages(prev => ({
+      setApiKeySaving((prev) => ({ ...prev, [provider]: true }));
+      setApiKeyMessages((prev) => ({
         ...prev,
-        [provider]: { ok: false, text: err instanceof Error ? err.message : "Failed to save" },
+        [provider]: undefined as never,
       }));
-    } finally {
-      setApiKeySaving(prev => ({ ...prev, [provider]: false }));
-    }
-  }, [apiKeyInputs]);
+      try {
+        await engine.put(`/settings/api-keys/${provider}`, { key });
+        // For the HF token, also persist to llm.json via Rust so downloads work
+        // even when the Python engine is temporarily unreachable.
+        if (provider === "huggingface") {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("save_hf_token", { token: key }).catch(() => {
+            /* non-fatal */
+          });
+        }
+        setApiKeyProviders((prev) =>
+          prev.map((p) =>
+            p.provider === provider ? { ...p, configured: true } : p,
+          ),
+        );
+        setApiKeyInputs((prev) => ({ ...prev, [provider]: "" }));
+        setApiKeyMessages((prev) => ({
+          ...prev,
+          [provider]: { ok: true, text: "Key saved" },
+        }));
+        setTimeout(
+          () =>
+            setApiKeyMessages((prev) => {
+              const next = { ...prev };
+              delete next[provider];
+              return next;
+            }),
+          3000,
+        );
+      } catch (err) {
+        setApiKeyMessages((prev) => ({
+          ...prev,
+          [provider]: {
+            ok: false,
+            text: err instanceof Error ? err.message : "Failed to save",
+          },
+        }));
+      } finally {
+        setApiKeySaving((prev) => ({ ...prev, [provider]: false }));
+      }
+    },
+    [apiKeyInputs],
+  );
 
   const handleApiKeyDelete = useCallback(async (provider: string) => {
-    setApiKeyDeleting(prev => ({ ...prev, [provider]: true }));
+    setApiKeyDeleting((prev) => ({ ...prev, [provider]: true }));
     try {
       await engine.delete(`/settings/api-keys/${provider}`);
-      setApiKeyProviders(prev =>
-        prev.map(p => p.provider === provider ? { ...p, configured: false } : p)
+      setApiKeyProviders((prev) =>
+        prev.map((p) =>
+          p.provider === provider ? { ...p, configured: false } : p,
+        ),
       );
-      setApiKeyMessages(prev => ({ ...prev, [provider]: { ok: true, text: "Key removed" } }));
-      setTimeout(() => setApiKeyMessages(prev => {
-        const next = { ...prev };
-        delete next[provider];
-        return next;
-      }), 3000);
-    } catch (err) {
-      setApiKeyMessages(prev => ({
+      setApiKeyMessages((prev) => ({
         ...prev,
-        [provider]: { ok: false, text: err instanceof Error ? err.message : "Failed to remove" },
+        [provider]: { ok: true, text: "Key removed" },
+      }));
+      setTimeout(
+        () =>
+          setApiKeyMessages((prev) => {
+            const next = { ...prev };
+            delete next[provider];
+            return next;
+          }),
+        3000,
+      );
+    } catch (err) {
+      setApiKeyMessages((prev) => ({
+        ...prev,
+        [provider]: {
+          ok: false,
+          text: err instanceof Error ? err.message : "Failed to remove",
+        },
       }));
     } finally {
-      setApiKeyDeleting(prev => ({ ...prev, [provider]: false }));
+      setApiKeyDeleting((prev) => ({ ...prev, [provider]: false }));
     }
   }, []);
 
@@ -596,18 +700,17 @@ export function Settings({
     setBulkCustomMapping({});
     setBulkShowValues({});
     // Auto-select all entries that match a known provider
-    setBulkSelected(new Set(
-      parsed
-        .filter((e) => e.provider !== null)
-        .map((e) => e.rawKey),
-    ));
+    setBulkSelected(
+      new Set(parsed.filter((e) => e.provider !== null).map((e) => e.rawKey)),
+    );
   }, []);
 
   const handleBulkImport = useCallback(async () => {
     // Collect entries to save: matched OR custom-mapped, and selected
     const toSave = bulkParsed.filter((e) => {
       if (!bulkSelected.has(e.rawKey)) return false;
-      const effectiveProvider = e.provider ?? bulkCustomMapping[e.rawKey] ?? null;
+      const effectiveProvider =
+        e.provider ?? bulkCustomMapping[e.rawKey] ?? null;
       return effectiveProvider !== null;
     });
     if (toSave.length === 0) return;
@@ -615,12 +718,16 @@ export function Settings({
     setBulkSaving(true);
     setBulkResult(null);
     try {
-      const result = await engine.post("/settings/api-keys/bulk", {
+      const result = (await engine.post("/settings/api-keys/bulk", {
         keys: toSave.map((e) => ({
           provider: e.provider ?? bulkCustomMapping[e.rawKey],
           key: (bulkEditedValues[e.rawKey] ?? e.rawValue).trim(),
         })),
-      }) as { saved: string[]; skipped: string[]; errors: Record<string, string> };
+      })) as {
+        saved: string[];
+        skipped: string[];
+        errors: Record<string, string>;
+      };
       setBulkResult(result);
       if (result.saved.length > 0) {
         await loadApiKeyStatus();
@@ -635,23 +742,35 @@ export function Settings({
     } finally {
       setBulkSaving(false);
     }
-  }, [bulkParsed, bulkSelected, bulkEditedValues, bulkCustomMapping, loadApiKeyStatus]);
+  }, [
+    bulkParsed,
+    bulkSelected,
+    bulkEditedValues,
+    bulkCustomMapping,
+    loadApiKeyStatus,
+  ]);
 
   const handleTunnelToggle = async (enable: boolean) => {
     setTunnelLoading(true);
     try {
-      const result = await engine.post(enable ? "/tunnel/start" : "/tunnel/stop", {}) as typeof tunnelStatus;
+      const result = (await engine.post(
+        enable ? "/tunnel/start" : "/tunnel/stop",
+        {},
+      )) as typeof tunnelStatus;
       setTunnelStatus(result);
       // Persist to localStorage directly (without re-triggering the engine call
       // that saveSetting would fire via syncSetting("tunnelEnabled")).
       const current = await loadSettings();
       const updated = { ...current, tunnelEnabled: enable };
       await saveSettings(updated);
-      setSettings((prev) => prev ? { ...prev, tunnelEnabled: enable } : prev);
+      setSettings((prev) => (prev ? { ...prev, tunnelEnabled: enable } : prev));
       broadcastSettingsChanged();
       // Push full settings blob to cloud in the background.
       syncAllSettings().catch((err) => {
-        console.warn("[Settings] Background cloud sync failed after tunnel toggle:", err);
+        console.warn(
+          "[Settings] Background cloud sync failed after tunnel toggle:",
+          err,
+        );
       });
     } catch (err) {
       console.error("[Settings] Tunnel toggle failed:", err);
@@ -693,7 +812,9 @@ export function Settings({
     setSyncStatus(null);
     try {
       const result = await engine.triggerCloudSync();
-      setSyncStatus(`Sync ${result.status}${result.reason ? `: ${result.reason}` : ""}`);
+      setSyncStatus(
+        `Sync ${result.status}${result.reason ? `: ${result.reason}` : ""}`,
+      );
       if (result.settings) {
         const updated = await loadSettings();
         setSettings(updated);
@@ -768,11 +889,14 @@ export function Settings({
         description="Configure the desktop application and cloud sync"
       />
 
-      <SubTabBar tabs={settingsTabs} value={activeTab} onValueChange={setActiveTab} />
+      <SubTabBar
+        tabs={settingsTabs}
+        value={activeTab}
+        onValueChange={setActiveTab}
+      />
 
       <ScrollArea className="flex-1">
         <div className="mx-auto max-w-2xl space-y-6 p-6">
-
           {/* ── General Tab ──────────────────────────────────── */}
           {activeTab === "general" && (
             <>
@@ -793,11 +917,17 @@ export function Settings({
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant={engineStatus === "connected" ? "success" : "secondary"}>
+                      <Badge
+                        variant={
+                          engineStatus === "connected" ? "success" : "secondary"
+                        }
+                      >
                         {engineStatus}
                       </Badge>
                       {engineUrl && (
-                        <span className="text-xs font-mono text-muted-foreground">{engineUrl}</span>
+                        <span className="text-xs font-mono text-muted-foreground">
+                          {engineUrl}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -811,15 +941,31 @@ export function Settings({
                         Port range 22140-22159 is scanned automatically
                       </p>
                     </div>
-                    <Input value="22140" disabled className="w-24 text-right font-mono text-sm" />
+                    <Input
+                      value="22140"
+                      disabled
+                      className="w-24 text-right font-mono text-sm"
+                    />
                   </div>
 
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={onRefresh} className="flex-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onRefresh}
+                      className="flex-1"
+                    >
                       <RefreshCw className="h-4 w-4" /> Reconnect
                     </Button>
-                    <Button variant="outline" size="sm" onClick={handleRestartEngine} disabled={restarting} className="flex-1">
-                      <Power className="h-4 w-4" /> {restarting ? "Restarting..." : "Restart Engine"}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRestartEngine}
+                      disabled={restarting}
+                      className="flex-1"
+                    >
+                      <Power className="h-4 w-4" />{" "}
+                      {restarting ? "Restarting..." : "Restart Engine"}
                     </Button>
                   </div>
                 </CardContent>
@@ -847,7 +993,9 @@ export function Settings({
                         updateSetting("theme", v as AppSettings["theme"]);
                       }}
                     >
-                      <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="dark">Dark</SelectItem>
                         <SelectItem value="light">Light</SelectItem>
@@ -861,9 +1009,17 @@ export function Settings({
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="startup">Launch on Startup</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">Start AI Matrx when you log in</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Start AI Matrx when you log in
+                      </p>
                     </div>
-                    <Switch id="startup" checked={settings.launchOnStartup} onCheckedChange={(v) => updateSetting("launchOnStartup", v)} />
+                    <Switch
+                      id="startup"
+                      checked={settings.launchOnStartup}
+                      onCheckedChange={(v) =>
+                        updateSetting("launchOnStartup", v)
+                      }
+                    />
                   </div>
 
                   <Separator />
@@ -871,42 +1027,60 @@ export function Settings({
                   <div className="flex items-center justify-between">
                     <div>
                       <Label htmlFor="tray">Minimize to Tray</Label>
-                      <p className="text-xs text-muted-foreground mt-0.5">Keep running in system tray when window is closed</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Keep running in system tray when window is closed
+                      </p>
                     </div>
-                    <Switch id="tray" checked={settings.minimizeToTray} onCheckedChange={(v) => updateSetting("minimizeToTray", v)} />
+                    <Switch
+                      id="tray"
+                      checked={settings.minimizeToTray}
+                      onCheckedChange={(v) =>
+                        updateSetting("minimizeToTray", v)
+                      }
+                    />
                   </div>
 
                   <Separator />
 
                   {/* ── Wake Word / Listen Mode ───────────────────── */}
                   <div>
-                    <p className="text-sm font-medium mb-3">Wake Word / Listen Mode</p>
+                    <p className="text-sm font-medium mb-3">
+                      Wake Word / Listen Mode
+                    </p>
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <Label htmlFor="ww-enabled">Enable Listen Mode</Label>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            Master switch — turn off to disable wake-word detection entirely
+                            Master switch — turn off to disable wake-word
+                            detection entirely
                           </p>
                         </div>
                         <Switch
                           id="ww-enabled"
                           checked={settings.wakeWordEnabled}
-                          onCheckedChange={(v) => updateSetting("wakeWordEnabled", v)}
+                          onCheckedChange={(v) =>
+                            updateSetting("wakeWordEnabled", v)
+                          }
                         />
                       </div>
                       {settings.wakeWordEnabled && (
                         <div className="flex items-center justify-between">
                           <div>
-                            <Label htmlFor="ww-startup">Listen on Startup</Label>
+                            <Label htmlFor="ww-startup">
+                              Listen on Startup
+                            </Label>
                             <p className="text-xs text-muted-foreground mt-0.5">
-                              Automatically enter listen mode when the app launches
+                              Automatically enter listen mode when the app
+                              launches
                             </p>
                           </div>
                           <Switch
                             id="ww-startup"
                             checked={settings.wakeWordListenOnStartup}
-                            onCheckedChange={(v) => updateSetting("wakeWordListenOnStartup", v)}
+                            onCheckedChange={(v) =>
+                              updateSetting("wakeWordListenOnStartup", v)
+                            }
                           />
                         </div>
                       )}
@@ -917,19 +1091,26 @@ export function Settings({
 
                   {/* ── Notification Preferences ─────────────────── */}
                   <div>
-                    <p className="text-sm font-medium mb-3">Notification Preferences</p>
+                    <p className="text-sm font-medium mb-3">
+                      Notification Preferences
+                    </p>
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <Label htmlFor="notif-sound">Sound Notifications</Label>
+                          <Label htmlFor="notif-sound">
+                            Sound Notifications
+                          </Label>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            Play a sound when a notification arrives — important for long-running tasks
+                            Play a sound when a notification arrives — important
+                            for long-running tasks
                           </p>
                         </div>
                         <Switch
                           id="notif-sound"
                           checked={settings.notificationSound}
-                          onCheckedChange={(v) => updateSetting("notificationSound", v)}
+                          onCheckedChange={(v) =>
+                            updateSetting("notificationSound", v)
+                          }
                         />
                       </div>
 
@@ -937,11 +1118,18 @@ export function Settings({
                         <div className="flex items-center justify-between">
                           <div>
                             <Label>Sound Style</Label>
-                            <p className="text-xs text-muted-foreground mt-0.5">Tone used for incoming notifications</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Tone used for incoming notifications
+                            </p>
                           </div>
                           <Select
                             value={settings.notificationSoundStyle}
-                            onValueChange={(v) => updateSetting("notificationSoundStyle", v as AppSettings["notificationSoundStyle"])}
+                            onValueChange={(v) =>
+                              updateSetting(
+                                "notificationSoundStyle",
+                                v as AppSettings["notificationSoundStyle"],
+                              )
+                            }
                           >
                             <SelectTrigger className="w-32">
                               <SelectValue />
@@ -980,9 +1168,11 @@ export function Settings({
                   onClick={refreshHardwareProfile}
                   disabled={hardwareLoading || engineStatus !== "connected"}
                 >
-                  {hardwareLoading
-                    ? <Loader2 className="h-4 w-4 animate-spin" />
-                    : <RefreshCw className="h-4 w-4" />}
+                  {hardwareLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
                   {hardwareLoading ? "Detecting…" : "Refresh"}
                 </Button>
               </div>
@@ -1011,7 +1201,9 @@ export function Settings({
                 <Card>
                   <CardContent className="pt-6 pb-6 flex items-center justify-center gap-2 text-muted-foreground">
                     <AlertCircle className="h-4 w-4" />
-                    <span className="text-sm">Engine not connected — hardware data unavailable</span>
+                    <span className="text-sm">
+                      Engine not connected — hardware data unavailable
+                    </span>
                   </CardContent>
                 </Card>
               )}
@@ -1024,25 +1216,36 @@ export function Settings({
                       <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-base">
                           <Cpu className="h-4 w-4 text-primary" />
-                          {hardwareProfile.cpus.length === 1 ? "Processor" : `Processors (${hardwareProfile.cpus.length})`}
+                          {hardwareProfile.cpus.length === 1
+                            ? "Processor"
+                            : `Processors (${hardwareProfile.cpus.length})`}
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-3">
                         {hardwareProfile.cpus.map((cpu, i) => (
                           <div key={i} className="space-y-1">
                             {hardwareProfile.cpus.length > 1 && (
-                              <p className="text-xs font-medium text-muted-foreground">CPU {i + 1}</p>
+                              <p className="text-xs font-medium text-muted-foreground">
+                                CPU {i + 1}
+                              </p>
                             )}
                             <p className="text-sm font-medium">{cpu.model}</p>
                             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
                               {cpu.physical_cores != null && (
-                                <span>{cpu.physical_cores} physical cores / {cpu.logical_cores} threads</span>
+                                <span>
+                                  {cpu.physical_cores} physical cores /{" "}
+                                  {cpu.logical_cores} threads
+                                </span>
                               )}
-                              {cpu.architecture && <span>Architecture: {cpu.architecture}</span>}
+                              {cpu.architecture && (
+                                <span>Architecture: {cpu.architecture}</span>
+                              )}
                               {cpu.frequency_mhz != null && (
                                 <span>
                                   {(cpu.frequency_mhz / 1000).toFixed(2)} GHz
-                                  {cpu.frequency_max_mhz ? ` (max ${(cpu.frequency_max_mhz / 1000).toFixed(2)} GHz)` : ""}
+                                  {cpu.frequency_max_mhz
+                                    ? ` (max ${(cpu.frequency_max_mhz / 1000).toFixed(2)} GHz)`
+                                    : ""}
                                 </span>
                               )}
                             </div>
@@ -1058,7 +1261,9 @@ export function Settings({
                       <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-base">
                           <Layers className="h-4 w-4 text-primary" />
-                          {hardwareProfile.gpus.length === 1 ? "Graphics" : `Graphics (${hardwareProfile.gpus.length})`}
+                          {hardwareProfile.gpus.length === 1
+                            ? "Graphics"
+                            : `Graphics (${hardwareProfile.gpus.length})`}
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-3">
@@ -1068,10 +1273,16 @@ export function Settings({
                               <p className="text-sm font-medium">{gpu.name}</p>
                               <div className="flex gap-1">
                                 {gpu.is_primary && (
-                                  <Badge variant="outline" className="text-xs">Primary</Badge>
+                                  <Badge variant="outline" className="text-xs">
+                                    Primary
+                                  </Badge>
                                 )}
                                 <Badge
-                                  variant={gpu.backend === "cpu" ? "secondary" : "default"}
+                                  variant={
+                                    gpu.backend === "cpu"
+                                      ? "secondary"
+                                      : "default"
+                                  }
                                   className="text-xs capitalize"
                                 >
                                   {gpu.backend}
@@ -1086,9 +1297,13 @@ export function Settings({
                                     : `${(gpu.vram_mb / 1024).toFixed(1)} GB VRAM`}
                                 </p>
                               )}
-                              {gpu.driver_version && <p>Driver: {gpu.driver_version}</p>}
+                              {gpu.driver_version && (
+                                <p>Driver: {gpu.driver_version}</p>
+                              )}
                               {gpu.backend === "cpu" && (
-                                <p className="text-amber-500">No GPU acceleration — CPU inference only</p>
+                                <p className="text-amber-500">
+                                  No GPU acceleration — CPU inference only
+                                </p>
                               )}
                             </div>
                           </div>
@@ -1098,45 +1313,69 @@ export function Settings({
                   )}
 
                   {/* RAM */}
-                  {hardwareProfile.ram && hardwareProfile.ram.total_mb != null && (
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="flex items-center gap-2 text-base">
-                          <MemoryStick className="h-4 w-4 text-primary" />
-                          Memory (RAM)
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                          <div>
-                            <span className="text-muted-foreground text-xs">Total</span>
-                            <p className="font-medium">{(hardwareProfile.ram.total_mb / 1024).toFixed(1)} GB</p>
+                  {hardwareProfile.ram &&
+                    hardwareProfile.ram.total_mb != null && (
+                      <Card>
+                        <CardHeader className="pb-3">
+                          <CardTitle className="flex items-center gap-2 text-base">
+                            <MemoryStick className="h-4 w-4 text-primary" />
+                            Memory (RAM)
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                            <div>
+                              <span className="text-muted-foreground text-xs">
+                                Total
+                              </span>
+                              <p className="font-medium">
+                                {(hardwareProfile.ram.total_mb / 1024).toFixed(
+                                  1,
+                                )}{" "}
+                                GB
+                              </p>
+                            </div>
+                            {hardwareProfile.ram.available_mb != null && (
+                              <div>
+                                <span className="text-muted-foreground text-xs">
+                                  Available
+                                </span>
+                                <p className="font-medium">
+                                  {(
+                                    hardwareProfile.ram.available_mb / 1024
+                                  ).toFixed(1)}{" "}
+                                  GB
+                                </p>
+                              </div>
+                            )}
+                            {hardwareProfile.ram.type && (
+                              <div>
+                                <span className="text-muted-foreground text-xs">
+                                  Type
+                                </span>
+                                <p className="font-medium">
+                                  {hardwareProfile.ram.type}
+                                </p>
+                              </div>
+                            )}
+                            {hardwareProfile.ram.speed_mhz != null && (
+                              <div>
+                                <span className="text-muted-foreground text-xs">
+                                  Speed
+                                </span>
+                                <p className="font-medium">
+                                  {hardwareProfile.ram.speed_mhz} MHz
+                                </p>
+                              </div>
+                            )}
                           </div>
-                          {hardwareProfile.ram.available_mb != null && (
-                            <div>
-                              <span className="text-muted-foreground text-xs">Available</span>
-                              <p className="font-medium">{(hardwareProfile.ram.available_mb / 1024).toFixed(1)} GB</p>
-                            </div>
-                          )}
-                          {hardwareProfile.ram.type && (
-                            <div>
-                              <span className="text-muted-foreground text-xs">Type</span>
-                              <p className="font-medium">{hardwareProfile.ram.type}</p>
-                            </div>
-                          )}
-                          {hardwareProfile.ram.speed_mhz != null && (
-                            <div>
-                              <span className="text-muted-foreground text-xs">Speed</span>
-                              <p className="font-medium">{hardwareProfile.ram.speed_mhz} MHz</p>
-                            </div>
-                          )}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
+                        </CardContent>
+                      </Card>
+                    )}
 
                   {/* Audio Inputs */}
-                  {(hardwareProfile.audio_inputs.length > 0 || hardwareProfile.audio_outputs.length > 0) && (
+                  {(hardwareProfile.audio_inputs.length > 0 ||
+                    hardwareProfile.audio_outputs.length > 0) && (
                     <Card>
                       <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-base">
@@ -1152,23 +1391,33 @@ export function Settings({
                             </p>
                             <div className="space-y-1.5">
                               {hardwareProfile.audio_inputs.map((d, i) => (
-                                <div key={i} className="flex items-center justify-between text-sm">
+                                <div
+                                  key={i}
+                                  className="flex items-center justify-between text-sm"
+                                >
                                   <div className="flex items-center gap-2">
                                     <Mic className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                    <span className="truncate max-w-[260px]">{d.name}</span>
+                                    <span className="truncate max-w-[260px]">
+                                      {d.name}
+                                    </span>
                                   </div>
                                   <span className="text-xs text-muted-foreground shrink-0 ml-2">
-                                    {d.channels != null ? `${d.channels}ch` : ""}
-                                    {d.default_sample_rate ? ` · ${(d.default_sample_rate / 1000).toFixed(1)}kHz` : ""}
+                                    {d.channels != null
+                                      ? `${d.channels}ch`
+                                      : ""}
+                                    {d.default_sample_rate
+                                      ? ` · ${(d.default_sample_rate / 1000).toFixed(1)}kHz`
+                                      : ""}
                                   </span>
                                 </div>
                               ))}
                             </div>
                           </div>
                         )}
-                        {hardwareProfile.audio_inputs.length > 0 && hardwareProfile.audio_outputs.length > 0 && (
-                          <Separator />
-                        )}
+                        {hardwareProfile.audio_inputs.length > 0 &&
+                          hardwareProfile.audio_outputs.length > 0 && (
+                            <Separator />
+                          )}
                         {hardwareProfile.audio_outputs.length > 0 && (
                           <div>
                             <p className="text-xs font-medium text-muted-foreground mb-2">
@@ -1176,23 +1425,35 @@ export function Settings({
                             </p>
                             <div className="space-y-1.5">
                               {hardwareProfile.audio_outputs.map((d, i) => (
-                                <div key={i} className="flex items-center justify-between text-sm">
+                                <div
+                                  key={i}
+                                  className="flex items-center justify-between text-sm"
+                                >
                                   <div className="flex items-center gap-2">
                                     <Speaker className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                    <span className="truncate max-w-[260px]">{d.name}</span>
+                                    <span className="truncate max-w-[260px]">
+                                      {d.name}
+                                    </span>
                                   </div>
                                   <span className="text-xs text-muted-foreground shrink-0 ml-2">
-                                    {d.channels != null ? `${d.channels}ch` : ""}
-                                    {d.default_sample_rate ? ` · ${(d.default_sample_rate / 1000).toFixed(1)}kHz` : ""}
+                                    {d.channels != null
+                                      ? `${d.channels}ch`
+                                      : ""}
+                                    {d.default_sample_rate
+                                      ? ` · ${(d.default_sample_rate / 1000).toFixed(1)}kHz`
+                                      : ""}
                                   </span>
                                 </div>
                               ))}
                             </div>
                           </div>
                         )}
-                        {hardwareProfile.audio_inputs.length === 0 && hardwareProfile.audio_outputs.length === 0 && (
-                          <p className="text-sm text-muted-foreground">No audio devices found</p>
-                        )}
+                        {hardwareProfile.audio_inputs.length === 0 &&
+                          hardwareProfile.audio_outputs.length === 0 && (
+                            <p className="text-sm text-muted-foreground">
+                              No audio devices found
+                            </p>
+                          )}
                       </CardContent>
                     </Card>
                   )}
@@ -1207,15 +1468,22 @@ export function Settings({
                     </CardHeader>
                     <CardContent>
                       {hardwareProfile.video_devices.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No video capture devices found</p>
+                        <p className="text-sm text-muted-foreground">
+                          No video capture devices found
+                        </p>
                       ) : (
                         <div className="space-y-1.5">
                           {hardwareProfile.video_devices.map((d, i) => (
-                            <div key={i} className="flex items-center gap-2 text-sm">
+                            <div
+                              key={i}
+                              className="flex items-center gap-2 text-sm"
+                            >
                               <Camera className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                               <span>{d.name}</span>
                               {d.device && (
-                                <span className="text-xs text-muted-foreground font-mono">{d.device}</span>
+                                <span className="text-xs text-muted-foreground font-mono">
+                                  {d.device}
+                                </span>
                               )}
                             </div>
                           ))}
@@ -1238,11 +1506,17 @@ export function Settings({
                           <div key={i} className={i > 0 ? "pt-3 border-t" : ""}>
                             <div className="flex items-center justify-between">
                               <p className="text-sm font-medium">{m.name}</p>
-                              {m.is_primary && <Badge variant="outline" className="text-xs">Primary</Badge>}
+                              {m.is_primary && (
+                                <Badge variant="outline" className="text-xs">
+                                  Primary
+                                </Badge>
+                              )}
                             </div>
                             <div className="mt-0.5 text-xs text-muted-foreground">
                               {m.width_px != null && m.height_px != null && (
-                                <span>{m.width_px} × {m.height_px}</span>
+                                <span>
+                                  {m.width_px} × {m.height_px}
+                                </span>
                               )}
                               {m.refresh_hz != null && (
                                 <span> @ {m.refresh_hz} Hz</span>
@@ -1260,31 +1534,57 @@ export function Settings({
                       <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-base">
                           <Network className="h-4 w-4 text-primary" />
-                          Network Adapters ({hardwareProfile.network_adapters.filter(a => a.type !== "loopback").length})
+                          Network Adapters (
+                          {
+                            hardwareProfile.network_adapters.filter(
+                              (a) => a.type !== "loopback",
+                            ).length
+                          }
+                          )
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-3">
                         {hardwareProfile.network_adapters
-                          .filter(a => a.type !== "loopback")
+                          .filter((a) => a.type !== "loopback")
                           .map((a, i) => (
-                            <div key={i} className={i > 0 ? "pt-3 border-t" : ""}>
+                            <div
+                              key={i}
+                              className={i > 0 ? "pt-3 border-t" : ""}
+                            >
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                  {a.type === "wifi"
-                                    ? <Wifi className="h-3.5 w-3.5 text-muted-foreground" />
-                                    : <Network className="h-3.5 w-3.5 text-muted-foreground" />}
-                                  <span className="text-sm font-medium">{a.name}</span>
+                                  {a.type === "wifi" ? (
+                                    <Wifi className="h-3.5 w-3.5 text-muted-foreground" />
+                                  ) : (
+                                    <Network className="h-3.5 w-3.5 text-muted-foreground" />
+                                  )}
+                                  <span className="text-sm font-medium">
+                                    {a.name}
+                                  </span>
                                 </div>
                                 <div className="flex items-center gap-1.5">
-                                  <Badge variant="outline" className="text-xs capitalize">{a.type}</Badge>
-                                  <span className={`h-2 w-2 rounded-full ${a.is_up ? "bg-green-500" : "bg-muted"}`} />
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs capitalize"
+                                  >
+                                    {a.type}
+                                  </Badge>
+                                  <span
+                                    className={`h-2 w-2 rounded-full ${a.is_up ? "bg-green-500" : "bg-muted"}`}
+                                  />
                                 </div>
                               </div>
                               <div className="mt-0.5 text-xs text-muted-foreground space-y-0.5">
-                                {a.ipv4.length > 0 && <p>IPv4: {a.ipv4.join(", ")}</p>}
+                                {a.ipv4.length > 0 && (
+                                  <p>IPv4: {a.ipv4.join(", ")}</p>
+                                )}
                                 {a.mac && <p>MAC: {a.mac}</p>}
                                 {a.speed_mbps != null && a.speed_mbps > 0 && (
-                                  <p>{a.speed_mbps >= 1000 ? `${(a.speed_mbps / 1000).toFixed(0)} Gbps` : `${a.speed_mbps} Mbps`}</p>
+                                  <p>
+                                    {a.speed_mbps >= 1000
+                                      ? `${(a.speed_mbps / 1000).toFixed(0)} Gbps`
+                                      : `${a.speed_mbps} Mbps`}
+                                  </p>
                                 )}
                               </div>
                             </div>
@@ -1299,24 +1599,39 @@ export function Settings({
                       <CardHeader className="pb-3">
                         <CardTitle className="flex items-center gap-2 text-base">
                           <HardDrive className="h-4 w-4 text-primary" />
-                          Storage ({hardwareProfile.storage.length} volume{hardwareProfile.storage.length !== 1 ? "s" : ""})
+                          Storage ({hardwareProfile.storage.length} volume
+                          {hardwareProfile.storage.length !== 1 ? "s" : ""})
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-3">
                         {hardwareProfile.storage.map((s, i) => (
                           <div key={i} className={i > 0 ? "pt-3 border-t" : ""}>
                             <div className="flex items-center justify-between">
-                              <span className="text-sm font-medium font-mono truncate max-w-[200px]">{s.mountpoint}</span>
+                              <span className="text-sm font-medium font-mono truncate max-w-[200px]">
+                                {s.mountpoint}
+                              </span>
                               <div className="flex items-center gap-1.5">
                                 {s.disk_type !== "unknown" && (
-                                  <Badge variant="outline" className="text-xs uppercase">{s.disk_type}</Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs uppercase"
+                                  >
+                                    {s.disk_type}
+                                  </Badge>
                                 )}
-                                {s.fstype && <span className="text-xs text-muted-foreground">{s.fstype}</span>}
+                                {s.fstype && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {s.fstype}
+                                  </span>
+                                )}
                               </div>
                             </div>
                             <div className="mt-1.5">
                               <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                                <span>{s.used_gb.toFixed(1)} GB used of {s.total_gb.toFixed(1)} GB</span>
+                                <span>
+                                  {s.used_gb.toFixed(1)} GB used of{" "}
+                                  {s.total_gb.toFixed(1)} GB
+                                </span>
                                 <span>{s.free_gb.toFixed(1)} GB free</span>
                               </div>
                               <div className="h-1.5 rounded-full bg-muted overflow-hidden">
@@ -1348,14 +1663,17 @@ export function Settings({
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <p className="text-xs text-muted-foreground">
-                    Enter your own API keys to use AI providers directly from this device.
-                    The Hugging Face entry is also used for local GGUF downloads (including XET-hosted models).
-                    Keys are stored locally on this machine only and are never sent to AI Matrx servers.
-                    Leave a key blank if you don't have one — that provider will be unavailable.
+                    Enter your own API keys to use AI providers directly from
+                    this device. The Hugging Face entry is also used for local
+                    GGUF downloads (including XET-hosted models). Keys are
+                    stored locally on this machine only and are never sent to AI
+                    Matrx servers. Leave a key blank if you don't have one —
+                    that provider will be unavailable.
                   </p>
                   <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                    Keys are base64-encoded in local storage. Do not enter keys you cannot afford to rotate.
-                    A cloud relay (no user keys required) is planned for a future release.
+                    Keys are base64-encoded in local storage. Do not enter keys
+                    you cannot afford to rotate. A cloud relay (no user keys
+                    required) is planned for a future release.
                   </div>
                 </CardContent>
               </Card>
@@ -1391,7 +1709,8 @@ export function Settings({
                   </div>
                   {!bulkImportOpen && (
                     <p className="text-xs text-muted-foreground mt-1">
-                      Paste a .env file — we'll detect and import matching API keys automatically.
+                      Paste a .env file — we'll detect and import matching API
+                      keys automatically.
                     </p>
                   )}
                 </CardHeader>
@@ -1401,9 +1720,16 @@ export function Settings({
                     {/* ── Paste zone ── */}
                     <div className="space-y-1.5">
                       <p className="text-xs text-muted-foreground">
-                        Paste any block of <code className="font-mono bg-muted px-1 rounded">KEY=VALUE</code> lines.
-                        Alternate names like <code className="font-mono bg-muted px-1 rounded">GEMINI_API_KEY</code> → Google are auto-detected.
-                        You can edit any value or manually map unrecognised keys below.
+                        Paste any block of{" "}
+                        <code className="font-mono bg-muted px-1 rounded">
+                          KEY=VALUE
+                        </code>{" "}
+                        lines. Alternate names like{" "}
+                        <code className="font-mono bg-muted px-1 rounded">
+                          GEMINI_API_KEY
+                        </code>{" "}
+                        → Google are auto-detected. You can edit any value or
+                        manually map unrecognised keys below.
                       </p>
                       <Textarea
                         value={bulkEnvText}
@@ -1415,341 +1741,417 @@ export function Settings({
                     </div>
 
                     {/* ── Parsed entries ── */}
-                    {bulkParsed.length > 0 && (() => {
-                      const matched = bulkParsed.filter((e) => e.provider !== null);
-                      const unmatched = bulkParsed.filter((e) => e.provider === null);
-                      const selectableKeys = [
-                        ...matched.map((e) => e.rawKey),
-                        ...unmatched.filter((e) => bulkCustomMapping[e.rawKey]).map((e) => e.rawKey),
-                      ];
-                      const allSelected = selectableKeys.length > 0 && selectableKeys.every((k) => bulkSelected.has(k));
+                    {bulkParsed.length > 0 &&
+                      (() => {
+                        const matched = bulkParsed.filter(
+                          (e) => e.provider !== null,
+                        );
+                        const unmatched = bulkParsed.filter(
+                          (e) => e.provider === null,
+                        );
+                        const selectableKeys = [
+                          ...matched.map((e) => e.rawKey),
+                          ...unmatched
+                            .filter((e) => bulkCustomMapping[e.rawKey])
+                            .map((e) => e.rawKey),
+                        ];
+                        const allSelected =
+                          selectableKeys.length > 0 &&
+                          selectableKeys.every((k) => bulkSelected.has(k));
 
-                      return (
-                        <div className="space-y-3">
-                          {/* Header row */}
-                          <div className="flex items-center justify-between">
-                            <p className="text-sm font-medium">
-                              {matched.length} of {bulkParsed.length} keys matched
-                              {unmatched.length > 0 && ` · ${unmatched.length} unrecognised`}
-                            </p>
-                            {selectableKeys.length > 0 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 text-xs"
-                                onClick={() => setBulkSelected(allSelected ? new Set() : new Set(selectableKeys))}
-                              >
-                                {allSelected ? "Deselect All" : "Select All"}
-                              </Button>
-                            )}
-                          </div>
+                        return (
+                          <div className="space-y-3">
+                            {/* Header row */}
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium">
+                                {matched.length} of {bulkParsed.length} keys
+                                matched
+                                {unmatched.length > 0 &&
+                                  ` · ${unmatched.length} unrecognised`}
+                              </p>
+                              {selectableKeys.length > 0 && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() =>
+                                    setBulkSelected(
+                                      allSelected
+                                        ? new Set()
+                                        : new Set(selectableKeys),
+                                    )
+                                  }
+                                >
+                                  {allSelected ? "Deselect All" : "Select All"}
+                                </Button>
+                              )}
+                            </div>
 
-                          {/* ── Matched entries ── */}
-                          {matched.length > 0 && (
-                            <div className="space-y-2">
-                              {matched.map((entry) => {
-                                const selected = bulkSelected.has(entry.rawKey);
-                                const alreadyConfigured = apiKeyProviders.find(
-                                  (p) => p.provider === entry.provider && p.configured,
-                                );
-                                const savedOk = bulkResult?.saved.includes(entry.provider!);
-                                const saveErr = bulkResult?.errors[entry.provider!];
-                                const editedVal = bulkEditedValues[entry.rawKey] ?? entry.rawValue;
-                                const showVal = bulkShowValues[entry.rawKey] ?? false;
+                            {/* ── Matched entries ── */}
+                            {matched.length > 0 && (
+                              <div className="space-y-2">
+                                {matched.map((entry) => {
+                                  const selected = bulkSelected.has(
+                                    entry.rawKey,
+                                  );
+                                  const alreadyConfigured =
+                                    apiKeyProviders.find(
+                                      (p) =>
+                                        p.provider === entry.provider &&
+                                        p.configured,
+                                    );
+                                  const savedOk = bulkResult?.saved.includes(
+                                    entry.provider!,
+                                  );
+                                  const saveErr =
+                                    bulkResult?.errors[entry.provider!];
+                                  const editedVal =
+                                    bulkEditedValues[entry.rawKey] ??
+                                    entry.rawValue;
+                                  const showVal =
+                                    bulkShowValues[entry.rawKey] ?? false;
 
-                                return (
-                                  <div
-                                    key={entry.rawKey}
-                                    className={`rounded-lg border transition-colors ${
-                                      savedOk
-                                        ? "border-emerald-500/40 bg-emerald-500/5"
-                                        : saveErr
-                                          ? "border-red-500/40 bg-red-500/5"
-                                          : selected
-                                            ? "border-primary/40 bg-primary/5"
-                                            : "border-border/50 bg-muted/10 opacity-60"
-                                    }`}
-                                  >
-                                    {/* Top row: checkbox + labels + status */}
-                                    <div className="flex items-center gap-3 px-4 py-3">
-                                      <input
-                                        type="checkbox"
-                                        checked={selected}
-                                        disabled={!!savedOk}
-                                        onChange={(e) => {
-                                          setBulkSelected((prev) => {
-                                            const next = new Set(prev);
-                                            if (e.target.checked) next.add(entry.rawKey);
-                                            else next.delete(entry.rawKey);
-                                            return next;
-                                          });
-                                        }}
-                                        className="h-4 w-4 accent-primary shrink-0"
-                                      />
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                          <code className="font-mono text-sm font-medium">{entry.rawKey}</code>
-                                          <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-                                            → {entry.label}
-                                          </span>
-                                          {alreadyConfigured && !savedOk && (
-                                            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-                                              already configured — will overwrite
+                                  return (
+                                    <div
+                                      key={entry.rawKey}
+                                      className={`rounded-lg border transition-colors ${
+                                        savedOk
+                                          ? "border-emerald-500/40 bg-emerald-500/5"
+                                          : saveErr
+                                            ? "border-red-500/40 bg-red-500/5"
+                                            : selected
+                                              ? "border-primary/40 bg-primary/5"
+                                              : "border-border/50 bg-muted/10 opacity-60"
+                                      }`}
+                                    >
+                                      {/* Top row: checkbox + labels + status */}
+                                      <div className="flex items-center gap-3 px-4 py-3">
+                                        <input
+                                          type="checkbox"
+                                          checked={selected}
+                                          disabled={!!savedOk}
+                                          onChange={(e) => {
+                                            setBulkSelected((prev) => {
+                                              const next = new Set(prev);
+                                              if (e.target.checked)
+                                                next.add(entry.rawKey);
+                                              else next.delete(entry.rawKey);
+                                              return next;
+                                            });
+                                          }}
+                                          className="h-4 w-4 accent-primary shrink-0"
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <code className="font-mono text-sm font-medium">
+                                              {entry.rawKey}
+                                            </code>
+                                            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                                              → {entry.label}
                                             </span>
-                                          )}
+                                            {alreadyConfigured && !savedOk && (
+                                              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                                                already configured — will
+                                                overwrite
+                                              </span>
+                                            )}
+                                            {savedOk && (
+                                              <span className="flex items-center gap-1 text-xs text-emerald-500 font-medium">
+                                                <CheckCircle2 className="h-3.5 w-3.5" />{" "}
+                                                Saved
+                                              </span>
+                                            )}
+                                            {saveErr && (
+                                              <span className="flex items-center gap-1 text-xs text-red-500 font-medium">
+                                                <AlertCircle className="h-3.5 w-3.5" />{" "}
+                                                {saveErr}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      {/* Value row */}
+                                      <div className="flex items-center gap-2 px-4 pb-3">
+                                        <div className="relative flex-1">
+                                          <Input
+                                            type={showVal ? "text" : "password"}
+                                            value={editedVal}
+                                            onChange={(ev) =>
+                                              setBulkEditedValues((prev) => ({
+                                                ...prev,
+                                                [entry.rawKey]: ev.target.value,
+                                              }))
+                                            }
+                                            className="font-mono text-sm pr-10 h-8"
+                                            spellCheck={false}
+                                            disabled={!!savedOk}
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setBulkShowValues((prev) => ({
+                                                ...prev,
+                                                [entry.rawKey]: !showVal,
+                                              }))
+                                            }
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                            tabIndex={-1}
+                                          >
+                                            {showVal ? (
+                                              <EyeOff className="h-3.5 w-3.5" />
+                                            ) : (
+                                              <Eye className="h-3.5 w-3.5" />
+                                            )}
+                                          </button>
+                                        </div>
+                                        {editedVal !== entry.rawValue && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 text-xs text-muted-foreground"
+                                            onClick={() =>
+                                              setBulkEditedValues((prev) => {
+                                                const next = { ...prev };
+                                                delete next[entry.rawKey];
+                                                return next;
+                                              })
+                                            }
+                                          >
+                                            <RotateCcw className="h-3 w-3" />{" "}
+                                            Reset
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            {/* ── Unmatched entries ── */}
+                            {unmatched.length > 0 && (
+                              <div className="space-y-2">
+                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                                  Unrecognised — map manually to import
+                                </p>
+                                {unmatched.map((entry) => {
+                                  const customProvider =
+                                    bulkCustomMapping[entry.rawKey] ?? "";
+                                  const selected = bulkSelected.has(
+                                    entry.rawKey,
+                                  );
+                                  const savedOk =
+                                    customProvider &&
+                                    bulkResult?.saved.includes(customProvider);
+                                  const saveErr =
+                                    customProvider &&
+                                    bulkResult?.errors[customProvider];
+                                  const editedVal =
+                                    bulkEditedValues[entry.rawKey] ??
+                                    entry.rawValue;
+                                  const showVal =
+                                    bulkShowValues[entry.rawKey] ?? false;
+
+                                  return (
+                                    <div
+                                      key={entry.rawKey}
+                                      className={`rounded-lg border transition-colors ${
+                                        savedOk
+                                          ? "border-emerald-500/40 bg-emerald-500/5"
+                                          : saveErr
+                                            ? "border-red-500/40 bg-red-500/5"
+                                            : customProvider && selected
+                                              ? "border-primary/40 bg-primary/5"
+                                              : "border-border/40 bg-muted/10"
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-3 px-4 py-3">
+                                        <input
+                                          type="checkbox"
+                                          checked={selected && !!customProvider}
+                                          disabled={
+                                            !customProvider || !!savedOk
+                                          }
+                                          onChange={(e) => {
+                                            if (!customProvider) return;
+                                            setBulkSelected((prev) => {
+                                              const next = new Set(prev);
+                                              if (e.target.checked)
+                                                next.add(entry.rawKey);
+                                              else next.delete(entry.rawKey);
+                                              return next;
+                                            });
+                                          }}
+                                          className="h-4 w-4 accent-primary shrink-0"
+                                        />
+                                        <div className="flex-1 min-w-0 flex items-center gap-3 flex-wrap">
+                                          <code className="font-mono text-sm font-medium text-muted-foreground">
+                                            {entry.rawKey}
+                                          </code>
+                                          <span className="text-xs text-muted-foreground/60">
+                                            →
+                                          </span>
+                                          <Select
+                                            value={customProvider}
+                                            onValueChange={(v) => {
+                                              setBulkCustomMapping((prev) => ({
+                                                ...prev,
+                                                [entry.rawKey]: v,
+                                              }));
+                                              if (v) {
+                                                setBulkSelected((prev) => {
+                                                  const next = new Set(prev);
+                                                  next.add(entry.rawKey);
+                                                  return next;
+                                                });
+                                              }
+                                            }}
+                                          >
+                                            <SelectTrigger className="h-7 w-44 text-xs">
+                                              <SelectValue placeholder="Map to provider…" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                              {apiKeyProviders.map((p) => (
+                                                <SelectItem
+                                                  key={p.provider}
+                                                  value={p.provider}
+                                                  className="text-xs"
+                                                >
+                                                  {p.label}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
                                           {savedOk && (
                                             <span className="flex items-center gap-1 text-xs text-emerald-500 font-medium">
-                                              <CheckCircle2 className="h-3.5 w-3.5" /> Saved
+                                              <CheckCircle2 className="h-3.5 w-3.5" />{" "}
+                                              Saved
                                             </span>
                                           )}
                                           {saveErr && (
                                             <span className="flex items-center gap-1 text-xs text-red-500 font-medium">
-                                              <AlertCircle className="h-3.5 w-3.5" /> {saveErr}
+                                              <AlertCircle className="h-3.5 w-3.5" />{" "}
+                                              {saveErr}
                                             </span>
                                           )}
                                         </div>
                                       </div>
-                                    </div>
-                                    {/* Value row */}
-                                    <div className="flex items-center gap-2 px-4 pb-3">
-                                      <div className="relative flex-1">
-                                        <Input
-                                          type={showVal ? "text" : "password"}
-                                          value={editedVal}
-                                          onChange={(ev) =>
-                                            setBulkEditedValues((prev) => ({
-                                              ...prev,
-                                              [entry.rawKey]: ev.target.value,
-                                            }))
-                                          }
-                                          className="font-mono text-sm pr-10 h-8"
-                                          spellCheck={false}
-                                          disabled={!!savedOk}
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setBulkShowValues((prev) => ({
-                                              ...prev,
-                                              [entry.rawKey]: !showVal,
-                                            }))
-                                          }
-                                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                          tabIndex={-1}
-                                        >
-                                          {showVal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                                        </button>
-                                      </div>
-                                      {editedVal !== entry.rawValue && (
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          className="h-8 text-xs text-muted-foreground"
-                                          onClick={() =>
-                                            setBulkEditedValues((prev) => {
-                                              const next = { ...prev };
-                                              delete next[entry.rawKey];
-                                              return next;
-                                            })
-                                          }
-                                        >
-                                          <RotateCcw className="h-3 w-3" /> Reset
-                                        </Button>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-
-                          {/* ── Unmatched entries ── */}
-                          {unmatched.length > 0 && (
-                            <div className="space-y-2">
-                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                                Unrecognised — map manually to import
-                              </p>
-                              {unmatched.map((entry) => {
-                                const customProvider = bulkCustomMapping[entry.rawKey] ?? "";
-                                const selected = bulkSelected.has(entry.rawKey);
-                                const savedOk = customProvider && bulkResult?.saved.includes(customProvider);
-                                const saveErr = customProvider && bulkResult?.errors[customProvider];
-                                const editedVal = bulkEditedValues[entry.rawKey] ?? entry.rawValue;
-                                const showVal = bulkShowValues[entry.rawKey] ?? false;
-
-                                return (
-                                  <div
-                                    key={entry.rawKey}
-                                    className={`rounded-lg border transition-colors ${
-                                      savedOk
-                                        ? "border-emerald-500/40 bg-emerald-500/5"
-                                        : saveErr
-                                          ? "border-red-500/40 bg-red-500/5"
-                                          : customProvider && selected
-                                            ? "border-primary/40 bg-primary/5"
-                                            : "border-border/40 bg-muted/10"
-                                    }`}
-                                  >
-                                    <div className="flex items-center gap-3 px-4 py-3">
-                                      <input
-                                        type="checkbox"
-                                        checked={selected && !!customProvider}
-                                        disabled={!customProvider || !!savedOk}
-                                        onChange={(e) => {
-                                          if (!customProvider) return;
-                                          setBulkSelected((prev) => {
-                                            const next = new Set(prev);
-                                            if (e.target.checked) next.add(entry.rawKey);
-                                            else next.delete(entry.rawKey);
-                                            return next;
-                                          });
-                                        }}
-                                        className="h-4 w-4 accent-primary shrink-0"
-                                      />
-                                      <div className="flex-1 min-w-0 flex items-center gap-3 flex-wrap">
-                                        <code className="font-mono text-sm font-medium text-muted-foreground">{entry.rawKey}</code>
-                                        <span className="text-xs text-muted-foreground/60">→</span>
-                                        <Select
-                                          value={customProvider}
-                                          onValueChange={(v) => {
-                                            setBulkCustomMapping((prev) => ({ ...prev, [entry.rawKey]: v }));
-                                            if (v) {
-                                              setBulkSelected((prev) => {
-                                                const next = new Set(prev);
-                                                next.add(entry.rawKey);
-                                                return next;
-                                              });
+                                      <div className="flex items-center gap-2 px-4 pb-3">
+                                        <div className="relative flex-1">
+                                          <Input
+                                            type={showVal ? "text" : "password"}
+                                            value={editedVal}
+                                            onChange={(ev) =>
+                                              setBulkEditedValues((prev) => ({
+                                                ...prev,
+                                                [entry.rawKey]: ev.target.value,
+                                              }))
                                             }
-                                          }}
-                                        >
-                                          <SelectTrigger className="h-7 w-44 text-xs">
-                                            <SelectValue placeholder="Map to provider…" />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            {apiKeyProviders.map((p) => (
-                                              <SelectItem key={p.provider} value={p.provider} className="text-xs">
-                                                {p.label}
-                                              </SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
-                                        {savedOk && (
-                                          <span className="flex items-center gap-1 text-xs text-emerald-500 font-medium">
-                                            <CheckCircle2 className="h-3.5 w-3.5" /> Saved
-                                          </span>
-                                        )}
-                                        {saveErr && (
-                                          <span className="flex items-center gap-1 text-xs text-red-500 font-medium">
-                                            <AlertCircle className="h-3.5 w-3.5" /> {saveErr}
-                                          </span>
+                                            className="font-mono text-sm pr-10 h-8"
+                                            spellCheck={false}
+                                            disabled={!!savedOk}
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setBulkShowValues((prev) => ({
+                                                ...prev,
+                                                [entry.rawKey]: !showVal,
+                                              }))
+                                            }
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                            tabIndex={-1}
+                                          >
+                                            {showVal ? (
+                                              <EyeOff className="h-3.5 w-3.5" />
+                                            ) : (
+                                              <Eye className="h-3.5 w-3.5" />
+                                            )}
+                                          </button>
+                                        </div>
+                                        {editedVal !== entry.rawValue && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-8 text-xs text-muted-foreground"
+                                            onClick={() =>
+                                              setBulkEditedValues((prev) => {
+                                                const next = { ...prev };
+                                                delete next[entry.rawKey];
+                                                return next;
+                                              })
+                                            }
+                                          >
+                                            <RotateCcw className="h-3 w-3" />{" "}
+                                            Reset
+                                          </Button>
                                         )}
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-2 px-4 pb-3">
-                                      <div className="relative flex-1">
-                                        <Input
-                                          type={showVal ? "text" : "password"}
-                                          value={editedVal}
-                                          onChange={(ev) =>
-                                            setBulkEditedValues((prev) => ({
-                                              ...prev,
-                                              [entry.rawKey]: ev.target.value,
-                                            }))
-                                          }
-                                          className="font-mono text-sm pr-10 h-8"
-                                          spellCheck={false}
-                                          disabled={!!savedOk}
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setBulkShowValues((prev) => ({
-                                              ...prev,
-                                              [entry.rawKey]: !showVal,
-                                            }))
-                                          }
-                                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                          tabIndex={-1}
-                                        >
-                                          {showVal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                                        </button>
-                                      </div>
-                                      {editedVal !== entry.rawValue && (
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          className="h-8 text-xs text-muted-foreground"
-                                          onClick={() =>
-                                            setBulkEditedValues((prev) => {
-                                              const next = { ...prev };
-                                              delete next[entry.rawKey];
-                                              return next;
-                                            })
-                                          }
-                                        >
-                                          <RotateCcw className="h-3 w-3" /> Reset
-                                        </Button>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
+                                  );
+                                })}
+                              </div>
+                            )}
 
-                          {/* ── Top-level error (network / unexpected) ── */}
-                          {bulkResult?.errors._ && (
-                            <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-2.5 text-sm text-red-500 flex items-center gap-2">
-                              <AlertCircle className="h-4 w-4 shrink-0" />
-                              {bulkResult.errors._}
-                            </div>
-                          )}
+                            {/* ── Top-level error (network / unexpected) ── */}
+                            {bulkResult?.errors._ && (
+                              <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-2.5 text-sm text-red-500 flex items-center gap-2">
+                                <AlertCircle className="h-4 w-4 shrink-0" />
+                                {bulkResult.errors._}
+                              </div>
+                            )}
 
-                          {/* ── Action bar ── */}
-                          <div className="flex items-center gap-3 pt-1">
-                            <Button
-                              onClick={() => void handleBulkImport()}
-                              disabled={
-                                bulkSaving ||
-                                bulkSelected.size === 0 ||
-                                engineStatus !== "connected"
-                              }
-                            >
-                              {bulkSaving ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <FileUp className="h-4 w-4" />
-                              )}
-                              {bulkSaving
-                                ? "Saving…"
-                                : `Import ${bulkSelected.size > 0 ? `${bulkSelected.size} key${bulkSelected.size !== 1 ? "s" : ""}` : "Selected Keys"}`}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              onClick={() => {
-                                setBulkEnvText("");
-                                setBulkParsed([]);
-                                setBulkSelected(new Set());
-                                setBulkResult(null);
-                                setBulkEditedValues({});
-                                setBulkCustomMapping({});
-                                setBulkShowValues({});
-                              }}
-                              className="text-muted-foreground"
-                            >
-                              <X className="h-4 w-4" /> Clear
-                            </Button>
+                            {/* ── Action bar ── */}
+                            <div className="flex items-center gap-3 pt-1">
+                              <Button
+                                onClick={() => void handleBulkImport()}
+                                disabled={
+                                  bulkSaving ||
+                                  bulkSelected.size === 0 ||
+                                  engineStatus !== "connected"
+                                }
+                              >
+                                {bulkSaving ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <FileUp className="h-4 w-4" />
+                                )}
+                                {bulkSaving
+                                  ? "Saving…"
+                                  : `Import ${bulkSelected.size > 0 ? `${bulkSelected.size} key${bulkSelected.size !== 1 ? "s" : ""}` : "Selected Keys"}`}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                onClick={() => {
+                                  setBulkEnvText("");
+                                  setBulkParsed([]);
+                                  setBulkSelected(new Set());
+                                  setBulkResult(null);
+                                  setBulkEditedValues({});
+                                  setBulkCustomMapping({});
+                                  setBulkShowValues({});
+                                }}
+                                className="text-muted-foreground"
+                              >
+                                <X className="h-4 w-4" /> Clear
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })()}
+                        );
+                      })()}
 
                     {/* Empty state after paste that yielded nothing */}
-                    {bulkEnvText.trim().length > 0 && bulkParsed.length === 0 && (
-                      <p className="text-sm text-muted-foreground text-center py-4">
-                        No API key patterns detected. Make sure your lines follow <code className="font-mono bg-muted px-1 rounded text-xs">KEY=VALUE</code> format.
-                      </p>
-                    )}
+                    {bulkEnvText.trim().length > 0 &&
+                      bulkParsed.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          No API key patterns detected. Make sure your lines
+                          follow{" "}
+                          <code className="font-mono bg-muted px-1 rounded text-xs">
+                            KEY=VALUE
+                          </code>{" "}
+                          format.
+                        </p>
+                      )}
                   </CardContent>
                 )}
               </Card>
@@ -1781,52 +2183,78 @@ export function Settings({
                           <div className="flex items-start gap-3">
                             <div className="min-w-0 flex-1 space-y-2">
                               <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium">{p.label}</span>
+                                <span className="text-sm font-medium">
+                                  {p.label}
+                                </span>
                                 {p.configured ? (
-                                  <Badge variant="success" className="text-xs">Configured</Badge>
+                                  <Badge variant="success" className="text-xs">
+                                    Configured
+                                  </Badge>
                                 ) : (
-                                  <Badge variant="secondary" className="text-xs">Not set</Badge>
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-xs"
+                                  >
+                                    Not set
+                                  </Badge>
                                 )}
                               </div>
-                              <p className="text-xs text-muted-foreground">{p.description}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {p.description}
+                              </p>
                               <div className="flex items-center gap-2">
                                 <div className="relative flex-1">
                                   <Input
                                     type={visible ? "text" : "password"}
                                     value={inputVal}
                                     onChange={(e) =>
-                                      setApiKeyInputs(prev => ({ ...prev, [p.provider]: e.target.value }))
+                                      setApiKeyInputs((prev) => ({
+                                        ...prev,
+                                        [p.provider]: e.target.value,
+                                      }))
                                     }
                                     onKeyDown={(e) => {
-                                      if (e.key === "Enter" && canSave) void handleApiKeySave(p.provider);
+                                      if (e.key === "Enter" && canSave)
+                                        void handleApiKeySave(p.provider);
                                     }}
-                                    placeholder={p.configured ? "Enter new key to update" : "Enter API key"}
+                                    placeholder={
+                                      p.configured
+                                        ? "Enter new key to update"
+                                        : "Enter API key"
+                                    }
                                     className="pr-9 font-mono text-xs"
                                   />
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      setApiKeyVisible(prev => ({ ...prev, [p.provider]: !prev[p.provider] }))
+                                      setApiKeyVisible((prev) => ({
+                                        ...prev,
+                                        [p.provider]: !prev[p.provider],
+                                      }))
                                     }
                                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                                     tabIndex={-1}
                                   >
-                                    {visible
-                                      ? <EyeOff className="h-3.5 w-3.5" />
-                                      : <Eye className="h-3.5 w-3.5" />
-                                    }
+                                    {visible ? (
+                                      <EyeOff className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <Eye className="h-3.5 w-3.5" />
+                                    )}
                                   </button>
                                 </div>
                                 <Button
                                   size="sm"
                                   disabled={!canSave || saving}
-                                  onClick={() => void handleApiKeySave(p.provider)}
+                                  onClick={() =>
+                                    void handleApiKeySave(p.provider)
+                                  }
                                   className="shrink-0"
                                 >
-                                  {saving
-                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    : <Check className="h-3.5 w-3.5" />
-                                  }
+                                  {saving ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Check className="h-3.5 w-3.5" />
+                                  )}
                                   Save
                                 </Button>
                                 {p.configured && (
@@ -1834,19 +2262,24 @@ export function Settings({
                                     size="sm"
                                     variant="outline"
                                     disabled={deleting}
-                                    onClick={() => void handleApiKeyDelete(p.provider)}
+                                    onClick={() =>
+                                      void handleApiKeyDelete(p.provider)
+                                    }
                                     className="shrink-0 text-destructive hover:text-destructive"
                                   >
-                                    {deleting
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : <Trash2 className="h-3.5 w-3.5" />
-                                    }
+                                    {deleting ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    )}
                                     Remove
                                   </Button>
                                 )}
                               </div>
                               {msg && (
-                                <p className={`text-xs ${msg.ok ? "text-green-500" : "text-destructive"}`}>
+                                <p
+                                  className={`text-xs ${msg.ok ? "text-green-500" : "text-destructive"}`}
+                                >
                                   {msg.text}
                                 </p>
                               )}
@@ -1867,16 +2300,37 @@ export function Settings({
                 </CardHeader>
                 <CardContent className="space-y-1.5 text-xs text-muted-foreground">
                   {[
-                    { label: "OpenAI", url: "https://platform.openai.com/api-keys" },
-                    { label: "Anthropic", url: "https://console.anthropic.com/settings/keys" },
-                    { label: "Google (Gemini)", url: "https://aistudio.google.com/app/apikey" },
-                    { label: "Hugging Face", url: "https://huggingface.co/settings/tokens" },
+                    {
+                      label: "OpenAI",
+                      url: "https://platform.openai.com/api-keys",
+                    },
+                    {
+                      label: "Anthropic",
+                      url: "https://console.anthropic.com/settings/keys",
+                    },
+                    {
+                      label: "Google (Gemini)",
+                      url: "https://aistudio.google.com/app/apikey",
+                    },
+                    {
+                      label: "Hugging Face",
+                      url: "https://huggingface.co/settings/tokens",
+                    },
                     { label: "Groq", url: "https://console.groq.com/keys" },
-                    { label: "Together AI", url: "https://api.together.ai/settings/api-keys" },
+                    {
+                      label: "Together AI",
+                      url: "https://api.together.ai/settings/api-keys",
+                    },
                     { label: "xAI (Grok)", url: "https://console.x.ai/" },
-                    { label: "Cerebras", url: "https://cloud.cerebras.ai/platform" },
+                    {
+                      label: "Cerebras",
+                      url: "https://cloud.cerebras.ai/platform",
+                    },
                   ].map(({ label, url }) => (
-                    <div key={label} className="flex items-center justify-between">
+                    <div
+                      key={label}
+                      className="flex items-center justify-between"
+                    >
                       <span>{label}</span>
                       <a
                         href={url}
@@ -1894,254 +2348,311 @@ export function Settings({
           )}
 
           {/* ── Storage Tab ────────────────────────────────── */}
-          {activeTab === "storage" && (() => {
-            const userPaths = storagePaths.filter((p) => p.user_visible);
-            const internalPaths = storagePaths.filter((p) => !p.user_visible);
+          {activeTab === "storage" &&
+            (() => {
+              const userPaths = storagePaths.filter((p) => p.user_visible);
+              const internalPaths = storagePaths.filter((p) => !p.user_visible);
 
-            const formatBytes = (bytes: number) => {
-              if (bytes === 0) return "0 B";
-              const k = 1024;
-              const sizes = ["B", "KB", "MB", "GB"];
-              const i = Math.floor(Math.log(bytes) / Math.log(k));
-              return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-            };
+              const formatBytes = (bytes: number) => {
+                if (bytes === 0) return "0 B";
+                const k = 1024;
+                const sizes = ["B", "KB", "MB", "GB"];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+              };
 
-            const StatsCell = ({ name }: { name: string }) => {
-              const stats = pathStats[name];
-              const loading = statsLoading[name];
-              if (loading) return <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />;
-              if (!stats) return <span className="text-muted-foreground/40">—</span>;
-              if (!stats.exists) return <span className="text-muted-foreground/40 text-xs">not found</span>;
-              return (
-                <span className="text-sm tabular-nums">
-                  {stats.file_count.toLocaleString()} file{stats.file_count !== 1 ? "s" : ""}
-                  <span className="text-muted-foreground ml-1.5">({formatBytes(stats.size_bytes)})</span>
-                </span>
-              );
-            };
+              const StatsCell = ({ name }: { name: string }) => {
+                const stats = pathStats[name];
+                const loading = statsLoading[name];
+                if (loading)
+                  return (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                  );
+                if (!stats)
+                  return <span className="text-muted-foreground/40">—</span>;
+                if (!stats.exists)
+                  return (
+                    <span className="text-muted-foreground/40 text-xs">
+                      not found
+                    </span>
+                  );
+                return (
+                  <span className="text-sm tabular-nums">
+                    {stats.file_count.toLocaleString()} file
+                    {stats.file_count !== 1 ? "s" : ""}
+                    <span className="text-muted-foreground ml-1.5">
+                      ({formatBytes(stats.size_bytes)})
+                    </span>
+                  </span>
+                );
+              };
 
-            const PathRow = ({ p, editable }: { p: StoragePath; editable: boolean }) => {
-              const isEditing = pathEditing === p.name;
-              return (
-                <tr key={p.name} className="group border-b last:border-0 hover:bg-muted/30 transition-colors">
-                  {/* Location name */}
-                  <td className="py-3 pl-4 pr-3 align-top w-36">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-sm font-medium leading-tight">{p.label}</span>
-                      {p.is_custom ? (
-                        <Badge variant="secondary" className="w-fit text-[10px] px-1.5 py-0">Custom</Badge>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground/50">Default</span>
-                      )}
-                    </div>
-                  </td>
-
-                  {/* Path */}
-                  <td className="py-3 px-3 align-middle">
-                    {isEditing ? (
-                      <div className="flex gap-2">
-                        <Input
-                          value={pathEditValue}
-                          onChange={(e) => setPathEditValue(e.target.value)}
-                          placeholder={p.default}
-                          className="h-8 font-mono text-sm flex-1"
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") savePathEdit(p.name);
-                            if (e.key === "Escape") cancelEditPath();
-                          }}
-                        />
-                        <Button
-                          size="sm"
-                          className="h-8 px-3 shrink-0"
-                          disabled={pathSaving === p.name || !pathEditValue.trim()}
-                          onClick={() => savePathEdit(p.name)}
-                        >
-                          {pathSaving === p.name ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Check className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 px-2 shrink-0"
-                          onClick={cancelEditPath}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
+              const PathRow = ({
+                p,
+                editable,
+              }: {
+                p: StoragePath;
+                editable: boolean;
+              }) => {
+                const isEditing = pathEditing === p.name;
+                return (
+                  <tr
+                    key={p.name}
+                    className="group border-b last:border-0 hover:bg-muted/30 transition-colors"
+                  >
+                    {/* Location name */}
+                    <td className="py-3 pl-4 pr-3 align-top w-36">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-sm font-medium leading-tight">
+                          {p.label}
+                        </span>
+                        {p.is_custom ? (
+                          <Badge
+                            variant="secondary"
+                            className="w-fit text-[10px] px-1.5 py-0"
+                          >
+                            Custom
+                          </Badge>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground/50">
+                            Default
+                          </span>
+                        )}
                       </div>
-                    ) : (
-                      <code className="block font-mono text-sm text-muted-foreground break-all leading-relaxed">
-                        {p.current}
-                      </code>
-                    )}
-                  </td>
+                    </td>
 
-                  {/* Stats */}
-                  <td className="py-3 px-3 align-middle text-right whitespace-nowrap">
-                    <StatsCell name={p.name} />
-                  </td>
-
-                  {/* Actions */}
-                  <td className="py-3 pr-4 pl-2 align-middle whitespace-nowrap">
-                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {editable && !isEditing && (
-                        <>
+                    {/* Path */}
+                    <td className="py-3 px-3 align-middle">
+                      {isEditing ? (
+                        <div className="flex gap-2">
+                          <Input
+                            value={pathEditValue}
+                            onChange={(e) => setPathEditValue(e.target.value)}
+                            placeholder={p.default}
+                            className="h-8 font-mono text-sm flex-1"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") savePathEdit(p.name);
+                              if (e.key === "Escape") cancelEditPath();
+                            }}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-8 px-3 shrink-0"
+                            disabled={
+                              pathSaving === p.name || !pathEditValue.trim()
+                            }
+                            onClick={() => savePathEdit(p.name)}
+                          >
+                            {pathSaving === p.name ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Check className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0"
-                            title="Edit path"
-                            onClick={() => startEditPath(p)}
+                            className="h-8 px-2 shrink-0"
+                            onClick={cancelEditPath}
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            <X className="h-3.5 w-3.5" />
                           </Button>
-                          {p.is_custom && (
+                        </div>
+                      ) : (
+                        <code className="block font-mono text-sm text-muted-foreground break-all leading-relaxed">
+                          {p.current}
+                        </code>
+                      )}
+                    </td>
+
+                    {/* Stats */}
+                    <td className="py-3 px-3 align-middle text-right whitespace-nowrap">
+                      <StatsCell name={p.name} />
+                    </td>
+
+                    {/* Actions */}
+                    <td className="py-3 pr-4 pl-2 align-middle whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {editable && !isEditing && (
+                          <>
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 w-7 p-0 text-muted-foreground"
-                              title="Reset to default"
-                              disabled={pathSaving === p.name}
-                              onClick={() => resetPathToDefault(p.name)}
+                              className="h-7 w-7 p-0"
+                              title="Edit path"
+                              onClick={() => startEditPath(p)}
                             >
-                              {pathSaving === p.name ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <RotateCcw className="h-3.5 w-3.5" />
-                              )}
+                              <Pencil className="h-3.5 w-3.5" />
                             </Button>
+                            {p.is_custom && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-muted-foreground"
+                                title="Reset to default"
+                                disabled={pathSaving === p.name}
+                                onClick={() => resetPathToDefault(p.name)}
+                              >
+                                {pathSaving === p.name ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              };
+
+              return (
+                <>
+                  {/* ── User-visible paths table ── */}
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <CardTitle className="flex items-center gap-2 text-base">
+                            <HardDrive className="h-4 w-4 text-primary" />{" "}
+                            Storage Locations
+                          </CardTitle>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Customise where Matrx stores your files. Changes
+                            take effect immediately. Hover a row to edit. Click
+                            the file count to refresh stats.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              void loadStoragePaths();
+                              void loadPathStats(
+                                storagePaths.map((p) => p.name),
+                              );
+                            }}
+                            disabled={engineStatus !== "connected"}
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              void loadPathStats(userPaths.map((p) => p.name))
+                            }
+                            disabled={engineStatus !== "connected"}
+                          >
+                            <Layers className="h-3.5 w-3.5" /> Scan Files
+                          </Button>
+                        </div>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="p-0">
+                      {engineStatus !== "connected" ? (
+                        <p className="px-4 py-6 text-sm text-muted-foreground text-center">
+                          Connect to the engine to manage storage paths.
+                        </p>
+                      ) : storagePaths.length === 0 ? (
+                        <div className="flex items-center justify-center py-10">
+                          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : (
+                        <>
+                          {pathError && (
+                            <div className="mx-4 mb-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
+                              <AlertCircle className="mr-1.5 inline h-4 w-4" />
+                              {pathError}
+                            </div>
                           )}
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b bg-muted/30">
+                                <th className="py-2 pl-4 pr-3 text-left text-xs font-medium text-muted-foreground w-36">
+                                  Location
+                                </th>
+                                <th className="py-2 px-3 text-left text-xs font-medium text-muted-foreground">
+                                  Path
+                                </th>
+                                <th className="py-2 px-3 text-right text-xs font-medium text-muted-foreground">
+                                  Contents
+                                </th>
+                                <th className="py-2 pr-4 pl-2 w-20" />
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {userPaths.map((p) => (
+                                <PathRow key={p.name} p={p} editable={true} />
+                              ))}
+                            </tbody>
+                          </table>
                         </>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            };
+                    </CardContent>
+                  </Card>
 
-            return (
-              <>
-                {/* ── User-visible paths table ── */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle className="flex items-center gap-2 text-base">
-                          <HardDrive className="h-4 w-4 text-primary" /> Storage Locations
+                  {/* ── Internal paths table ── */}
+                  {internalPaths.length > 0 && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                          <HardDrive className="h-4 w-4" /> Internal Directories
                         </CardTitle>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Customise where Matrx stores your files. Changes take effect immediately.
-                          Hover a row to edit. Click the file count to refresh stats.
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Engine internals — read-only here. These paths follow
+                          OS conventions and change only on reinstall.
                         </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            void loadStoragePaths();
-                            void loadPathStats(storagePaths.map((p) => p.name));
-                          }}
-                          disabled={engineStatus !== "connected"}
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" /> Refresh
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void loadPathStats(userPaths.map((p) => p.name))}
-                          disabled={engineStatus !== "connected"}
-                        >
-                          <Layers className="h-3.5 w-3.5" /> Scan Files
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-
-                  <CardContent className="p-0">
-                    {engineStatus !== "connected" ? (
-                      <p className="px-4 py-6 text-sm text-muted-foreground text-center">
-                        Connect to the engine to manage storage paths.
-                      </p>
-                    ) : storagePaths.length === 0 ? (
-                      <div className="flex items-center justify-center py-10">
-                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                      </div>
-                    ) : (
-                      <>
-                        {pathError && (
-                          <div className="mx-4 mb-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
-                            <AlertCircle className="mr-1.5 inline h-4 w-4" />
-                            {pathError}
-                          </div>
-                        )}
+                      </CardHeader>
+                      <CardContent className="p-0">
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b bg-muted/30">
-                              <th className="py-2 pl-4 pr-3 text-left text-xs font-medium text-muted-foreground w-36">Location</th>
-                              <th className="py-2 px-3 text-left text-xs font-medium text-muted-foreground">Path</th>
-                              <th className="py-2 px-3 text-right text-xs font-medium text-muted-foreground">Contents</th>
+                              <th className="py-2 pl-4 pr-3 text-left text-xs font-medium text-muted-foreground w-36">
+                                Directory
+                              </th>
+                              <th className="py-2 px-3 text-left text-xs font-medium text-muted-foreground">
+                                Path
+                              </th>
+                              <th className="py-2 px-3 text-right text-xs font-medium text-muted-foreground">
+                                Contents
+                              </th>
                               <th className="py-2 pr-4 pl-2 w-20" />
                             </tr>
                           </thead>
                           <tbody>
-                            {userPaths.map((p) => (
-                              <PathRow key={p.name} p={p} editable={true} />
+                            {internalPaths.map((p) => (
+                              <PathRow key={p.name} p={p} editable={false} />
                             ))}
                           </tbody>
                         </table>
-                      </>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* ── Internal paths table ── */}
-                {internalPaths.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                        <HardDrive className="h-4 w-4" /> Internal Directories
-                      </CardTitle>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Engine internals — read-only here. These paths follow OS conventions and change only on reinstall.
-                      </p>
-                    </CardHeader>
-                    <CardContent className="p-0">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b bg-muted/30">
-                            <th className="py-2 pl-4 pr-3 text-left text-xs font-medium text-muted-foreground w-36">Directory</th>
-                            <th className="py-2 px-3 text-left text-xs font-medium text-muted-foreground">Path</th>
-                            <th className="py-2 px-3 text-right text-xs font-medium text-muted-foreground">Contents</th>
-                            <th className="py-2 pr-4 pl-2 w-20" />
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {internalPaths.map((p) => (
-                            <PathRow key={p.name} p={p} editable={false} />
-                          ))}
-                        </tbody>
-                      </table>
-                      <div className="px-4 py-3 border-t">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-xs text-muted-foreground"
-                          onClick={() => void loadPathStats(internalPaths.map((p) => p.name))}
-                          disabled={engineStatus !== "connected"}
-                        >
-                          <Layers className="h-3.5 w-3.5" /> Scan Internal Directories
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </>
-            );
-          })()}
+                        <div className="px-4 py-3 border-t">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs text-muted-foreground"
+                            onClick={() =>
+                              void loadPathStats(
+                                internalPaths.map((p) => p.name),
+                              )
+                            }
+                            disabled={engineStatus !== "connected"}
+                          >
+                            <Layers className="h-3.5 w-3.5" /> Scan Internal
+                            Directories
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              );
+            })()}
 
           {/* ── Proxy Tab ────────────────────────────────────── */}
           {activeTab === "proxy" && (
@@ -2156,7 +2667,8 @@ export function Settings({
                   <div>
                     <Label htmlFor="proxy-enabled">Enable Proxy Server</Label>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Allow your computer to be used as an HTTP proxy for AI Matrx cloud services
+                      Allow your computer to be used as an HTTP proxy for AI
+                      Matrx cloud services
                     </p>
                   </div>
                   <Switch
@@ -2171,14 +2683,20 @@ export function Settings({
                 <div className="flex items-center justify-between">
                   <div>
                     <Label>Proxy Status</Label>
-                    <p className="text-xs text-muted-foreground mt-0.5">Current state of the local HTTP proxy</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Current state of the local HTTP proxy
+                    </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge variant={proxyStatus?.running ? "success" : "secondary"}>
+                    <Badge
+                      variant={proxyStatus?.running ? "success" : "secondary"}
+                    >
                       {proxyStatus?.running ? "Running" : "Stopped"}
                     </Badge>
                     {proxyStatus?.running && (
-                      <span className="text-xs font-mono text-muted-foreground">:{proxyStatus.port}</span>
+                      <span className="text-xs font-mono text-muted-foreground">
+                        :{proxyStatus.port}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -2189,20 +2707,37 @@ export function Settings({
                     <div className="flex items-center justify-between">
                       <div>
                         <Label>Proxy URL</Label>
-                        <p className="text-xs text-muted-foreground mt-0.5">Use this URL to route traffic through your machine</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Use this URL to route traffic through your machine
+                        </p>
                       </div>
                       <div className="flex items-center gap-1">
-                        <code className="rounded bg-muted px-2 py-1 text-xs font-mono">{proxyStatus.proxy_url}</code>
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={handleCopyProxyUrl}>
-                          {copied ? <CheckCheck className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                        <code className="rounded bg-muted px-2 py-1 text-xs font-mono">
+                          {proxyStatus.proxy_url}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={handleCopyProxyUrl}
+                        >
+                          {copied ? (
+                            <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
                         </Button>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-3 text-center">
                       <div className="rounded-lg bg-muted/50 p-2">
-                        <p className="text-lg font-semibold">{proxyStatus.request_count}</p>
-                        <p className="text-xs text-muted-foreground">Requests</p>
+                        <p className="text-lg font-semibold">
+                          {proxyStatus.request_count}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Requests
+                        </p>
                       </div>
                       <div className="rounded-lg bg-muted/50 p-2">
                         <p className="text-lg font-semibold">
@@ -2212,10 +2747,14 @@ export function Settings({
                               ? `${(proxyStatus.bytes_forwarded / 1024).toFixed(1)}KB`
                               : `${proxyStatus.bytes_forwarded}B`}
                         </p>
-                        <p className="text-xs text-muted-foreground">Forwarded</p>
+                        <p className="text-xs text-muted-foreground">
+                          Forwarded
+                        </p>
                       </div>
                       <div className="rounded-lg bg-muted/50 p-2">
-                        <p className="text-lg font-semibold">{proxyStatus.active_connections}</p>
+                        <p className="text-lg font-semibold">
+                          {proxyStatus.active_connections}
+                        </p>
                         <p className="text-xs text-muted-foreground">Active</p>
                       </div>
                     </div>
@@ -2223,21 +2762,38 @@ export function Settings({
                 )}
 
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="flex-1" onClick={handleProxyTest} disabled={proxyTesting || !proxyStatus?.running}>
-                    {proxyTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wifi className="h-4 w-4" />}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={handleProxyTest}
+                    disabled={proxyTesting || !proxyStatus?.running}
+                  >
+                    {proxyTesting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Wifi className="h-4 w-4" />
+                    )}
                     Test Connection
                   </Button>
-                  <Button variant="outline" size="sm" className="flex-1" onClick={loadProxyStatus}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={loadProxyStatus}
+                  >
                     <RefreshCw className="h-4 w-4" /> Refresh Status
                   </Button>
                 </div>
 
                 {proxyTestResult && (
-                  <div className={`rounded-lg border p-3 text-sm ${
-                    proxyTestResult.startsWith("Connected")
-                      ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
-                      : "border-red-500/30 bg-red-500/5 text-red-400"
-                  }`}>
+                  <div
+                    className={`rounded-lg border p-3 text-sm ${
+                      proxyTestResult.startsWith("Connected")
+                        ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+                        : "border-red-500/30 bg-red-500/5 text-red-400"
+                    }`}
+                  >
                     {proxyTestResult.startsWith("Connected") ? (
                       <CheckCircle2 className="mr-1.5 inline h-4 w-4" />
                     ) : (
@@ -2259,9 +2815,9 @@ export function Settings({
                     <Radio className="h-4 w-4 text-primary" /> Remote Access
                   </CardTitle>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Open this engine to the internet so you can connect from your phone,
-                    tablet, or any browser — without port forwarding or a static IP.
-                    Powered by Cloudflare Tunnel.
+                    Open this engine to the internet so you can connect from
+                    your phone, tablet, or any browser — without port forwarding
+                    or a static IP. Powered by Cloudflare Tunnel.
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -2273,13 +2829,18 @@ export function Settings({
 
                   <div className="flex items-center justify-between">
                     <div>
-                      <Label htmlFor="tunnel-enabled">Enable Remote Access</Label>
+                      <Label htmlFor="tunnel-enabled">
+                        Enable Remote Access
+                      </Label>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Start a secure tunnel so remote devices can connect to this engine
+                        Start a secure tunnel so remote devices can connect to
+                        this engine
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      {(tunnelLoading || tunnelFetching) && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                      {(tunnelLoading || tunnelFetching) && (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      )}
                       <Switch
                         id="tunnel-enabled"
                         checked={
@@ -2287,9 +2848,15 @@ export function Settings({
                           // preference so the switch never flickers to OFF on tab return.
                           tunnelFetching
                             ? (settings?.tunnelEnabled ?? false)
-                            : (tunnelStatus?.running ?? settings?.tunnelEnabled ?? false)
+                            : (tunnelStatus?.running ??
+                              settings?.tunnelEnabled ??
+                              false)
                         }
-                        disabled={tunnelLoading || tunnelFetching || engineStatus !== "connected"}
+                        disabled={
+                          tunnelLoading ||
+                          tunnelFetching ||
+                          engineStatus !== "connected"
+                        }
                         onCheckedChange={handleTunnelToggle}
                       />
                     </div>
@@ -2309,11 +2876,31 @@ export function Settings({
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant={tunnelStatus?.running ? "success" : tunnelFetching ? "outline" : "secondary"}>
-                        {tunnelFetching ? "Checking…" : tunnelStatus?.running ? "Running" : "Stopped"}
+                      <Badge
+                        variant={
+                          tunnelStatus?.running
+                            ? "success"
+                            : tunnelFetching
+                              ? "outline"
+                              : "secondary"
+                        }
+                      >
+                        {tunnelFetching
+                          ? "Checking…"
+                          : tunnelStatus?.running
+                            ? "Running"
+                            : "Stopped"}
                       </Badge>
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={loadTunnelStatus} disabled={tunnelFetching}>
-                        <RefreshCw className={`h-3.5 w-3.5 ${tunnelFetching ? "animate-spin" : ""}`} />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        onClick={loadTunnelStatus}
+                        disabled={tunnelFetching}
+                      >
+                        <RefreshCw
+                          className={`h-3.5 w-3.5 ${tunnelFetching ? "animate-spin" : ""}`}
+                        />
                       </Button>
                     </div>
                   </div>
@@ -2325,7 +2912,8 @@ export function Settings({
                       <div className="space-y-2">
                         <Label>Public URL</Label>
                         <p className="text-xs text-muted-foreground">
-                          Share this URL with any authorized device to connect remotely
+                          Share this URL with any authorized device to connect
+                          remotely
                         </p>
                         <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
                           <Link className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -2339,9 +2927,11 @@ export function Settings({
                             onClick={handleCopyTunnelUrl}
                             title="Copy URL"
                           >
-                            {tunnelCopied
-                              ? <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />
-                              : <Copy className="h-3.5 w-3.5" />}
+                            {tunnelCopied ? (
+                              <CheckCheck className="h-3.5 w-3.5 text-emerald-500" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5" />
+                            )}
                           </Button>
                           <a
                             href={tunnelStatus.url}
@@ -2370,7 +2960,9 @@ export function Settings({
                             className="h-7 w-7 p-0 shrink-0"
                             onClick={() => {
                               if (tunnelStatus.ws_url) {
-                                navigator.clipboard.writeText(tunnelStatus.ws_url);
+                                navigator.clipboard.writeText(
+                                  tunnelStatus.ws_url,
+                                );
                               }
                             }}
                             title="Copy WebSocket URL"
@@ -2398,13 +2990,22 @@ export function Settings({
 
                   {!tunnelFetching && !tunnelStatus?.running && (
                     <div className="rounded-lg border border-muted bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
-                      <p className="font-medium text-foreground/70">How it works</p>
-                      <p>
-                        Enabling remote access starts a secure outbound tunnel via Cloudflare.
-                        Each installation gets its own unique URL — no port forwarding, no firewall changes, works on every network.
+                      <p className="font-medium text-foreground/70">
+                        How it works
                       </p>
                       <p>
-                        The URL is a random <code className="font-mono bg-muted px-1 rounded">*.trycloudflare.com</code> address that is saved to your account so your phone and other devices can always find this PC automatically.
+                        Enabling remote access starts a secure outbound tunnel
+                        via Cloudflare. Each installation gets its own unique
+                        URL — no port forwarding, no firewall changes, works on
+                        every network.
+                      </p>
+                      <p>
+                        The URL is a random{" "}
+                        <code className="font-mono bg-muted px-1 rounded">
+                          *.trycloudflare.com
+                        </code>{" "}
+                        address that is saved to your account so your phone and
+                        other devices can always find this PC automatically.
                       </p>
                     </div>
                   )}
@@ -2414,26 +3015,37 @@ export function Settings({
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-base">
-                    <Monitor className="h-4 w-4 text-primary" /> Connected Devices
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 ml-auto" onClick={loadInstanceInfo} title="Refresh devices">
+                    <Monitor className="h-4 w-4 text-primary" /> Connected
+                    Devices
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0 ml-auto"
+                      onClick={loadInstanceInfo}
+                      title="Refresh devices"
+                    >
                       <RefreshCw className="h-3.5 w-3.5" />
                     </Button>
                   </CardTitle>
                   <p className="text-xs text-muted-foreground mt-1">
                     Devices linked to your account that can connect remotely.
-                    Active tunnel URLs are stored in the cloud and visible to your mobile app.
+                    Active tunnel URLs are stored in the cloud and visible to
+                    your mobile app.
                   </p>
                 </CardHeader>
                 <CardContent>
                   {instances.length === 0 ? (
                     <p className="text-xs text-muted-foreground py-2">
-                      No registered devices found. Sign in and configure cloud sync to register this device.
+                      No registered devices found. Sign in and configure cloud
+                      sync to register this device.
                     </p>
                   ) : (
                     <div className="space-y-2">
                       {instances.map((inst) => {
-                        const isThis = inst.instance_id === instanceInfo?.instance_id;
-                        const hasTunnel = !!inst.tunnel_active && !!inst.tunnel_url;
+                        const isThis =
+                          inst.instance_id === instanceInfo?.instance_id;
+                        const hasTunnel =
+                          !!inst.tunnel_active && !!inst.tunnel_url;
                         return (
                           <div
                             key={inst.instance_id}
@@ -2444,43 +3056,74 @@ export function Settings({
                                 <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                                 <div className="min-w-0">
                                   <p className="text-sm font-medium truncate">
-                                    {inst.instance_name || inst.hostname || "Unknown"}
+                                    {inst.instance_name ||
+                                      inst.hostname ||
+                                      "Unknown"}
                                   </p>
                                   <p className="text-xs text-muted-foreground">
                                     {inst.platform} {inst.architecture}
-                                    {inst.last_seen && ` · ${new Date(inst.last_seen).toLocaleDateString()}`}
+                                    {inst.last_seen &&
+                                      ` · ${new Date(inst.last_seen).toLocaleDateString()}`}
                                   </p>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
                                 {hasTunnel && (
-                                  <Badge variant="success" className="text-xs gap-1">
-                                    <Radio className="h-2.5 w-2.5" /> Tunnel Active
+                                  <Badge
+                                    variant="success"
+                                    className="text-xs gap-1"
+                                  >
+                                    <Radio className="h-2.5 w-2.5" /> Tunnel
+                                    Active
                                   </Badge>
                                 )}
                                 {isThis && (
-                                  <Badge variant="outline" className="text-xs">This Device</Badge>
+                                  <Badge variant="outline" className="text-xs">
+                                    This Device
+                                  </Badge>
                                 )}
                               </div>
                             </div>
                             {hasTunnel && (
                               <div className="pl-7 space-y-1">
                                 <div className="flex items-center gap-1.5">
-                                  <code className="flex-1 truncate text-xs font-mono text-muted-foreground">{inst.tunnel_url}</code>
+                                  <code className="flex-1 truncate text-xs font-mono text-muted-foreground">
+                                    {inst.tunnel_url}
+                                  </code>
                                   <Button
-                                    variant="ghost" size="sm" className="h-5 w-5 p-0 shrink-0"
-                                    onClick={() => inst.tunnel_url && navigator.clipboard.writeText(inst.tunnel_url)}
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-5 w-5 p-0 shrink-0"
+                                    onClick={() =>
+                                      inst.tunnel_url &&
+                                      navigator.clipboard.writeText(
+                                        inst.tunnel_url,
+                                      )
+                                    }
                                     title="Copy REST URL"
-                                  ><Copy className="h-3 w-3" /></Button>
+                                  >
+                                    <Copy className="h-3 w-3" />
+                                  </Button>
                                 </div>
                                 {inst.tunnel_ws_url && (
                                   <div className="flex items-center gap-1.5">
-                                    <code className="flex-1 truncate text-xs font-mono text-muted-foreground">{inst.tunnel_ws_url}</code>
+                                    <code className="flex-1 truncate text-xs font-mono text-muted-foreground">
+                                      {inst.tunnel_ws_url}
+                                    </code>
                                     <Button
-                                      variant="ghost" size="sm" className="h-5 w-5 p-0 shrink-0"
-                                      onClick={() => inst.tunnel_ws_url && navigator.clipboard.writeText(inst.tunnel_ws_url!)}
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-5 w-5 p-0 shrink-0"
+                                      onClick={() =>
+                                        inst.tunnel_ws_url &&
+                                        navigator.clipboard.writeText(
+                                          inst.tunnel_ws_url!,
+                                        )
+                                      }
                                       title="Copy WebSocket URL"
-                                    ><Copy className="h-3 w-3" /></Button>
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                    </Button>
                                   </div>
                                 )}
                               </div>
@@ -2498,116 +3141,136 @@ export function Settings({
           {/* ── Scraping Tab ─────────────────────────────────── */}
           {activeTab === "scraping" && (
             <>
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Globe className="h-4 w-4 text-primary" /> Scraping
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="headless">Headless Mode</Label>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Run browser without visible window during scraping
-                    </p>
-                  </div>
-                  <Switch
-                    id="headless"
-                    checked={settings.headlessScraping}
-                    onCheckedChange={(v) => updateSetting("headlessScraping", v)}
-                  />
-                </div>
-
-                <Separator />
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Request Delay</Label>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Minimum seconds between requests to the same domain
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={settings.scrapeDelay}
-                      onChange={(e) => updateSetting("scrapeDelay", e.target.value)}
-                      className="w-20 text-right font-mono text-sm"
-                      type="number"
-                      min="0.5"
-                      max="30"
-                      step="0.5"
-                    />
-                    <span className="text-xs text-muted-foreground">sec</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Ban className="h-4 w-4 text-destructive" /> Forbidden URLs
-                </CardTitle>
-                <p className="text-xs text-muted-foreground mt-1">
-                  These domains or patterns are blocked from scraping, even if requested by an AI.
-                  Use <code className="font-mono bg-muted px-1 rounded">*.example.com</code> to block all subdomains.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex gap-2">
-                  <Input
-                    value={newForbiddenUrl}
-                    onChange={(e) => setNewForbiddenUrl(e.target.value)}
-                    placeholder="example.com or *.ads-tracker.io"
-                    className="font-mono text-xs flex-1"
-                    onKeyDown={(e) => { if (e.key === "Enter") addForbiddenUrl(); }}
-                  />
-                  <Button
-                    size="sm"
-                    onClick={addForbiddenUrl}
-                    disabled={forbiddenSaving || !newForbiddenUrl.trim() || engineStatus !== "connected"}
-                    className="gap-1.5 shrink-0"
-                  >
-                    {forbiddenSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                    Add
-                  </Button>
-                </div>
-
-                {forbiddenUrls.length === 0 ? (
-                  <p className="text-xs text-muted-foreground italic py-2">
-                    No forbidden URLs configured. All domains are allowed.
-                  </p>
-                ) : (
-                  <ScrollArea className="max-h-48">
-                    <div className="space-y-1">
-                      {forbiddenUrls.map((url) => (
-                        <div
-                          key={url}
-                          className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
-                        >
-                          <Ban className="h-3 w-3 text-destructive/60 shrink-0" />
-                          <code className="flex-1 text-xs font-mono text-foreground/80 truncate">{url}</code>
-                          <button
-                            onClick={() => removeForbiddenUrl(url)}
-                            className="text-muted-foreground/40 hover:text-destructive transition-colors shrink-0"
-                            title="Remove"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Globe className="h-4 w-4 text-primary" /> Scraping
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="headless">Headless Mode</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Run browser without visible window during scraping
+                      </p>
                     </div>
-                  </ScrollArea>
-                )}
+                    <Switch
+                      id="headless"
+                      checked={settings.headlessScraping}
+                      onCheckedChange={(v) =>
+                        updateSetting("headlessScraping", v)
+                      }
+                    />
+                  </div>
 
-                {engineStatus !== "connected" && (
-                  <p className="text-xs text-muted-foreground">
-                    Connect to the engine to manage forbidden URLs.
+                  <Separator />
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label>Request Delay</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Minimum seconds between requests to the same domain
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={settings.scrapeDelay}
+                        onChange={(e) =>
+                          updateSetting("scrapeDelay", e.target.value)
+                        }
+                        className="w-20 text-right font-mono text-sm"
+                        type="number"
+                        min="0.5"
+                        max="30"
+                        step="0.5"
+                      />
+                      <span className="text-xs text-muted-foreground">sec</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Ban className="h-4 w-4 text-destructive" /> Forbidden URLs
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    These domains or patterns are blocked from scraping, even if
+                    requested by an AI. Use{" "}
+                    <code className="font-mono bg-muted px-1 rounded">
+                      *.example.com
+                    </code>{" "}
+                    to block all subdomains.
                   </p>
-                )}
-              </CardContent>
-            </Card>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex gap-2">
+                    <Input
+                      value={newForbiddenUrl}
+                      onChange={(e) => setNewForbiddenUrl(e.target.value)}
+                      placeholder="example.com or *.ads-tracker.io"
+                      className="font-mono text-xs flex-1"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") addForbiddenUrl();
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      onClick={addForbiddenUrl}
+                      disabled={
+                        forbiddenSaving ||
+                        !newForbiddenUrl.trim() ||
+                        engineStatus !== "connected"
+                      }
+                      className="gap-1.5 shrink-0"
+                    >
+                      {forbiddenSaving ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
+                      Add
+                    </Button>
+                  </div>
+
+                  {forbiddenUrls.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic py-2">
+                      No forbidden URLs configured. All domains are allowed.
+                    </p>
+                  ) : (
+                    <ScrollArea className="max-h-48">
+                      <div className="space-y-1">
+                        {forbiddenUrls.map((url) => (
+                          <div
+                            key={url}
+                            className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+                          >
+                            <Ban className="h-3 w-3 text-destructive/60 shrink-0" />
+                            <code className="flex-1 text-xs font-mono text-foreground/80 truncate">
+                              {url}
+                            </code>
+                            <button
+                              onClick={() => removeForbiddenUrl(url)}
+                              className="text-muted-foreground/40 hover:text-destructive transition-colors shrink-0"
+                              title="Remove"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+
+                  {engineStatus !== "connected" && (
+                    <p className="text-xs text-muted-foreground">
+                      Connect to the engine to manage forbidden URLs.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
             </>
           )}
 
@@ -2619,7 +3282,8 @@ export function Settings({
                   <Cpu className="h-4 w-4 text-primary" /> Capabilities
                 </CardTitle>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Most capabilities are bundled and ready to use. Only large AI models (e.g. Whisper) require separate installation.
+                  Most capabilities are bundled and ready to use. Only large AI
+                  models (e.g. Whisper) require separate installation.
                 </p>
               </CardHeader>
               <CardContent className="space-y-1 p-0">
@@ -2652,12 +3316,22 @@ export function Settings({
                             </div>
                             <div className="min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-medium">{cap.name}</span>
-                                <Badge variant={isInstalled ? "success" : "secondary"} className="text-xs">
+                                <span className="text-sm font-medium">
+                                  {cap.name}
+                                </span>
+                                <Badge
+                                  variant={
+                                    isInstalled ? "success" : "secondary"
+                                  }
+                                  className="text-xs"
+                                >
                                   {isInstalled ? "Installed" : "Not installed"}
                                 </Badge>
                                 {cap.size_warning && !isInstalled && (
-                                  <Badge variant="outline" className="text-xs text-amber-500 border-amber-500/40">
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs text-amber-500 border-amber-500/40"
+                                  >
                                     {cap.size_warning}
                                   </Badge>
                                 )}
@@ -2667,7 +3341,10 @@ export function Settings({
                               </p>
                               <div className="flex items-center gap-1 mt-1 flex-wrap">
                                 {cap.packages.map((pkg) => (
-                                  <code key={pkg} className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
+                                  <code
+                                    key={pkg}
+                                    className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono"
+                                  >
                                     {pkg}
                                   </code>
                                 ))}
@@ -2690,23 +3367,32 @@ export function Settings({
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handleInstallCapability(cap.id)}
-                                disabled={isInstalling || engineStatus !== "connected"}
+                                disabled={
+                                  isInstalling || engineStatus !== "connected"
+                                }
                               >
                                 {isInstalling ? (
-                                  <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Installing...</>
+                                  <>
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />{" "}
+                                    Installing...
+                                  </>
                                 ) : (
-                                  <><Download className="h-3.5 w-3.5" /> Install</>
+                                  <>
+                                    <Download className="h-3.5 w-3.5" /> Install
+                                  </>
                                 )}
                               </Button>
                             )}
                           </div>
                         </div>
                         {result && (
-                          <div className={`rounded-md border px-3 py-2 text-xs ${
-                            result.success
-                              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
-                              : "border-red-500/30 bg-red-500/5 text-red-400"
-                          }`}>
+                          <div
+                            className={`rounded-md border px-3 py-2 text-xs ${
+                              result.success
+                                ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+                                : "border-red-500/30 bg-red-500/5 text-red-400"
+                            }`}
+                          >
                             {result.success ? (
                               <CheckCircle2 className="mr-1.5 inline h-3.5 w-3.5" />
                             ) : (
@@ -2750,10 +3436,13 @@ export function Settings({
                     <div>
                       <Label>Sync Status</Label>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Settings are synchronized between this device and the cloud
+                        Settings are synchronized between this device and the
+                        cloud
                       </p>
                     </div>
-                    <Badge variant={auth.isAuthenticated ? "success" : "secondary"}>
+                    <Badge
+                      variant={auth.isAuthenticated ? "success" : "secondary"}
+                    >
                       {auth.isAuthenticated ? "Connected" : "Not Signed In"}
                     </Badge>
                   </div>
@@ -2764,7 +3453,9 @@ export function Settings({
                       <div className="flex items-center justify-between">
                         <div>
                           <Label>Instance ID</Label>
-                          <p className="text-xs text-muted-foreground mt-0.5">Unique identifier for this installation</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Unique identifier for this installation
+                          </p>
                         </div>
                         <code className="rounded bg-muted px-2 py-1 text-xs font-mono">
                           {instanceInfo.instance_id.slice(0, 20)}...
@@ -2778,22 +3469,35 @@ export function Settings({
                       <Separator />
                       <div>
                         <Label>Registered Devices</Label>
-                        <p className="text-xs text-muted-foreground mt-0.5 mb-2">All devices linked to your account</p>
+                        <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+                          All devices linked to your account
+                        </p>
                         <div className="space-y-2">
                           {instances.map((inst) => (
-                            <div key={inst.instance_id} className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2">
+                            <div
+                              key={inst.instance_id}
+                              className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2"
+                            >
                               <div className="flex items-center gap-2">
                                 <Monitor className="h-4 w-4 text-muted-foreground" />
                                 <div>
-                                  <p className="text-sm font-medium">{inst.instance_name || inst.hostname || "Unknown"}</p>
+                                  <p className="text-sm font-medium">
+                                    {inst.instance_name ||
+                                      inst.hostname ||
+                                      "Unknown"}
+                                  </p>
                                   <p className="text-xs text-muted-foreground">
                                     {inst.platform} {inst.architecture}
-                                    {inst.last_seen && ` · ${new Date(inst.last_seen).toLocaleDateString()}`}
+                                    {inst.last_seen &&
+                                      ` · ${new Date(inst.last_seen).toLocaleDateString()}`}
                                   </p>
                                 </div>
                               </div>
-                              {inst.instance_id === instanceInfo?.instance_id && (
-                                <Badge variant="outline" className="text-xs">This Device</Badge>
+                              {inst.instance_id ===
+                                instanceInfo?.instance_id && (
+                                <Badge variant="outline" className="text-xs">
+                                  This Device
+                                </Badge>
                               )}
                             </div>
                           ))}
@@ -2805,26 +3509,59 @@ export function Settings({
                   <Separator />
 
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="flex-1" onClick={handlePushToCloud} disabled={syncing || !auth.isAuthenticated}>
-                      {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUpFromLine className="h-4 w-4" />}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={handlePushToCloud}
+                      disabled={syncing || !auth.isAuthenticated}
+                    >
+                      {syncing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ArrowUpFromLine className="h-4 w-4" />
+                      )}
                       Save to Cloud
                     </Button>
-                    <Button variant="outline" size="sm" className="flex-1" onClick={handlePullFromCloud} disabled={syncing || !auth.isAuthenticated}>
-                      {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowDownToLine className="h-4 w-4" />}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={handlePullFromCloud}
+                      disabled={syncing || !auth.isAuthenticated}
+                    >
+                      {syncing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ArrowDownToLine className="h-4 w-4" />
+                      )}
                       Pull from Cloud
                     </Button>
-                    <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing || !auth.isAuthenticated}>
-                      {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSync}
+                      disabled={syncing || !auth.isAuthenticated}
+                    >
+                      {syncing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
                     </Button>
                   </div>
 
                   {syncStatus && (
-                    <div className={`rounded-lg border p-3 text-sm ${
-                      syncStatus.includes("error") || syncStatus.includes("failed")
-                        ? "border-red-500/30 bg-red-500/5 text-red-400"
-                        : "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
-                    }`}>
-                      {syncStatus.includes("error") || syncStatus.includes("failed") ? (
+                    <div
+                      className={`rounded-lg border p-3 text-sm ${
+                        syncStatus.includes("error") ||
+                        syncStatus.includes("failed")
+                          ? "border-red-500/30 bg-red-500/5 text-red-400"
+                          : "border-emerald-500/30 bg-emerald-500/5 text-emerald-400"
+                      }`}
+                    >
+                      {syncStatus.includes("error") ||
+                      syncStatus.includes("failed") ? (
                         <CloudOff className="mr-1.5 inline h-4 w-4" />
                       ) : (
                         <Cloud className="mr-1.5 inline h-4 w-4" />
@@ -2847,22 +3584,41 @@ export function Settings({
                     <>
                       <div className="flex items-center gap-3">
                         <Avatar className="h-10 w-10">
-                          <AvatarImage src={auth.user.user_metadata?.avatar_url} />
-                          <AvatarFallback>{(auth.user.email?.[0] ?? "U").toUpperCase()}</AvatarFallback>
+                          <AvatarImage
+                            src={auth.user.user_metadata?.avatar_url}
+                          />
+                          <AvatarFallback>
+                            {(auth.user.email?.[0] ?? "U").toUpperCase()}
+                          </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium">{auth.user.user_metadata?.full_name ?? auth.user.email}</p>
-                          <p className="truncate text-xs text-muted-foreground">{auth.user.email}</p>
+                          <p className="truncate text-sm font-medium">
+                            {auth.user.user_metadata?.full_name ??
+                              auth.user.email}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {auth.user.email}
+                          </p>
                         </div>
-                        <Badge variant="success" className="shrink-0">{auth.user.app_metadata?.provider ?? "email"}</Badge>
+                        <Badge variant="success" className="shrink-0">
+                          {auth.user.app_metadata?.provider ?? "email"}
+                        </Badge>
                       </div>
                       <Separator />
-                      <Button variant="outline" size="sm" className="w-full" onClick={auth.signOut} disabled={auth.loading}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={auth.signOut}
+                        disabled={auth.loading}
+                      >
                         <Power className="h-4 w-4" /> Sign Out
                       </Button>
                     </>
                   ) : (
-                    <p className="text-sm text-muted-foreground">Not signed in</p>
+                    <p className="text-sm text-muted-foreground">
+                      Not signed in
+                    </p>
                   )}
                 </CardContent>
               </Card>
@@ -2877,25 +3633,35 @@ export function Settings({
                 <Card>
                   <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-base">
-                      <Monitor className="h-4 w-4 text-primary" /> System Information
+                      <Monitor className="h-4 w-4 text-primary" /> System
+                      Information
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 gap-y-2 text-sm">
-                      {([
-                        ["Platform", instanceInfo.platform],
-                        ["OS Version", instanceInfo.os_version],
-                        ["Architecture", instanceInfo.architecture],
-                        ["Hostname", instanceInfo.hostname],
-                        ["CPU", instanceInfo.cpu_model],
-                        ["CPU Cores", instanceInfo.cpu_cores?.toString()],
-                        ["RAM", instanceInfo.ram_total_gb ? `${instanceInfo.ram_total_gb} GB` : undefined],
-                        ["Python", instanceInfo.python_version],
-                      ] as const)
+                      {(
+                        [
+                          ["Platform", instanceInfo.platform],
+                          ["OS Version", instanceInfo.os_version],
+                          ["Architecture", instanceInfo.architecture],
+                          ["Hostname", instanceInfo.hostname],
+                          ["CPU", instanceInfo.cpu_model],
+                          ["CPU Cores", instanceInfo.cpu_cores?.toString()],
+                          [
+                            "RAM",
+                            instanceInfo.ram_total_gb
+                              ? `${instanceInfo.ram_total_gb} GB`
+                              : undefined,
+                          ],
+                          ["Python", instanceInfo.python_version],
+                        ] as const
+                      )
                         .filter(([, v]) => v)
                         .map(([label, value]) => (
                           <div key={label} className="contents">
-                            <span className="text-muted-foreground">{label}</span>
+                            <span className="text-muted-foreground">
+                              {label}
+                            </span>
                             <span className="font-mono text-xs">{value}</span>
                           </div>
                         ))}
@@ -2913,12 +3679,18 @@ export function Settings({
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Version</span>
+                    <span className="text-sm text-muted-foreground">
+                      Version
+                    </span>
                     <Badge variant="secondary">{__APP_VERSION__}</Badge>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">Engine Version</span>
-                    <Badge variant="secondary">{engineVersion || "\u2014"}</Badge>
+                    <span className="text-sm text-muted-foreground">
+                      Engine Version
+                    </span>
+                    <Badge variant="secondary">
+                      {engineVersion || "\u2014"}
+                    </Badge>
                   </div>
                   <Separator />
 
@@ -2930,10 +3702,12 @@ export function Settings({
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {updateStatus?.status === "installed"
                               ? "Update installed \u2014 restart to apply"
-                              : updateShowDownloadProgress && updateStatus?.status === "downloading"
+                              : updateShowDownloadProgress &&
+                                  updateStatus?.status === "downloading"
                                 ? "Downloading update…"
                                 : updateStatus?.status === "available" ||
-                                    (updateStatus?.status === "downloading" && !updateShowDownloadProgress)
+                                    (updateStatus?.status === "downloading" &&
+                                      !updateShowDownloadProgress)
                                   ? `v${updateStatus.version} available — preparing in the background; use Install when ready`
                                   : updateStatus?.status === "up_to_date"
                                     ? "You're on the latest version"
@@ -2961,18 +3735,50 @@ export function Settings({
                             </Button>
                           ) : updateStatus?.status === "available" ? (
                             <>
-                              <Button variant="outline" size="sm" onClick={() => updateActions?.check({ showResult: true })} disabled={checking}>
-                                {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  updateActions?.check({ showResult: true })
+                                }
+                                disabled={checking}
+                              >
+                                {checking ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-4 w-4" />
+                                )}
                                 Check Again
                               </Button>
-                              <Button size="sm" onClick={() => updateActions?.openDialog()} disabled={checking}>
-                                {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                              <Button
+                                size="sm"
+                                onClick={() => updateActions?.openDialog()}
+                                disabled={checking}
+                              >
+                                {checking ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Download className="h-4 w-4" />
+                                )}
                                 Install Update
                               </Button>
                             </>
                           ) : (
-                            <Button variant="outline" size="sm" onClick={() => updateActions?.check({ showResult: true })} disabled={checking}>
-                              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : updateStatus?.status === "up_to_date" ? <CheckCircle2 className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                updateActions?.check({ showResult: true })
+                              }
+                              disabled={checking}
+                            >
+                              {checking ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : updateStatus?.status === "up_to_date" ? (
+                                <CheckCircle2 className="h-4 w-4" />
+                              ) : (
+                                <RefreshCw className="h-4 w-4" />
+                              )}
                               Check for Updates
                             </Button>
                           )}
@@ -2982,27 +3788,41 @@ export function Settings({
                       {settings && (
                         <div className="flex items-center justify-between">
                           <div>
-                            <Label htmlFor="auto-check-updates">Automatic Updates</Label>
+                            <Label htmlFor="auto-check-updates">
+                              Automatic Updates
+                            </Label>
                             <p className="text-xs text-muted-foreground mt-0.5">
-                              Check for updates every {settings.updateCheckInterval >= 60 ? `${Math.round(settings.updateCheckInterval / 60)}h` : `${settings.updateCheckInterval}m`}
+                              Check for updates every{" "}
+                              {settings.updateCheckInterval >= 60
+                                ? `${Math.round(settings.updateCheckInterval / 60)}h`
+                                : `${settings.updateCheckInterval}m`}
                             </p>
                           </div>
                           <Switch
                             id="auto-check-updates"
                             checked={settings.autoCheckUpdates}
-                            onCheckedChange={(v) => updateSetting("autoCheckUpdates", v)}
+                            onCheckedChange={(v) =>
+                              updateSetting("autoCheckUpdates", v)
+                            }
                           />
                         </div>
                       )}
 
                       {settings?.autoCheckUpdates && (
                         <div className="flex items-center justify-between">
-                          <Label htmlFor="update-interval">Check Interval</Label>
+                          <Label htmlFor="update-interval">
+                            Check Interval
+                          </Label>
                           <Select
                             value={String(settings.updateCheckInterval)}
-                            onValueChange={(v) => updateSetting("updateCheckInterval", Number(v))}
+                            onValueChange={(v) =>
+                              updateSetting("updateCheckInterval", Number(v))
+                            }
                           >
-                            <SelectTrigger className="w-32" id="update-interval">
+                            <SelectTrigger
+                              className="w-32"
+                              id="update-interval"
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -3020,10 +3840,22 @@ export function Settings({
                   )}
 
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="flex-1" onClick={() => handleOpenFolder("logs")} disabled={engineStatus !== "connected"}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => handleOpenFolder("logs")}
+                      disabled={engineStatus !== "connected"}
+                    >
                       <FolderOpen className="h-4 w-4" /> Open Logs Folder
                     </Button>
-                    <Button variant="outline" size="sm" className="flex-1" onClick={() => handleOpenFolder("data")} disabled={engineStatus !== "connected"}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => handleOpenFolder("data")}
+                      disabled={engineStatus !== "connected"}
+                    >
                       <FolderOpen className="h-4 w-4" /> Open Data Folder
                     </Button>
                   </div>
@@ -3031,7 +3863,6 @@ export function Settings({
               </Card>
             </>
           )}
-
         </div>
       </ScrollArea>
     </div>

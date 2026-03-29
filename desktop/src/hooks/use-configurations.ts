@@ -26,6 +26,7 @@ export type ConfigSection =
   | "localLlm"
   | "localLlmSampling"
   | "voice"
+  | "tts"
   | "wakeWord"
   | "scraping"
   | "proxy"
@@ -78,6 +79,12 @@ const SECTION_KEYS: Record<ConfigSection, (keyof AppSettings)[]> = {
     "transcriptionAudioDevice",
     "transcriptionProcessingTimeout",
   ],
+  tts: [
+    "ttsDefaultVoice",
+    "ttsDefaultSpeed",
+    "ttsAutoDownloadModel",
+    "ttsFavoriteVoices",
+  ],
   wakeWord: [
     "wakeWordEnabled",
     "wakeWordListenOnStartup",
@@ -125,7 +132,10 @@ export interface ConfigurationsActions {
   reload: () => Promise<void>;
 }
 
-export function useConfigurations(): [ConfigurationsState, ConfigurationsActions] {
+export function useConfigurations(): [
+  ConfigurationsState,
+  ConfigurationsActions,
+] {
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [saved, setSaved] = useState<AppSettings | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -148,7 +158,9 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
   // dirty computation stays correct. Update `draft` only for keys the user
   // has NOT edited (draft[key] === saved[key]) to preserve in-progress edits.
   const savedRef = useRef<AppSettings | null>(null);
-  useEffect(() => { savedRef.current = saved; }, [saved]);
+  useEffect(() => {
+    savedRef.current = saved;
+  }, [saved]);
 
   useEffect(() => {
     const onChanged = () => {
@@ -173,7 +185,8 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
       });
     };
     window.addEventListener("matrx-settings-changed", onChanged);
-    return () => window.removeEventListener("matrx-settings-changed", onChanged);
+    return () =>
+      window.removeEventListener("matrx-settings-changed", onChanged);
   }, []);
 
   // Compute per-section dirty flags
@@ -186,7 +199,7 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
         continue;
       }
       result[section] = SECTION_KEYS[section].some(
-        (key) => JSON.stringify(draft[key]) !== JSON.stringify(saved[key])
+        (key) => JSON.stringify(draft[key]) !== JSON.stringify(saved[key]),
       );
     }
     return result;
@@ -194,14 +207,14 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
 
   const isGlobalDirty = useMemo(
     () => Object.values(sectionDirty).some(Boolean),
-    [sectionDirty]
+    [sectionDirty],
   );
 
   const set = useCallback(
     <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
       setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
     },
-    []
+    [],
   );
 
   const setMany = useCallback((updates: Partial<AppSettings>) => {
@@ -228,7 +241,9 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
         setLastSyncResult(syncResult);
         // Surface engine/cloud errors as saveError so the UI can show them
         if (syncResult.engine !== "ok" && syncResult.engine !== "skipped") {
-          setSaveError(`Saved locally, but engine sync failed: ${syncResult.engine}`);
+          setSaveError(
+            `Saved locally, but engine sync failed: ${syncResult.engine}`,
+          );
         }
         // Notify other mounted components (Settings page, etc.) to reload
         broadcastSettingsChanged();
@@ -238,7 +253,7 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
         setIsSaving(false);
       }
     },
-    [draft, saved]
+    [draft, saved],
   );
 
   const cancelSection = useCallback(
@@ -253,7 +268,7 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
         return restored;
       });
     },
-    [saved]
+    [saved],
   );
 
   const saveAll = useCallback(async () => {
@@ -267,7 +282,9 @@ export function useConfigurations(): [ConfigurationsState, ConfigurationsActions
       const syncResult = await syncAllSettings();
       setLastSyncResult(syncResult);
       if (syncResult.engine !== "ok" && syncResult.engine !== "skipped") {
-        setSaveError(`Saved locally, but engine sync failed: ${syncResult.engine}`);
+        setSaveError(
+          `Saved locally, but engine sync failed: ${syncResult.engine}`,
+        );
       }
       broadcastSettingsChanged();
     } catch (err) {

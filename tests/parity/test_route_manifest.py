@@ -94,6 +94,9 @@ def page_file_for_route(route: str) -> list[Path]:
     # /browser → BrowserLab.tsx
     if base == "browser":
         candidates.append(PAGES_DIR / "BrowserLab.tsx")
+    # /tts → TextToSpeech.tsx
+    if base == "tts":
+        candidates.append(PAGES_DIR / "TextToSpeech.tsx")
 
     return candidates
 

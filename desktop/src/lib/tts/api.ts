@@ -1,4 +1,5 @@
 import { engine } from "@/lib/api";
+import supabase from "@/lib/supabase";
 import type {
   TtsStatus,
   TtsVoice,
@@ -12,7 +13,6 @@ function ttsUrl(base: string, path: string): string {
 
 async function authHeaders(): Promise<Record<string, string>> {
   try {
-    const { default: supabase } = await import("@/lib/supabase");
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -29,7 +29,10 @@ async function ttsJson<T>(url: string, init?: RequestInit): Promise<T> {
   const auth = await authHeaders();
   const resp = await fetch(url, {
     ...init,
-    headers: { ...auth, ...(init?.headers as Record<string, string> | undefined) },
+    headers: {
+      ...auth,
+      ...(init?.headers as Record<string, string> | undefined),
+    },
   });
   if (!resp.ok) {
     const detail = await resp.text().catch(() => resp.statusText);

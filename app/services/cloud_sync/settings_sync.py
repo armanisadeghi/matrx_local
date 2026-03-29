@@ -101,6 +101,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "transcription_auto_init": True,
     "transcription_audio_device": "",
     "transcription_processing_timeout": 15000,
+    # Text to Speech
+    "tts_default_voice": "af_heart",
+    "tts_default_speed": 1.0,
+    "tts_auto_download_model": False,
+    "tts_favorite_voices": [],
     # UI
     "sidebar_collapsed": False,
 }

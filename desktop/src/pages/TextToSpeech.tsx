@@ -40,7 +40,10 @@ export function TextToSpeech() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Text to Speech" description="Kokoro TTS — local AI voice synthesis">
+      <PageHeader
+        title="Text to Speech"
+        description="Kokoro TTS — local AI voice synthesis"
+      >
         <StatusBadge status={state.status} />
       </PageHeader>
       <SubTabBar tabs={TABS} value={tab} onValueChange={setTab} />
@@ -53,7 +56,11 @@ export function TextToSpeech() {
   );
 }
 
-function StatusBadge({ status }: { status: ReturnType<typeof useTts>[0]["status"] }) {
+function StatusBadge({
+  status,
+}: {
+  status: ReturnType<typeof useTts>[0]["status"];
+}) {
   if (!status) return null;
   if (!status.model_downloaded) {
     return (
@@ -125,7 +132,10 @@ function SpeakTab({
           <div className="flex-1">
             <p className="text-sm text-red-400">{state.error}</p>
           </div>
-          <button onClick={actions.clearError} className="text-red-400 hover:text-red-300">
+          <button
+            onClick={actions.clearError}
+            className="text-red-400 hover:text-red-300"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -154,7 +164,9 @@ function SpeakTab({
       <div className="flex flex-wrap items-end gap-4">
         {/* Voice selector */}
         <div className="min-w-[200px] flex-1 space-y-1.5">
-          <label className="text-xs font-medium text-muted-foreground">Voice</label>
+          <label className="text-xs font-medium text-muted-foreground">
+            Voice
+          </label>
           <VoiceSelector
             voices={state.voices}
             selected={state.selectedVoice}
@@ -166,7 +178,9 @@ function SpeakTab({
         {/* Speed slider */}
         <div className="w-48 space-y-1.5">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-medium text-muted-foreground">Speed</label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Speed
+            </label>
             <span className="text-xs tabular-nums text-muted-foreground">
               {state.speed.toFixed(1)}x
             </span>
@@ -230,8 +244,15 @@ function SpeakTab({
       {state.history.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-muted-foreground">Recent</h3>
-            <Button variant="ghost" size="sm" onClick={actions.clearHistory} className="h-7 text-xs">
+            <h3 className="text-sm font-medium text-muted-foreground">
+              Recent
+            </h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={actions.clearHistory}
+              className="h-7 text-xs"
+            >
               <Trash2 className="mr-1 h-3 w-3" />
               Clear
             </Button>
@@ -247,7 +268,11 @@ function SpeakTab({
       {/* Keyboard shortcut hint */}
       {isReady && (
         <p className="text-center text-xs text-muted-foreground/60">
-          Press <kbd className="rounded border px-1.5 py-0.5 text-[10px] font-mono">Cmd+Enter</kbd> to speak
+          Press{" "}
+          <kbd className="rounded border px-1.5 py-0.5 text-[10px] font-mono">
+            Cmd+Enter
+          </kbd>{" "}
+          to speak
         </p>
       )}
     </div>
@@ -350,12 +375,16 @@ function VoiceSelector({
                     v.voice_id === selected && "bg-accent",
                   )}
                 >
-                  <span className={cn(
-                    "h-1.5 w-1.5 rounded-full shrink-0",
-                    v.gender === "female" ? "bg-pink-400" : "bg-blue-400",
-                  )} />
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full shrink-0",
+                      v.gender === "female" ? "bg-pink-400" : "bg-blue-400",
+                    )}
+                  />
                   <span className="flex-1 text-left">{v.name}</span>
-                  <span className="text-xs text-muted-foreground">{v.quality_grade}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {v.quality_grade}
+                  </span>
                 </button>
               ))}
             </div>
@@ -384,21 +413,22 @@ function VoicesTab({
     loadSettings().then((s) => setFavorites(s.ttsFavoriteVoices ?? []));
   }, []);
 
-  const toggleFavorite = useCallback(
-    (voiceId: string) => {
-      setFavorites((prev) => {
-        const next = prev.includes(voiceId)
-          ? prev.filter((id) => id !== voiceId)
-          : [...prev, voiceId];
-        saveSetting("ttsFavoriteVoices", next);
-        return next;
-      });
-    },
-    [],
-  );
+  const toggleFavorite = useCallback((voiceId: string) => {
+    setFavorites((prev) => {
+      const next = prev.includes(voiceId)
+        ? prev.filter((id) => id !== voiceId)
+        : [...prev, voiceId];
+      saveSetting("ttsFavoriteVoices", next);
+      return next;
+    });
+  }, []);
 
   const filtered = state.voices.filter((v) => {
-    if (search && !v.name.toLowerCase().includes(search.toLowerCase()) && !v.voice_id.includes(search.toLowerCase())) {
+    if (
+      search &&
+      !v.name.toLowerCase().includes(search.toLowerCase()) &&
+      !v.voice_id.includes(search.toLowerCase())
+    ) {
       return false;
     }
     if (filterLang && v.language !== filterLang) return false;
@@ -439,7 +469,9 @@ function VoicesTab({
         >
           <option value="">All Languages</option>
           {languages.map((l) => (
-            <option key={l} value={l}>{l}</option>
+            <option key={l} value={l}>
+              {l}
+            </option>
           ))}
         </select>
         <select
@@ -483,13 +515,17 @@ function VoicesTab({
 
       {/* All voices by language */}
       {state.languageGroups.map((group) => {
-        const groupVoices = otherVoices.filter((v) => v.language === group.language);
+        const groupVoices = otherVoices.filter(
+          (v) => v.language === group.language,
+        );
         if (groupVoices.length === 0) return null;
         return (
           <div key={group.language} className="space-y-3">
             <h3 className="text-sm font-medium text-muted-foreground">
               {group.language}
-              <span className="ml-2 text-xs font-normal">({groupVoices.length})</span>
+              <span className="ml-2 text-xs font-normal">
+                ({groupVoices.length})
+              </span>
             </h3>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {groupVoices.map((v) => (
@@ -563,10 +599,12 @@ function VoiceCard({
       {/* Info */}
       <div className="min-w-0 flex-1 cursor-pointer" onClick={onSelect}>
         <div className="flex items-center gap-2">
-          <span className={cn(
-            "h-2 w-2 rounded-full shrink-0",
-            voice.gender === "female" ? "bg-pink-400" : "bg-blue-400",
-          )} />
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full shrink-0",
+              voice.gender === "female" ? "bg-pink-400" : "bg-blue-400",
+            )}
+          />
           <span className="truncate text-sm font-medium">{voice.name}</span>
           {voice.is_default && (
             <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
@@ -580,7 +618,8 @@ function VoiceCard({
           )}
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          <span className="capitalize">{voice.gender}</span> &middot; Grade {voice.quality_grade}
+          <span className="capitalize">{voice.gender}</span> &middot; Grade{" "}
+          {voice.quality_grade}
           {voice.voice_id !== voice.name && (
             <span className="ml-1 font-mono opacity-60">{voice.voice_id}</span>
           )}
@@ -611,6 +650,16 @@ function SettingsTab({
   state: ReturnType<typeof useTts>[0];
   actions: ReturnType<typeof useTts>[1];
 }) {
+  if (!state.status) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const { status } = state;
+
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 p-6">
       {/* Model Status */}
@@ -618,7 +667,7 @@ function SettingsTab({
         <h3 className="text-sm font-semibold">Model</h3>
         <div className="grid gap-4 sm:grid-cols-2">
           <InfoRow label="Status">
-            {state.status!.model_downloaded ? (
+            {status.model_downloaded ? (
               <span className="flex items-center gap-1.5 text-emerald-500">
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 Downloaded
@@ -630,20 +679,16 @@ function SettingsTab({
               </span>
             )}
           </InfoRow>
-          <InfoRow label="Loaded">
-            {state.status!.model_loaded ? "Yes" : "No"}
-          </InfoRow>
+          <InfoRow label="Loaded">{status.model_loaded ? "Yes" : "No"}</InfoRow>
           <InfoRow label="Model Directory">
             <span className="break-all font-mono text-xs opacity-70">
-              {state.status!.model_dir}
+              {status.model_dir}
             </span>
           </InfoRow>
-          <InfoRow label="Voices Available">
-            {state.status!.voice_count}
-          </InfoRow>
+          <InfoRow label="Voices Available">{status.voice_count}</InfoRow>
         </div>
         <div className="flex gap-3 pt-2">
-          {!state.status!.model_downloaded && (
+          {!status.model_downloaded && (
             <Button
               onClick={actions.downloadModel}
               disabled={state.isDownloading}
@@ -653,7 +698,7 @@ function SettingsTab({
               {state.isDownloading ? (
                 <>
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Downloading... {state.status!.download_progress.toFixed(0)}%
+                  Downloading... {status.download_progress.toFixed(0)}%
                 </>
               ) : (
                 <>
@@ -663,8 +708,13 @@ function SettingsTab({
               )}
             </Button>
           )}
-          {state.status!.model_loaded && (
-            <Button onClick={actions.unload} variant="outline" size="sm" className="gap-2">
+          {status.model_loaded && (
+            <Button
+              onClick={actions.unload}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+            >
               <RefreshCw className="h-3.5 w-3.5" />
               Unload from Memory
             </Button>
@@ -677,7 +727,9 @@ function SettingsTab({
         <h3 className="text-sm font-semibold">Defaults</h3>
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Default Voice</label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Default Voice
+            </label>
             <VoiceSelector
               voices={state.voices}
               selected={state.selectedVoice}
@@ -686,8 +738,12 @@ function SettingsTab({
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-muted-foreground">Default Speed</label>
-              <span className="text-xs tabular-nums text-muted-foreground">{state.speed.toFixed(1)}x</span>
+              <label className="text-xs font-medium text-muted-foreground">
+                Default Speed
+              </label>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {state.speed.toFixed(1)}x
+              </span>
             </div>
             <Slider
               min={0.25}
@@ -704,9 +760,10 @@ function SettingsTab({
       <section className="space-y-2 rounded-lg border p-5">
         <h3 className="text-sm font-semibold">About</h3>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Kokoro is an open-weight TTS model with 82 million parameters. Despite its lightweight
-          architecture, it delivers quality comparable to larger models while running 3-5x faster
-          than real-time on CPU. Apache 2.0 licensed.
+          Kokoro is an open-weight TTS model with 82 million parameters. Despite
+          its lightweight architecture, it delivers quality comparable to larger
+          models while running 3-5x faster than real-time on CPU. Apache 2.0
+          licensed.
         </p>
         <div className="flex gap-3 pt-1">
           <a
@@ -731,7 +788,13 @@ function SettingsTab({
   );
 }
 
-function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
+function InfoRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="space-y-0.5">
       <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
@@ -760,7 +823,8 @@ function DownloadBanner({
         <div className="flex-1">
           <h4 className="text-sm font-medium">Model Download Required</h4>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            The Kokoro TTS model (~300 MB) needs to be downloaded before you can generate speech.
+            The Kokoro TTS model (~300 MB) needs to be downloaded before you can
+            generate speech.
           </p>
           {status.is_downloading && (
             <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
