@@ -103,9 +103,12 @@ export function useTts(): [UseTtsState, UseTtsActions] {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const prevAudioUrlRef = useRef<string | null>(null);
-  const audioQueueRef = useRef<Blob[]>([]);
-  const isPlayingQueueRef = useRef(false);
   const streamAbortRef = useRef<AbortController | null>(null);
+
+  // AudioContext scheduler for gapless streaming playback
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const nextStartTimeRef = useRef<number>(0);
+  const scheduledSourcesRef = useRef<AudioBufferSourceNode[]>([]);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -146,6 +149,10 @@ export function useTts(): [UseTtsState, UseTtsActions] {
         audioRef.current.pause();
         audioRef.current = null;
       }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
+      }
     };
   }, []);
 
@@ -174,8 +181,21 @@ export function useTts(): [UseTtsState, UseTtsActions] {
 
   const stopAudio = useCallback(() => {
     streamAbortRef.current?.abort();
-    audioQueueRef.current = [];
-    isPlayingQueueRef.current = false;
+    // Stop all scheduled AudioContext nodes
+    for (const src of scheduledSourcesRef.current) {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+    scheduledSourcesRef.current = [];
+    nextStartTimeRef.current = 0;
+    // Close the AudioContext so it's recreated fresh on next play
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -206,33 +226,54 @@ export function useTts(): [UseTtsState, UseTtsActions] {
     return url;
   }, []);
 
-  const _playQueue = useCallback(() => {
-    if (isPlayingQueueRef.current) return;
-    const next = audioQueueRef.current.shift();
-    if (!next) return;
+  /**
+   * Schedule a WAV blob for gapless playback using the Web Audio API.
+   *
+   * Each chunk is decoded into an AudioBuffer and scheduled back-to-back via
+   * AudioContext.currentTime so there is zero gap between phoneme-batch chunks.
+   * Falls back to a new Audio() element if AudioContext is unavailable.
+   */
+  const scheduleChunk = useCallback(async (wavBlob: Blob) => {
+    try {
+      // Lazy-create a single shared AudioContext for the session
+      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+        audioCtxRef.current = new AudioContext();
+        nextStartTimeRef.current = 0;
+        scheduledSourcesRef.current = [];
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
 
-    isPlayingQueueRef.current = true;
-    if (prevAudioUrlRef.current) URL.revokeObjectURL(prevAudioUrlRef.current);
-    if (audioRef.current) audioRef.current.pause();
+      const arrayBuf = await wavBlob.arrayBuffer();
+      const audioBuf = await ctx.decodeAudioData(arrayBuf);
 
-    const url = URL.createObjectURL(next);
-    prevAudioUrlRef.current = url;
-    setCurrentAudioUrl(url);
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuf;
+      src.connect(ctx.destination);
 
-    const audio = new Audio(url);
-    audioRef.current = audio;
-    audio.onended = () => {
-      isPlayingQueueRef.current = false;
-      _playQueue();
-    };
-    audio.onerror = () => {
-      isPlayingQueueRef.current = false;
-      _playQueue();
-    };
-    audio.play().catch(() => {
-      isPlayingQueueRef.current = false;
-      _playQueue();
-    });
+      // Schedule at the end of the previous chunk (or immediately if first chunk)
+      const startAt = Math.max(ctx.currentTime, nextStartTimeRef.current);
+      src.start(startAt);
+      nextStartTimeRef.current = startAt + audioBuf.duration;
+
+      scheduledSourcesRef.current.push(src);
+      // Clean up references after playback ends
+      src.onended = () => {
+        scheduledSourcesRef.current = scheduledSourcesRef.current.filter(
+          (s) => s !== src,
+        );
+      };
+    } catch (err) {
+      // Fallback: plain <audio> element if Web Audio API fails
+      console.warn("[use-tts] AudioContext decode failed, falling back:", err);
+      const url = URL.createObjectURL(wavBlob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play().catch(() => URL.revokeObjectURL(url));
+    }
   }, []);
 
   const speak = useCallback(
@@ -281,8 +322,6 @@ export function useTts(): [UseTtsState, UseTtsActions] {
       setIsSynthesizing(true);
       setError(null);
       stopAudio();
-      audioQueueRef.current = [];
-      isPlayingQueueRef.current = false;
 
       streamAbortRef.current?.abort();
       const abort = new AbortController();
@@ -298,8 +337,9 @@ export function useTts(): [UseTtsState, UseTtsActions] {
 
         for await (const wavBlob of gen) {
           if (abort.signal.aborted) break;
-          audioQueueRef.current.push(wavBlob);
-          _playQueue();
+          // scheduleChunk decodes and back-to-back schedules each phoneme-batch
+          // chunk via AudioContext — no gap between chunks
+          await scheduleChunk(wavBlob);
         }
 
         const elapsed = (performance.now() - t0) / 1000;
@@ -325,7 +365,7 @@ export function useTts(): [UseTtsState, UseTtsActions] {
         setIsSynthesizing(false);
       }
     },
-    [selectedVoice, speed, voices, stopAudio, _playQueue],
+    [selectedVoice, speed, voices, stopAudio, scheduleChunk],
   );
 
   const speakText = useCallback(
@@ -338,9 +378,6 @@ export function useTts(): [UseTtsState, UseTtsActions] {
       if (!text.trim()) return;
       const vid = voiceId ?? selectedVoice;
       const s = spd ?? speed;
-
-      audioQueueRef.current = [];
-      isPlayingQueueRef.current = false;
 
       streamAbortRef.current?.abort();
       const abort = new AbortController();
@@ -357,8 +394,7 @@ export function useTts(): [UseTtsState, UseTtsActions] {
         );
         for await (const wavBlob of gen) {
           if (abort.signal.aborted) break;
-          audioQueueRef.current.push(wavBlob);
-          _playQueue();
+          await scheduleChunk(wavBlob);
         }
       } catch (e) {
         if ((e as Error).name !== "AbortError") {
@@ -366,7 +402,7 @@ export function useTts(): [UseTtsState, UseTtsActions] {
         }
       }
     },
-    [selectedVoice, speed, _playQueue],
+    [selectedVoice, speed, scheduleChunk],
   );
 
   const preview = useCallback(

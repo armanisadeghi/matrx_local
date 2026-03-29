@@ -12,6 +12,7 @@ import { parseMarkdownToText } from "@/lib/parse-markdown-for-speech";
 import {
   AudioLines,
   Play,
+  Square,
   Download,
   Loader2,
   CheckCircle2,
@@ -27,6 +28,7 @@ import {
   HardDrive,
   RefreshCw,
   FileText,
+  Radio,
 } from "lucide-react";
 import { loadSettings, saveSetting } from "@/lib/settings";
 
@@ -99,12 +101,10 @@ function SpeakTab({
 }) {
   const [text, setText] = useState("");
   const textRef = useRef<HTMLTextAreaElement>(null);
-  const [streamThreshold, setStreamThreshold] = useState(200);
   const [autoClean, setAutoClean] = useState(false);
 
   useEffect(() => {
     loadSettings().then((s) => {
-      setStreamThreshold(s.ttsStreamingThreshold);
       setAutoClean(s.ttsAutoCleanMarkdown);
     });
   }, []);
@@ -112,17 +112,16 @@ function SpeakTab({
   const needsDownload = state.status && !state.status.model_downloaded;
   const isReady = state.status?.model_downloaded ?? false;
   const canSpeak = isReady && text.trim().length > 0 && !state.isSynthesizing;
-  const useStreaming = streamThreshold === 0 || text.length > streamThreshold;
 
   const handleSpeak = useCallback(() => {
     if (!canSpeak) return;
     const spokenText = autoClean ? parseMarkdownToText(text) : text;
-    if (useStreaming) {
-      actions.speakStreaming(spokenText);
-    } else {
-      actions.speak(spokenText);
-    }
-  }, [canSpeak, text, actions, useStreaming, autoClean]);
+    actions.speakStreaming(spokenText);
+  }, [canSpeak, text, actions, autoClean]);
+
+  const handleStop = useCallback(() => {
+    actions.stopAudio();
+  }, [actions]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -130,8 +129,12 @@ function SpeakTab({
         e.preventDefault();
         handleSpeak();
       }
+      if (e.key === "Escape" && state.isSynthesizing) {
+        e.preventDefault();
+        handleStop();
+      }
     },
-    [handleSpeak],
+    [handleSpeak, handleStop, state.isSynthesizing],
   );
 
   const handleCleanMarkdown = useCallback(() => {
@@ -162,6 +165,11 @@ function SpeakTab({
             <X className="h-4 w-4" />
           </button>
         </div>
+      )}
+
+      {/* Streaming status banner */}
+      {state.isSynthesizing && (
+        <StreamingBanner onStop={handleStop} elapsed={state.currentElapsed} />
       )}
 
       {/* Text input */}
@@ -222,7 +230,7 @@ function SpeakTab({
             </span>
           </div>
           <Slider
-            min={0.25}
+            min={0.5}
             max={2}
             step={0.05}
             value={[state.speed]}
@@ -231,47 +239,53 @@ function SpeakTab({
           />
         </div>
 
-        {/* Speak button */}
-        <Button
-          onClick={handleSpeak}
-          disabled={!canSpeak}
-          size="lg"
-          className="gap-2"
-        >
-          {state.isSynthesizing ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            <>
-              <AudioLines className="h-4 w-4" />
-              {useStreaming ? "Stream" : "Speak"}
-            </>
+        {/* Speak / Stop buttons */}
+        <div className="flex gap-2">
+          <Button
+            onClick={handleSpeak}
+            disabled={!canSpeak}
+            size="lg"
+            className="gap-2"
+          >
+            {state.isSynthesizing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Streaming…
+              </>
+            ) : (
+              <>
+                <AudioLines className="h-4 w-4" />
+                Speak
+              </>
+            )}
+          </Button>
+          {state.isSynthesizing && (
+            <Button
+              onClick={handleStop}
+              size="lg"
+              variant="outline"
+              className="gap-2"
+            >
+              <Square className="h-4 w-4 fill-current" />
+              Stop
+            </Button>
           )}
-        </Button>
+        </div>
       </div>
 
-      {/* Audio player */}
-      {state.currentAudioUrl && (
-        <div className="rounded-lg border bg-card p-4">
-          <div className="flex items-center gap-4">
-            <audio
-              src={state.currentAudioUrl}
-              controls
-              className="h-10 flex-1"
-            />
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {state.currentDuration.toFixed(1)}s
-              </span>
-              <span className="flex items-center gap-1">
-                <Zap className="h-3 w-3" />
-                {state.currentElapsed.toFixed(2)}s
-              </span>
-            </div>
-          </div>
+      {/* Elapsed timing after stream completes */}
+      {!state.isSynthesizing && state.currentElapsed > 0 && (
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          {state.currentDuration > 0 && (
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {state.currentDuration.toFixed(1)}s audio
+            </span>
+          )}
+          <span className="flex items-center gap-1">
+            <Zap className="h-3 w-3" />
+            {state.currentElapsed.toFixed(2)}s total
+          </span>
         </div>
       )}
 
@@ -303,13 +317,54 @@ function SpeakTab({
       {/* Keyboard shortcut hint */}
       {isReady && (
         <p className="text-center text-xs text-muted-foreground/60">
-          Press{" "}
           <kbd className="rounded border px-1.5 py-0.5 text-[10px] font-mono">
             Cmd+Enter
           </kbd>{" "}
-          to speak
+          to speak &middot;{" "}
+          <kbd className="rounded border px-1.5 py-0.5 text-[10px] font-mono">
+            Esc
+          </kbd>{" "}
+          to stop
         </p>
       )}
+    </div>
+  );
+}
+
+function StreamingBanner({
+  onStop,
+  elapsed,
+}: {
+  onStop: () => void;
+  elapsed: number;
+}) {
+  const [dots, setDots] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setDots((d) => (d + 1) % 4), 400);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="flex items-center gap-4 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+      <Radio className="h-4 w-4 shrink-0 animate-pulse text-primary" />
+      <div className="flex-1">
+        <p className="text-sm font-medium text-primary">
+          Streaming{".".repeat(dots)}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Audio plays as each chunk is generated — near real-time
+          {elapsed > 0 && ` · ${elapsed.toFixed(1)}s`}
+        </p>
+      </div>
+      <Button
+        onClick={onStop}
+        size="sm"
+        variant="outline"
+        className="shrink-0 gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+      >
+        <Square className="h-3 w-3 fill-current" />
+        Stop
+      </Button>
     </div>
   );
 }
@@ -781,7 +836,7 @@ function SettingsTab({
               </span>
             </div>
             <Slider
-              min={0.25}
+              min={0.5}
               max={2}
               step={0.05}
               value={[state.speed]}

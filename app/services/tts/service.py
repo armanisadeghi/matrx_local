@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import re
 import struct
 import threading
 import time
@@ -340,78 +339,53 @@ class TtsService:
         speed: float,
         lang: str,
     ) -> SynthesisResult:
+        # Grab a reference under lock (does not hold the lock during inference —
+        # the ONNX session is thread-safe and create_stream also runs executor
+        # tasks concurrently, so holding the lock here would cause deadlocks).
         with self._lock:
-            if self._kokoro is None:
-                return SynthesisResult(success=False, error="Model not loaded")
+            kokoro = self._kokoro
+        if kokoro is None:
+            return SynthesisResult(success=False, error="Model not loaded")
 
-            try:
-                t0 = time.monotonic()
+        try:
+            t0 = time.monotonic()
 
-                samples, sample_rate = self._kokoro.create(
-                    text,
-                    voice=voice_id,
-                    speed=speed,
-                    lang=lang,
-                )
+            samples, sample_rate = kokoro.create(
+                text,
+                voice=voice_id,
+                speed=speed,
+                lang=lang,
+            )
 
-                if samples is None or len(samples) == 0:
-                    return SynthesisResult(
-                        success=False,
-                        error="Model returned empty audio — text may be too short or unsupported",
-                    )
-
-                audio_bytes = _wav_bytes(samples, sample_rate)
-                duration = len(samples) / sample_rate
-                elapsed = time.monotonic() - t0
-
-                logger.info(
-                    "[tts] Synthesized %.1fs audio in %.2fs (%.1fx real-time) voice=%s",
-                    duration, elapsed, duration / max(elapsed, 0.001), voice_id,
-                )
-
+            if samples is None or len(samples) == 0:
                 return SynthesisResult(
-                    success=True,
-                    audio_bytes=audio_bytes,
-                    sample_rate=sample_rate,
-                    duration_seconds=duration,
-                    voice_id=voice_id,
-                    elapsed_seconds=elapsed,
+                    success=False,
+                    error="Model returned empty audio — text may be too short or unsupported",
                 )
 
-            except Exception as exc:
-                logger.error("[tts] Synthesis failed: %s", exc, exc_info=True)
-                return SynthesisResult(success=False, error=str(exc))
+            audio_bytes = _wav_bytes(samples, sample_rate)
+            duration = len(samples) / sample_rate
+            elapsed = time.monotonic() - t0
+
+            logger.info(
+                "[tts] Synthesized %.1fs audio in %.2fs (%.1fx real-time) voice=%s",
+                duration, elapsed, duration / max(elapsed, 0.001), voice_id,
+            )
+
+            return SynthesisResult(
+                success=True,
+                audio_bytes=audio_bytes,
+                sample_rate=sample_rate,
+                duration_seconds=duration,
+                voice_id=voice_id,
+                elapsed_seconds=elapsed,
+            )
+
+        except Exception as exc:
+            logger.error("[tts] Synthesis failed: %s", exc, exc_info=True)
+            return SynthesisResult(success=False, error=str(exc))
 
     # ── Streaming synthesis ─────────────────────────────────────────────────
-
-    _SENTENCE_RE = re.compile(
-        r'(?<=[.!?;])\s+'          # split after . ! ? ;
-        r'|(?<=\n)\s*'             # or after newlines
-        r'|(?<=[:])(?=\s+[A-Z])'  # or after colon when followed by capital
-    )
-
-    @staticmethod
-    def _split_sentences(text: str, min_len: int = 20, max_len: int = 400) -> list[str]:
-        """Split text into sentence-ish chunks suitable for incremental TTS."""
-        raw_parts = TtsService._SENTENCE_RE.split(text)
-        chunks: list[str] = []
-        buf = ""
-        for part in raw_parts:
-            part = part.strip()
-            if not part:
-                continue
-            candidate = f"{buf} {part}".strip() if buf else part
-            if len(candidate) > max_len and buf:
-                chunks.append(buf)
-                buf = part
-            else:
-                buf = candidate
-            if len(buf) >= min_len and buf[-1] in ".!?;\n":
-                chunks.append(buf)
-                buf = ""
-        if buf.strip():
-            chunks.append(buf.strip())
-        return chunks
 
     async def synthesize_stream(
         self,
@@ -420,13 +394,21 @@ class TtsService:
         speed: float = 1.0,
         lang: str | None = None,
     ) -> AsyncIterator[bytes]:
-        """Yield WAV chunks for each sentence.
+        """Yield WAV chunks using kokoro-onnx native create_stream().
 
-        Each chunk is a complete, playable WAV so the client can decode
-        and enqueue them independently for gapless playback.
+        create_stream() splits text at the phoneme-batch level (~510 phonemes,
+        roughly 2-4 words) and processes each batch concurrently in a thread
+        executor.  This yields the first audio chunk in ~200-400ms instead of
+        waiting for a full sentence, giving near-real-time playback start.
+
+        Each yielded value is a complete, self-contained WAV blob so the client
+        can decode and enqueue them independently for gapless playback.
         """
         load_result = await self.ensure_loaded()
         if not load_result.get("success"):
+            return
+
+        if not text.strip():
             return
 
         voice_info = VOICE_MAP.get(voice_id)
@@ -437,17 +419,31 @@ class TtsService:
         elif resolved_lang is None:
             resolved_lang = "en-us"
 
-        chunks = self._split_sentences(text)
-        if not chunks:
-            return
+        with self._lock:
+            if self._kokoro is None:
+                return
+            kokoro = self._kokoro
 
-        loop = asyncio.get_running_loop()
-        for chunk_text in chunks:
-            result = await loop.run_in_executor(
-                None, self._synthesize_sync, chunk_text, voice_id, speed, resolved_lang,
-            )
-            if result.success and result.audio_bytes:
-                yield result.audio_bytes
+        chunk_index = 0
+        try:
+            async for audio_chunk, sample_rate in kokoro.create_stream(
+                text=text,
+                voice=voice_id,
+                speed=speed,
+                lang=resolved_lang,
+            ):
+                if audio_chunk is None or len(audio_chunk) == 0:
+                    continue
+                wav = _wav_bytes(audio_chunk, sample_rate)
+                duration = len(audio_chunk) / sample_rate
+                logger.debug(
+                    "[tts] Stream chunk %d: %.2fs audio, %d bytes WAV",
+                    chunk_index, duration, len(wav),
+                )
+                chunk_index += 1
+                yield wav
+        except Exception as exc:
+            logger.error("[tts] Stream synthesis error at chunk %d: %s", chunk_index, exc, exc_info=True)
 
     async def preview_voice(self, voice_id: str) -> SynthesisResult:
         """Generate a short preview clip for a voice."""

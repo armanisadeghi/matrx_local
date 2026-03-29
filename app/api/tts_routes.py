@@ -39,7 +39,7 @@ class TtsVoiceInfo(BaseModel):
 class SynthesizeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=50_000)
     voice_id: str = Field(default="af_heart")
-    speed: float = Field(default=1.0, ge=0.25, le=4.0)
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
     lang: str | None = Field(default=None, description="Override espeak language code (e.g. 'en-us')")
 
 
@@ -140,15 +140,19 @@ async def synthesize_json(req: SynthesizeRequest) -> SynthesizeResponse:
 
 @router.post("/synthesize-stream")
 async def synthesize_stream(req: SynthesizeRequest) -> StreamingResponse:
-    """Stream speech as a sequence of WAV chunks separated by a length-prefix.
+    """Stream speech as a sequence of WAV chunks separated by a 4-byte length prefix.
 
-    Wire format: for each sentence chunk the server sends:
-      4 bytes (big-endian uint32) = length of the following WAV blob
-      N bytes = complete WAV file for that sentence
+    Uses the kokoro-onnx native create_stream() which chunks at the phoneme-batch
+    level (~510 phonemes, roughly 2-4 words per chunk).  This yields the first audio
+    chunk in ~200-400ms instead of waiting for a complete sentence, giving near
+    real-time playback start even for long texts.
 
-    The client reads length + blob in a loop until the stream ends.
-    This allows playback to begin after the first sentence is synthesized
-    rather than waiting for the entire text.
+    Wire format (repeated until EOF):
+      4 bytes big-endian uint32  — byte length of the following WAV blob
+      N bytes                    — complete self-contained WAV file for that chunk
+
+    The client reads length + blob in a loop and enqueues each WAV for gapless
+    sequential playback.
     """
     import struct as _struct
 
@@ -174,6 +178,7 @@ async def synthesize_stream(req: SynthesizeRequest) -> StreamingResponse:
         headers={
             "X-TTS-Voice": req.voice_id,
             "X-TTS-Format": "chunked-wav",
+            "X-TTS-Chunk-Granularity": "phoneme-batch",
             "Cache-Control": "no-cache",
         },
     )
