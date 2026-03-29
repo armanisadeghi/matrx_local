@@ -124,7 +124,7 @@ export async function previewVoice(
  * The server sends length-prefixed WAV chunks so playback can start after the
  * first sentence is ready instead of waiting for the entire text.
  */
-export async function synthesizeStream(
+export async function* synthesizeStream(
   req: SynthesizeRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<Blob> {
@@ -146,21 +146,14 @@ export async function synthesizeStream(
 
   if (!resp.body) throw new Error("No response body for TTS stream");
 
-  return _readChunkedWav(resp.body, signal);
-}
-
-async function* _readChunkedWav(
-  body: ReadableStream<Uint8Array>,
-  signal?: AbortSignal,
-): AsyncGenerator<Blob> {
-  const reader = body.getReader();
+  const reader = resp.body.getReader();
   let buffer = new Uint8Array(0);
 
   const concat = (a: Uint8Array, b: Uint8Array): Uint8Array => {
-    const result = new Uint8Array(a.length + b.length);
-    result.set(a, 0);
-    result.set(b, a.length);
-    return result;
+    const out = new Uint8Array(a.length + b.length);
+    out.set(a, 0);
+    out.set(b, a.length);
+    return out;
   };
 
   try {
@@ -170,17 +163,17 @@ async function* _readChunkedWav(
       while (buffer.length < 4) {
         const { done, value } = await reader.read();
         if (done) return;
-        buffer = concat(buffer, value);
+        if (value) buffer = concat(buffer, new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
       }
 
       const view = new DataView(buffer.buffer, buffer.byteOffset, 4);
-      const wavLen = view.getUint32(0, false); // big-endian
+      const wavLen = view.getUint32(0, false);
       buffer = buffer.slice(4);
 
       while (buffer.length < wavLen) {
         const { done, value } = await reader.read();
         if (done) return;
-        buffer = concat(buffer, value);
+        if (value) buffer = concat(buffer, new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
       }
 
       const wavData = buffer.slice(0, wavLen);

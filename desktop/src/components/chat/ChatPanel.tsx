@@ -128,8 +128,8 @@ export function ChatPanel({
     // TtsProvider not mounted — read-aloud unavailable
   }
 
-  const lastAssistantMsg =
-    messages.filter((m) => m.role === "assistant").at(-1) ?? null;
+  const assistantMsgs = messages.filter((m) => m.role === "assistant");
+  const lastAssistantMsg = assistantMsgs[assistantMsgs.length - 1] ?? null;
   const chatTts = useChatTts(ttsActions, lastAssistantMsg, isStreaming);
 
   const handleReadAloud = useCallback(
