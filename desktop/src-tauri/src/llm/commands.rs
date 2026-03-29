@@ -338,7 +338,7 @@ pub async fn download_llm_model(
     std::fs::create_dir_all(&dest_dir)
         .map_err(|e| format!("Failed to create models dir: {}", e))?;
 
-    // Engine API key first, then legacy llm.json (may be None — fine for public non-XET repos)
+    // Engine API key first, then legacy llm.json (may be None — fine for public repos)
     let hf_token: Option<String> = hf_token
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.trim().to_string())
@@ -347,30 +347,11 @@ pub async fn download_llm_model(
             LlmConfig::load(&config_dir).hf_token
         });
 
-    // Probe the first URL to detect XET storage before starting any download.
-    // XET repos redirect to cas-bridge.xethub.hf.co — a plain download client
-    // cannot reconstruct the file from that endpoint without the hf_xet SDK.
-    // We catch this early and return a clear error instead of writing garbage.
-    if let Some(first_url) = urls.first() {
-        if is_xet_url(first_url, &hf_token).await {
-            if hf_token.is_none() {
-                return Err(
-                    "XET_TOKEN_REQUIRED: This model is hosted on HuggingFace's XET storage system. \
-                     A free HuggingFace access token is required to download it. \
-                     Create one at huggingface.co/settings/tokens (read-only scope is enough), \
-                     then add it in Settings → API Keys → Hugging Face."
-                        .to_string(),
-                );
-            } else {
-                return Err(
-                    "XET_TOKEN_INVALID: This model uses HuggingFace XET storage. \
-                     Your token was rejected or does not have read access to this repo. \
-                     Check your token at huggingface.co/settings/tokens."
-                        .to_string(),
-                );
-            }
-        }
-    }
+    // NOTE: HuggingFace now routes ALL public model downloads through XET storage
+    // (cas-bridge.xethub.hf.co). Despite the domain name, this endpoint is a
+    // standard HTTPS/S3 URL that reqwest follows automatically — no special SDK
+    // needed. The XET early-exit check has been removed because it was blocking
+    // every download. HTTP 401/403 errors from auth failures surface naturally.
 
     // Look up catalog entry so we can get per-part expected sizes
     let catalog_entry = model_selector::LLM_MODELS
@@ -941,42 +922,6 @@ fn extract_stem(filename: &str) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string()
-}
-
-/// Detect whether a HuggingFace URL serves via XET storage by issuing a HEAD
-/// request and checking whether the redirect destination is cas-bridge.xethub.hf.co.
-///
-/// XET storage requires the hf_xet SDK to reconstruct files from content-addressed
-/// chunks. A plain HTTP client cannot download XET files and will either receive
-/// garbage or fail. We detect this early and surface a clear error.
-async fn is_xet_url(url: &str, hf_token: &Option<String>) -> bool {
-    // Only applies to huggingface.co URLs
-    if !url.contains("huggingface.co") {
-        return false;
-    }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap_or_default();
-
-    let mut req = client.head(url).header("User-Agent", "matrx-local/1.0");
-    if let Some(token) = hf_token {
-        req = req.header("Authorization", format!("Bearer {}", token));
-    }
-
-    match req.send().await {
-        Ok(resp) => {
-            // HF returns 302 redirect; check where it points
-            if let Some(location) = resp.headers().get("location") {
-                if let Ok(loc) = location.to_str() {
-                    return loc.contains("xethub.hf.co") || loc.contains("xet-bridge");
-                }
-            }
-            false
-        }
-        Err(_) => false,
-    }
 }
 
 /// Probe the content-length of a URL without downloading it.
