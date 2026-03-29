@@ -89,6 +89,9 @@ function sortedEntries(map: Map<string, DownloadEntry>): DownloadEntry[] {
   );
 }
 
+// Track last-seen bytes/time per download for speed calculation
+const speedTracker = new Map<string, { bytes: number; time: number }>();
+
 export function DownloadManagerProvider({ children }: { children: ReactNode }) {
   const [entriesMap, setEntriesMap] = useState<Map<string, DownloadEntry>>(new Map());
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -99,26 +102,114 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
   const downloads = sortedEntries(entriesMap);
   const activeCount = downloads.filter((d) => d.status === "active" || d.status === "queued").length;
 
-  // Merge a progress event payload into state
+  // Merge a progress event payload into state, computing speed from byte deltas if not provided
   const handleEvent = useCallback((raw: unknown) => {
     if (!raw || typeof raw !== "object") return;
     const payload = raw as Partial<DownloadEntry> & { id?: string };
     if (!payload.id) return;
-    setEntriesMap((prev) => mergeEntry(prev, payload as DownloadEntry & { id: string }));
+
+    // Compute speed from byte delta when the emitter doesn't provide it
+    let speed_bps = (payload as { speed_bps?: number }).speed_bps ?? 0;
+    const bytes = (payload as { bytes_done?: number }).bytes_done ?? 0;
+    if (speed_bps === 0 && bytes > 0) {
+      const now = Date.now();
+      const prev = speedTracker.get(payload.id);
+      if (prev && bytes > prev.bytes) {
+        const dt = (now - prev.time) / 1000;
+        if (dt > 0.5) {
+          speed_bps = (bytes - prev.bytes) / dt;
+          speedTracker.set(payload.id, { bytes, time: now });
+        }
+      } else {
+        speedTracker.set(payload.id, { bytes, time: now });
+      }
+    }
+
+    // Compute ETA from speed + remaining bytes when not provided
+    let eta_seconds = (payload as { eta_seconds?: number }).eta_seconds;
+    if (eta_seconds === undefined && speed_bps > 0) {
+      const total = (payload as { total_bytes?: number }).total_bytes ?? 0;
+      const remaining = total > bytes ? total - bytes : 0;
+      if (remaining > 0) eta_seconds = remaining / speed_bps;
+    }
+
+    setEntriesMap((prev) => mergeEntry(prev, {
+      ...(payload as DownloadEntry & { id: string }),
+      speed_bps,
+      eta_seconds,
+    }));
   }, []);
 
   // ── Tauri event listeners ────────────────────────────────────────────────
   useEffect(() => {
     if (!isTauri()) return;
 
-    const events = ["dm-progress", "dm-queued", "dm-completed", "dm-failed", "dm-cancelled"];
     const cleanup: Array<() => void> = [];
 
     (async () => {
-      for (const evt of events) {
+      // Core DM events
+      const coreEvents = ["dm-progress", "dm-queued", "dm-completed", "dm-failed", "dm-cancelled"];
+      for (const evt of coreEvents) {
         const unlisten = await tauriListen(evt, handleEvent);
         cleanup.push(unlisten);
       }
+
+      // Bridge llm-download-progress → dm-progress so that external (register_external)
+      // LLM downloads show live progress in the modal.
+      const unlistenLlm = await tauriListen("llm-download-progress", (raw) => {
+        if (!raw || typeof raw !== "object") return;
+        const p = raw as Record<string, unknown>;
+        const filename = p["filename"] as string | undefined;
+        if (!filename) return;
+        const id = `llm-${filename}`;
+        const bytesDone = (p["bytes_downloaded"] as number | undefined) ?? 0;
+        const totalBytes = (p["total_bytes"] as number | undefined) ?? 0;
+        const percent = (p["percent"] as number | undefined) ?? 0;
+        const partCurrent = (p["part"] as number | undefined) ?? 1;
+        const partTotal = (p["total_parts"] as number | undefined) ?? 1;
+        handleEvent({
+          id,
+          category: "llm",
+          filename,
+          display_name: filename,
+          status: percent >= 100 ? "completed" : "active",
+          bytes_done: bytesDone,
+          total_bytes: totalBytes,
+          percent,
+          part_current: partCurrent,
+          part_total: partTotal,
+          speed_bps: 0,
+          eta_seconds: undefined,
+        });
+      });
+      cleanup.push(unlistenLlm);
+
+      // Bridge whisper-download-progress → dm-progress
+      const unlistenWhisper = await tauriListen("whisper-download-progress", (raw) => {
+        if (!raw || typeof raw !== "object") return;
+        const p = raw as Record<string, unknown>;
+        const filename = (p["filename"] as string | undefined) ?? "whisper-model";
+        const id = `whisper-${filename}`;
+        const bytesDone = (p["bytes_downloaded"] as number | undefined) ?? 0;
+        const totalBytes = (p["total_bytes"] as number | undefined) ?? 0;
+        const percent = (p["percent"] as number | undefined) ?? 0;
+        handleEvent({
+          id,
+          category: "whisper",
+          filename,
+          display_name: filename,
+          status: percent >= 100 ? "completed" : "active",
+          bytes_done: bytesDone,
+          total_bytes: totalBytes,
+          percent,
+          part_current: 1,
+          part_total: 1,
+          speed_bps: 0,
+          eta_seconds: undefined,
+        });
+      });
+      cleanup.push(unlistenWhisper);
+
       unlistenFns.current = cleanup;
     })();
 
