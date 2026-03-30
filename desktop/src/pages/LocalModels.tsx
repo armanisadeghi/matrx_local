@@ -64,6 +64,12 @@ import {
   FileText,
   Volume2,
   VolumeX,
+  ChevronRight,
+  TriangleAlert,
+  ListChecks,
+  OctagonX,
+  CheckCheck,
+  Timer,
 } from "lucide-react";
 import { isTauri } from "@/lib/sidecar";
 import { Button } from "@/components/ui/button";
@@ -92,10 +98,15 @@ import {
 } from "@/components/ui/dialog";
 import {
   streamCompletion,
-  callWithTools,
+  runAgenticLoop,
   ContextSizeError,
 } from "@/lib/llm/api";
-import type { ChatMessage, LlmModelInfo } from "@/lib/llm/types";
+import type {
+  ChatMessage,
+  LlmModelInfo,
+  ToolDefinition,
+} from "@/lib/llm/types";
+import type { EngineToolSchema } from "@/lib/api";
 import { useNavigate } from "react-router-dom";
 import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
 import type { SystemPrompt } from "@/lib/system-prompts";
@@ -2427,6 +2438,99 @@ function ModelsTab() {
   );
 }
 
+// ── Agentic Tool Call Card ─────────────────────────────────────────────────
+
+function AgenticToolCallCard({
+  toolName,
+  arguments: args,
+  result,
+  isError,
+  elapsedMs,
+}: {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  result: string;
+  isError: boolean;
+  elapsedMs: number;
+}) {
+  const [showArgs, setShowArgs] = useState(false);
+  const [showResult, setShowResult] = useState(false);
+
+  return (
+    <div
+      className={`rounded-lg border text-xs ${
+        isError
+          ? "border-destructive/40 bg-destructive/5"
+          : "border-blue-500/20 bg-blue-500/5"
+      }`}
+    >
+      {/* Header row */}
+      <div className="flex items-center gap-2 px-3 py-2">
+        <div
+          className={`h-5 w-5 rounded-full flex items-center justify-center shrink-0 ${
+            isError ? "bg-destructive/20" : "bg-blue-500/20"
+          }`}
+        >
+          {isError ? (
+            <AlertCircle className="h-3 w-3 text-destructive" />
+          ) : (
+            <Wrench className="h-3 w-3 text-blue-500" />
+          )}
+        </div>
+        <span className="font-mono font-semibold">{toolName}</span>
+        <span className="ml-auto text-muted-foreground flex items-center gap-1">
+          <Timer className="h-2.5 w-2.5" />
+          {elapsedMs < 1000
+            ? `${elapsedMs}ms`
+            : `${(elapsedMs / 1000).toFixed(1)}s`}
+        </span>
+      </div>
+
+      {/* Expandable args */}
+      <div className="border-t">
+        <button
+          className="flex items-center gap-1 w-full px-3 py-1.5 text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => setShowArgs((v) => !v)}
+        >
+          <ChevronRight
+            className={`h-3 w-3 transition-transform ${showArgs ? "rotate-90" : ""}`}
+          />
+          Arguments
+        </button>
+        {showArgs && (
+          <pre className="px-3 pb-2 font-mono text-[10px] whitespace-pre-wrap break-all text-muted-foreground overflow-hidden">
+            {JSON.stringify(args, null, 2)}
+          </pre>
+        )}
+      </div>
+
+      {/* Expandable result */}
+      <div className="border-t">
+        <button
+          className={`flex items-center gap-1 w-full px-3 py-1.5 transition-colors ${
+            isError
+              ? "text-destructive hover:text-destructive/80"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          onClick={() => setShowResult((v) => !v)}
+        >
+          <ChevronRight
+            className={`h-3 w-3 transition-transform ${showResult ? "rotate-90" : ""}`}
+          />
+          {isError ? "Error" : "Result"}
+        </button>
+        {showResult && (
+          <pre className="px-3 pb-2 font-mono text-[10px] whitespace-pre-wrap break-all max-h-48 overflow-y-auto text-muted-foreground">
+            {result.length > 4000
+              ? result.slice(0, 4000) + "\n…(truncated)"
+              : result}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Inference / Playground Tab ────────────────────────────────────────────
 
 type InferenceMode = "chat" | "tools" | "raw";
@@ -2436,6 +2540,23 @@ interface ConversationMessage {
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  // Agentic tool step data
+  toolSteps?: AgenticStepDisplay[];
+}
+
+/** Display model for a single agentic step shown in the chat */
+interface AgenticStepDisplay {
+  stepIndex: number;
+  assistantContent: string | null;
+  toolCalls: {
+    toolCallId: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    result: string;
+    isError: boolean;
+    elapsedMs: number;
+  }[];
+  finishReason: string;
 }
 
 interface SavedConversation {
@@ -3037,28 +3158,259 @@ function InferenceTab() {
   const [maxTokens, setMaxTokens] = useState(8000);
   const [mode, setMode] = useState<InferenceMode>("chat");
 
-  // Tool / Raw state
-  const [toolDef, setToolDef] = useState(
-    JSON.stringify(
-      {
-        type: "function",
+  // ── Agentic tools mode state ──────────────────────────────────────────
+  const [toolSchemasByCategory, setToolSchemasByCategory] = useState<
+    Record<string, EngineToolSchema[]>
+  >({});
+  const [loadingToolSchemas, setLoadingToolSchemas] = useState(false);
+  const [toolSchemasError, setToolSchemasError] = useState<string | null>(null);
+  // Selected tool names for the agentic loop
+  const [selectedToolNames, setSelectedToolNames] = useState<Set<string>>(
+    new Set(),
+  );
+  const [toolSearchQuery, setToolSearchQuery] = useState("");
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
+    new Set(),
+  );
+  // Agentic chat messages for tools mode
+  const [agentMessages, setAgentMessages] = useState<ConversationMessage[]>([]);
+  // Full message history (including tool result messages) for accurate context on follow-up turns
+  const agentHistoryRef = useRef<ChatMessage[]>([]);
+  const [agentInput, setAgentInput] = useState("");
+  const [isAgentRunning, setIsAgentRunning] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [maxAgentSteps, setMaxAgentSteps] = useState(10);
+  const agentAbortRef = useRef<AbortController | null>(null);
+  const agentScrollRef = useRef<HTMLDivElement>(null);
+
+  // Load tool schemas when entering tools mode
+  useEffect(() => {
+    if (mode !== "tools" || Object.keys(toolSchemasByCategory).length > 0)
+      return;
+    setLoadingToolSchemas(true);
+    setToolSchemasError(null);
+    engine
+      .getToolSchemasByCategory()
+      .then((schemas) => {
+        setToolSchemasByCategory(schemas);
+        // Expand first two categories by default
+        const cats = Object.keys(schemas).sort();
+        setExpandedCategories(new Set(cats.slice(0, 2)));
+      })
+      .catch((e) => {
+        setToolSchemasError(
+          e instanceof Error ? e.message : "Failed to load tools",
+        );
+      })
+      .finally(() => setLoadingToolSchemas(false));
+  }, [mode]);
+
+  const toggleToolSelection = (toolName: string) => {
+    setSelectedToolNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(toolName)) {
+        next.delete(toolName);
+      } else {
+        next.add(toolName);
+      }
+      return next;
+    });
+  };
+
+  const toggleCategory = (cat: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) {
+        next.delete(cat);
+      } else {
+        next.add(cat);
+      }
+      return next;
+    });
+  };
+
+  const selectAllInCategory = (cat: string) => {
+    const tools = toolSchemasByCategory[cat] ?? [];
+    setSelectedToolNames((prev) => {
+      const next = new Set(prev);
+      tools.forEach((t) => next.add(t.name));
+      return next;
+    });
+  };
+
+  const deselectAllInCategory = (cat: string) => {
+    const tools = toolSchemasByCategory[cat] ?? [];
+    setSelectedToolNames((prev) => {
+      const next = new Set(prev);
+      tools.forEach((t) => next.delete(t.name));
+      return next;
+    });
+  };
+
+  const clearAllTools = () => setSelectedToolNames(new Set());
+
+  /** Convert selected engine tool schemas to llama-server ToolDefinition format. */
+  const buildToolDefinitions = (): ToolDefinition[] => {
+    const allSchemas = Object.values(toolSchemasByCategory).flat();
+    return allSchemas
+      .filter((s) => selectedToolNames.has(s.name))
+      .map((s) => ({
+        type: "function" as const,
         function: {
-          name: "get_weather",
-          description: "Get current weather for a location",
+          name: s.name,
+          description: s.description,
           parameters: {
-            type: "object",
-            properties: {
-              location: { type: "string", description: "City name" },
-            },
-            required: ["location"],
+            type: "object" as const,
+            properties: Object.fromEntries(
+              Object.entries(s.input_schema.properties).map(([k, v]) => [
+                k,
+                { type: v.type, description: v.description ?? k },
+              ]),
+            ),
+            required: s.input_schema.required,
           },
         },
-      },
-      null,
-      2,
-    ),
-  );
-  const [toolResult, setToolResult] = useState<string | null>(null);
+      }));
+  };
+
+  const handleAgentAbort = () => {
+    if (agentAbortRef.current) {
+      agentAbortRef.current.abort();
+    }
+  };
+
+  const handleAgentSend = async () => {
+    if (!port || !agentInput.trim() || isAgentRunning) return;
+    if (selectedToolNames.size === 0) {
+      setAgentError("Select at least one tool from the panel before sending.");
+      return;
+    }
+
+    const userMsg = agentInput.trim();
+    setAgentInput("");
+    setAgentError(null);
+
+    const userMsgEntry: ConversationMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: userMsg,
+    };
+    const assistantPlaceholderId = crypto.randomUUID();
+    const assistantEntry: ConversationMessage = {
+      id: assistantPlaceholderId,
+      role: "assistant",
+      content: "",
+      isStreaming: true,
+      toolSteps: [],
+    };
+
+    setAgentMessages((prev) => [...prev, userMsgEntry, assistantEntry]);
+    setIsAgentRunning(true);
+
+    const controller = new AbortController();
+    agentAbortRef.current = controller;
+
+    const tools = buildToolDefinitions();
+
+    // Use the accumulated full history (includes tool result messages) so the
+    // model has proper context on follow-up turns.
+    const chatHistory: ChatMessage[] = [
+      ...agentHistoryRef.current,
+      { role: "user" as const, content: userMsg },
+    ];
+
+    const accSteps: AgenticStepDisplay[] = [];
+
+    try {
+      const result = await runAgenticLoop(
+        port,
+        chatHistory,
+        tools,
+        async (toolName, args) => {
+          try {
+            const res = await engine.invokeTool(
+              toolName,
+              args as Record<string, unknown>,
+            );
+            return {
+              output: res.output ?? "",
+              isError: res.type === "error",
+            };
+          } catch (e) {
+            return {
+              output: `Failed to invoke ${toolName}: ${(e as Error).message}`,
+              isError: true,
+            };
+          }
+        },
+        (step) => {
+          accSteps.push(step);
+          setAgentMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantPlaceholderId
+                ? {
+                    ...m,
+                    content: step.assistantContent ?? m.content,
+                    toolSteps: [...accSteps],
+                  }
+                : m,
+            ),
+          );
+          // Scroll to bottom after each step
+          setTimeout(
+            () =>
+              agentScrollRef.current?.scrollTo({
+                top: agentScrollRef.current.scrollHeight,
+                behavior: "smooth",
+              }),
+            50,
+          );
+        },
+        controller.signal,
+        maxAgentSteps,
+      );
+
+      const finalMsg =
+        result.finalContent ||
+        (result.stoppedByUser
+          ? "⚠️ Stopped by user."
+          : result.stoppedByMaxSteps
+            ? `⚠️ Reached the maximum of ${maxAgentSteps} steps.`
+            : "Done.");
+
+      // Persist the full history (including tool results) for accurate context
+      // on subsequent turns. Also append the final assistant message.
+      agentHistoryRef.current = [...result.fullHistory];
+
+      setAgentMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantPlaceholderId
+            ? {
+                ...m,
+                content: finalMsg,
+                isStreaming: false,
+                toolSteps: accSteps,
+              }
+            : m,
+        ),
+      );
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      setAgentError(errMsg);
+      setAgentMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantPlaceholderId
+            ? { ...m, content: "", isStreaming: false, toolSteps: accSteps }
+            : m,
+        ),
+      );
+    } finally {
+      setIsAgentRunning(false);
+      agentAbortRef.current = null;
+    }
+  };
+
+  // Tool / Raw state
   const [rawJson, setRawJson] = useState(
     JSON.stringify(
       {
@@ -3608,26 +3960,6 @@ function InferenceTab() {
         saveConversations(updated);
         return updated;
       });
-      setIsGenerating(false);
-    }
-  };
-
-  const handleToolTest = async () => {
-    if (!port || !input.trim()) return;
-    setError(null);
-    setToolResult(null);
-    setIsGenerating(true);
-    try {
-      const tool = JSON.parse(toolDef);
-      const result = await callWithTools(
-        port,
-        [{ role: "user", content: input }],
-        [tool],
-      );
-      setToolResult(JSON.stringify(result, null, 2));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
       setIsGenerating(false);
     }
   };
@@ -4384,50 +4716,387 @@ function InferenceTab() {
           </>
         )}
 
-        {/* ── Tools mode ── */}
+        {/* ── Tools / Agentic mode ── */}
         {mode === "tools" && (
-          <div className="flex-1 overflow-auto p-4">
-            <div className="grid grid-cols-2 gap-4 h-full max-w-4xl mx-auto">
-              <div className="space-y-3">
-                <Label className="text-sm font-medium">
-                  Tool Definition (JSON)
-                </Label>
-                <Textarea
-                  value={toolDef}
-                  onChange={(e) => setToolDef(e.target.value)}
-                  className="font-mono text-xs h-48 resize-none"
-                />
-                <Label className="text-sm font-medium">User Prompt</Label>
-                <Textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="What is the weather in San Francisco?"
-                  className="text-sm resize-none h-24"
-                />
-                <Button
-                  disabled={isGenerating || !input.trim()}
-                  onClick={handleToolTest}
-                  className="w-full"
-                >
-                  {isGenerating ? "Running…" : "Run Tool Call"}
-                </Button>
+          <div className="flex flex-1 min-h-0 overflow-hidden">
+            {/* ── Left: Tool selector panel ── */}
+            <div className="w-64 shrink-0 flex flex-col border-r bg-muted/10">
+              {/* Panel header */}
+              <div className="flex items-center justify-between px-3 py-2.5 border-b shrink-0">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                  <ListChecks className="h-3.5 w-3.5" />
+                  Tools
+                  {selectedToolNames.size > 0 && (
+                    <Badge
+                      variant="secondary"
+                      className="text-[10px] h-4 px-1.5 ml-1"
+                    >
+                      {selectedToolNames.size}
+                    </Badge>
+                  )}
+                </span>
+                {selectedToolNames.size > 0 && (
+                  <button
+                    className="text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+                    onClick={clearAllTools}
+                  >
+                    Clear all
+                  </button>
+                )}
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">Response</Label>
-                  {toolResult && <CopyButton text={toolResult} />}
-                </div>
-                {toolResult ? (
-                  <ScrollArea className="h-96 rounded-lg border bg-muted/30">
-                    <pre className="p-4 text-xs font-mono whitespace-pre-wrap">
-                      {toolResult}
-                    </pre>
-                  </ScrollArea>
-                ) : (
-                  <div className="h-96 rounded-lg border bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
-                    Response will appear here
+
+              {/* Max steps control */}
+              <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0">
+                <Label className="text-xs text-muted-foreground whitespace-nowrap">
+                  Max steps
+                </Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={maxAgentSteps}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value);
+                    if (!isNaN(n) && n >= 1) setMaxAgentSteps(Math.min(n, 50));
+                  }}
+                  className="h-6 text-xs w-16"
+                />
+              </div>
+
+              {/* Search */}
+              <div className="px-3 py-2 border-b shrink-0">
+                <Input
+                  value={toolSearchQuery}
+                  onChange={(e) => setToolSearchQuery(e.target.value)}
+                  placeholder="Search tools…"
+                  className="h-7 text-xs"
+                />
+              </div>
+
+              {/* Tool list */}
+              <ScrollArea className="flex-1">
+                {loadingToolSchemas && (
+                  <div className="flex items-center justify-center py-8 gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Loading…
                   </div>
                 )}
+                {toolSchemasError && (
+                  <div className="px-3 py-3 text-xs text-destructive flex items-start gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    {toolSchemasError}
+                  </div>
+                )}
+                {!loadingToolSchemas && !toolSchemasError && (
+                  <div className="p-1.5 space-y-0.5">
+                    {Object.entries(toolSchemasByCategory)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([cat, tools]) => {
+                        const q = toolSearchQuery.toLowerCase();
+                        const filtered = q
+                          ? tools.filter(
+                              (t) =>
+                                t.name.toLowerCase().includes(q) ||
+                                t.description.toLowerCase().includes(q),
+                            )
+                          : tools;
+                        if (filtered.length === 0) return null;
+
+                        const allSelected = filtered.every((t) =>
+                          selectedToolNames.has(t.name),
+                        );
+                        const someSelected = filtered.some((t) =>
+                          selectedToolNames.has(t.name),
+                        );
+                        const isExpanded =
+                          expandedCategories.has(cat) || !!toolSearchQuery;
+
+                        return (
+                          <div key={cat}>
+                            {/* Category header */}
+                            <div className="flex items-center gap-1 rounded-md px-2 py-1.5 hover:bg-muted/40 cursor-pointer group/cat">
+                              <button
+                                className="flex items-center gap-1 flex-1 text-left"
+                                onClick={() => toggleCategory(cat)}
+                              >
+                                <ChevronRight
+                                  className={`h-3 w-3 text-muted-foreground transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                                />
+                                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                                  {cat}
+                                </span>
+                                <span className="text-[10px] text-muted-foreground/60 ml-0.5">
+                                  ({filtered.length})
+                                </span>
+                              </button>
+                              {/* Select all / deselect all for category */}
+                              <button
+                                className="opacity-0 group-hover/cat:opacity-100 text-[10px] text-muted-foreground hover:text-foreground transition-opacity px-1"
+                                onClick={() =>
+                                  allSelected
+                                    ? deselectAllInCategory(cat)
+                                    : selectAllInCategory(cat)
+                                }
+                                title={
+                                  allSelected ? "Deselect all" : "Select all"
+                                }
+                              >
+                                {allSelected ? (
+                                  <CheckCheck className="h-3 w-3 text-primary" />
+                                ) : someSelected ? (
+                                  <ListChecks className="h-3 w-3" />
+                                ) : (
+                                  <ListChecks className="h-3 w-3" />
+                                )}
+                              </button>
+                            </div>
+
+                            {/* Tool list for category */}
+                            {isExpanded && (
+                              <div className="ml-3 space-y-0.5 mb-1">
+                                {filtered.map((tool) => {
+                                  const isSelected = selectedToolNames.has(
+                                    tool.name,
+                                  );
+                                  return (
+                                    <button
+                                      key={tool.name}
+                                      onClick={() =>
+                                        toggleToolSelection(tool.name)
+                                      }
+                                      className={`flex items-start gap-2 w-full rounded-md px-2 py-1.5 text-left transition-colors ${
+                                        isSelected
+                                          ? "bg-primary/10 text-primary"
+                                          : "hover:bg-muted/40 text-foreground"
+                                      }`}
+                                    >
+                                      <div
+                                        className={`mt-0.5 h-3 w-3 shrink-0 rounded border transition-colors ${
+                                          isSelected
+                                            ? "bg-primary border-primary"
+                                            : "border-muted-foreground/40"
+                                        }`}
+                                      >
+                                        {isSelected && (
+                                          <Check className="h-3 w-3 text-primary-foreground" />
+                                        )}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="text-[11px] font-medium leading-tight truncate">
+                                          {tool.name}
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground leading-tight line-clamp-2 mt-0.5">
+                                          {tool.description}
+                                        </div>
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </ScrollArea>
+            </div>
+
+            {/* ── Right: Agentic chat area ── */}
+            <div className="flex-1 flex flex-col min-w-0">
+              {/* Abort / status bar */}
+              {isAgentRunning && (
+                <div className="flex items-center justify-between px-4 py-2 bg-amber-500/10 border-b shrink-0">
+                  <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Agent running…</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 text-xs gap-1 font-semibold"
+                    onClick={handleAgentAbort}
+                  >
+                    <OctagonX className="h-3.5 w-3.5" />
+                    Abort Now
+                  </Button>
+                </div>
+              )}
+
+              {agentError && (
+                <div className="flex gap-2 px-4 py-3 text-sm text-destructive bg-destructive/10 border-b shrink-0">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span className="flex-1">{agentError}</span>
+                  <button
+                    className="text-xs underline"
+                    onClick={() => setAgentError(null)}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {selectedToolNames.size === 0 && !isAgentRunning && (
+                <div className="flex items-center gap-2 px-4 py-2 bg-muted/30 border-b text-xs text-muted-foreground shrink-0">
+                  <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+                  Select tools from the left panel to enable the agentic loop.
+                </div>
+              )}
+
+              {/* Conversation scroll area */}
+              <div
+                ref={agentScrollRef}
+                className="flex-1 overflow-y-auto p-4 space-y-6"
+              >
+                {agentMessages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full py-16 gap-3 text-center">
+                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Wrench className="h-6 w-6 text-primary/60" />
+                    </div>
+                    <div className="max-w-xs space-y-1">
+                      <p className="text-sm font-medium">Agentic Tool Loop</p>
+                      <p className="text-xs text-muted-foreground">
+                        Select tools on the left, then send a message. The model
+                        will call tools and continue until it has an answer or
+                        you abort.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {agentMessages.map((msg) => (
+                  <div key={msg.id} className="space-y-2">
+                    {msg.role === "user" ? (
+                      /* User message */
+                      <div className="flex justify-end">
+                        <div className="max-w-[70%] rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+                          {msg.content}
+                        </div>
+                      </div>
+                    ) : (
+                      /* Assistant message — shows tool steps inline */
+                      <div className="space-y-3">
+                        {/* Tool step cards */}
+                        {(msg.toolSteps ?? []).map((step) => (
+                          <div key={step.stepIndex} className="space-y-2">
+                            {step.toolCalls.map((tc) => (
+                              <AgenticToolCallCard
+                                key={tc.toolCallId}
+                                toolName={tc.toolName}
+                                arguments={tc.arguments}
+                                result={tc.result}
+                                isError={tc.isError}
+                                elapsedMs={tc.elapsedMs}
+                              />
+                            ))}
+                            {step.assistantContent &&
+                              step.toolCalls.length > 0 && (
+                                <div className="text-xs text-muted-foreground px-2 italic">
+                                  {step.assistantContent}
+                                </div>
+                              )}
+                          </div>
+                        ))}
+
+                        {/* Final assistant content */}
+                        {msg.content && (
+                          <div className="rounded-xl px-4 py-3 bg-muted/40">
+                            <div
+                              className="chat-prose leading-[1.75]"
+                              style={{
+                                fontFamily:
+                                  "'Georgia', 'Charter', 'Palatino Linotype', serif",
+                                fontSize: "0.9375rem",
+                              }}
+                            >
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                {msg.content}
+                              </ReactMarkdown>
+                              {msg.isStreaming && (
+                                <span className="inline-block h-4 w-0.5 bg-primary opacity-70 animate-pulse ml-0.5 align-middle" />
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Streaming spinner when no content yet */}
+                        {msg.isStreaming &&
+                          !msg.content &&
+                          (msg.toolSteps ?? []).length === 0 && (
+                            <div className="flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Thinking…
+                            </div>
+                          )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Composer */}
+              <div className="border-t px-4 py-3 shrink-0">
+                <div className="flex gap-2 items-end">
+                  <Textarea
+                    value={agentInput}
+                    onChange={(e) => setAgentInput(e.target.value)}
+                    placeholder={
+                      selectedToolNames.size === 0
+                        ? "Select tools first…"
+                        : "Ask the agent to do something…"
+                    }
+                    disabled={isAgentRunning || selectedToolNames.size === 0}
+                    className="flex-1 resize-none min-h-[64px] max-h-[160px] text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void handleAgentSend();
+                      }
+                    }}
+                  />
+                  <div className="flex flex-col gap-1.5">
+                    {isAgentRunning ? (
+                      <button
+                        onClick={handleAgentAbort}
+                        className="flex h-9 w-9 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                        title="Abort agent"
+                      >
+                        <OctagonX className="h-4 w-4" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void handleAgentSend()}
+                        disabled={
+                          !agentInput.trim() ||
+                          selectedToolNames.size === 0 ||
+                          isAgentRunning
+                        }
+                        title="Run agent"
+                        className={`flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200 ${
+                          !agentInput.trim() ||
+                          selectedToolNames.size === 0 ||
+                          isAgentRunning
+                            ? "bg-muted-foreground/30 text-primary-foreground opacity-30 cursor-not-allowed"
+                            : "bg-primary text-primary-foreground active:scale-95"
+                        }`}
+                      >
+                        <Zap className="h-4 w-4" />
+                      </button>
+                    )}
+                    {agentMessages.length > 0 && (
+                      <button
+                        onClick={() => {
+                          setAgentMessages([]);
+                          agentHistoryRef.current = [];
+                        }}
+                        className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                        title="Clear conversation"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

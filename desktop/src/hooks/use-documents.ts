@@ -311,6 +311,86 @@ export function useDocuments(
     [engineReady, userId, update, loadTree],
   );
 
+  // ── Rename folder ────────────────────────────────────────────────────────
+
+  const renameFolder = useCallback(
+    async (folderId: string, name: string) => {
+      if (!engineReady) return;
+      try {
+        await engine.updateFolder(folderId, userId ?? "local", { name });
+        await loadTree();
+      } catch (err) {
+        update({
+          error: err instanceof Error ? err.message : "Failed to rename folder",
+        });
+      }
+    },
+    [engineReady, userId, update, loadTree],
+  );
+
+  // ── Move note to a different folder ──────────────────────────────────────
+
+  const moveNote = useCallback(
+    async (noteId: string, folderId: string | null, folderName: string) => {
+      if (!engineReady) return;
+      try {
+        const updatedNote = await engine.updateNote(noteId, userId ?? "local", {
+          folder_id: folderId ?? undefined,
+          folder_name: folderName,
+        });
+        if (state.activeNote?.id === noteId) {
+          update({ activeNote: updatedNote });
+        }
+        await loadTree();
+        await loadNotes(state.activeFolderId);
+      } catch (err) {
+        update({
+          error: err instanceof Error ? err.message : "Failed to move note",
+        });
+      }
+    },
+    [
+      engineReady,
+      userId,
+      state.activeNote,
+      state.activeFolderId,
+      update,
+      loadTree,
+      loadNotes,
+    ],
+  );
+
+  // ── Rename note ──────────────────────────────────────────────────────────
+
+  const renameNote = useCallback(
+    async (noteId: string, label: string) => {
+      if (!engineReady) return;
+      try {
+        const updatedNote = await engine.updateNote(noteId, userId ?? "local", {
+          label,
+        });
+        if (state.activeNote?.id === noteId) {
+          update({ activeNote: updatedNote });
+        }
+        await loadNotes(state.activeFolderId);
+        await loadTree();
+      } catch (err) {
+        update({
+          error: err instanceof Error ? err.message : "Failed to rename note",
+        });
+      }
+    },
+    [
+      engineReady,
+      userId,
+      state.activeNote,
+      state.activeFolderId,
+      update,
+      loadNotes,
+      loadTree,
+    ],
+  );
+
   // ── Delete folder ────────────────────────────────────────────────────────
 
   const deleteFolder = useCallback(
@@ -535,7 +615,10 @@ export function useDocuments(
     updateNote,
     deleteNote,
     createFolder,
+    renameFolder,
     deleteFolder,
+    moveNote,
+    renameNote,
     revertNote,
     triggerSync,
     loadSyncStatus,

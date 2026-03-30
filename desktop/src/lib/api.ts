@@ -19,6 +19,21 @@ export interface ToolInfo {
   category?: string;
 }
 
+/** Full tool schema as returned by /chat/tools (Anthropic-compatible with category). */
+export interface EngineToolSchema {
+  name: string;
+  description: string;
+  category: string;
+  input_schema: {
+    type: "object";
+    properties: Record<
+      string,
+      { type: string; description?: string; default?: unknown }
+    >;
+    required: string[];
+  };
+}
+
 export interface ToolResult {
   type: "success" | "error";
   output: string;
@@ -546,6 +561,30 @@ class EngineAPI {
     if (!resp.ok) throw new Error(`Failed to list tools: ${resp.status}`);
     const data = await resp.json();
     return data.tools ?? data;
+  }
+
+  /** Get tool schemas grouped by category (from /chat/tools/by-category). */
+  async getToolSchemasByCategory(): Promise<
+    Record<string, EngineToolSchema[]>
+  > {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/chat/tools/by-category`, {
+      headers,
+    });
+    if (!resp.ok) throw new Error(`Failed to get tool schemas: ${resp.status}`);
+    const data = await resp.json();
+    return (data.categories ?? {}) as Record<string, EngineToolSchema[]>;
+  }
+
+  /** Get all tool schemas as a flat list (from /chat/tools). */
+  async getAllToolSchemas(): Promise<EngineToolSchema[]> {
+    if (!this.baseUrl) throw new Error("Engine not discovered");
+    const headers = await this.authHeaders();
+    const resp = await fetch(`${this.baseUrl}/chat/tools`, { headers });
+    if (!resp.ok) throw new Error(`Failed to get tool schemas: ${resp.status}`);
+    const data = await resp.json();
+    return (data.tools ?? []) as EngineToolSchema[];
   }
 
   /** Invoke a tool via REST (stateless, one-shot). */

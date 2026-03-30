@@ -286,14 +286,19 @@ export function Documents({ engineStatus, userId }: DocumentsProps) {
                 onSelect={docs.selectFolder}
                 onCreate={docs.createFolder}
                 onDelete={docs.deleteFolder}
+                onRename={docs.renameFolder}
               />
             </div>
 
             <div className="flex-1 overflow-auto p-2">
               <NoteList
                 notes={docs.notes}
+                folders={allFolders}
                 activeNoteId={docs.activeNote?.id ?? null}
                 onSelect={docs.selectNote}
+                onDelete={docs.deleteNote}
+                onRename={docs.renameNote}
+                onMove={docs.moveNote}
               />
             </div>
           </div>

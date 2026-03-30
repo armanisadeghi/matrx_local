@@ -261,7 +261,8 @@ jobs:
           for attempt in range(1, 6):
               try:
                   urllib.request.urlretrieve(URL, tarball)
-                  print(f"  ✅ Downloaded on attempt {attempt}")
+                  # ASCII only — Windows runners use cp1252 for stdout; emoji crashes print()
+                  print(f"  OK: Downloaded on attempt {attempt}")
                   break
               except urllib.error.URLError as e:
                   print(f"  attempt {attempt}/5 failed: {e}")
@@ -283,7 +284,7 @@ jobs:
           extracted.rmdir()
           tarball.unlink()
 
-          print(f"✅ whisper.cpp source ready at {dest}")
+          print(f"OK: whisper.cpp source ready at {dest}")
 
           # Write to GITHUB_ENV — use native path string (correct on all platforms)
           with open(os.environ["GITHUB_ENV"], "a") as f:

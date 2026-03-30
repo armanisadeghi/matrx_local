@@ -4,7 +4,7 @@ import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTtsApp } from "@/contexts/TtsContext";
 import { useTts } from "@/hooks/use-tts";
 import type { TtsVoice } from "@/lib/tts/types";
-import type { TtsHistoryEntry } from "@/hooks/use-tts";
+import type { TtsHistoryEntry, TtsPlaybackState } from "@/hooks/use-tts";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { parseMarkdownToText } from "@/lib/parse-markdown-for-speech";
 import {
   AudioLines,
   Play,
+  Pause,
   Square,
   Download,
   Loader2,
@@ -28,7 +29,6 @@ import {
   HardDrive,
   RefreshCw,
   FileText,
-  Radio,
   Blend,
   Plus,
   Save,
@@ -131,9 +131,15 @@ function SpeakTab({
     });
   }, []);
 
+  const ps = state.playbackState;
+  const isActive = ps === "synthesizing" || ps === "playing" || ps === "paused";
+  const isSynthesizing = ps === "synthesizing";
+  const isPlaying = ps === "playing";
+  const isPaused = ps === "paused";
+
   const needsDownload = state.status && !state.status.model_downloaded;
   const isReady = state.status?.model_downloaded ?? false;
-  const canSpeak = isReady && text.trim().length > 0 && !state.isSynthesizing;
+  const canSpeak = isReady && text.trim().length > 0 && !isActive;
 
   const handleSpeak = useCallback(() => {
     if (!canSpeak) return;
@@ -141,22 +147,35 @@ function SpeakTab({
     actions.speakStreaming(spokenText);
   }, [canSpeak, text, actions, autoClean]);
 
-  const handleStop = useCallback(() => {
-    actions.stopAudio();
-  }, [actions]);
+  const handleStop = useCallback(() => actions.stopAudio(), [actions]);
+  const handlePause = useCallback(() => actions.pauseAudio(), [actions]);
+  const handleResume = useCallback(() => actions.resumeAudio(), [actions]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        handleSpeak();
+        if (!isActive) handleSpeak();
       }
-      if (e.key === "Escape" && state.isSynthesizing) {
+      if (e.key === " " && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        if (isPlaying) handlePause();
+        else if (isPaused) handleResume();
+      }
+      if (e.key === "Escape" && isActive) {
         e.preventDefault();
         handleStop();
       }
     },
-    [handleSpeak, handleStop, state.isSynthesizing],
+    [
+      handleSpeak,
+      handleStop,
+      handlePause,
+      handleResume,
+      isActive,
+      isPlaying,
+      isPaused,
+    ],
   );
 
   const handleCleanMarkdown = useCallback(() => {
@@ -189,11 +208,6 @@ function SpeakTab({
         </div>
       )}
 
-      {/* Streaming status banner */}
-      {state.isSynthesizing && (
-        <StreamingBanner onStop={handleStop} elapsed={state.currentElapsed} />
-      )}
-
       {/* Text input */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -215,15 +229,26 @@ function SpeakTab({
             </span>
           </div>
         </div>
-        <textarea
-          ref={textRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Enter text to speak..."
-          className="min-h-[160px] w-full resize-y rounded-lg border bg-background p-4 text-sm leading-relaxed focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          disabled={!isReady}
-        />
+        <div className="relative">
+          <textarea
+            ref={textRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Enter text to speak..."
+            className="min-h-[160px] w-full resize-y rounded-lg border bg-background p-4 text-sm leading-relaxed focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            disabled={!isReady}
+          />
+          {isActive && (
+            <SynthesizingOverlay
+              playbackState={ps}
+              elapsed={state.currentElapsed}
+              onStop={handleStop}
+              onPause={handlePause}
+              onResume={handleResume}
+            />
+          )}
+        </div>
       </div>
 
       {/* Controls row */}
@@ -237,7 +262,7 @@ function SpeakTab({
             voices={state.voices}
             selected={state.selectedVoice}
             onChange={actions.setSelectedVoice}
-            disabled={!isReady}
+            disabled={!isReady || isActive}
           />
         </div>
 
@@ -257,36 +282,63 @@ function SpeakTab({
             step={0.05}
             value={[state.speed]}
             onValueChange={([v]) => actions.setSpeed(v)}
-            disabled={!isReady}
+            disabled={!isReady || isActive}
           />
         </div>
 
-        {/* Speak / Stop buttons */}
+        {/* Transport controls */}
         <div className="flex gap-2">
-          <Button
-            onClick={handleSpeak}
-            disabled={!canSpeak}
-            size="lg"
-            className="gap-2"
-          >
-            {state.isSynthesizing ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Streaming…
-              </>
-            ) : (
-              <>
-                <AudioLines className="h-4 w-4" />
-                Speak
-              </>
-            )}
-          </Button>
-          {state.isSynthesizing && (
+          {!isActive && (
+            <Button
+              onClick={handleSpeak}
+              disabled={!canSpeak}
+              size="lg"
+              className="gap-2"
+            >
+              <AudioLines className="h-4 w-4" />
+              Speak
+            </Button>
+          )}
+
+          {isSynthesizing && (
+            <Button
+              size="lg"
+              variant="outline"
+              disabled
+              className="gap-2 opacity-60"
+            >
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Synthesizing…
+            </Button>
+          )}
+
+          {(isPlaying || isPaused) && (
+            <Button
+              onClick={isPaused ? handleResume : handlePause}
+              size="lg"
+              variant="outline"
+              className="gap-2"
+            >
+              {isPaused ? (
+                <>
+                  <Play className="h-4 w-4" />
+                  Resume
+                </>
+              ) : (
+                <>
+                  <Pause className="h-4 w-4" />
+                  Pause
+                </>
+              )}
+            </Button>
+          )}
+
+          {isActive && (
             <Button
               onClick={handleStop}
               size="lg"
               variant="outline"
-              className="gap-2"
+              className="gap-2 border-destructive/40 text-destructive hover:bg-destructive/10"
             >
               <Square className="h-4 w-4 fill-current" />
               Stop
@@ -296,7 +348,7 @@ function SpeakTab({
       </div>
 
       {/* Elapsed timing after stream completes */}
-      {!state.isSynthesizing && state.currentElapsed > 0 && (
+      {ps === "idle" && state.currentElapsed > 0 && (
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           {state.currentDuration > 0 && (
             <span className="flex items-center gap-1">
@@ -340,54 +392,110 @@ function SpeakTab({
       {isReady && (
         <p className="text-center text-xs text-muted-foreground/60">
           <kbd className="rounded border px-1.5 py-0.5 text-[10px] font-mono">
-            Cmd+Enter
+            ⌘↵
           </kbd>{" "}
-          to speak &middot;{" "}
+          speak
+          {" · "}
+          <kbd className="rounded border px-1.5 py-0.5 text-[10px] font-mono">
+            ⌘Space
+          </kbd>{" "}
+          pause/resume
+          {" · "}
           <kbd className="rounded border px-1.5 py-0.5 text-[10px] font-mono">
             Esc
           </kbd>{" "}
-          to stop
+          stop
         </p>
       )}
     </div>
   );
 }
 
-function StreamingBanner({
-  onStop,
+function SynthesizingOverlay({
+  playbackState,
   elapsed,
+  onStop,
+  onPause,
+  onResume,
 }: {
-  onStop: () => void;
+  playbackState: TtsPlaybackState;
   elapsed: number;
+  onStop: () => void;
+  onPause: () => void;
+  onResume: () => void;
 }) {
-  const [dots, setDots] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setDots((d) => (d + 1) % 4), 400);
-    return () => clearInterval(id);
-  }, []);
+  const isPaused = playbackState === "paused";
+  const isSynth = playbackState === "synthesizing";
 
   return (
-    <div className="flex items-center gap-4 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
-      <Radio className="h-4 w-4 shrink-0 animate-pulse text-primary" />
-      <div className="flex-1">
-        <p className="text-sm font-medium text-primary">
-          Streaming{".".repeat(dots)}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Audio plays as each chunk is generated — near real-time
-          {elapsed > 0 && ` · ${elapsed.toFixed(1)}s`}
-        </p>
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between px-3 pb-2.5">
+      {/* Left: waveform + state label */}
+      <div className="flex items-center gap-2">
+        <WaveformBars paused={isPaused} />
+        <span className="text-[11px] font-medium text-primary/80 tabular-nums">
+          {isSynth
+            ? "Synthesizing…"
+            : isPaused
+              ? "Paused"
+              : elapsed > 0
+                ? `${elapsed.toFixed(1)}s`
+                : "Playing…"}
+        </span>
       </div>
-      <Button
-        onClick={onStop}
-        size="sm"
-        variant="outline"
-        className="shrink-0 gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
-      >
-        <Square className="h-3 w-3 fill-current" />
-        Stop
-      </Button>
+      {/* Right: pause/resume + stop */}
+      <div className="pointer-events-auto flex items-center gap-1">
+        {!isSynth && (
+          <button
+            onClick={isPaused ? onResume : onPause}
+            className="flex h-6 items-center gap-1 rounded-full border border-primary/30 bg-background/80 px-2.5 text-[11px] font-medium text-primary backdrop-blur-sm transition-colors hover:bg-primary/10"
+          >
+            {isPaused ? (
+              <>
+                <Play className="h-2.5 w-2.5" /> Resume
+              </>
+            ) : (
+              <>
+                <Pause className="h-2.5 w-2.5" /> Pause
+              </>
+            )}
+          </button>
+        )}
+        <button
+          onClick={onStop}
+          className="flex h-6 items-center gap-1 rounded-full border border-destructive/30 bg-background/80 px-2.5 text-[11px] font-medium text-destructive backdrop-blur-sm transition-colors hover:bg-destructive/10"
+        >
+          <Square className="h-2.5 w-2.5 fill-current" />
+          Stop
+        </button>
+      </div>
     </div>
+  );
+}
+
+function WaveformBars({ paused }: { paused?: boolean }) {
+  return (
+    <span className="flex items-end gap-[2px]" aria-label="audio playback">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <span
+          key={i}
+          className="w-[3px] rounded-full bg-primary/70"
+          style={{
+            height: "14px",
+            animation: paused
+              ? "none"
+              : `tts-bar 0.9s ease-in-out ${i * 0.12}s infinite alternate`,
+            transform: paused ? "scaleY(0.25)" : undefined,
+            opacity: paused ? 0.35 : undefined,
+          }}
+        />
+      ))}
+      <style>{`
+        @keyframes tts-bar {
+          from { transform: scaleY(0.2); opacity: 0.4; }
+          to   { transform: scaleY(1);   opacity: 1;   }
+        }
+      `}</style>
+    </span>
   );
 }
 
