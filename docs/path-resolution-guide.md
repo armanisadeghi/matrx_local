@@ -1,5 +1,8 @@
 # Path Resolution — How to Reference Files from React
 
+> **Note:** The `@docs/` alias referenced below is deprecated. Use `@notes/` instead.
+> See `react-migration-notes-api.md` for the current alias mappings (`@notes/`, `@files/`, `@code/`, etc.).
+
 When invoking tools on the local engine, **never construct OS paths in React**.
 The engine runs on the user's machine — it could be Windows (any drive), macOS, or Linux, with user-configurable storage locations. React has no way to know any of this.
 

@@ -232,6 +232,43 @@ jobs:
         working-directory: desktop
         run: pnpm install --frozen-lockfile
 
+      # ---- Pre-download whisper.cpp source ----
+      # whisper-cpp-plus-sys downloads whisper.cpp from a pinned GitHub commit at
+      # build time. That download is a single HTTP call with no retry — a transient
+      # 502/503 from GitHub CDN fails the entire build. We pre-download here with
+      # curl's built-in retry logic and unpack into a known directory, then pass
+      # WHISPER_CPP_SOURCE_DIR so the Rust build script uses the local copy and
+      # never touches the network.
+      - name: Pre-download whisper.cpp source
+        shell: bash
+        run: |
+          # Must match WHISPER_CPP_VERSION in whisper-cpp-plus-sys/build.rs.
+          # Update here whenever the whisper-cpp-plus crate is upgraded.
+          WHISPER_COMMIT="02de44819ba4f9cf3f3d2a4adcfc2c5130d7140a"
+          WHISPER_REPO="rmorse/whisper.cpp"
+          WHISPER_URL="https://github.com/${WHISPER_REPO}/archive/${WHISPER_COMMIT}.tar.gz"
+          WHISPER_DIR="$RUNNER_TEMP/whisper-cpp-src"
+          mkdir -p "$WHISPER_DIR"
+
+          echo "Downloading whisper.cpp @ ${WHISPER_COMMIT:0:12}..."
+          curl -fsSL \
+            --retry 5 --retry-delay 10 --retry-all-errors \
+            --connect-timeout 30 --max-time 120 \
+            -o "$RUNNER_TEMP/whisper.tar.gz" \
+            "$WHISPER_URL"
+
+          tar -xzf "$RUNNER_TEMP/whisper.tar.gz" -C "$RUNNER_TEMP"
+          # Tarball extracts to whisper.cpp-<commit>/ — move contents into WHISPER_DIR
+          EXTRACTED=$(find "$RUNNER_TEMP" -maxdepth 1 -type d -name "whisper.cpp-*" | head -1)
+          if [[ -z "$EXTRACTED" ]]; then
+            echo "ERROR: whisper.cpp directory not found after extraction" >&2
+            ls "$RUNNER_TEMP"
+            exit 1
+          fi
+          mv "$EXTRACTED"/* "$WHISPER_DIR/"
+          echo "✅ whisper.cpp source ready at $WHISPER_DIR"
+          echo "WHISPER_CPP_SOURCE_DIR=$WHISPER_DIR" >> "$GITHUB_ENV"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0.5
         env:

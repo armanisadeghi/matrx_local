@@ -1,12 +1,12 @@
-# Matrx Local -- System Architecture
+# Matrx Local — System Architecture
 
-> The single source of truth for understanding this repository. Start here.
+> Deep-dive technical reference. Start with **CLAUDE.md** for rules and conventions.
 
 ---
 
 ## What is Matrx Local?
 
-Matrx Local is the companion desktop application for **AI Matrx**. It runs on the user's machine and exposes a tool-based API (REST + WebSocket) that the AI Matrx web/mobile apps and AI agents call to interact with the user's local environment: filesystem, shell, browser, clipboard, hardware, and residential IP. It integrates a production-grade scraping engine for bypassing anti-bot protections using the user's real browser and real IP. It also runs local AI models (text via llama-server sidecar, image generation via optional diffusers) directly on the user's hardware.
+Matrx Local is the companion desktop application for **AI Matrx**. It runs on the user's machine and exposes a tool-based API (REST + WebSocket) that AI Matrx web/mobile apps and AI agents call to interact with the local environment: filesystem, shell, browser, clipboard, hardware, and residential IP. It integrates a production-grade scraping engine for bypassing anti-bot protections using the user's real browser and real IP. It also runs local AI models (text via llama-server sidecar, image generation via optional diffusers, TTS via Kokoro ONNX) directly on the user's hardware.
 
 ---
 
@@ -15,22 +15,26 @@ Matrx Local is the companion desktop application for **AI Matrx**. It runs on th
 ```mermaid
 graph TB
   subgraph TauriApp [Tauri Desktop App]
-    RustCore["Rust Core<br/>Window, tray, sidecar lifecycle"]
-    ReactUI["React/Vite UI<br/>Dashboard, Scraping, Tools, Settings"]
+    RustCore["Rust Core<br/>Window, tray, sidecar lifecycle,<br/>transcription, LLM server"]
+    ReactUI["React/Vite UI<br/>Dashboard, Scraping, Tools,<br/>Chat, Voice, TTS, Settings"]
     RustCore -->|WebView| ReactUI
   end
 
   subgraph PythonEngine [Python/FastAPI Engine]
     FastAPI["FastAPI Server<br/>run.py :22140"]
-    ToolDispatcher["Tool Dispatcher<br/>79 tools"]
+    ToolDispatcher["Tool Dispatcher<br/>~80 tools"]
     ScraperEngine["Scraper Engine<br/>scraper-service subtree"]
     SyncEngine["Sync Engine<br/>Documents & Settings sync"]
     WSManager["WebSocket Manager<br/>Concurrent sessions"]
     ImageGenSvc["Image Gen Service<br/>diffusers optional extra"]
+    TTSSvc["TTS Service<br/>Kokoro ONNX"]
+    WakeWordSvc["Wake Word Service<br/>openWakeWord"]
     FastAPI --> ToolDispatcher
     FastAPI --> WSManager
     FastAPI --> SyncEngine
     FastAPI --> ImageGenSvc
+    FastAPI --> TTSSvc
+    FastAPI --> WakeWordSvc
     ToolDispatcher --> ScraperEngine
   end
 
@@ -67,97 +71,124 @@ In production, Tauri spawns the Python engine as a managed child process (sideca
 matrx_local/
 ├── app/                            # Python engine source
 │   ├── main.py                     # FastAPI app, CORS, scraper lifespan
-│   ├── config.py                   # Env-based configuration
+│   ├── config.py                   # Env-based configuration (Pydantic Settings)
 │   ├── websocket_manager.py        # WS connection handling
 │   ├── api/
 │   │   ├── routes.py               # Health, version, logs
 │   │   ├── tool_routes.py          # /tools/invoke, /tools/list
-│   │   ├── remote_scraper_routes.py # /remote-scraper/* proxy to scraper server
-│   │   ├── image_gen_routes.py     # /image-gen/* text-to-image (optional diffusers)
+│   │   ├── auth.py                 # Engine auth middleware
+│   │   ├── remote_scraper_routes.py # /remote-scraper/* proxy
+│   │   ├── image_gen_routes.py     # /image-gen/* (optional diffusers)
+│   │   ├── tts_routes.py           # /tts/* (Kokoro TTS)
+│   │   ├── wake_word_routes.py     # /wake-word/* (openWakeWord)
+│   │   ├── document_routes.py      # /notes/* (local-first documents)
+│   │   ├── settings_routes.py      # /settings/*
+│   │   ├── proxy_routes.py         # /proxy/* (local HTTP proxy)
+│   │   └── cloud_sync_routes.py    # /cloud-sync/* (instance + settings)
 │   ├── tools/
-│   │   ├── dispatcher.py           # Tool routing (79 tools registered)
+│   │   ├── dispatcher.py           # Tool routing (~80 tools registered)
 │   │   ├── session.py              # Per-connection state (cwd, bg processes)
 │   │   ├── types.py                # ToolResult, ToolResultType
-│   │   └── tools/                  # Individual tool implementations
+│   │   └── tools/                  # Individual tool implementations (~33 files)
 │   │       ├── file_ops.py         # Read, Write, Edit, Glob, Grep
 │   │       ├── execution.py        # Bash, BashOutput, TaskStop
 │   │       ├── system.py           # SystemInfo, Screenshot, etc.
-│   │       ├── clipboard.py        # ClipboardRead, ClipboardWrite
-│   │       ├── notify.py           # Notify
 │   │       ├── network.py          # FetchUrl, FetchWithBrowser, Scrape, Search, Research
-│   │       ├── transfer.py         # DownloadFile, UploadFile
-│   │       ├── process_manager.py  # ListProcesses, LaunchApp, KillProcess, FocusApp
-│   │       ├── window_manager.py   # ListWindows, FocusWindow, MoveWindow, MinimizeWindow
-│   │       ├── input_automation.py # TypeText, Hotkey, MouseClick, MouseMove
-│   │       ├── audio.py            # ListAudioDevices, RecordAudio, PlayAudio, TranscribeAudio
-│   │       ├── browser_automation.py # BrowserNavigate, Click, Type, Extract, Screenshot, Eval, Tabs
-│   │       ├── network_discovery.py # NetworkInfo, NetworkScan, PortScan, MDNSDiscover
-│   │       ├── system_monitor.py   # SystemResources, BatteryStatus, DiskUsage, TopProcesses
-│   │       ├── file_watch.py       # WatchDirectory, WatchEvents, StopWatch
-│   │       ├── app_integration.py  # AppleScript, PowerShellScript, GetInstalledApps
-│   │       ├── scheduler.py        # ScheduleTask, ListScheduled, CancelScheduled, HeartbeatStatus, PreventSleep
-│   │       ├── media.py            # ImageOCR, ImageResize, PdfExtract, ArchiveCreate, ArchiveExtract
-│   │       └── wifi_bluetooth.py   # WifiNetworks, BluetoothDevices, ConnectedDevices
+│   │       ├── browser_automation.py # BrowserNavigate, Click, Type, Extract, etc.
+│   │       ├── audio.py            # ListAudioDevices, RecordAudio, PlayAudio, Transcribe
+│   │       ├── documents.py        # Document CRUD tools
+│   │       └── ...                 # clipboard, notify, transfer, process_manager,
+│   │                               # window_manager, input_automation, network_discovery,
+│   │                               # system_monitor, file_watch, app_integration,
+│   │                               # scheduler, media, wifi_bluetooth
 │   ├── services/
 │   │   ├── scraper/
-│   │   │   ├── engine.py           # ScraperEngine bridge to scraper-service
-│   │   │   └── remote_client.py    # HTTP client for remote scraper server API
-│   │   └── image_gen/
-│   │       ├── __init__.py
-│   │       ├── models.py           # Image gen model catalog + workflow presets
-│   │       └── service.py          # ImageGenService singleton (lazy diffusers import)
+│   │   │   ├── engine.py           # ScraperEngine bridge (sys.modules alias)
+│   │   │   └── remote_client.py    # HTTP client for remote scraper server
+│   │   ├── image_gen/
+│   │   │   ├── models.py           # Model catalog + workflow presets
+│   │   │   └── service.py          # ImageGenService singleton (lazy diffusers)
+│   │   ├── tts/
+│   │   │   ├── models.py           # 54 voices × 9 languages catalog
+│   │   │   └── service.py          # Kokoro ONNX singleton (~300 MB model)
+│   │   ├── wake_word/
+│   │   │   ├── models.py           # Wake word models
+│   │   │   └── service.py          # openWakeWord service
+│   │   ├── documents/
+│   │   │   ├── file_manager.py     # Local filesystem operations
+│   │   │   ├── supabase_client.py  # Supabase sync client
+│   │   │   └── sync_engine.py      # Local-first sync engine
+│   │   ├── cloud_sync/
+│   │   │   ├── instance_manager.py # App instance registration
+│   │   │   └── settings_sync.py    # Settings sync engine
+│   │   └── proxy/
+│   │       └── server.py           # Local HTTP proxy (127.0.0.1:22180)
 │   └── common/
 │       └── system_logger.py        # Rotating file + console logging
-├── scraper-service/                # Git subtree -- DO NOT EDIT directly
-│   ├── app/                        # Upstream scraper codebase
-│   ├── alembic/                    # DB migrations (PostgreSQL)
-│   └── pyproject.toml              # Upstream dependencies
+├── scraper-service/                # Git subtree — READ-ONLY (see CLAUDE.md rule 1)
 ├── desktop/                        # Tauri + React desktop UI
 │   ├── src/
-│   │   ├── App.tsx                 # Router, auth guard, engine context
+│   │   ├── App.tsx                 # Router, auth guard, context providers
 │   │   ├── index.css               # Dark theme (shadcn/ui CSS vars)
 │   │   ├── components/
 │   │   │   ├── layout/             # Sidebar, Header, AppLayout
+│   │   │   ├── documents/          # NoteEditor, FolderTree, SyncStatus, etc.
 │   │   │   ├── llm/                # ModelRepoAnalyzer, LLM-specific components
-│   │   │   ├── documents/          # Document/note editor components
-│   │   │   └── ui/                 # shadcn/ui components (Button, Card, Badge, etc.)
-│   │   ├── contexts/
-│   │   │   └── LlmContext.tsx      # Shared LLM state context (single hook across tabs)
-│   │   ├── pages/
-│   │   │   ├── Dashboard.tsx       # Engine status, system info, browser detection
-│   │   │   ├── Scraping.tsx        # URL input, batch scrape, dual-mode results
-│   │   │   ├── Tools.tsx           # Browse and invoke all 79 tools
+│   │   │   └── ui/                 # shadcn/ui primitives (Button, Card, Badge, etc.)
+│   │   ├── contexts/               # Singleton state providers (see CLAUDE.md)
+│   │   │   ├── LlmContext.tsx
+│   │   │   ├── TtsContext.tsx
+│   │   │   ├── TranscriptionContext.tsx
+│   │   │   ├── WakeWordContext.tsx
+│   │   │   ├── TranscriptionSessionsContext.tsx
+│   │   │   ├── PermissionsContext.tsx
+│   │   │   ├── AudioDevicesContext.tsx
+│   │   │   └── DownloadManagerContext.tsx
+│   │   ├── pages/                  # ~23 page components
+│   │   │   ├── Dashboard.tsx       # Engine status, system info
+│   │   │   ├── Scraping.tsx        # URL input, batch scrape, dual-mode
+│   │   │   ├── Tools.tsx           # Browse and invoke all tools
 │   │   │   ├── Activity.tsx        # Real-time WebSocket event log
-│   │   │   ├── Settings.tsx        # Engine, scraping, theme, account, API keys, hardware
-│   │   │   ├── LocalModels.tsx     # LLM model picker, inference, server, image gen tab
-│   │   │   ├── Voice.tsx           # Whisper transcription + wake word
-│   │   │   ├── Documents.tsx       # Local-first notes with optional Supabase sync
 │   │   │   ├── Chat.tsx            # AI chat (cloud agents or local LLM)
+│   │   │   ├── LocalModels.tsx     # LLM model picker, inference, server
+│   │   │   ├── Wake.tsx            # Whisper transcription + wake word
+│   │   │   ├── TextToSpeech.tsx    # Kokoro TTS UI
+│   │   │   ├── Documents.tsx       # Local-first notes with Supabase sync
+│   │   │   ├── Settings.tsx        # Engine, scraping, theme, account
+│   │   │   ├── Configurations.tsx  # Detailed app configuration
 │   │   │   ├── Login.tsx           # OAuth (Google/GitHub/Apple) + email
-│   │   │   └── AuthCallback.tsx    # OAuth redirect handler
-│   │   ├── hooks/
+│   │   │   ├── AuthCallback.tsx    # OAuth redirect handler
+│   │   │   └── ...                 # AiMatrx, BrowserLab, Devices, Ports,
+│   │   │                           # SystemPrompts, Tunneling, etc.
+│   │   ├── hooks/                  # ~26 custom hooks
 │   │   │   ├── use-engine.ts       # Engine auto-discovery, health, WS
-│   │   │   ├── use-auth.ts         # Supabase auth state + OAuth methods
-│   │   │   ├── use-theme.ts        # Dark/light/system theme management
+│   │   │   ├── use-auth.ts         # Supabase auth state + OAuth
 │   │   │   ├── use-llm.ts          # Local LLM server state + actions
-│   │   │   ├── use-transcription.ts # Whisper transcription state
+│   │   │   ├── use-tts.ts          # TTS state + actions
+│   │   │   ├── use-chat-tts.ts     # Chat read-aloud bridge
+│   │   │   ├── use-transcription.ts # Whisper transcription
 │   │   │   ├── use-documents.ts    # Document CRUD + sync
-│   │   │   └── use-auto-update.ts  # Background app update pre-download
+│   │   │   ├── use-auto-update.ts  # Background app update pre-download
+│   │   │   ├── use-theme.ts        # Dark/light/system theme
+│   │   │   └── ...                 # use-chat, use-scrape, use-wake-word,
+│   │   │                           # use-permissions, use-configurations, etc.
 │   │   └── lib/
-│   │       ├── api.ts              # REST + WS client for Python engine (incl. image-gen helpers)
+│   │       ├── api.ts              # REST + WS client for Python engine
 │   │       ├── supabase.ts         # Supabase client singleton
 │   │       ├── sidecar.ts          # Tauri sidecar lifecycle + port discovery
 │   │       ├── settings.ts         # App settings persistence (localStorage)
-│   │       ├── image-gen/
-│   │       │   ├── api.ts          # Standalone image gen API client
-│   │       │   └── types.ts        # Image gen TypeScript types
-│   │       ├── llm/
-│   │       │   ├── api.ts          # llama-server streaming client
-│   │       │   └── types.ts        # LLM types (LlmModelInfo, LlmTier, variants, etc.)
+│   │       ├── platformCtx.ts      # Platform context init
+│   │       ├── image-gen/          # Image gen API client + types
+│   │       ├── llm/                # llama-server streaming client + types
+│   │       ├── tts/                # TTS API client + types
+│   │       ├── transcription/      # Transcription types + session persistence
 │   │       └── utils.ts            # cn(), formatBytes, formatDuration
 │   ├── src-tauri/                  # Rust backend
-│   │   ├── src/lib.rs              # Sidecar spawn/kill, system tray, hide-to-tray
-│   │   ├── src/main.rs             # Windows subsystem entry point
+│   │   ├── src/
+│   │   │   ├── lib.rs              # Sidecar spawn/kill, system tray, hide-to-tray
+│   │   │   ├── main.rs             # Windows subsystem entry point
+│   │   │   ├── transcription/      # Whisper: audio_capture, hardware, model_selector, etc.
+│   │   │   └── llm/                # llama-server: config, model_selector, server mgmt
 │   │   ├── tauri.conf.json         # App config, CSP, sidecar + bundle settings
 │   │   ├── capabilities/           # Permission grants (shell, notification, store)
 │   │   └── Cargo.toml              # tauri v2, shell/notification/store plugins
@@ -165,15 +196,20 @@ matrx_local/
 │   ├── vite.config.ts
 │   └── tailwind.config.ts
 ├── scripts/
+│   ├── build-sidecar.sh            # PyInstaller → platform-named binary
 │   ├── update-scraper.sh           # Pull upstream scraper-service changes
-│   ├── build-sidecar.sh            # PyInstaller -> platform-named binary
-│   ├── download-llama-server.sh    # Download llama-server from llama.cpp releases
-│   └── download-cloudflared.sh     # Download cloudflared sidecar binary
-├── specs/
-│   ├── aimatrx-engine-aarch64-apple-darwin.spec   # PyInstaller spec (macOS ARM)
-│   ├── aimatrx-engine-x86_64-apple-darwin.spec    # PyInstaller spec (macOS Intel)
-│   ├── aimatrx-engine-x86_64-unknown-linux-gnu.spec # PyInstaller spec (Linux)
-│   └── aimatrx-engine-x86_64-pc-windows-msvc.spec  # PyInstaller spec (Windows)
+│   ├── download-llama-server.sh    # Download llama-server binaries
+│   ├── download-cloudflared.sh     # Download cloudflared sidecar binary
+│   ├── release.sh                  # Version bump + tag + push
+│   ├── launch.sh                   # Full dev launch (engine + frontend)
+│   └── ...                         # setup.sh, generate-icons.sh, check.sh, etc.
+├── specs/                          # PyInstaller specs (4 platforms)
+│   ├── aimatrx-engine-aarch64-apple-darwin.spec
+│   ├── aimatrx-engine-x86_64-apple-darwin.spec
+│   ├── aimatrx-engine-x86_64-unknown-linux-gnu.spec
+│   └── aimatrx-engine-x86_64-pc-windows-msvc.spec
+├── migrations/                     # Supabase SQL migrations (001–008)
+├── docs/                           # Feature-specific guides
 ├── run.py                          # Entry point (port discovery, tray, uvicorn)
 ├── pyproject.toml                  # Python deps (uv-managed)
 └── .env                            # Local config (not committed)
@@ -195,10 +231,12 @@ matrx_local/
 | **Remote Scraper** | REST API at scraper.app.matrxserver.com | httpx |
 | **Scraping** | httpx, curl-cffi, Playwright, BeautifulSoup, PyMuPDF | See pyproject.toml |
 | **Search** | Brave Search API | Optional |
+| **Local LLM** | llama-server (llama.cpp) sidecar | Bundled binary |
+| **Image Gen** | Hugging Face Diffusers (optional `[image-gen]` extra) | torch + diffusers |
+| **TTS** | Kokoro ONNX (core, always installed) | kokoro-onnx |
+| **Wake Word** | openWakeWord (ONNX Runtime) | Core dep |
 | **Package Manager (JS)** | pnpm | 10.x |
 | **Package Manager (Python)** | uv | Latest |
-| **Local LLM inference** | llama-server (llama.cpp) sidecar | Bundled binary |
-| **Image generation** | Hugging Face Diffusers (optional extra) | torch + diffusers ≥0.32 |
 
 ---
 
@@ -212,11 +250,20 @@ matrx_local/
 | `/tools/invoke` | POST | Invoke a tool (stateless session) |
 | `/image-gen/status` | GET | Image gen availability + loaded model |
 | `/image-gen/models` | GET | Model catalog (FLUX, HunyuanDiT, SDXL, etc.) |
-| `/image-gen/presets` | GET | Workflow presets (portrait, product, landscape…) |
+| `/image-gen/presets` | GET | Workflow presets (portrait, product, landscape, etc.) |
 | `/image-gen/load` | POST | Load a model into memory (downloads from HF) |
 | `/image-gen/unload` | POST | Unload model, free VRAM |
 | `/image-gen/generate` | POST | Text-to-image → base64 PNG |
 | `/image-gen/generate-workflow` | POST | Fill preset template + generate |
+| `/tts/status` | GET | TTS availability + loaded model |
+| `/tts/voices` | GET | Voice catalog (54 voices × 9 languages) |
+| `/tts/synthesize` | POST | Text-to-speech → WAV |
+| `/tts/synthesize-stream` | POST | Streaming TTS (sentence-boundary chunks) |
+| `/wake-word/status` | GET | Wake word detection status |
+| `/notes/*` | CRUD | Local-first document management |
+| `/settings/*` | GET/PUT | Engine settings |
+| `/cloud-sync/*` | Various | Instance registration + settings sync |
+| `/proxy/*` | Various | Local HTTP proxy status + test |
 
 **POST /tools/invoke** body:
 ```json
@@ -254,16 +301,13 @@ Persistent sessions with concurrent tool execution and cancellation.
 
 // Cancel all running tasks
 { "action": "cancel_all" }
-
-// Ping
-{ "action": "ping" }
 ```
 
 Multiple tool calls run simultaneously on one connection. Each uses its own `id`.
 
 ### Remote Scraper Proxy (`/remote-scraper/*`)
 
-The React frontend calls the Python engine's `/remote-scraper/*` routes, which proxy requests to the remote scraper server (`scraper.app.matrxserver.com`). This keeps the `SCRAPER_API_KEY` server-side -- the frontend never talks to the remote server directly.
+The React frontend calls the Python engine's `/remote-scraper/*` routes, which proxy requests to the remote scraper server. This keeps auth tokens server-side — the frontend never talks to the remote server directly.
 
 | Endpoint | Method | Proxies To | Description |
 |----------|--------|-----------|-------------|
@@ -273,19 +317,11 @@ The React frontend calls the Python engine's `/remote-scraper/*` routes, which p
 | `/remote-scraper/search-and-scrape` | POST | `POST /api/v1/search-and-scrape` | Combined search + scrape |
 | `/remote-scraper/research` | POST | `POST /api/v1/research` | Deep research via remote server |
 
-**POST /remote-scraper/scrape** body:
-```json
-{
-  "urls": ["https://example.com"],
-  "options": { "use_cache": true }
-}
-```
-
-Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from the env var. No auth header needed from the frontend for these routes. In production, this can be replaced with the user's Supabase JWT.
+Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from the env var. In production, this is replaced with the user's Supabase JWT.
 
 ---
 
-## Tool Reference (79 Tools)
+## Tool Reference (~80 Tools)
 
 ### File Operations (5)
 
@@ -328,14 +364,14 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 |------|-----------|-------------|
 | `Notify` | `title`, `message` | Native OS notification |
 
-### Network -- Simple (2)
+### Network — Simple (2)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `FetchUrl` | `url`, `method?`, `headers?`, `body?`, `follow_redirects?`, `timeout?` | Direct HTTP from residential IP |
 | `FetchWithBrowser` | `url`, `wait_for?`, `wait_timeout?`, `extract_text?` | Playwright headless fetch |
 
-### Network -- Scraper Engine (3)
+### Network — Scraper Engine (3)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -405,7 +441,7 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 | `NetworkInfo` | *(none)* | Get network interfaces, IPs, gateway, DNS |
 | `NetworkScan` | `subnet?`, `timeout?` | Scan local network for devices (ARP) |
 | `PortScan` | `host`, `ports?` | Scan ports on a host |
-| `MDNSDiscover` | `service_type?` | Discover mDNS/Bonjour services (smart devices) |
+| `MDNSDiscover` | `service_type?` | Discover mDNS/Bonjour services |
 
 ### System Monitoring (4)
 
@@ -464,26 +500,21 @@ Auth: The Python engine attaches `Authorization: Bearer <SCRAPER_API_KEY>` from 
 
 ## Scraper Engine
 
-The scraper engine is sourced from the `aidream` monorepo via **git subtree**. The `scraper-service/` directory is a read-only copy; changes flow one-way from upstream.
+The scraper engine is sourced from the `aidream` monorepo via **git subtree** (see CLAUDE.md rule 1).
 
 ### Import Isolation
 
-Both `matrx_local` and `scraper-service` have an `app/` package. The `ScraperEngine` class in `app/services/scraper/engine.py` resolves this conflict by manipulating `sys.modules` to alias the scraper's `app` as `scraper_app` at import time. This means:
-
-- Zero modifications to `scraper-service/` code
-- Upstream updates merge cleanly via `./scripts/update-scraper.sh`
+Both `matrx_local` and `scraper-service` have an `app/` package. `ScraperEngine` in `app/services/scraper/engine.py` aliases the scraper's `app` as `scraper_app` via `sys.modules`, allowing zero modifications to upstream code.
 
 ### Multi-Strategy Fetching
 
-1. **httpx** -- Fast, lightweight HTTP client
-2. **curl-cffi** -- Browser TLS impersonation (bypasses JA3 fingerprinting)
-3. **Playwright** -- Full headless browser (Cloudflare Turnstile, JS-heavy sites)
+1. **httpx** — Fast, lightweight HTTP client
+2. **curl-cffi** — Browser TLS impersonation (bypasses JA3 fingerprinting)
+3. **Playwright** — Full headless browser (Cloudflare Turnstile, JS-heavy sites)
 
 The engine tries strategies in order, escalating only when the simpler approach fails.
 
 ### Graceful Degradation
-
-The engine starts with whatever resources are available:
 
 | Resource | Available | Degraded |
 |----------|-----------|----------|
@@ -504,46 +535,15 @@ uv sync                                # If scraper deps changed
 
 ## Remote Scraper Server
 
-The desktop app can delegate scraping to a remote server at `scraper.app.matrxserver.com` instead of (or in addition to) the local scraper engine.
-
-### Architecture
-
-```mermaid
-graph LR
-  ReactUI["React UI"] -->|"POST /remote-scraper/scrape"| PythonEngine["Python Engine<br/>:22140"]
-  PythonEngine -->|"POST /api/v1/scrape<br/>Bearer token"| RemoteServer["Remote Scraper<br/>scraper.app.matrxserver.com"]
-  RemoteServer -->|JSON response| PythonEngine
-  PythonEngine -->|JSON response| ReactUI
-```
+The desktop app can delegate scraping to `scraper.app.matrxserver.com` via the engine's `/remote-scraper/*` proxy routes.
 
 ### Authentication
 
-The remote server supports dual auth:
-1. **API Key** -- `Authorization: Bearer <API_KEY>` (existing, for server-to-server)
-2. **Supabase JWT** -- `Authorization: Bearer <supabase_jwt>` (new, for end users)
+Dual auth:
+1. **API Key** — `Authorization: Bearer <API_KEY>` (server-to-server)
+2. **Supabase JWT** — `Authorization: Bearer <jwt>` (end users, validated via JWKS)
 
-JWT validation uses the Supabase JWKS endpoint (`https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json`) with ES256 signing. When a Bearer token doesn't match the API key, the server tries JWT validation. Both auth methods coexist.
-
-### Why Proxy Through the Engine?
-
-The React frontend never talks to the remote scraper directly. All requests go through the Python engine's `/remote-scraper/*` proxy routes. This:
-- Keeps auth tokens server-side (never exposed to frontend)
-- Allows the engine to add request signing, caching, or rate limiting
-- Provides a uniform interface whether scraping locally or remotely
-
-### Remote Server API
-
-The remote server provides these endpoints (see `.arman/scraper-api-reference.md` for full docs):
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/v1/health` | Server health and capabilities |
-| `POST /api/v1/scrape` | Scrape one or more URLs |
-| `POST /api/v1/search` | Search via Brave Search API |
-| `POST /api/v1/search-and-scrape` | Search + scrape results |
-| `POST /api/v1/research` | Deep research (iterative search + scrape) |
-| `GET /api/v1/scrape/stream` | SSE streaming scrape progress |
-| `GET /api/v1/config/domains` | Domain-specific scraping configs |
+JWKS endpoint: `https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json` (ES256, Key ID `8a68756f-4254-41d7-9871-a7615685e38a`).
 
 ### Local vs Remote Scraping
 
@@ -552,15 +552,13 @@ The remote server provides these endpoints (see `.arman/scraper-api-reference.md
 | Local | User's residential IP | Sites blocking datacenter IPs |
 | Remote | Server infrastructure + proxy rotation | Bulk scraping, parallel jobs |
 
-Both modes are fully integrated into the Scraping page with a real-time toggle.
+Both modes are integrated into the Scraping page with a real-time toggle.
 
 ---
 
 ## Authentication
 
 ### OAuth Flow (Desktop)
-
-The desktop app uses Supabase Auth with three OAuth providers: Google, GitHub, and Apple.
 
 ```mermaid
 sequenceDiagram
@@ -588,23 +586,19 @@ http://localhost:1420/auth/callback
 tauri://localhost/auth/callback
 ```
 
-Ensure Google, GitHub, and Apple providers are enabled in **Auth > Providers**.
-
 ### Token Handling
 
-- The React app stores the Supabase session in `localStorage` (managed by `@supabase/supabase-js`)
-- All API requests to the Python engine include `Authorization: Bearer <jwt>` via the `EngineAPI.setTokenProvider()` mechanism
-- The Python engine can validate the JWT against Supabase for cloud-sync features
-- The remote scraper server also validates Supabase JWTs via JWKS endpoint (ES256)
+- React stores the Supabase session in `localStorage` (managed by `@supabase/supabase-js`)
+- All API requests include `Authorization: Bearer <jwt>` via `EngineAPI.setTokenProvider()`
+- Python engine validates JWT against Supabase for cloud-sync features
+- Remote scraper server validates Supabase JWTs via JWKS (ES256)
 
 ### Shipping Auth Strategy
 
-Supabase acts as an **OAuth 2.1 Server** (https://supabase.com/docs/guides/auth/oauth-server):
-
-1. **Publishable key** -- Safe to embed in the desktop binary (RLS enforced, client-side by design)
-2. **User JWT** -- Obtained via Supabase OAuth, used to authenticate with both the local engine and remote scraper server
-3. **No embedded API keys** -- The `SCRAPER_API_KEY` is only used in development. In production, the user's Supabase JWT authenticates directly with the scraper server via JWKS validation
-4. **JWKS endpoint** -- `https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json`
+Supabase acts as **OAuth 2.1 Server**:
+1. **Publishable key** — Safe to embed in desktop binary (RLS enforced)
+2. **User JWT** — Authenticates with both local engine and remote scraper
+3. **No embedded API keys** — `SCRAPER_API_KEY` is dev-only; production uses JWT via JWKS
 
 ---
 
@@ -612,86 +606,59 @@ Supabase acts as an **OAuth 2.1 Server** (https://supabase.com/docs/guides/auth/
 
 ### Sidecar Lifecycle
 
-In production, the Rust core spawns the Python engine as a child process:
-
-1. `start_sidecar` -- Spawns PyInstaller binary, streams stdout/stderr to Tauri logs
+1. `start_sidecar` — Spawns PyInstaller binary, streams stdout/stderr to Tauri logs
 2. React UI polls `localhost:22140` until the engine responds
-3. On window close -- Hides to system tray instead of quitting
-4. On quit (tray menu) -- Kills the sidecar process, then exits
+3. On window close — Hides to system tray
+4. On quit (tray menu) — Kills the sidecar, then exits
 
 ### System Tray
 
-Exactly **one** tray icon is shown, owned by the Tauri/Rust layer.
-
-- The `trayIcon` declaration in `tauri.conf.json` has been intentionally **removed** — it produced a second blank icon.
-- `setup_tray()` in `lib.rs` creates the single icon programmatically via `TrayIconBuilder`, using `app.default_window_icon()` so the tray icon always matches the dock/taskbar icon.
-- When the Python engine is spawned as a Tauri sidecar, Rust sets `TAURI_SIDECAR=1` in the child process environment. `run.py` detects this and **skips** the `pystray` tray icon. Without this, pystray would add a third icon.
-- In standalone mode (dev without Tauri), `run.py` still creates a pystray icon as before.
-
-The app persists in the system tray for receiving background scrape jobs from the cloud. Menu items: Show, Status, Quit.
+Single tray icon, owned by Rust:
+- `trayIcon` in `tauri.conf.json` is intentionally **removed** (produced duplicate icon)
+- `setup_tray()` in `lib.rs` creates the icon via `TrayIconBuilder` using `app.default_window_icon()`
+- When spawned as sidecar, Rust sets `TAURI_SIDECAR=1` — `run.py` detects this and skips `pystray`
+- In standalone dev mode, `run.py` still creates a pystray icon
 
 ### Content Security Policy
 
-The Tauri CSP allows connections to:
-- `127.0.0.1:*` (local Python engine)
-- `*.supabase.co` (auth + database)
-- Profile image CDNs (Google, GitHub, Supabase)
+Tauri CSP allows: `127.0.0.1:*`, `*.supabase.co`, profile image CDNs (Google, GitHub, Supabase).
 
 ---
 
 ## Port Discovery
 
-The Python engine uses port **22140** by default (chosen to avoid conflicts with 3000, 5173, 8000, 8001). If taken, it scans 22140-22159.
+Default **22140**, auto-scans 22140–22159 if taken.
 
 | Priority | Mechanism |
 |----------|-----------|
 | 1 | `MATRX_PORT` env var (exact port, no fallback) |
 | 2 | Default 22140 |
-| 3 | Auto-scan 22140-22159 |
+| 3 | Auto-scan 22140–22159 |
 
-The engine writes connection info to `~/.matrx/local.json`:
+Discovery file (`~/.matrx/local.json`):
 ```json
 {
-  "port": 22140,
-  "host": "127.0.0.1",
-  "url": "http://127.0.0.1:22140",
-  "ws": "ws://127.0.0.1:22140/ws",
-  "pid": 12345,
-  "version": "0.3.0"
+  "port": 22140, "host": "127.0.0.1",
+  "url": "http://127.0.0.1:22140", "ws": "ws://127.0.0.1:22140/ws",
+  "pid": 12345, "version": "0.3.0"
 }
 ```
-
-The React frontend scans the port range on startup. Cache the discovered port for the session; re-scan only on connection failure.
 
 ---
 
 ## Data Persistence
 
-### Current State
-
-- **Scrape cache**: In-memory TTLCache by default. Set `DATABASE_URL` to a PostgreSQL connection string (e.g., your Supabase PostgreSQL) for persistent caching across restarts.
-- **Auth tokens**: Persisted in browser `localStorage` by Supabase client.
-- **App settings**: Persisted to `localStorage` via `lib/settings.ts`. Tauri Store plugin is available for future native persistence upgrade.
-- **Theme**: Managed by `use-theme.ts` hook. Applies `.dark` class to `<html>`, persists preference to `localStorage`, supports system theme detection. Default: dark.
+- **Scrape cache**: In-memory TTLCache by default; `DATABASE_URL` enables PostgreSQL persistence.
+- **Auth tokens**: `localStorage` (Supabase client).
+- **App settings**: `localStorage` via `lib/settings.ts`. Tauri Store plugin available for future upgrade.
+- **Theme**: `use-theme.ts` applies `.dark` class to `<html>`, persists to `localStorage`. Default: dark.
 - **Logs**: Rotating files in `system/logs/`.
 - **Temp files**: Screenshots, code saves in `system/temp/`.
-
-### Database Architecture
-
-Three separate concerns:
-
-1. **Remote Scraper Server** -- Dedicated server at `scraper.app.matrxserver.com` with its own internal PostgreSQL (domain configs, page cache, failure logs). The DB has **no public port** -- all access is via REST API with `Authorization: Bearer` token. The desktop app never connects to this DB directly.
-2. **Supabase (everything except scrapes)** -- The AI Matrx platform's Supabase instance. Handles auth, user accounts, document sync, settings sync, app instances, and all non-scrape data. Desktop app communicates using the publishable key + user JWT. Never use the service role key.
-3. **Local Scraper Cache** -- Optional **local** PostgreSQL for the local scraper engine only (set `DATABASE_URL` in root `.env`). This is a database running on the user's machine for caching scrape results locally. It does NOT connect to the remote scraper server's database. Defaults to in-memory TTLCache when not set.
-
-### Configuring Database
-
-In `.env`:
-```env
-DATABASE_URL=postgresql://user:pass@your-scrape-server:5432/scraper_db
-```
-
-The scraper engine uses `asyncpg` (PostgreSQL only). Without `DATABASE_URL`, the system works fully but scrape cache is memory-only.
+- **TTS models**: `~/.matrx/tts/`
+- **Transcription config**: `~/{app_data}/transcription.json`
+- **Whisper models**: `~/{app_data}/models/*.bin`
+- **LLM config**: `~/{app_data}/llm.json`
+- **GGUF models**: `~/{app_data}/models/*.gguf`
 
 ---
 
@@ -700,9 +667,9 @@ The scraper engine uses `asyncpg` (PostgreSQL only). Without `DATABASE_URL`, the
 ### Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- [Node.js](https://nodejs.org/) 20+ (for desktop frontend)
+- [Node.js](https://nodejs.org/) 20+
 - [pnpm](https://pnpm.io/) 10+ (`npm install -g pnpm`)
-- [Rust + rustup](https://rustup.rs/) (required for all Tauri builds, dev and prod)
+- [Rust + rustup](https://rustup.rs/) (required for Tauri builds)
 
 ### Running (Development)
 
@@ -710,113 +677,108 @@ The scraper engine uses `asyncpg` (PostgreSQL only). Without `DATABASE_URL`, the
 # Terminal 1: Python engine
 cd /path/to/matrx_local
 cp .env.example .env   # Configure API_KEY, optionally DATABASE_URL
-uv sync                            # base deps only
-# Optional: enable local image generation (large install ~3-8 GB)
-# uv sync --extra image-gen
+uv sync
 uv run playwright install chromium
 API_KEY=local-dev uv run python run.py
 
-# Terminal 2: React frontend (Vite dev server)
+# Terminal 2: React frontend
 cd desktop
 pnpm install
-pnpm dev
-# Open http://localhost:1420
+pnpm dev               # http://localhost:1420
 ```
 
 ### Running (Tauri — full desktop app)
 
 ```bash
-# First-time Rust setup (one-time only)
+# One-time Rust setup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 
-# Build the Python sidecar (required before first Tauri run)
+# Build Python sidecar (required before first Tauri run)
 ./scripts/build-sidecar.sh
 
-# Run Tauri dev (starts Vite + Rust hot reload)
-cd desktop
-pnpm tauri dev
+# Run
+cd desktop && pnpm tauri dev
 ```
 
 ---
 
 ## Building for Distribution
 
-### 1. Install Rust (one-time)
-
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"   # or restart your terminal
-rustc --version              # should print rustc 1.93+
+# 1. Build Python sidecar
+uv sync && bash scripts/build-sidecar.sh
+
+# 2. Build desktop app
+cd desktop && pnpm install && pnpm tauri build
 ```
 
-### 2. Build the Python sidecar
+Outputs: `.dmg` (macOS), `.msi` + NSIS (Windows), `.deb` (Linux).
 
-```bash
-cd /path/to/matrx_local
-uv sync                     # ensure all deps including pyinstaller are installed
-bash scripts/build-sidecar.sh
-```
+### CI/CD
 
-This uses PyInstaller (from the `.venv`) to build a single-file binary and copies it to
-`desktop/src-tauri/sidecar/aimatrx-engine-<platform-triple>`. The binary (~60 MB) bundles
-the full Python engine including FastAPI, uvicorn, and all scraping libraries.
+Cross-platform builds via GitHub Actions (`.github/workflows/release.yml`). Push a `v*` tag to trigger. Artifacts go to GitHub Releases with auto-patched `latest.json` for the Tauri updater.
 
-Rebuild the sidecar any time you change Python code.
-
-### 3. Build the desktop app
-
-```bash
-cd desktop
-pnpm install
-pnpm tauri build
-```
-
-Outputs: `.dmg` (macOS), `.msi` + NSIS installer (Windows), `.deb` (Linux).
-
-### 4. CI/CD
-
-Cross-platform builds run via GitHub Actions (see `.github/workflows/release.yml`). Push a `v*` tag to trigger. Artifacts are uploaded to GitHub Releases and the Tauri updater `latest.json` is patched automatically.
-
-**macOS signing requirements (CI):** The release workflow must have `APPLE_CERTIFICATE`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` secrets set. The CI signs:
-- The Python sidecar dylibs (pre-build, at source)
-- The llama-server executable (required: ad-hoc signatures from llama.cpp releases are rejected by Gatekeeper)
-- All `.dylib` dependencies from llama.cpp
-- The final app bundle (via tauri-action with hardened runtime + notarization)
+**macOS signing secrets required:** `APPLE_CERTIFICATE`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`. CI signs: sidecar dylibs, llama-server binary, llama.cpp dylibs, and the final app bundle (hardened runtime + notarization).
 
 ---
 
 ## Environment Variables
 
+### Python Engine (root `.env`)
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `API_KEY` | Yes | -- | API key for engine access (any value for local dev) |
-| `SCRAPER_API_KEY` | No | `""` | API key for remote scraper server (`Authorization: Bearer` header) |
-| `SCRAPER_SERVER_URL` | No | `https://scraper.app.matrxserver.com` | Remote scraper server base URL |
-| `DATABASE_URL` | No | `""` | **Local** PostgreSQL connection string for scraper cache (user's machine, NOT remote server) |
-| `BRAVE_API_KEY` | No | -- | Enables Search and Research tools |
-| `DATACENTER_PROXIES` | No | -- | Comma-separated proxy list |
-| `RESIDENTIAL_PROXIES` | No | -- | Comma-separated proxy list |
+| `API_KEY` | Yes | — | API key for engine access (any value for local dev) |
+| `SCRAPER_API_KEY` | No | `""` | Remote scraper server Bearer token |
+| `SCRAPER_SERVER_URL` | No | `https://scraper.app.matrxserver.com` | Remote scraper base URL |
+| `DATABASE_URL` | No | `""` | Local PostgreSQL for scraper cache (NOT remote server) |
+| `BRAVE_API_KEY` | No | — | Enables Search and Research tools |
+| `DATACENTER_PROXIES` | No | — | Comma-separated proxy list |
+| `RESIDENTIAL_PROXIES` | No | — | Comma-separated proxy list |
 | `MATRX_PORT` | No | `22140` | Force a specific port |
 | `DEBUG` | No | `True` | Debug mode |
 | `LOG_LEVEL` | No | `DEBUG` | Logging level |
-| `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | No | -- | HuggingFace token (required for gated models like FLUX.1 Dev; set in Settings → API Keys) |
+| `HF_TOKEN` | No | — | HuggingFace token (gated models like FLUX.1 Dev) |
 
-### Desktop Environment Variables (`desktop/.env`)
+### Desktop (`desktop/.env`)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `VITE_SUPABASE_URL` | Yes | Supabase project URL |
-| `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Yes | Supabase publishable key (safe to embed, RLS enforced) |
+| `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY` | Yes | Supabase publishable key (RLS enforced) |
 
 ---
 
 ## CORS Configuration
 
-The Python engine allows requests from:
+Allowed origins:
 - `https://aimatrx.com`, `https://www.aimatrx.com`
 - `http://localhost:1420`, `http://localhost:3000-3002`, `http://localhost:5173`
 - `http://127.0.0.1:1420`, `http://127.0.0.1:3000-3002`, `http://127.0.0.1:5173`
 - `tauri://localhost`
 
 Override via `ALLOWED_ORIGINS` env var (comma-separated).
+
+---
+
+## Feature-Specific Documentation
+
+These guides in `docs/` provide deep dives on individual features:
+
+| Guide | Covers |
+|-------|--------|
+| `whisper-transcription-integration.md` | Rust transcription architecture, model catalog, download strategy |
+| `local-llm-inference-integration.md` | llama-server sidecar, Qwen3 tool calling, binary bundling |
+| `local-storage-architecture.md` | Local-first storage philosophy, directory structure, sync strategy |
+| `proxy-integration-guide.md` | Cloud-to-local proxy routing via `app_instances` |
+| `proxy-testing-guide.md` | Frontend proxy troubleshooting decision tree |
+| `WEB_CLIENT_INTEGRATION.md` | Web app ↔ desktop engine integration contract |
+| `activity-log.md` | Structured HTTP logging + SSE streaming |
+| `react-migration-notes-api.md` | `/documents/` → `/notes/` migration, path aliases |
+| `wake-word-training.md` | Training "Hey Matrix" wake word with openWakeWord |
+| `ux-principles.md` | 8 non-negotiable UX rules for the app |
+| `settings-audit.md` | Settings architecture audit (44 keys, sync status) |
+| `release-script-guide.md` | Generic release script best practices |
+| `local-models-update.md` | Current open-source model catalog + hardware requirements |
+| `matrx-ai-generic-openai-port.md` | GenericOpenAIChat provider porting guide |

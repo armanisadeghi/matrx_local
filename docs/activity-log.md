@@ -47,7 +47,7 @@ Server-Sent Events stream. Pushes a new JSON object every time a request complet
 ```typescript
 const token = supabase.auth.getSession()?.access_token ?? "";
 const es = new EventSource(
-  `http://localhost:22110/logs/access/stream?token=${encodeURIComponent(token)}`,
+  `http://localhost:22140/logs/access/stream?token=${encodeURIComponent(token)}`,
 );
 
 es.onmessage = (evt) => {
