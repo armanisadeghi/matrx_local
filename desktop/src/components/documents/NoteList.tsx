@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   FileText,
   Clock,
@@ -64,11 +64,6 @@ export function NoteList({
   );
   const menuRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
-
-  const closeMenu = useCallback(
-    () => setContextMenu((prev) => (prev ? { ...prev, submenu: null } : null)),
-    [],
-  );
 
   useEffect(() => {
     if (!contextMenu) return;
