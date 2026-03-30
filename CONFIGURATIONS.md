@@ -1,248 +1,263 @@
-# Matrx Local — Comprehensive Configuration Audit
+# Matrx Local — Comprehensive Configuration Reference
 
-> Generated 2026-03-24. This document catalogs every user-facing setting, its
-> current storage location, default value, and cloud sync status.
-
----
-
-## 1. Application Settings (currently in `AppSettings` / localStorage)
-
-These are the "official" settings defined in `desktop/src/lib/settings.ts` and
-synced to Supabase via `app_settings.settings_json`.
-
-| # | Setting | Key (local) | Key (cloud) | Type | Default | Storage | Cloud Sync |
-|---|---------|-------------|-------------|------|---------|---------|------------|
-| 1 | Launch on startup | `launchOnStartup` | `launch_on_startup` | boolean | `false` | localStorage | Yes |
-| 2 | Minimize to tray | `minimizeToTray` | `minimize_to_tray` | boolean | `true` | localStorage | Yes |
-| 3 | Theme | `theme` | `theme` | enum: dark/light/system | `"dark"` | localStorage + `matrx-theme` | Yes |
-| 4 | Auto-check updates | `autoCheckUpdates` | `auto_check_updates` | boolean | `true` | localStorage | Yes |
-| 5 | Update check interval (min) | `updateCheckInterval` | `update_check_interval` | number | `240` | localStorage | Yes |
-| 6 | Headless scraping | `headlessScraping` | `headless_scraping` | boolean | `true` | localStorage | Yes |
-| 7 | Scrape delay (seconds) | `scrapeDelay` | `scrape_delay` | string/number | `"1.0"` | localStorage | Yes |
-| 8 | Proxy enabled | `proxyEnabled` | `proxy_enabled` | boolean | `true` | localStorage | Yes |
-| 9 | Proxy port | `proxyPort` | `proxy_port` | number | `22180` | localStorage | Yes |
-| 10 | Tunnel enabled | `tunnelEnabled` | `tunnel_enabled` | boolean | `false` | localStorage | Yes |
-| 11 | Instance name | `instanceName` | `instance_name` | string | `"My Computer"` | localStorage | Yes |
-| 12 | Notification sound | `notificationSound` | `notification_sound` | boolean | `true` | localStorage | Yes |
-| 13 | Notification sound style | `notificationSoundStyle` | `notification_sound_style` | enum: chime/alert/success/error | `"chime"` | localStorage | Yes |
-| 14 | Wake word enabled | `wakeWordEnabled` | — | boolean | `true` | localStorage | **NO** |
-| 15 | Wake word listen on startup | `wakeWordListenOnStartup` | — | boolean | `true` | localStorage | **NO** |
+> Last updated **2026-03-30**. Canonical definitions: `desktop/src/lib/settings.ts`
+> (`AppSettings`, `DEFAULTS`, `settingsToCloud`, `mergeCloudSettings`) and
+> `app/services/cloud_sync/settings_sync.py` (`DEFAULT_SETTINGS`). Cloud payload:
+> Supabase `app_settings.settings_json` (per user + instance), synced via
+> `SettingsSync` when the engine is configured and the desktop pushes settings.
 
 ---
 
-## 2. LLM / Local Model Settings (currently hardcoded or ephemeral)
+## How storage works
 
-Found in `desktop/src/lib/llm/api.ts`, `desktop/src/hooks/use-llm.ts`,
-`desktop/src/hooks/use-chat.ts`, and Rust `desktop/src-tauri/src/llm/`.
-
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 16 | Default LLM model (local) | hardcoded in quickSetup | string | hardware-recommended | None (ephemeral) | **NO** |
-| 17 | Default GPU layers | hardcoded in quickSetup | number | hardware-recommended | None | **NO** |
-| 18 | Default context length | hardcoded `8192` in quickSetup | number | `8192` | None | **NO** |
-| 19 | Chat temperature | `CHAT_PARAMS.temperature` | number | `0.7` | Hardcoded | **NO** |
-| 20 | Chat top_p | `CHAT_PARAMS.top_p` | number | `0.8` | Hardcoded | **NO** |
-| 21 | Chat top_k | `CHAT_PARAMS.top_k` | number | `20` | Hardcoded | **NO** |
-| 22 | Chat max_tokens | hardcoded in chatCompletion | number | `1024` | Hardcoded | **NO** |
-| 23 | Reasoning temperature | `REASONING_PARAMS.temperature` | number | `0.6` | Hardcoded | **NO** |
-| 24 | Reasoning top_p | `REASONING_PARAMS.top_p` | number | `0.95` | Hardcoded | **NO** |
-| 25 | Enable thinking mode | `chat_template_kwargs.enable_thinking` | boolean | `false` (chat) / `true` (reasoning) | Hardcoded | **NO** |
-| 26 | Tool call temperature | `TOOL_CALL_PARAMS.temperature` | number | `0.7` | Hardcoded | **NO** |
-| 27 | Tool call top_p | `TOOL_CALL_PARAMS.top_p` | number | `0.8` | Hardcoded | **NO** |
-| 28 | Tool call top_k | `TOOL_CALL_PARAMS.top_k` | number | `20` | Hardcoded | **NO** |
-| 29 | Structured output temperature | hardcoded | number | `0.1` | Hardcoded | **NO** |
-| 30 | Stream max_tokens | hardcoded | number | `1024` | Hardcoded | **NO** |
-| 31 | HuggingFace token (GGUF downloads) | `ApiKeysRepo` key `huggingface` + `GET /settings/api-keys/huggingface/value` for Tauri | string | unset | Engine SQLite (`~/.matrx/matrx.db` via settings blob); legacy `llm.json` fallback | **NO** (same as other API keys) |
-| 32 | Auto-start LLM server on app launch | not implemented | boolean | `false` | None | **NO** |
+| Layer | Role |
+|-------|------|
+| **localStorage `matrx-settings`** | Primary JSON blob for all `AppSettings` fields on the desktop. |
+| **Engine + cloud** | `syncAllSettings()` calls `engine.updateCloudSettings(settingsToCloud(...))`; engine merges into `~/.matrx/settings.json` and may push to Supabase. |
+| **Per-key native/engine sync** | `saveSetting()` only special-cases: `launchOnStartup`, `minimizeToTray`, `headlessScraping`, `scrapeDelay`, `proxyEnabled`, `proxyPort`, `tunnelEnabled`. Full blob still goes to engine on `syncAllSettings()`. |
+| **Theme nuance** | `AppSettings.theme` is cloud-synced. `use-theme.ts` also persists **`matrx-theme`** for immediate DOM application. See **Gaps** — Configurations saves theme to `matrx-settings` only unless `setTheme` is invoked elsewhere. |
 
 ---
 
-## 3. Chat Settings (currently hardcoded or localStorage)
+## 1. `AppSettings` — full catalog (localStorage + cloud)
 
-Found in `desktop/src/hooks/use-chat.ts` and `desktop/src/pages/Chat.tsx`.
+All rows below use storage: **localStorage** key `matrx-settings` unless noted.
+**Cloud** = included in `settingsToCloud` / `mergeCloudSettings` → `settings_json`.
 
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 33 | Default AI model (cloud) | `FALLBACK_MODELS[0].id` | string | `"claude-sonnet-4-6"` | Ephemeral | **NO** |
-| 34 | Default chat mode | useState initial | enum: chat/co-work/code | `"chat"` | Ephemeral per conversation | **NO** |
-| 35 | Chat history max conversations | `MAX_CONVERSATIONS` | number | `100` | Hardcoded | **NO** |
-| 36 | Default system prompt for chat | user selection | string | "Assistant" builtin | localStorage `matrx-system-prompts` | **NO** |
+### Application, updates, instance
 
----
+| Setting | Key (local) | Key (cloud) | Type | Default | Cloud |
+|---------|-------------|-------------|------|---------|-------|
+| Launch on startup | `launchOnStartup` | `launch_on_startup` | boolean | `false` | Yes |
+| Minimize to tray | `minimizeToTray` | `minimize_to_tray` | boolean | `true` | Yes |
+| Theme | `theme` | `theme` | `dark` \| `light` \| `system` | `"dark"` | Yes |
+| Auto-check updates | `autoCheckUpdates` | `auto_check_updates` | boolean | `true` | Yes |
+| Update interval (minutes) | `updateCheckInterval` | `update_check_interval` | number (≥ 60 when merged) | `240` | Yes |
+| Instance name | `instanceName` | `instance_name` | string | `"My Computer"` | Yes |
 
-## 4. Transcription / Voice Settings (currently in Rust config or ephemeral)
+### Scraping, proxy, remote access, notifications
 
-Found in `desktop/src/hooks/use-transcription.ts`, `desktop/src/lib/transcription/types.ts`,
-Rust `desktop/src-tauri/src/transcription/`.
+| Setting | Key (local) | Key (cloud) | Type | Default | Cloud |
+|---------|-------------|-------------|------|---------|-------|
+| Headless scraping | `headlessScraping` | `headless_scraping` | boolean | `true` | Yes |
+| Scrape delay | `scrapeDelay` | `scrape_delay` | string / coerced to number in cloud | `"1.0"` | Yes |
+| Proxy enabled | `proxyEnabled` | `proxy_enabled` | boolean | `true` | Yes |
+| Proxy port | `proxyPort` | `proxy_port` | number | `22180` | Yes |
+| Tunnel enabled | `tunnelEnabled` | `tunnel_enabled` | boolean | `false` | Yes |
+| Notification sound | `notificationSound` | `notification_sound` | boolean | `true` | Yes |
+| Notification sound style | `notificationSoundStyle` | `notification_sound_style` | `chime` \| `alert` \| `success` \| `error` | `"chime"` | Yes |
 
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 37 | Default Whisper model | Rust `transcription.json` | string | hardware-recommended | Tauri app data | **NO** |
-| 38 | Audio input device | `AudioDevicesContext` | string | system default (null) | Context only (ephemeral) | **NO** |
-| 39 | Auto-init transcription on startup | Rust auto-init logic | boolean | `true` (if setup_complete) | Tauri config | **NO** |
-| 40 | Processing tail timeout (ms) | hardcoded `15_000` | number | `15000` | Hardcoded | **NO** |
+### Wake word
 
----
+| Setting | Key (local) | Key (cloud) | Type | Default | Cloud |
+|---------|-------------|-------------|------|---------|-------|
+| Wake word enabled | `wakeWordEnabled` | `wake_word_enabled` | boolean | `true` | Yes |
+| Listen on startup | `wakeWordListenOnStartup` | `wake_word_listen_on_startup` | boolean | `true` | Yes |
+| Engine | `wakeWordEngine` | `wake_word_engine` | `whisper` \| `oww` | `"whisper"` | Yes |
+| OWW model filename | `wakeWordOwwModel` | `wake_word_oww_model` | string | `"hey_jarvis"` | Yes |
+| OWW threshold | `wakeWordOwwThreshold` | `wake_word_oww_threshold` | number | `0.5` | Yes |
+| Custom keyword (whisper) | `wakeWordCustomKeyword` | `wake_word_custom_keyword` | string | `"hey matrix"` | Yes |
 
-## 5. Wake Word Settings (currently in Rust SQLite + localStorage)
+**Note:** Rust still persists the whisper keyword to **`transcription.json`** when `configure_wake_word` runs. That is separate from the React/Supabase blob — see **Gaps**.
 
-Found in `desktop/src/pages/WakeWord.tsx`, `desktop/src/lib/transcription/types.ts`.
+### Chat and AI defaults
 
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 41 | Wake word engine | Rust SQLite | enum: whisper/oww | `"whisper"` | SQLite (Rust) | **NO** |
-| 42 | OWW model name | Rust SQLite | string | `"hey_jarvis"` | SQLite (Rust) | **NO** |
-| 43 | OWW threshold | Rust SQLite | number (0-1) | `0.5` | SQLite (Rust) | **NO** |
-| 44 | Custom keyword (whisper) | Rust SQLite | string | `"hey matrix"` | SQLite (Rust) | **NO** |
+| Setting | Key (local) | Key (cloud) | Type | Default | Cloud |
+|---------|-------------|-------------|------|---------|-------|
+| Default cloud/local model id | `chatDefaultModel` | `chat_default_model` | string (`""` = first from engine) | `""` | Yes |
+| Default mode | `chatDefaultMode` | `chat_default_mode` | `chat` \| `co-work` \| `code` | `"chat"` | Yes |
+| Max conversations (cap target) | `chatMaxConversations` | `chat_max_conversations` | number | `100` | Yes |
+| Default system prompt id | `chatDefaultSystemPromptId` | `chat_default_system_prompt_id` | string (`""` = builtin) | `""` | Yes |
 
----
+### Local LLM (model + sampling)
 
-## 6. UI / Layout Settings (currently localStorage)
+| Setting | Key (local) | Key (cloud) | Type | Default | Cloud |
+|---------|-------------|-------------|------|---------|-------|
+| Default model filename | `llmDefaultModel` | `llm_default_model` | string (`""` = auto) | `""` | Yes |
+| GPU layers | `llmDefaultGpuLayers` | `llm_default_gpu_layers` | number (`-1` = auto) | `-1` | Yes |
+| Context length | `llmDefaultContextLength` | `llm_default_context_length` | number | `8192` | Yes |
+| Auto-start llama-server | `llmAutoStartServer` | `llm_auto_start_server` | boolean | `false` | Yes |
+| Chat temperature | `llmChatTemperature` | `llm_chat_temperature` | number | `0.7` | Yes |
+| Chat top_p | `llmChatTopP` | `llm_chat_top_p` | number | `0.8` | Yes |
+| Chat top_k | `llmChatTopK` | `llm_chat_top_k` | number | `20` | Yes |
+| Chat max tokens | `llmChatMaxTokens` | `llm_chat_max_tokens` | number | `1024` | Yes |
+| Reasoning temperature | `llmReasoningTemperature` | `llm_reasoning_temperature` | number | `0.6` | Yes |
+| Reasoning top_p | `llmReasoningTopP` | `llm_reasoning_top_p` | number | `0.95` | Yes |
+| Reasoning top_k | `llmReasoningTopK` | `llm_reasoning_top_k` | number | `20` | Yes |
+| Reasoning max tokens | `llmReasoningMaxTokens` | `llm_reasoning_max_tokens` | number | `4096` | Yes |
+| Enable thinking | `llmEnableThinking` | `llm_enable_thinking` | boolean | `false` | Yes |
+| Tool-call temperature | `llmToolCallTemperature` | `llm_tool_call_temperature` | number | `0.7` | Yes |
+| Tool-call top_p | `llmToolCallTopP` | `llm_tool_call_top_p` | number | `0.8` | Yes |
+| Tool-call top_k | `llmToolCallTopK` | `llm_tool_call_top_k` | number | `20` | Yes |
+| Structured output temperature | `llmStructuredOutputTemperature` | `llm_structured_output_temperature` | number | `0.1` | Yes |
+| Stream max tokens | `llmStreamMaxTokens` | `llm_stream_max_tokens` | number | `1024` | Yes |
 
-Found scattered across components.
+Sampling values are read by `desktop/src/lib/llm/api.ts` from `AppSettings` (not hardcoded constants).
 
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 45 | Sidebar collapsed | `AppSidebar.tsx` | boolean | `false` | localStorage `sidebar-collapsed` | **NO** |
-| 46 | Chat sidebar collapsed | `Chat.tsx` | boolean | `false` | Component state | **NO** |
-| 47 | First-run dismissed | `App.tsx` | boolean | `false` | localStorage `matrx-setup-dismissed` | **NO** |
+### Transcription / voice
 
----
+| Setting | Key (local) | Key (cloud) | Type | Default | Cloud |
+|---------|-------------|-------------|------|---------|-------|
+| Default Whisper model | `transcriptionDefaultModel` | `transcription_default_model` | string (`""` = auto) | `""` | Yes |
+| Auto-init on startup | `transcriptionAutoInit` | `transcription_auto_init` | boolean | `true` | Yes |
+| Audio input device | `transcriptionAudioDevice` | `transcription_audio_device` | string (`""` = default) | `""` | Yes |
+| Processing timeout (ms) | `transcriptionProcessingTimeout` | `transcription_processing_timeout` | number | `15000` | Yes |
 
-## 7. Engine / Backend Settings (Python `settings_sync.py` + env vars)
+Rust **`transcription.json`** still holds `selected_model`, `setup_complete`, `wake_keyword` for native code paths.
 
-Found in `app/services/cloud_sync/settings_sync.py`, `app/config.py`, `.env`.
+### Text to speech
 
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 48 | Engine port | `run.py` / config | number | `22140` | `~/.matrx/local.json` | **NO** |
-| 49 | API key (engine auth) | `.env` `API_KEY` | string | — | `.env` file | **NO** |
-| 50 | Scraper API key | `.env` `SCRAPER_API_KEY` | string | — | `.env` file | **NO** |
-| 51 | Scraper server URL | `.env` `SCRAPER_SERVER_URL` | string | — | `.env` file | **NO** |
-| 52 | Database URL (local PG) | `.env` `DATABASE_URL` | string | — | `.env` file | **NO** |
+| Setting | Key (local) | Key (cloud) | Type | Default | Cloud |
+|---------|-------------|-------------|------|---------|-------|
+| Default voice | `ttsDefaultVoice` | `tts_default_voice` | string | `"af_heart"` | Yes |
+| Default speed | `ttsDefaultSpeed` | `tts_default_speed` | number | `1.0` | Yes |
+| Auto-download model | `ttsAutoDownloadModel` | `tts_auto_download_model` | boolean | `false` | Yes |
+| Favorite voices | `ttsFavoriteVoices` | `tts_favorite_voices` | string[] | `[]` | Yes |
+| Chat read-aloud voice | `ttsChatVoice` | `tts_chat_voice` | string (`""` = use default) | `""` | Yes |
+| Chat read-aloud speed | `ttsChatSpeed` | `tts_chat_speed` | number (`0` = use default speed) | `0` | Yes |
+| Notification voice | `ttsNotificationVoice` | `tts_notification_voice` | string | `""` | Yes |
+| Read-aloud enabled | `ttsReadAloudEnabled` | `tts_read_aloud_enabled` | boolean | `true` | Yes |
+| Read-aloud autoplay | `ttsReadAloudAutoPlay` | `tts_read_aloud_auto_play` | boolean | `false` | Yes |
+| Streaming threshold (chars) | `ttsStreamingThreshold` | `tts_streaming_threshold` | number | `200` | Yes |
+| Auto-clean markdown (TTS page) | `ttsAutoCleanMarkdown` | `tts_auto_clean_markdown` | boolean | `false` | Yes |
 
----
+### UI
 
-## 8. Storage Paths (engine API /settings/paths)
+| Setting | Key (local) | Key (cloud) | Type | Default | Cloud |
+|---------|-------------|-------------|------|---------|-------|
+| Sidebar collapsed | `sidebarCollapsed` | `sidebar_collapsed` | boolean | `false` | Yes |
 
-Found in `app/api/settings_routes.py`.
+`AppSidebar` also reads/writes legacy **`sidebar-collapsed`** for backward compatibility.
 
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 53 | Documents directory | Engine settings | path | OS-specific | `~/.matrx/settings.json` | **NO** |
-| 54 | Downloads directory | Engine settings | path | OS-specific | `~/.matrx/settings.json` | **NO** |
-| 55 | Scrape output directory | Engine settings | path | OS-specific | `~/.matrx/settings.json` | **NO** |
-
----
-
-## 9. API Keys (engine-managed, /settings/api-keys)
-
-These are managed by the engine's API key system, stored in `.env` or engine config.
-
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 56 | Anthropic API key | Engine `.env` | string | — | `.env` | **NO** |
-| 57 | OpenAI API key | Engine `.env` | string | — | `.env` | **NO** |
-| 58 | Google/Gemini API key | Engine `.env` | string | — | `.env` | **NO** |
-| 59 | Groq API key | Engine `.env` | string | — | `.env` | **NO** |
-| 60 | Together API key | Engine `.env` | string | — | `.env` | **NO** |
-| 61 | xAI API key | Engine `.env` | string | — | `.env` | **NO** |
-| 62 | Cerebras API key | Engine `.env` | string | — | `.env` | **NO** |
-| 63 | Brave Search API key | Engine `.env` | string | — | `.env` | **NO** |
-
----
-
-## 10. Forbidden URLs (engine-managed)
-
-| # | Setting | Current Location | Type | Default | Storage | Cloud Sync |
-|---|---------|-----------------|------|---------|---------|------------|
-| 64 | Forbidden URL list | Engine API | string[] | `[]` | `~/.matrx/settings.json` | **NO** |
-
----
-
-## Summary: Gaps Identified
-
-### Settings NOT in the centralized AppSettings / not synced to cloud:
-
-1. **Wake word settings** (#14, 15, 41-44) — partially in localStorage, partially in Rust SQLite
-2. **ALL LLM inference parameters** (#16-32) — entirely hardcoded, no persistence
-3. **ALL chat defaults** (#33-36) — hardcoded or ephemeral
-4. **ALL transcription settings** (#37-40) — only in Rust config, not synced
-5. **UI layout preferences** (#45-47) — scattered localStorage keys
-6. **Storage paths** (#53-55) — engine-only, not synced
-7. **Forbidden URLs** (#64) — engine-only, not synced
-
-### Settings already in cloud sync (via `app_settings.settings_json`):
-- #1-13 (Application, Proxy, Scraping, Updates, Instance, Notifications)
-
-### Database structure:
-- `app_settings` table with `settings_json` JSONB column — **perfect for storing all settings**
-- No schema changes needed — we just expand the JSON blob with new keys
-- Cloud sync already works via `SettingsSync.sync()` — bidirectional with timestamp comparison
+**Field count:** 58 keys in `AppSettings`, all mapped to cloud snake_case.
 
 ---
 
-## Implementation Status (COMPLETED)
+## 2. Configurations page (`Configurations.tsx` + `use-configurations.ts`)
 
-### What Was Done
+Dirty-tracking sections (each has section save/cancel):
 
-#### Phase 1: Expanded AppSettings type and defaults
-- **`desktop/src/lib/settings.ts`** — `AppSettings` interface expanded from 15 to 48+ fields
-- **`desktop/src/lib/settings.ts`** — `DEFAULTS` object expanded with all new defaults
-- **`desktop/src/lib/settings.ts`** — `mergeCloudSettings()` handles all new cloud→local mappings
-- **`desktop/src/lib/settings.ts`** — `settingsToCloud()` handles all new local→cloud mappings
-- **`app/services/cloud_sync/settings_sync.py`** — `DEFAULT_SETTINGS` expanded to match TypeScript
+| Section id | `AppSettings` keys |
+|------------|-------------------|
+| `application` | `instanceName`, `launchOnStartup`, `minimizeToTray`, `autoCheckUpdates`, `updateCheckInterval` |
+| `appearance` | `theme`, `sidebarCollapsed` |
+| `chatAi` | `chatDefaultModel`, `chatDefaultMode`, `chatMaxConversations`, `chatDefaultSystemPromptId` |
+| `localLlm` | `llmDefaultModel`, `llmDefaultGpuLayers`, `llmDefaultContextLength`, `llmAutoStartServer` |
+| `localLlmSampling` | all `llm*` sampling / thinking keys (14 keys) |
+| `voice` | `transcriptionDefaultModel`, `transcriptionAutoInit`, `transcriptionAudioDevice`, `transcriptionProcessingTimeout` |
+| `tts` | all `tts*` keys (12 keys) |
+| `wakeWord` | all `wakeWord*` keys (6 keys) |
+| `scraping` | `headlessScraping`, `scrapeDelay` |
+| `proxy` | `proxyEnabled`, `proxyPort`, `tunnelEnabled` |
+| `notifications` | `notificationSound`, `notificationSoundStyle` |
 
-#### Phase 2: Created Configurations page
-- **`desktop/src/pages/Configurations.tsx`** — New centralized page with:
-  - 10 sections: Application, Appearance, Chat & AI, Local LLM, Voice, Wake Word, Scraping, Proxy, Notifications, UI
-  - Responsive 3-column grid layout (1 col mobile, 2 col large, 3 col xl)
-  - Per-section save/cancel buttons (only appear when section has dirty state)
-  - Global floating save bar at bottom (appears when any section is dirty)
-  - Uses Switch, Select, Slider, Input, NumberInput controls
-- **`desktop/src/hooks/use-configurations.ts`** — New hook with:
-  - Draft/saved state comparison
-  - Per-section dirty tracking via `SECTION_KEYS` mapping
-  - `saveSection()` and `cancelSection()` for fine-grained control
-  - `saveAll()` and `cancelAll()` for global control
-  - Automatic sync to engine/Tauri on save
+Legacy **Settings** page still exposes overlapping controls (e.g. theme with `setTheme` + `updateSetting`).
 
-#### Phase 3: Wired to actual behavior
-- **`desktop/src/lib/llm/api.ts`** — All 4 LLM API functions now read sampling parameters
-  from `AppSettings` instead of hardcoded constants (temperature, top_p, top_k, max_tokens)
-- **`desktop/src/hooks/use-chat.ts`** — Default model and chat mode loaded from settings on mount
-- **`desktop/src/components/layout/AppSidebar.tsx`** — Sidebar collapsed state reads/writes to unified settings
+---
 
-#### Phase 4: Navigation integrated
-- **`desktop/src/App.tsx`** — Configurations page added to route list
-- **`desktop/src/components/layout/AppSidebar.tsx`** — "Configurations" nav item with SlidersHorizontal icon
+## 3. Engine-only and environment (not in `AppSettings`)
 
-### Data Flow (End-to-End)
+### Runtime discovery and secrets (`.env`, `~/.matrx/local.json`)
+
+| Concern | Location | Cloud |
+|---------|----------|-------|
+| Engine listen port | `MATRX_PORT`, discovery, `~/.matrx/local.json` | No |
+| `API_KEY` | `.env` | No |
+| `SCRAPER_API_KEY`, `SCRAPER_SERVER_URL` | `.env` | No |
+| `DATABASE_URL` (local PG cache) | `.env` | No |
+| Brave, proxies, `DEBUG`, `LOG_LEVEL`, CORS extras, tunnel token | `app/config.py` / `.env` | No |
+
+### Engine settings file (`~/.matrx/settings.json` via sync)
+
+| Concern | API / code | Cloud |
+|---------|------------|-------|
+| Documents / downloads / scrape paths | `GET/PUT /settings/paths` | No |
+| Forbidden URL patterns | `/settings/forbidden-urls` | No |
+| Provider API keys (Anthropic, OpenAI, …) | `/settings/api-keys` | No |
+| Hugging Face token (GGUF / gated downloads) | `/settings/api-keys/huggingface` (+ Tauri `llm.json` fallback) | No |
+
+Detail for env vars: `ARCHITECTURE.md` (Environment Variables).
+
+---
+
+## 4. Other desktop persistence (not `AppSettings`)
+
+These are **not** in `settings_json` unless separately migrated.
+
+| Key / store | Purpose |
+|-------------|---------|
+| `matrx-theme` | Theme for `useTheme()` / DOM class (`dark`). |
+| `matrx-system-prompts` | Full prompt library (`system-prompts.ts`); `chatDefaultSystemPromptId` references an id here. |
+| `matrx-selected-audio-device` | `AudioDevicesContext` selected mic (may diverge from `transcriptionAudioDevice`). |
+| `matrx-chat-conversations` | Chat thread persistence. |
+| `llm-playground-conversations` | Local Models playground chats. |
+| `custom-model-names` | User renames for local GGUF models. |
+| `matrx:scrape-history` | Recent scrape URLs. |
+| Transcription sessions store | `lib/transcription/sessions.ts` localStorage key. |
+| `matrx-setup-dismissed` | First-run / setup wizard. |
+| Updater keys in `use-auto-update.ts` | Prepared update version, dismissed version banners. |
+| OAuth PKCE (`oauth.ts`, `use-auth.ts`) | Transient auth flow. |
+| Installed apps panel cache | One-off cache in `InstalledAppsPanel`. |
+| `~/.matrx/downloads.db` (Rust) | Download manager queue state. |
+
+---
+
+## 5. Data flow (unchanged)
 
 ```
-User edits in Configurations page
-  → useConfigurations hook updates draft state
-  → User clicks Save (section or global)
-  → saveSettings() writes to localStorage (key: "matrx-settings")
-  → syncAllSettings() pushes to Tauri/engine side effects
-  → settingsToCloud() converts to snake_case
-  → SettingsSync.sync() upserts to Supabase app_settings.settings_json
-  → On next app launch: loadSettings() reads from localStorage
-  → mergeCloudSettings() merges any newer cloud values
+Configurations or Settings saves
+  → saveSettings() → localStorage `matrx-settings`
+  → syncAllSettings() → engine.updateCloudSettings(settingsToCloud(...))
+  → engine persists + optional Supabase `app_settings.settings_json`
+  → hydrateFromEngine() / merge when cloud is newer
 ```
 
-### Database Storage
+---
 
-- **Table:** `app_settings` (migration 002)
-- **Column:** `settings_json` (JSONB)
-- **Scope:** Per user + per instance
-- **No schema changes needed** — the JSONB blob naturally accommodates new keys
-- All 48+ settings are stored in a single JSON object, keyed by snake_case names
+## 6. Gaps, fixes, and tracking recommendations
 
-### Cloud Sync Behavior
+Items to fix or unify — **not** exhaustive of all product work, but specific to configuration consistency.
 
-- Bidirectional sync via timestamp comparison (`updated_at`)
-- Local-first: app always works offline, syncs when connection available
-- On startup: `SettingsSync.sync()` compares timestamps, pulls newer or pushes
-- Manual: user can force push/pull from Settings > Cloud tab
-- New settings automatically included since they're part of the `settings_json` blob
+### Must-fix (incorrect or confusing behavior)
+
+1. **Theme dual storage** — `AppSettings.theme` syncs to cloud; **`matrx-theme`** is what `useTheme()` reads/writes. Saving theme from **Configurations** updates only `matrx-settings`, so `<html>` class can stay stale until reload or a Settings-page path that calls `setTheme`. **Fix:** On Configurations save (appearance section or `saveAll`), call the same `setTheme` used on the Settings page, or subscribe to `matrx-settings-changed` in `useTheme` and reconcile.
+
+2. **`chatMaxConversations` not applied** — `use-chat.ts` still uses a hardcoded `MAX_CONVERSATIONS = 100` when persisting `matrx-chat-conversations`, ignoring `AppSettings.chatMaxConversations`. **Fix:** Read the cap from settings (or ref) when slicing saved conversations.
+
+3. **Duplicate microphone preference** — `transcriptionAudioDevice` (AppSettings, cloud) vs **`matrx-selected-audio-device`** (`AudioDevicesContext`). Users can end up with two sources of truth. **Fix:** Single key (prefer AppSettings) and migrate context to read/write it, or explicit bidirectional sync on mount/save.
+
+4. **Wake keyword dual persistence** — `wakeWordCustomKeyword` in Supabase vs **`transcription.json`** `wake_keyword` updated by Rust `configure_wake_word`. **Fix:** On save from Configurations, invoke Tauri to align native config, or document that native path is authoritative until next sync.
+
+### Should track in Configurations or engine UI (today elsewhere only)
+
+5. **Forbidden URLs** — Engine-only (`~/.matrx/settings.json`). Consider a “Scraping safety” card on Configurations or deep-link to Settings scraper tab so users discover it.
+
+6. **Storage paths** — Same: engine `/settings/paths`; optional surfaced row on Configurations.
+
+7. **Image generation defaults** — Presets/steps/guidance on Local Models / image-gen UI appear ephemeral; if users expect cross-device parity, add `AppSettings` keys + sections.
+
+8. **Chat sidebar width/collapsed** — Still component state in `Chat.tsx` (not `AppSettings`). Add keys if layout prefs should sync.
+
+9. **Local Models: `custom-model-names`** — localStorage only. Optional: fold into `AppSettings` for cloud backup of display labels.
+
+10. **Scrape history / playground / sessions** — Ephemeral local data; usually OK not in cloud; document as “device-local only.”
+
+### Operational / documentation
+
+11. **Python `DEFAULT_SETTINGS` vs TypeScript** — Already maintained in parallel; any new `AppSettings` key **must** land in both files (project rule). CI or a codegen check would reduce drift.
+
+12. **HF / API keys** — Correctly remain out of `settings_json` for security; keep in engine secret store + `.env` only.
+
+13. **`llmAutoStartServer`** — Field exists in `AppSettings`; verify end-to-end that app launch actually starts llama-server when true (if not wired, track as implementation gap in `AGENT_TASKS.md`).
+
+14. **Wake word engine switching** — Ensure choosing `oww` vs `whisper` in Configurations propagates to Rust/Python listeners the same as the Voice page (integration test on device).
+
+### Resolved vs old docs (for clarity)
+
+- Wake word and LLM sampling are **no longer** “local only” or “all hardcoded”: they live in **`AppSettings`** and **cloud `settings_json`**.
+- Wake word settings are **not** stored in “Rust SQLite” for this product path; Rust uses **`transcription.json`** for parts of transcription + keyword side effects.
+- TTS preferences are first-class in **`AppSettings`** and synced.
+
+---
+
+*When adding a new preference: extend `AppSettings` + `DEFAULTS` + `mergeCloudSettings` + `settingsToCloud` + `DEFAULT_SETTINGS` in Python, add to `SECTION_KEYS` if it belongs on Configurations, and update this file.*
