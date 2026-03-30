@@ -1,6 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os
-import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 # espeak-ng: bundled native library + language dictionaries (required by kokoro-onnx TTS)
@@ -25,7 +23,8 @@ a = Analysis(
         'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto',
         'uvicorn.protocols.websockets', 'uvicorn.protocols.websockets.auto',
         'uvicorn.lifespan', 'uvicorn.lifespan.on',
-        'httptools', 'pydantic', 'fastapi', 'websockets', 'httpx',
+        'httptools', 'python_multipart', 'multipart',
+        'pydantic', 'fastapi', 'websockets', 'httpx',
         'curl_cffi', 'bs4', 'lxml', 'selectolax', 'asyncpg', 'cachetools',
         'tldextract', 'markdownify', 'tabulate', 'fitz', 'pytesseract',
         'playwright', 'playwright.async_api', 'playwright.sync_api',
@@ -53,7 +52,12 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=['hooks/runtime_hook.py'],
-    excludes=['torch', 'torchvision', 'torchaudio', 'tensorflow', 'tensorboard', 'triton', 'scipy', 'nipype', 'nibabel', 'pyxnat', 'openai_whisper', 'whisper', 'matplotlib', 'sklearn', 'skimage', 'cv2', 'IPython', 'ipykernel', 'jupyter', 'ipywidgets'],
+    excludes=[
+        'torch', 'torchvision', 'torchaudio', 'tensorflow', 'tensorboard',
+        'triton', 'scipy', 'nipype', 'nibabel', 'pyxnat', 'openai_whisper',
+        'whisper', 'matplotlib', 'sklearn', 'skimage', 'cv2',
+        'IPython', 'ipykernel', 'jupyter', 'ipywidgets',
+    ],
     noarchive=False,
     optimize=0,
 )
@@ -65,20 +69,17 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='aimatrx-engine-x86_64-apple-darwin',
+    name='aimatrx-engine-x86_64-unknown-linux-gnu',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    # UPX is disabled on macOS: UPX cannot correctly process .dylib shared
-    # libraries on macOS, corrupting them before code signing runs. This would
-    # cause signed dylibs to be invalid at runtime. On Linux/Windows it is fine.
-    upx=sys.platform != 'darwin',
+    upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
-    codesign_identity=os.environ.get('APPLE_SIGNING_IDENTITY', None),
-    entitlements_file=os.environ.get('SIDECAR_ENTITLEMENTS', None),
+    codesign_identity=None,
+    entitlements_file=None,
 )

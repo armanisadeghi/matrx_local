@@ -216,7 +216,7 @@ echo "  → Playwright browsers will be auto-installed at runtime (not bundled)"
 # signing all collected dylibs) and upx=False (UPX corrupts dylibs on macOS).
 # We MUST use the spec file on macOS — CLI flags alone can't express these.
 #
-SPEC_FILE="$PROJECT_ROOT/aimatrx-engine-$TARGET.spec"
+SPEC_FILE="$PROJECT_ROOT/specs/aimatrx-engine-$TARGET.spec"
 
 build_with_spec() {
     echo "  → Using spec file: $SPEC_FILE"
@@ -272,6 +272,8 @@ args = [
     "--hidden-import", "uvicorn.lifespan",
     "--hidden-import", "uvicorn.lifespan.on",
     "--hidden-import", "httptools",
+    "--hidden-import", "python_multipart",
+    "--hidden-import", "multipart",
     "--hidden-import", "pydantic",
     "--hidden-import", "fastapi",
     "--hidden-import", "websockets",

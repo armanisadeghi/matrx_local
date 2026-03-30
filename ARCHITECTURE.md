@@ -166,7 +166,14 @@ matrx_local/
 │   └── tailwind.config.ts
 ├── scripts/
 │   ├── update-scraper.sh           # Pull upstream scraper-service changes
-│   └── build-sidecar.sh            # PyInstaller -> platform-named binary
+│   ├── build-sidecar.sh            # PyInstaller -> platform-named binary
+│   ├── download-llama-server.sh    # Download llama-server from llama.cpp releases
+│   └── download-cloudflared.sh     # Download cloudflared sidecar binary
+├── specs/
+│   ├── aimatrx-engine-aarch64-apple-darwin.spec   # PyInstaller spec (macOS ARM)
+│   ├── aimatrx-engine-x86_64-apple-darwin.spec    # PyInstaller spec (macOS Intel)
+│   ├── aimatrx-engine-x86_64-unknown-linux-gnu.spec # PyInstaller spec (Linux)
+│   └── aimatrx-engine-x86_64-pc-windows-msvc.spec  # PyInstaller spec (Windows)
 ├── run.py                          # Entry point (port discovery, tray, uvicorn)
 ├── pyproject.toml                  # Python deps (uv-managed)
 └── .env                            # Local config (not committed)
@@ -765,11 +772,17 @@ pnpm install
 pnpm tauri build
 ```
 
-Outputs: `.dmg` (macOS), `.msi` (Windows), `.AppImage`/`.deb` (Linux).
+Outputs: `.dmg` (macOS), `.msi` + NSIS installer (Windows), `.deb` (Linux).
 
-### 3. CI/CD
+### 4. CI/CD
 
-Cross-platform builds run via GitHub Actions (see `.github/workflows/build-desktop.yml`). Artifacts are uploaded to GitHub Releases and optionally synced to S3 for download hosting.
+Cross-platform builds run via GitHub Actions (see `.github/workflows/release.yml`). Push a `v*` tag to trigger. Artifacts are uploaded to GitHub Releases and the Tauri updater `latest.json` is patched automatically.
+
+**macOS signing requirements (CI):** The release workflow must have `APPLE_CERTIFICATE`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` secrets set. The CI signs:
+- The Python sidecar dylibs (pre-build, at source)
+- The llama-server executable (required: ad-hoc signatures from llama.cpp releases are rejected by Gatekeeper)
+- All `.dylib` dependencies from llama.cpp
+- The final app bundle (via tauri-action with hardened runtime + notarization)
 
 ---
 

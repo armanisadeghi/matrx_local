@@ -126,21 +126,37 @@ jobs:
           fi
         shell: bash
 
-      # ---- Sign llama.cpp dylibs (macOS only) ----
+      # ---- Sign llama.cpp binaries (macOS only) ----
       # Apple notarization requires every binary inside the app bundle to be
-      # signed with a Developer ID certificate. The llama.cpp dylibs we download
-      # from GitHub Releases are unsigned, so we must sign them here before
-      # tauri-action bundles them via tauri.macos.conf.json resources.
-      - name: Sign llama.cpp dylibs for notarization
+      # signed with a Developer ID certificate. The llama.cpp binaries and dylibs
+      # we download from GitHub Releases are only ad-hoc signed, so we must
+      # re-sign them with our Developer ID here before tauri-action bundles them.
+      #
+      # This covers two things:
+      #   1. All *.dylib files (shared libraries the binary links against at runtime)
+      #   2. The llama-server executable itself
+      #
+      # Without signing the executable, macOS Gatekeeper blocks it at launch with
+      # "killed by macOS before writing anything" — the exact crash seen in production.
+      - name: Sign llama.cpp binaries for notarization
         if: matrix.platform == 'macos-15'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           DYLIB_DIR="desktop/src-tauri/binaries"
+
+          # Determine which llama-server binary applies to this build target
+          if [[ "${{ matrix.args }}" == *"aarch64-apple-darwin"* ]]; then
+            LLAMA_BIN="$DYLIB_DIR/llama-server-aarch64-apple-darwin"
+          else
+            LLAMA_BIN="$DYLIB_DIR/llama-server-x86_64-apple-darwin"
+          fi
+
+          # Sign all dylibs first (they are loaded at runtime by the binary)
           if ls "$DYLIB_DIR"/*.dylib 1>/dev/null 2>&1; then
             echo "Signing dylibs in $DYLIB_DIR with identity: $APPLE_SIGNING_IDENTITY"
             for dylib in "$DYLIB_DIR"/*.dylib; do
-              echo "  Signing: $(basename "$dylib")"
+              echo "  Signing dylib: $(basename "$dylib")"
               codesign \
                 --force \
                 --timestamp \
@@ -151,6 +167,26 @@ jobs:
             echo "✅ All dylibs signed"
           else
             echo "No dylibs found in $DYLIB_DIR — skipping dylib signing"
+          fi
+
+          # Sign the llama-server executable itself.
+          # The binary from llama.cpp GitHub Releases carries only an ad-hoc
+          # signature (flags=adhoc,linker-signed). Gatekeeper rejects ad-hoc
+          # signatures for binaries not launched by the user from their own
+          # build. We must replace it with a proper Developer ID signature so
+          # the signed and notarized app bundle passes Gatekeeper on end-user
+          # machines.
+          if [[ -f "$LLAMA_BIN" ]]; then
+            echo "Signing llama-server binary: $(basename "$LLAMA_BIN")"
+            codesign \
+              --force \
+              --timestamp \
+              --options runtime \
+              --sign "$APPLE_SIGNING_IDENTITY" \
+              "$LLAMA_BIN"
+            echo "✅ llama-server binary signed"
+          else
+            echo "Warning: llama-server binary not found at $LLAMA_BIN — skipping"
           fi
 
       # ---- Frontend + Tauri build ----
