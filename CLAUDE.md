@@ -1,6 +1,6 @@
 # CLAUDE.md -- Matrx Local
 
-> AI assistant instructions. See ARCHITECTURE.md for full technical reference.
+> AI assistant instructions. See ARCHITECTURE.md for full technical reference. See LESSONS.md for hard-won CI/build gotchas.
 
 ## Project Overview
 

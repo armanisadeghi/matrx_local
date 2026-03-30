@@ -233,41 +233,61 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # ---- Pre-download whisper.cpp source ----
-      # whisper-cpp-plus-sys downloads whisper.cpp from a pinned GitHub commit at
-      # build time. That download is a single HTTP call with no retry — a transient
-      # 502/503 from GitHub CDN fails the entire build. We pre-download here with
-      # curl's built-in retry logic and unpack into a known directory, then pass
-      # WHISPER_CPP_SOURCE_DIR so the Rust build script uses the local copy and
-      # never touches the network.
+      # whisper-cpp-plus-sys downloads whisper.cpp from GitHub at compile time
+      # using a single HTTP call with no retry. A transient CDN error fails the
+      # whole build. We pre-download here with retries using Python (cross-platform,
+      # always available) and set WHISPER_CPP_SOURCE_DIR so the Rust build script
+      # uses the local copy and never touches the network.
+      #
+      # WHISPER_COMMIT must match WHISPER_CPP_VERSION in whisper-cpp-plus-sys/build.rs.
+      # Update here whenever the whisper-cpp-plus crate is upgraded.
       - name: Pre-download whisper.cpp source
-        shell: bash
+        shell: python
         run: |
-          # Must match WHISPER_CPP_VERSION in whisper-cpp-plus-sys/build.rs.
-          # Update here whenever the whisper-cpp-plus crate is upgraded.
-          WHISPER_COMMIT="02de44819ba4f9cf3f3d2a4adcfc2c5130d7140a"
-          WHISPER_REPO="rmorse/whisper.cpp"
-          WHISPER_URL="https://github.com/${WHISPER_REPO}/archive/${WHISPER_COMMIT}.tar.gz"
-          WHISPER_DIR="$RUNNER_TEMP/whisper-cpp-src"
-          mkdir -p "$WHISPER_DIR"
+          import os, sys, urllib.request, urllib.error, tarfile, shutil, time, pathlib
 
-          echo "Downloading whisper.cpp @ ${WHISPER_COMMIT:0:12}..."
-          curl -fsSL \
-            --retry 5 --retry-delay 10 --retry-all-errors \
-            --connect-timeout 30 --max-time 120 \
-            -o "$RUNNER_TEMP/whisper.tar.gz" \
-            "$WHISPER_URL"
+          WHISPER_COMMIT = "02de44819ba4f9cf3f3d2a4adcfc2c5130d7140a"
+          WHISPER_REPO   = "rmorse/whisper.cpp"
+          URL = f"https://github.com/{WHISPER_REPO}/archive/{WHISPER_COMMIT}.tar.gz"
 
-          tar -xzf "$RUNNER_TEMP/whisper.tar.gz" -C "$RUNNER_TEMP"
-          # Tarball extracts to whisper.cpp-<commit>/ — move contents into WHISPER_DIR
-          EXTRACTED=$(find "$RUNNER_TEMP" -maxdepth 1 -type d -name "whisper.cpp-*" | head -1)
-          if [[ -z "$EXTRACTED" ]]; then
-            echo "ERROR: whisper.cpp directory not found after extraction" >&2
-            ls "$RUNNER_TEMP"
-            exit 1
-          fi
-          mv "$EXTRACTED"/* "$WHISPER_DIR/"
-          echo "✅ whisper.cpp source ready at $WHISPER_DIR"
-          echo "WHISPER_CPP_SOURCE_DIR=$WHISPER_DIR" >> "$GITHUB_ENV"
+          # Use workspace dir — always a clean native path on every platform
+          workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          tarball   = workspace / "whisper.tar.gz"
+          dest      = workspace / "whisper-cpp-src"
+          dest.mkdir(exist_ok=True)
+
+          # Download with retries
+          print(f"Downloading whisper.cpp @ {WHISPER_COMMIT[:12]}...")
+          for attempt in range(1, 6):
+              try:
+                  urllib.request.urlretrieve(URL, tarball)
+                  print(f"  ✅ Downloaded on attempt {attempt}")
+                  break
+              except urllib.error.URLError as e:
+                  print(f"  attempt {attempt}/5 failed: {e}")
+                  if attempt == 5:
+                      sys.exit(f"ERROR: all download attempts failed: {e}")
+                  time.sleep(10 * attempt)
+
+          # Extract — tarfile is cross-platform and handles Windows paths correctly
+          print("Extracting...")
+          with tarfile.open(tarball, "r:gz") as tf:
+              tf.extractall(workspace)
+
+          # Tarball extracts to whisper.cpp-<commit>/ — move contents into dest
+          extracted = next(workspace.glob(f"whisper.cpp-{WHISPER_COMMIT}*"), None)
+          if not extracted or not extracted.is_dir():
+              sys.exit(f"ERROR: expected directory whisper.cpp-{WHISPER_COMMIT[:8]}* not found in {workspace}")
+          for item in extracted.iterdir():
+              shutil.move(str(item), dest / item.name)
+          extracted.rmdir()
+          tarball.unlink()
+
+          print(f"✅ whisper.cpp source ready at {dest}")
+
+          # Write to GITHUB_ENV — use native path string (correct on all platforms)
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"WHISPER_CPP_SOURCE_DIR={dest}\n")
 
       - name: Build and release
         uses: tauri-apps/tauri-action@v0.5
