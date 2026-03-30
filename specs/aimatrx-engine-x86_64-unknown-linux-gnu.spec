@@ -1,5 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
+# SPECPATH is injected by PyInstaller and equals the directory containing this
+# spec file (specs/). All project-relative paths must be resolved from the
+# project root, which is one level up.
+_ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
 # espeak-ng: bundled native library + language dictionaries (required by kokoro-onnx TTS)
 _espeakng_data = collect_data_files('espeakng_loader')
@@ -14,10 +20,14 @@ _lang_tags_data = collect_data_files('language_tags')
 
 
 a = Analysis(
-    ['run.py'],
-    pathex=[],
+    [os.path.join(_ROOT, 'run.py')],
+    pathex=[_ROOT],
     binaries=_espeakng_libs + _soundfile_libs,
-    datas=[('app', 'app'), ('scraper-service/app', 'scraper-service/app'), ('pyproject.toml', '.')] + _espeakng_data + _soundfile_data + _kokoro_data + _lang_tags_data,
+    datas=[
+        (os.path.join(_ROOT, 'app'), 'app'),
+        (os.path.join(_ROOT, 'scraper-service/app'), 'scraper-service/app'),
+        (os.path.join(_ROOT, 'pyproject.toml'), '.'),
+    ] + _espeakng_data + _soundfile_data + _kokoro_data + _lang_tags_data,
     hiddenimports=[
         'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto',
         'uvicorn.protocols', 'uvicorn.protocols.http', 'uvicorn.protocols.http.auto',
@@ -51,7 +61,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=['hooks/runtime_hook.py'],
+    runtime_hooks=[os.path.join(_ROOT, 'hooks/runtime_hook.py')],
     excludes=[
         'torch', 'torchvision', 'torchaudio', 'tensorflow', 'tensorboard',
         'triton', 'scipy', 'nipype', 'nibabel', 'pyxnat', 'openai_whisper',
