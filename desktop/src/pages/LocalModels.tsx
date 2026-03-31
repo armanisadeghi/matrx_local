@@ -22,6 +22,7 @@ import {
   Download,
   Trash2,
   Play,
+  Pause,
   Square,
   RotateCcw,
   Zap,
@@ -4400,35 +4401,61 @@ function InferenceTab() {
                                 <GitFork className="h-3.5 w-3.5" />
                               </button>
 
-                              {/* Read aloud */}
+                              {/* Read aloud — play / pause / stop */}
                               {ttsActions && (
-                                <button
-                                  className={`rounded-md p-1.5 transition-colors ${
-                                    readingMsgId === msg.id
-                                      ? "text-primary"
-                                      : "text-muted-foreground hover:text-foreground"
-                                  }`}
-                                  title={
-                                    readingMsgId === msg.id
-                                      ? "Stop reading"
-                                      : "Read aloud"
-                                  }
-                                  onClick={() => {
-                                    if (readingMsgId === msg.id) {
-                                      chatTts.stopReadAloud();
-                                      setReadingMsgId(null);
-                                    } else {
-                                      setReadingMsgId(msg.id);
-                                      chatTts.readCompleteMessage(msg.content);
-                                    }
-                                  }}
-                                >
+                                <>
                                   {readingMsgId === msg.id ? (
-                                    <VolumeX className="h-3.5 w-3.5" />
+                                    <>
+                                      {/* Pause / Resume */}
+                                      <button
+                                        className="rounded-md p-1.5 text-primary transition-colors hover:text-primary/70"
+                                        title={
+                                          chatTts.isPaused
+                                            ? "Resume reading"
+                                            : "Pause reading"
+                                        }
+                                        onClick={() => {
+                                          if (chatTts.isPaused) {
+                                            chatTts.resumeReadAloud();
+                                          } else {
+                                            chatTts.pauseReadAloud();
+                                          }
+                                        }}
+                                      >
+                                        {chatTts.isPaused ? (
+                                          <Play className="h-3.5 w-3.5" />
+                                        ) : (
+                                          <Pause className="h-3.5 w-3.5" />
+                                        )}
+                                      </button>
+                                      {/* Stop */}
+                                      <button
+                                        className="rounded-md p-1.5 text-destructive transition-colors hover:text-destructive/70"
+                                        title="Stop reading"
+                                        onClick={() => {
+                                          chatTts.stopReadAloud();
+                                          setReadingMsgId(null);
+                                        }}
+                                      >
+                                        <VolumeX className="h-3.5 w-3.5" />
+                                      </button>
+                                    </>
                                   ) : (
-                                    <Volume2 className="h-3.5 w-3.5" />
+                                    /* Play */
+                                    <button
+                                      className="rounded-md p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                                      title="Read aloud"
+                                      onClick={() => {
+                                        setReadingMsgId(msg.id);
+                                        chatTts.readCompleteMessage(
+                                          msg.content,
+                                        );
+                                      }}
+                                    >
+                                      <Volume2 className="h-3.5 w-3.5" />
+                                    </button>
                                   )}
-                                </button>
+                                </>
                               )}
 
                               {/* Divider */}
