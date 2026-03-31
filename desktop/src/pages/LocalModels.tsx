@@ -26,6 +26,8 @@ import {
   Square,
   RotateCcw,
   Zap,
+  ZapOff,
+  Send,
   Cpu,
   HardDrive,
   Activity,
@@ -2538,9 +2540,286 @@ function AgenticToolCallCard({
   );
 }
 
+// ── Audio Chat Mode ───────────────────────────────────────────────────────
+
+interface AudioChatModeProps {
+  voiceChatState: import("@/hooks/use-voice-chat").VoiceChatState;
+  voiceChatActions: import("@/hooks/use-voice-chat").VoiceChatActions;
+  transcriptionState: import("@/hooks/use-transcription").TranscriptionState;
+  isGenerating: boolean;
+  stopGeneration: () => void;
+  ttsPlaybackState: import("@/hooks/use-tts").TtsPlaybackState;
+  chatTts: import("@/hooks/use-chat-tts").UseChatTtsReturn;
+  messages: {
+    id: string;
+    role: string;
+    content: string;
+    isStreaming?: boolean;
+  }[];
+  port: number | null;
+  ttsAvailable: boolean;
+}
+
+function AudioChatMode({
+  voiceChatState,
+  voiceChatActions,
+  transcriptionState,
+  isGenerating,
+  stopGeneration,
+  ttsPlaybackState,
+  messages,
+  ttsAvailable,
+}: AudioChatModeProps) {
+  const { phase, autoMode, pendingTranscript } = voiceChatState;
+  const isRecording = transcriptionState.isRecording;
+  const isProcessingTail = transcriptionState.isProcessingTail;
+  const liveRms = transcriptionState.liveRms;
+  const isSpeaking =
+    ttsPlaybackState === "playing" || ttsPlaybackState === "synthesizing";
+
+  const lastAssistantMsg = [...messages]
+    .reverse()
+    .find((m) => m.role === "assistant");
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+
+  const phaseColor: Record<typeof phase, string> = {
+    idle: "text-muted-foreground",
+    recording: "text-red-500",
+    processing: "text-amber-500",
+    transcribed: "text-blue-500",
+    generating: "text-primary",
+    speaking: "text-green-500",
+  };
+
+  const phaseLabel: Record<typeof phase, string> = {
+    idle: "Tap the mic to speak",
+    recording: "Listening…",
+    processing: "Processing speech…",
+    transcribed: "Ready — tap Send or speak again",
+    generating: "Model is thinking…",
+    speaking: "Speaking…",
+  };
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      {/* Status bar */}
+      <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b bg-muted/10">
+        <div className="flex items-center gap-2">
+          <span className={`text-sm font-medium ${phaseColor[phase]}`}>
+            {phaseLabel[phase]}
+          </span>
+          {!ttsAvailable && (
+            <span className="text-xs text-amber-500">
+              (TTS not available — text responses only)
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Auto mode toggle */}
+          <button
+            onClick={() => voiceChatActions.setAutoMode(!autoMode)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
+              autoMode
+                ? "bg-primary/15 text-primary border-primary/30"
+                : "text-muted-foreground border-border hover:text-foreground"
+            }`}
+            title={
+              autoMode
+                ? "Auto mode: silence auto-submits"
+                : "Manual mode: press Send to submit"
+            }
+          >
+            {autoMode ? (
+              <Zap className="h-3 w-3" />
+            ) : (
+              <ZapOff className="h-3 w-3" />
+            )}
+            {autoMode ? "Auto" : "Manual"}
+          </button>
+        </div>
+      </div>
+
+      {/* Conversation preview — last exchange */}
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-end px-6 py-6 gap-4">
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 text-center max-w-sm">
+            <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
+              <Mic className="h-7 w-7 text-primary/60" />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              No messages yet.{" "}
+              {autoMode
+                ? "Start speaking — I'll auto-submit when you pause."
+                : "Tap the mic, speak, then press Send."}
+            </p>
+          </div>
+        ) : (
+          <div className="w-full max-w-2xl space-y-4">
+            {/* Last user message */}
+            {lastUserMsg && (
+              <div className="flex justify-end">
+                <div className="max-w-[80%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+                  {lastUserMsg.content}
+                </div>
+              </div>
+            )}
+            {/* Last assistant message */}
+            {lastAssistantMsg && (
+              <div className="flex justify-start items-start gap-3">
+                <div
+                  className={`h-8 w-8 rounded-full flex items-center justify-center shrink-0 ${
+                    isSpeaking ? "bg-green-500/20" : "bg-muted"
+                  }`}
+                >
+                  {isSpeaking ? (
+                    <SpeakingWave />
+                  ) : (
+                    <Volume2 className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="max-w-[80%] rounded-2xl bg-muted px-4 py-2.5 text-sm">
+                  {lastAssistantMsg.isStreaming ? (
+                    <>
+                      {lastAssistantMsg.content}
+                      <span className="inline-block h-3.5 w-0.5 bg-primary opacity-70 animate-pulse ml-1 align-middle" />
+                    </>
+                  ) : (
+                    lastAssistantMsg.content
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Live transcript preview */}
+        {(phase === "recording" ||
+          phase === "processing" ||
+          phase === "transcribed") && (
+          <div className="w-full max-w-2xl">
+            <div className="flex justify-end">
+              <div
+                className={`max-w-[80%] rounded-2xl border px-4 py-2.5 text-sm ${
+                  phase === "transcribed"
+                    ? "border-blue-500/40 bg-blue-500/5 text-foreground"
+                    : "border-dashed border-muted-foreground/30 text-muted-foreground italic"
+                }`}
+              >
+                {phase === "recording"
+                  ? transcriptionState.fullTranscript
+                      .split("\n")
+                      .slice(-3)
+                      .join("\n")
+                      .trim() || "Listening…"
+                  : pendingTranscript || "Processing…"}
+                {phase === "recording" && (
+                  <span className="inline-block h-3 w-0.5 bg-current animate-pulse ml-0.5" />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom controls */}
+      <div className="shrink-0 border-t bg-background px-6 py-4">
+        <div className="max-w-2xl mx-auto flex flex-col items-center gap-4">
+          {/* Main mic button */}
+          <div className="flex items-center gap-6">
+            {/* Stop TTS / generation */}
+            {(isSpeaking || isGenerating) && (
+              <button
+                onClick={() => {
+                  if (isSpeaking) voiceChatActions.stopSpeaking();
+                  if (isGenerating) stopGeneration();
+                }}
+                className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/15 text-destructive hover:bg-destructive/25 transition-colors"
+                title={isSpeaking ? "Stop speaking" : "Stop generation"}
+              >
+                <Square className="h-5 w-5 fill-current" />
+              </button>
+            )}
+
+            {/* Big mic button */}
+            <RecordingMicButton
+              isRecording={isRecording}
+              isProcessingTail={isProcessingTail}
+              liveRms={liveRms}
+              onToggle={voiceChatActions.toggleRecording}
+              disabled={
+                isGenerating || isSpeaking || !transcriptionState.activeModel
+              }
+              size="lg"
+              stopIcon="square"
+            />
+
+            {/* Send (manual mode) */}
+            {!autoMode && (
+              <button
+                onClick={voiceChatActions.sendPendingTranscript}
+                disabled={
+                  phase !== "transcribed" ||
+                  !pendingTranscript.trim() ||
+                  isGenerating
+                }
+                className={`flex h-12 w-12 items-center justify-center rounded-full transition-colors ${
+                  phase === "transcribed" &&
+                  pendingTranscript.trim() &&
+                  !isGenerating
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                    : "bg-muted text-muted-foreground opacity-40 cursor-not-allowed"
+                }`}
+                title="Send transcript"
+              >
+                <Send className="h-5 w-5" />
+              </button>
+            )}
+          </div>
+
+          {/* Status hint */}
+          <p className="text-xs text-muted-foreground text-center">
+            {!transcriptionState.activeModel ? (
+              <span className="text-amber-500">
+                Transcription model not ready — go to Voice tab to set up
+              </span>
+            ) : autoMode ? (
+              "Speak, then pause for ~1.5s — I'll send automatically. Response plays back, speak any time to interrupt."
+            ) : (
+              "Tap mic → speak → tap mic again or wait → tap Send → listen to response."
+            )}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SpeakingWave() {
+  return (
+    <div className="flex items-center gap-[2px]">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="block w-[3px] rounded-full bg-green-500"
+          style={{
+            height: `${8 + (i % 2) * 6}px`,
+            animation: `speaking-bar 0.7s ease-in-out ${i * 0.18}s infinite alternate`,
+          }}
+        />
+      ))}
+      <style>{`
+        @keyframes speaking-bar {
+          from { transform: scaleY(0.3); opacity: 0.5; }
+          to   { transform: scaleY(1);   opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 // ── Inference / Playground Tab ────────────────────────────────────────────
 
-type InferenceMode = "chat" | "tools" | "raw";
+type InferenceMode = "chat" | "tools" | "raw" | "voice";
 
 interface ConversationMessage {
   id: string;
@@ -3189,16 +3468,42 @@ function InferenceTab() {
   useEffect(() => {
     const wasGenerating = prevIsGeneratingRef.current;
     prevIsGeneratingRef.current = isGenerating;
-    if (wasGenerating && !isGenerating && autoReadAloud) {
-      // Find the last assistant message
-      const lastAssistant = [...messages]
-        .reverse()
-        .find((m) => m.role === "assistant");
-      if (lastAssistant?.content) {
-        chatTts.readCompleteMessage(lastAssistant.content);
+
+    if (!wasGenerating && isGenerating && autoReadAloud) {
+      // LLM just started — reset readingMsgId so the stop button appears
+      setReadingMsgId("auto");
+    }
+
+    if (wasGenerating && !isGenerating) {
+      if (autoReadAloud) {
+        // Generation just finished — speak the last assistant message
+        const lastAssistant = [...messages]
+          .reverse()
+          .find((m) => m.role === "assistant");
+        if (lastAssistant?.content) {
+          setReadingMsgId(lastAssistant.id);
+          chatTts.readCompleteMessage(lastAssistant.content);
+        } else {
+          // Nothing to read — clear state
+          chatTts.stopReadAloud();
+          setReadingMsgId(null);
+        }
+      } else {
+        // Generation stopped but autoReadAloud is off — stop any silent TTS
+        if (chatTts.isReadingAloud) {
+          chatTts.stopReadAloud();
+          setReadingMsgId(null);
+        }
       }
     }
-  });
+  }, [isGenerating]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When TTS finishes, clear the readingMsgId
+  useEffect(() => {
+    if (!chatTts.isReadingAloud && readingMsgId !== null) {
+      setReadingMsgId(null);
+    }
+  }, [chatTts.isReadingAloud, readingMsgId]);
 
   // Voice chat: auto-play TTS when generation finishes in voice chat mode
   useEffect(() => {
@@ -4373,22 +4678,35 @@ function InferenceTab() {
           <div className="flex items-center gap-3">
             {/* Mode switcher */}
             <div className="flex gap-0.5 rounded-md border p-0.5 bg-muted/30">
-              {(["chat", "tools", "raw"] as InferenceMode[]).map((m) => (
-                <button
-                  key={m}
-                  className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-                    mode === m
-                      ? "bg-background shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  onClick={() => setMode(m)}
-                >
-                  {m === "chat" && <MessageSquare className="h-3 w-3" />}
-                  {m === "tools" && <Wrench className="h-3 w-3" />}
-                  {m === "raw" && <Code className="h-3 w-3" />}
-                  {m.charAt(0).toUpperCase() + m.slice(1)}
-                </button>
-              ))}
+              {(["chat", "voice", "tools", "raw"] as InferenceMode[]).map(
+                (m) => (
+                  <button
+                    key={m}
+                    className={`flex items-center gap-1 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                      mode === m
+                        ? "bg-background shadow-sm text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => {
+                      setMode(m);
+                      // Entering voice mode → auto-activate voice chat
+                      if (m === "voice" && !voiceChatState.isActive) {
+                        voiceChatActions.activate();
+                      }
+                      // Leaving voice mode → deactivate
+                      if (m !== "voice" && voiceChatState.isActive) {
+                        voiceChatActions.deactivate();
+                      }
+                    }}
+                  >
+                    {m === "chat" && <MessageSquare className="h-3 w-3" />}
+                    {m === "voice" && <Mic className="h-3 w-3" />}
+                    {m === "tools" && <Wrench className="h-3 w-3" />}
+                    {m === "raw" && <Code className="h-3 w-3" />}
+                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                  </button>
+                ),
+              )}
             </div>
             <ModelSwitcher />
           </div>
@@ -5024,7 +5342,7 @@ function InferenceTab() {
               </div>
             </div>
 
-            {/* Voice Chat Bar — appears below the input area */}
+            {/* Voice Chat Bar — appears below the input area (chat mode only) */}
             <VoiceChatBar
               voiceChatState={voiceChatState}
               voiceChatActions={voiceChatActions}
@@ -5039,6 +5357,24 @@ function InferenceTab() {
               }
             />
           </>
+        )}
+
+        {/* ── Voice Chat mode ── */}
+        {mode === "voice" && (
+          <AudioChatMode
+            voiceChatState={voiceChatState}
+            voiceChatActions={voiceChatActions}
+            transcriptionState={transcriptionState}
+            isGenerating={isGenerating}
+            stopGeneration={() => {
+              stopRef.current = true;
+            }}
+            ttsPlaybackState={ttsPlaybackState}
+            chatTts={chatTts}
+            messages={messages}
+            port={port}
+            ttsAvailable={!!ttsActions}
+          />
         )}
 
         {/* ── Tools / Agentic mode ── */}

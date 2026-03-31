@@ -494,7 +494,17 @@ export function useTts(): [UseTtsState, UseTtsActions] {
       const vid = voiceId ?? selectedVoice;
       const s = spd ?? speed;
 
-      streamAbortRef.current?.abort();
+      // Hard-reset the AudioContext and all scheduling state so that chunks
+      // from the new session are never tacked onto the timeline of a previous
+      // (potentially still-running) session.  Without this, nextStartTimeRef
+      // can point minutes into the future and every chunk will be delayed.
+      stopAudio();
+
+      synthDoneRef.current = false;
+      activeSourceCountRef.current = 0;
+      setPlaybackState("synthesizing");
+      setError(null);
+
       const abort = new AbortController();
       streamAbortRef.current = abort;
 
@@ -507,17 +517,33 @@ export function useTts(): [UseTtsState, UseTtsActions] {
           { text, voice_id: vid, speed: s },
           abort.signal,
         );
+        let firstChunk = true;
         for await (const wavBlob of gen) {
           if (abort.signal.aborted) break;
           await scheduleChunk(wavBlob);
+          // Flip to "playing" as soon as the first chunk is scheduled so the
+          // UI shows the correct state while subsequent chunks are still arriving.
+          if (firstChunk && !abort.signal.aborted) {
+            firstChunk = false;
+            setPlaybackState("playing");
+          }
+        }
+        if (!abort.signal.aborted) {
+          synthDoneRef.current = true;
+          if (activeSourceCountRef.current === 0) {
+            setPlaybackState("idle");
+          }
+          // else: still playing — onAllSourcesEnded() will flip to idle
         }
       } catch (e) {
         if ((e as Error).name !== "AbortError") {
+          setPlaybackState("idle");
           throw e;
         }
+        setPlaybackState("idle");
       }
     },
-    [selectedVoice, speed, scheduleChunk],
+    [selectedVoice, speed, scheduleChunk, stopAudio],
   );
 
   const preview = useCallback(
