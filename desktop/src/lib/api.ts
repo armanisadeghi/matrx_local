@@ -5,6 +5,8 @@
  * In production, Tauri spawns it as a managed sidecar process.
  */
 
+import { emitClientLog } from "@/hooks/use-client-log";
+
 const DEFAULT_PORT = 22140;
 const DISCOVERY_PORTS = Array.from({ length: 20 }, (_, i) => DEFAULT_PORT + i);
 
@@ -152,6 +154,11 @@ class EngineAPI {
     const token = await this._getAccessToken();
     if (!token) return {};
     return { Authorization: `Bearer ${token}` };
+  }
+
+  /** Headers for authenticated engine HTTP calls (same JWT as tools, settings, etc.). */
+  async getEngineAuthHeaders(): Promise<Record<string, string>> {
+    return this.authHeaders();
   }
 
   /**
@@ -3068,9 +3075,19 @@ async function imageGenFetch<T>(
   url: string,
   options?: RequestInit,
 ): Promise<T> {
+  const auth = await engine.getEngineAuthHeaders();
+  const mergedHeaders = new Headers({
+    "Content-Type": "application/json",
+    ...auth,
+  });
+  if (options?.headers) {
+    const extra = new Headers(options.headers);
+    extra.forEach((value, key) => mergedHeaders.set(key, value));
+  }
+  const method = options?.method ?? "GET";
   const resp = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: mergedHeaders,
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
@@ -3080,6 +3097,21 @@ async function imageGenFetch<T>(
       if (parsed.detail) detail = parsed.detail;
     } catch {
       // use raw body
+    }
+    try {
+      const u = new URL(url);
+      const path = `${u.pathname}${u.search}`;
+      emitClientLog(
+        "error",
+        `[image-gen] ${method} ${path} → HTTP ${resp.status}: ${detail.slice(0, 240)}`,
+        "engine",
+      );
+    } catch {
+      emitClientLog(
+        "error",
+        `[image-gen] ${method} request failed → HTTP ${resp.status}: ${detail.slice(0, 240)}`,
+        "engine",
+      );
     }
     throw new Error(detail || `HTTP ${resp.status}`);
   }

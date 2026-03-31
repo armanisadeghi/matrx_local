@@ -2707,9 +2707,7 @@ function AudioChatMode({
               >
                 {phase === "recording"
                   ? transcriptionState.fullTranscript
-                      .split("\n")
-                      .slice(-3)
-                      .join("\n")
+                      .slice(voiceChatState.sessionBaseTranscript.length)
                       .trim() || "Listening…"
                   : pendingTranscript || "Processing…"}
                 {phase === "recording" && (
@@ -3447,6 +3445,19 @@ function InferenceTab() {
   const { state: wwState } = useWakeWordContext();
 
   // ── Voice chat state machine ──────────────────────────────────────────
+  // Stable getter for the last completed assistant message — used by the hook
+  // to start TTS after generation finishes.  We use a ref so the hook never
+  // holds a stale closure over `messages`.
+  const lastAssistantContentRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isGenerating) {
+      const last = [...messages]
+        .reverse()
+        .find((m) => m.role === "assistant" && !m.isStreaming);
+      lastAssistantContentRef.current = last?.content ?? null;
+    }
+  }, [isGenerating, messages]);
+
   const [voiceChatState, voiceChatActions] = useVoiceChat({
     transcriptionState,
     transcriptionActions,
@@ -3459,6 +3470,7 @@ function InferenceTab() {
         void handleSendText(text);
       }, 0);
     },
+    onStartTts: () => lastAssistantContentRef.current,
     isGenerating,
     modelReady: !!transcriptionState.activeModel,
   });
@@ -3505,20 +3517,6 @@ function InferenceTab() {
     }
   }, [chatTts.isReadingAloud, readingMsgId]);
 
-  // Voice chat: auto-play TTS when generation finishes in voice chat mode
-  useEffect(() => {
-    if (!voiceChatState.isActive) return;
-    if (voiceChatState.phase !== "speaking") return;
-    // The phase flipped to "speaking" because generation just completed.
-    // Kick off TTS for the most recent assistant message.
-    const lastAssistant = [...messages]
-      .reverse()
-      .find((m) => m.role === "assistant" && !m.isStreaming);
-    if (lastAssistant?.content) {
-      chatTts.readCompleteMessage(lastAssistant.content);
-    }
-  }, [voiceChatState.phase]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // Dictation: when standalone mic recording stops and tail is done, append delta to input
   useEffect(() => {
     if (!dictationActiveRef.current) return;
@@ -3538,18 +3536,24 @@ function InferenceTab() {
     transcriptionState.fullTranscript,
   ]);
 
-  // Wake word → auto-activate voice chat
+  // Wake word → switch to Voice tab and start recording through the state machine
   const prevWwUiModeRef = useRef(wwState.uiMode);
   useEffect(() => {
     const prev = prevWwUiModeRef.current;
     prevWwUiModeRef.current = wwState.uiMode;
-    if (
-      prev !== "active" &&
-      wwState.uiMode === "active" &&
-      !voiceChatState.isActive
-    ) {
-      voiceChatActions.activate();
-      void transcriptionActions.startRecording();
+    if (prev !== "active" && wwState.uiMode === "active") {
+      // Switch to the voice tab so the full UI is visible
+      setMode("voice");
+      // Activate the voice chat panel if not already active
+      if (!voiceChatState.isActive) {
+        voiceChatActions.activate();
+      }
+      // Use toggleRecording (not startRecording directly) so the hook
+      // snapshots the transcript base and manages the phase correctly.
+      // Give React one tick to commit activate() before starting.
+      setTimeout(() => {
+        voiceChatActions.toggleRecording();
+      }, 50);
     }
   }, [wwState.uiMode]); // eslint-disable-line react-hooks/exhaustive-deps
   const [switchingModel, setSwitchingModel] = useState(false);
@@ -4711,21 +4715,35 @@ function InferenceTab() {
             <ModelSwitcher />
           </div>
           <div className="flex items-center gap-2">
-            {mode === "chat" && activeConv && messages.length > 0 && (
+            {(mode === "chat" || mode === "voice") && (
               <Button
                 size="sm"
                 variant="ghost"
                 className="h-7 text-xs text-muted-foreground gap-1"
-                onClick={() => {
-                  updateMessages(activeConvId!, [], systemPrompt);
-                  setError(null);
-                }}
-                title="Clear messages"
+                onClick={newConversation}
+                title="New conversation"
               >
-                <RotateCcw className="h-3 w-3" />
-                Clear
+                <Plus className="h-3 w-3" />
+                New
               </Button>
             )}
+            {(mode === "chat" || mode === "voice") &&
+              activeConv &&
+              messages.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs text-muted-foreground gap-1"
+                  onClick={() => {
+                    updateMessages(activeConvId!, [], systemPrompt);
+                    setError(null);
+                  }}
+                  title="Clear messages"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  Clear
+                </Button>
+              )}
             <Button
               size="sm"
               variant="ghost"
@@ -5355,6 +5373,7 @@ function InferenceTab() {
                 ttsPlaybackState === "playing" ||
                 ttsPlaybackState === "synthesizing"
               }
+              sessionBaseTranscript={voiceChatState.sessionBaseTranscript}
             />
           </>
         )}
@@ -6515,7 +6534,39 @@ function StarRating({ value, max = 5 }: { value: number; max?: number }) {
 
 type ImageGenView = "picker" | "generate" | "workflow";
 
+function classifyImageGenLoadError(
+  message: string,
+  engineConnected: boolean,
+): { title: string; hint: string; kind: "engine" | "auth" | "generic" } {
+  if (!engineConnected) {
+    return {
+      title: "Local engine not connected",
+      hint: "The Matrx engine on your computer is not reachable yet. Wait for it to finish starting, or restart the app. Then use Try again below.",
+      kind: "engine",
+    };
+  }
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("authorization") ||
+    lower.includes("401") ||
+    lower.includes("bearer")
+  ) {
+    return {
+      title: "Sign in to Matrx required",
+      hint: "This feature talks to the secure copy of the engine on your device. That requires an active Matrx account session (the same sign-in as the rest of the app). It is separate from your Hugging Face token in Configurations—which is only used when downloading certain models from Hugging Face.",
+      kind: "auth",
+    };
+  }
+  return {
+    title: "Could not load image generation",
+    hint: message,
+    kind: "generic",
+  };
+}
+
 function MediaModelsTab() {
+  const navigate = useNavigate();
+  const { isAuthenticated, signInWithOAuth } = useAuth();
   const [igStatus, setIgStatus] = useState<ImageGenStatus | null>(null);
   const [models, setModels] = useState<ImageGenModelInfo[]>([]);
   const [presets, setPresets] = useState<ImageGenWorkflowPreset[]>([]);
@@ -6560,6 +6611,7 @@ function MediaModelsTab() {
       setLoading(false);
       return;
     }
+    setLoading(true);
     try {
       const [status, modelList, presetList] = await Promise.all([
         getImageGenStatus(base),
@@ -6582,6 +6634,13 @@ function MediaModelsTab() {
   useEffect(() => {
     void fetchStatus();
   }, [fetchStatus]);
+
+  // Engine URL is set outside React state; poll briefly while we're waiting.
+  useEffect(() => {
+    if (error !== "Engine not connected") return;
+    const id = window.setInterval(() => void fetchStatus(), 2500);
+    return () => window.clearInterval(id);
+  }, [error, fetchStatus]);
 
   async function handleLoadModel(model: ImageGenModelInfo) {
     const base = getBaseUrl();
@@ -6698,12 +6757,70 @@ function MediaModelsTab() {
   }
 
   if (error) {
+    const engineConnected = !!getBaseUrl();
+    const { title, hint, kind } = classifyImageGenLoadError(
+      error,
+      engineConnected,
+    );
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 flex items-start gap-3">
-        <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
-        <div className="text-sm">
-          <p className="font-medium text-foreground">Engine not available</p>
-          <p className="text-muted-foreground text-xs mt-0.5">{error}</p>
+      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-4 space-y-3">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+          <div className="text-sm space-y-1.5 min-w-0">
+            <p className="font-medium text-foreground">{title}</p>
+            <p className="text-muted-foreground text-xs leading-relaxed">
+              {hint}
+            </p>
+            {kind !== "auth" && (
+              <p className="text-[11px] font-mono text-muted-foreground/90 break-all pt-0.5">
+                {error}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => void fetchStatus()}
+          >
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Try again
+          </Button>
+          {kind === "auth" && (
+            <>
+              {!isAuthenticated ? (
+                <Button size="sm" onClick={() => void signInWithOAuth()}>
+                  <UserPlus className="h-3.5 w-3.5 mr-1.5" />
+                  Sign in to Matrx
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate("/configurations")}
+              >
+                <Settings className="h-3.5 w-3.5 mr-1.5" />
+                Open Configurations
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate("/settings")}
+              >
+                Open Settings
+              </Button>
+            </>
+          )}
+          {kind === "engine" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate("/activity")}
+            >
+              View Activity / logs
+            </Button>
+          ) : null}
         </div>
       </div>
     );

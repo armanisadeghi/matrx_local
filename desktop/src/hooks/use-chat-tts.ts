@@ -179,7 +179,17 @@ export function useChatTts(
         });
       }
     } else {
+      // Nothing remaining to synthesize — mark done and clear UI state.
       readAloudActiveRef.current = false;
+      // Only clear isReadingAloud if the AudioContext queue is also drained.
+      // If the fallback queue has items still playing, _playNextInQueue will
+      // call setIsReadingAloud(false) when it empties. But if both queues are
+      // already empty (e.g. entire message was already spoken chunk-by-chunk),
+      // we must clear it here, otherwise it stays "reading" forever.
+      if (audioQueueRef.current.length === 0 && !isPlayingRef.current) {
+        setIsReadingAloud(false);
+        setIsPaused(false);
+      }
     }
   }, [llmIsStreaming, _synthesizeChunk]);
 

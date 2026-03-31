@@ -28,6 +28,12 @@ interface VoiceChatBarProps {
   stopGeneration: () => void;
   /** Whether TTS is currently speaking. */
   isSpeaking: boolean;
+  /**
+   * The transcript base snapshotted at the start of the current recording
+   * session. Used to compute the live session-delta display during recording.
+   * If omitted the component falls back to showing the last 3 transcript lines.
+   */
+  sessionBaseTranscript?: string;
 }
 
 const PHASE_LABELS: Record<VoiceChatState["phase"], string> = {
@@ -46,6 +52,7 @@ export function VoiceChatBar({
   isGenerating,
   stopGeneration,
   isSpeaking,
+  sessionBaseTranscript = "",
 }: VoiceChatBarProps) {
   const { phase, isActive, autoMode, pendingTranscript } = voiceChatState;
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -61,13 +68,12 @@ export function VoiceChatBar({
   const isProcessingTail = transcriptionState.isProcessingTail;
   const liveRms = transcriptionState.liveRms;
 
-  // Live transcript for preview: show delta during recording, final pending after
+  // Live transcript for preview: show only the session-delta during recording
+  // so that text from previous turns doesn't bleed into this turn's display.
   const displayTranscript =
     phase === "recording" || phase === "processing"
       ? transcriptionState.fullTranscript
-          .split("\n")
-          .slice(-3)
-          .join("\n")
+          .slice(sessionBaseTranscript.length)
           .trim()
       : pendingTranscript;
 

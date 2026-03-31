@@ -212,6 +212,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
             token = request.query_params.get("token") or None
 
         if not token:
+            logger.warning(
+                "[auth] rejected %s %s — missing bearer token or ?token= query",
+                request.method,
+                path,
+            )
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Authorization header required"},

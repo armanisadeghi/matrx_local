@@ -19,6 +19,8 @@ These cannot be resolved by changes to this repo. They are blocked on upstream p
 
 Known broken things in the current release that need fixing.
 
+- [x] **Image gen tab: 401 "Authorization header required"** — Fixed 2026-03-31: `imageGenFetch` in `api.ts` did not attach the same `Authorization: Bearer` JWT as other engine calls; auth middleware rejected `/image-gen/*`. Also added client `emitClientLog` on failures, Python `logger.warning` on missing token, and clearer Image tab error UI (sign-in vs HF token vs engine).
+
 - [ ] **Health check false-positives on slow engine start** — `isHealthy()` in `api.ts` and Rust's `check_engine_health` both call `/tools/list` with a 2-second timeout. Heavy first-load (scraper init, model warmup) can exceed 2 s and incorrectly flip the engine to "disconnected" in the UI. Fix: either switch to a lightweight `/health` endpoint, or increase the timeout to 5–8 s for the startup grace window.
 
 - [ ] **Chat: "Agent not found" silent failure after agent pick** — `ChatPanel` calls `.find()` across the loaded agent list; if the agent ID isn't present (e.g. sync hasn't completed), `activeAgent` silently becomes `null` — no error toast, next send proceeds agentlessly. Fix: show a toast / retry when `found === undefined`, and gate the send button until sync completes.
