@@ -65,6 +65,7 @@ import {
   FileText,
   Volume2,
   VolumeX,
+  Mic,
   ChevronRight,
   TriangleAlert,
   ListChecks,
@@ -133,6 +134,11 @@ import type {
 import { useAuth } from "@/hooks/use-auth";
 import { useTtsApp } from "@/contexts/TtsContext";
 import { useChatTts } from "@/hooks/use-chat-tts";
+import { useTranscriptionApp } from "@/contexts/TranscriptionContext";
+import { useWakeWordContext } from "@/contexts/WakeWordContext";
+import { useVoiceChat } from "@/hooks/use-voice-chat";
+import { VoiceChatBar } from "@/components/voice/VoiceChatBar";
+import { RecordingMicButton } from "@/components/recording/RecordingMicButton";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
 
@@ -3133,16 +3139,114 @@ function InferenceTab() {
 
   // ── TTS read-aloud ────────────────────────────────────────────────────
   const [readingMsgId, setReadingMsgId] = useState<string | null>(null);
-  let ttsActions = null;
+  const [autoReadAloud, setAutoReadAloud] = useState(false);
+
+  // ── Dictation mic (standalone, separate from voice chat mode) ─────────
+  // Tracks whether the standalone mic button (in the toolbar) started recording
+  const dictationActiveRef = useRef(false);
+  const dictationBaseTranscriptRef = useRef("");
+  let ttsState = null as ReturnType<typeof useTtsApp>[0] | null;
+  let ttsActions = null as ReturnType<typeof useTtsApp>[1] | null;
   try {
-    const [, _actions] = useTtsApp();
+    const [_state, _actions] = useTtsApp();
+    ttsState = _state;
     ttsActions = _actions;
   } catch {
     // TtsProvider not in tree — read-aloud silently unavailable
   }
-  // useChatTts needs the "active" streaming message; for on-demand read-aloud
-  // of complete messages we only use readCompleteMessage / stopReadAloud.
-  const chatTts = useChatTts(ttsActions, null, false);
+  // The currently-streaming assistant message (for real-time TTS sentence chunking)
+  const streamingMsg =
+    messages.find((m) => m.role === "assistant" && m.isStreaming) ?? null;
+  const chatTts = useChatTts(ttsActions, streamingMsg, isGenerating);
+  const ttsPlaybackState = ttsState?.playbackState ?? "idle";
+
+  // ── Transcription (singleton) ─────────────────────────────────────────
+  const { state: transcriptionState, actions: transcriptionActions } =
+    useTranscriptionApp();
+
+  // ── Wake word context (read-only) ─────────────────────────────────────
+  const { state: wwState } = useWakeWordContext();
+
+  // ── Voice chat state machine ──────────────────────────────────────────
+  const [voiceChatState, voiceChatActions] = useVoiceChat({
+    transcriptionState,
+    transcriptionActions,
+    chatTts,
+    ttsPlaybackState,
+    onSend: (text: string) => {
+      setInput(text);
+      // Use a micro-task so setInput propagates before handleSend reads it
+      setTimeout(() => {
+        void handleSendText(text);
+      }, 0);
+    },
+    isGenerating,
+    modelReady: !!transcriptionState.activeModel,
+  });
+
+  // Auto-read aloud: start TTS when generation finishes
+  const prevIsGeneratingRef = useRef(false);
+  useEffect(() => {
+    const wasGenerating = prevIsGeneratingRef.current;
+    prevIsGeneratingRef.current = isGenerating;
+    if (wasGenerating && !isGenerating && autoReadAloud) {
+      // Find the last assistant message
+      const lastAssistant = [...messages]
+        .reverse()
+        .find((m) => m.role === "assistant");
+      if (lastAssistant?.content) {
+        chatTts.readCompleteMessage(lastAssistant.content);
+      }
+    }
+  });
+
+  // Voice chat: auto-play TTS when generation finishes in voice chat mode
+  useEffect(() => {
+    if (!voiceChatState.isActive) return;
+    if (voiceChatState.phase !== "speaking") return;
+    // The phase flipped to "speaking" because generation just completed.
+    // Kick off TTS for the most recent assistant message.
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant" && !m.isStreaming);
+    if (lastAssistant?.content) {
+      chatTts.readCompleteMessage(lastAssistant.content);
+    }
+  }, [voiceChatState.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Dictation: when standalone mic recording stops and tail is done, append delta to input
+  useEffect(() => {
+    if (!dictationActiveRef.current) return;
+    if (transcriptionState.isRecording || transcriptionState.isProcessingTail)
+      return;
+    // Recording fully finished — append delta
+    dictationActiveRef.current = false;
+    const delta = transcriptionState.fullTranscript
+      .slice(dictationBaseTranscriptRef.current.length)
+      .trim();
+    if (delta) {
+      setInput((prev) => (prev ? prev + " " + delta : delta));
+    }
+  }, [
+    transcriptionState.isRecording,
+    transcriptionState.isProcessingTail,
+    transcriptionState.fullTranscript,
+  ]);
+
+  // Wake word → auto-activate voice chat
+  const prevWwUiModeRef = useRef(wwState.uiMode);
+  useEffect(() => {
+    const prev = prevWwUiModeRef.current;
+    prevWwUiModeRef.current = wwState.uiMode;
+    if (
+      prev !== "active" &&
+      wwState.uiMode === "active" &&
+      !voiceChatState.isActive
+    ) {
+      voiceChatActions.activate();
+      void transcriptionActions.startRecording();
+    }
+  }, [wwState.uiMode]); // eslint-disable-line react-hooks/exhaustive-deps
   const [switchingModel, setSwitchingModel] = useState(false);
   const [showPromptPicker, setShowPromptPicker] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -3965,6 +4069,99 @@ function InferenceTab() {
     }
   };
 
+  // Variant of handleSend that accepts text directly (used by voice chat hook)
+  const handleSendText = async (text: string) => {
+    if (!port || !text.trim() || isGenerating) return;
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    setInput("");
+    setError(null);
+    stopRef.current = false;
+
+    let convId = activeConvId;
+    if (!convId) {
+      const conv: SavedConversation = {
+        id: crypto.randomUUID(),
+        title: makeTitle(text),
+        messages: [],
+        systemPrompt,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        modelName: serverStatus?.model_name,
+      };
+      persistConvs([conv, ...conversations]);
+      convId = conv.id;
+      setActiveConvId(convId);
+    }
+
+    const chatMessages: ChatMessage[] = [
+      ...(systemPrompt.trim()
+        ? [{ role: "system" as const, content: systemPrompt }]
+        : []),
+      ...messages.map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      })),
+      { role: "user" as const, content: text },
+    ];
+
+    const assistantId = crypto.randomUUID();
+    const newMessages: ConversationMessage[] = [
+      ...messages,
+      { id: crypto.randomUUID(), role: "user", content: text },
+      { id: assistantId, role: "assistant", content: "", isStreaming: true },
+    ];
+
+    updateMessages(convId, newMessages, systemPrompt);
+    setIsGenerating(true);
+    userScrolledUpRef.current = false;
+    scrollToBottom(true);
+
+    let accumulated = "";
+    try {
+      const stream = streamCompletion(port, chatMessages, {
+        temperature,
+        maxTokens,
+      });
+      for await (const token of stream) {
+        if (stopRef.current) break;
+        accumulated += token;
+        setConversations((prev) => {
+          const updated = prev.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === assistantId ? { ...m, content: accumulated } : m,
+                  ),
+                }
+              : c,
+          );
+          saveConversations(updated);
+          return updated;
+        });
+        scrollToBottom();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConversations((prev) => {
+        const updated = prev.map((c) =>
+          c.id === convId
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === assistantId ? { ...m, isStreaming: false } : m,
+                ),
+              }
+            : c,
+        );
+        saveConversations(updated);
+        return updated;
+      });
+      setIsGenerating(false);
+    }
+  };
+
   const handleRawJson = async () => {
     if (!port) return;
     setError(null);
@@ -4712,7 +4909,93 @@ function InferenceTab() {
                       </div>
                     </div>
 
-                    <div>
+                    <div className="flex items-center gap-1.5">
+                      {/* Mic dictation button */}
+                      <RecordingMicButton
+                        isRecording={
+                          transcriptionState.isRecording &&
+                          !voiceChatState.isActive
+                        }
+                        isProcessingTail={
+                          transcriptionState.isProcessingTail &&
+                          !voiceChatState.isActive
+                        }
+                        liveRms={
+                          voiceChatState.isActive
+                            ? 0
+                            : transcriptionState.liveRms
+                        }
+                        onToggle={() => {
+                          if (voiceChatState.isActive) return; // let VoiceChatBar handle mic in voice mode
+                          if (
+                            transcriptionState.isRecording ||
+                            transcriptionState.isProcessingTail
+                          ) {
+                            void transcriptionActions.stopRecording();
+                          } else {
+                            dictationBaseTranscriptRef.current =
+                              transcriptionState.fullTranscript;
+                            dictationActiveRef.current = true;
+                            void transcriptionActions.startRecording();
+                          }
+                        }}
+                        disabled={
+                          isGenerating ||
+                          switchingModel ||
+                          !transcriptionState.activeModel ||
+                          voiceChatState.isActive
+                        }
+                        size="xs"
+                        stopIcon="square"
+                      />
+
+                      {/* Voice chat toggle */}
+                      <button
+                        onClick={() => {
+                          if (voiceChatState.isActive) {
+                            voiceChatActions.deactivate();
+                          } else {
+                            voiceChatActions.activate();
+                          }
+                        }}
+                        className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
+                          voiceChatState.isActive
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                        }`}
+                        title={
+                          voiceChatState.isActive
+                            ? "Exit voice chat"
+                            : "Enter voice chat mode"
+                        }
+                      >
+                        <Mic className="h-3.5 w-3.5" />
+                      </button>
+
+                      {/* Auto-read-aloud toggle */}
+                      {ttsActions && (
+                        <button
+                          onClick={() => setAutoReadAloud((v) => !v)}
+                          className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
+                            autoReadAloud
+                              ? "bg-primary/15 text-primary"
+                              : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                          }`}
+                          title={
+                            autoReadAloud
+                              ? "Auto read-aloud ON (click to disable)"
+                              : "Auto read-aloud OFF (click to enable)"
+                          }
+                        >
+                          {autoReadAloud ? (
+                            <Volume2 className="h-3.5 w-3.5" />
+                          ) : (
+                            <VolumeX className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      )}
+
+                      {/* Send / Stop */}
                       {isGenerating ? (
                         <button
                           onClick={() => (stopRef.current = true)}
@@ -4740,6 +5023,21 @@ function InferenceTab() {
                 </div>
               </div>
             </div>
+
+            {/* Voice Chat Bar — appears below the input area */}
+            <VoiceChatBar
+              voiceChatState={voiceChatState}
+              voiceChatActions={voiceChatActions}
+              transcriptionState={transcriptionState}
+              isGenerating={isGenerating}
+              stopGeneration={() => {
+                stopRef.current = true;
+              }}
+              isSpeaking={
+                ttsPlaybackState === "playing" ||
+                ttsPlaybackState === "synthesizing"
+              }
+            />
           </>
         )}
 

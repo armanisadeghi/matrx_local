@@ -13,8 +13,6 @@ These cannot be resolved by changes to this repo. They are blocked on upstream p
 
 - [ ] **matrx-ai server-side ORM leaking into desktop** — The `matrx-ai` / chat stack still hits the server-side DB in places. Blocks confident production shipping until client-only/local paths through `matrx-ai` are verified and any server-side assumptions are guarded.
 
-- [ ] **Gemma-3n vision waiting on llama.cpp** — Gemma-3n-E4B has native multimodal (text + image + audio) but llama.cpp support is text-only. When llama.cpp adds a gemma3n vision pipeline, enable it: set `vision_rating` from 0 to 3 in `model_selector.rs` and add mmproj download support.
-
 ---
 
 ## 🟠 Active Bugs & Regressions
