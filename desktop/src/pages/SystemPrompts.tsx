@@ -3,10 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/layout/PageHeader";
-import {
-  systemPrompts,
-  BUILTIN_PROMPTS,
-} from "@/lib/system-prompts";
+import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
 import type { SystemPrompt } from "@/lib/system-prompts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +12,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Plus,
   Trash2,
@@ -32,6 +36,7 @@ import {
   Tag,
   Clock,
   Hash,
+  CopyPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -83,6 +88,8 @@ interface EditorState {
   category: string;
 }
 
+const CUSTOM_CATEGORY_VALUE = "__custom__";
+
 function PromptEditor({
   initial,
   isBuiltin,
@@ -90,6 +97,7 @@ function PromptEditor({
   onCancel,
   onDelete,
   onFork,
+  onDuplicate,
 }: {
   initial: PromptEntry | null;
   isBuiltin: boolean;
@@ -97,6 +105,7 @@ function PromptEditor({
   onCancel: () => void;
   onDelete?: () => void;
   onFork?: () => void;
+  onDuplicate?: () => void;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [content, setContent] = useState(initial?.content ?? "");
@@ -107,11 +116,27 @@ function PromptEditor({
   const categories = systemPrompts.categories();
   const isNew = initial === null;
 
-  const canSave = name.trim().length > 0 && content.trim().length > 0 && (dirty || isNew);
+  // Whether the current category value matches one of the known options
+  const isCustomCategory = category !== "" && !categories.includes(category);
+  // The Select value — either the category itself or the sentinel for custom
+  const selectValue = isCustomCategory
+    ? CUSTOM_CATEGORY_VALUE
+    : category || "General";
+  const [showCustomInput, setShowCustomInput] = useState(isCustomCategory);
 
-  const handleChange = <T extends string>(setter: (v: T) => void) => (v: T) => {
-    setter(v);
-    setDirty(true);
+  const canSave =
+    name.trim().length > 0 && content.trim().length > 0 && (dirty || isNew);
+
+  const handleChange =
+    <T extends string>(setter: (v: T) => void) =>
+    (v: T) => {
+      setter(v);
+      setDirty(true);
+    };
+
+  const handleSaveClick = () => {
+    onSave({ name, content, category });
+    setDirty(false);
   };
 
   const handleCopy = () => {
@@ -158,14 +183,26 @@ function PromptEditor({
             </Badge>
           )}
           {!isNew && !isBuiltin && dirty && (
-            <Badge variant="outline" className="text-amber-500 border-amber-500/30">
+            <Badge
+              variant="outline"
+              className="text-amber-500 border-amber-500/30"
+            >
               Unsaved changes
             </Badge>
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={handleCopy} className="gap-1.5">
-            {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleCopy}
+            className="gap-1.5"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
             {copied ? "Copied" : "Copy"}
           </Button>
           {isBuiltin ? (
@@ -176,9 +213,25 @@ function PromptEditor({
           ) : (
             <>
               {!isNew && dirty && (
-                <Button variant="ghost" size="sm" onClick={handleReset} className="gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleReset}
+                  className="gap-1.5"
+                >
                   <RotateCcw className="h-3.5 w-3.5" />
                   Reset
+                </Button>
+              )}
+              {!isNew && onDuplicate && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onDuplicate}
+                  className="gap-1.5"
+                >
+                  <CopyPlus className="h-3.5 w-3.5" />
+                  Duplicate
                 </Button>
               )}
               {!isNew && onDelete && (
@@ -195,7 +248,7 @@ function PromptEditor({
               <Button
                 size="sm"
                 disabled={!canSave}
-                onClick={() => onSave({ name, content, category })}
+                onClick={handleSaveClick}
                 className="gap-1.5"
               >
                 <Save className="h-3.5 w-3.5" />
@@ -230,21 +283,51 @@ function PromptEditor({
             <div className="space-y-2">
               <Label className="text-sm font-medium">Category</Label>
               {isBuiltin ? (
-                <p className="text-sm text-muted-foreground">{initial?.category}</p>
+                <p className="text-sm text-muted-foreground">
+                  {initial?.category}
+                </p>
               ) : (
-                <>
-                  <Input
-                    value={category}
-                    onChange={(e) => handleChange(setCategory)(e.target.value)}
-                    placeholder="e.g. Writing, Development…"
-                    className="h-10"
-                    list="sp-categories"
-                    disabled={isBuiltin}
-                  />
-                  <datalist id="sp-categories">
-                    {categories.map((c) => <option key={c} value={c} />)}
-                  </datalist>
-                </>
+                <div className="space-y-2">
+                  <Select
+                    value={selectValue}
+                    onValueChange={(val) => {
+                      if (val === CUSTOM_CATEGORY_VALUE) {
+                        setShowCustomInput(true);
+                        handleChange(setCategory)("");
+                      } else {
+                        setShowCustomInput(false);
+                        handleChange(setCategory)(val);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Select a category…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categories.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value={CUSTOM_CATEGORY_VALUE}>
+                        <span className="text-muted-foreground italic">
+                          Custom…
+                        </span>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {showCustomInput && (
+                    <Input
+                      value={category}
+                      onChange={(e) =>
+                        handleChange(setCategory)(e.target.value)
+                      }
+                      placeholder="Enter custom category…"
+                      className="h-9"
+                      autoFocus
+                    />
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -253,7 +336,9 @@ function PromptEditor({
           <div className="flex-1 flex flex-col space-y-2 min-h-0">
             <div className="flex items-center justify-between">
               <Label className="text-sm font-medium">System Prompt</Label>
-              <span className="text-xs text-muted-foreground">{content.length} characters</span>
+              <span className="text-xs text-muted-foreground">
+                {content.length} characters
+              </span>
             </div>
             <Textarea
               ref={textareaRef}
@@ -267,7 +352,7 @@ function PromptEditor({
               className={cn(
                 "flex-1 resize-none text-sm leading-relaxed font-mono",
                 "min-h-[320px]",
-                isBuiltin && "bg-muted/30 cursor-default"
+                isBuiltin && "bg-muted/30 cursor-default",
               )}
               readOnly={isBuiltin}
               spellCheck={!isBuiltin}
@@ -300,11 +385,15 @@ function PromptEditor({
         {/* Right tips panel */}
         <div className="w-64 shrink-0 border-l bg-muted/10 p-5 space-y-5">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Writing Tips</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+              Writing Tips
+            </p>
             <ul className="space-y-2.5 text-xs text-muted-foreground">
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">→</span>
-                <span>Start with the role: <em>"You are an expert…"</em></span>
+                <span>
+                  Start with the role: <em>"You are an expert…"</em>
+                </span>
               </li>
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">→</span>
@@ -312,11 +401,15 @@ function PromptEditor({
               </li>
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">→</span>
-                <span>Define output format: bullet list, JSON, markdown, prose</span>
+                <span>
+                  Define output format: bullet list, JSON, markdown, prose
+                </span>
               </li>
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">→</span>
-                <span>Add constraints: word count, language, what NOT to do</span>
+                <span>
+                  Add constraints: word count, language, what NOT to do
+                </span>
               </li>
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">→</span>
@@ -328,11 +421,15 @@ function PromptEditor({
           <Separator />
 
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Usage</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+              Usage
+            </p>
             <ul className="space-y-2.5 text-xs text-muted-foreground">
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">1.</span>
-                <span>Go to <strong>Local Models → Inference</strong></span>
+                <span>
+                  Go to <strong>Local Models → Inference</strong>
+                </span>
               </li>
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">2.</span>
@@ -340,7 +437,10 @@ function PromptEditor({
               </li>
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">3.</span>
-                <span>Click <strong>Choose Prompt</strong> to select from your library</span>
+                <span>
+                  Click <strong>Choose Prompt</strong> to select from your
+                  library
+                </span>
               </li>
             </ul>
           </div>
@@ -369,7 +469,7 @@ function PromptRow({
         "w-full text-left flex items-start gap-3 px-4 py-3 rounded-lg transition-colors group",
         isActive
           ? "bg-primary/10 border border-primary/20"
-          : "hover:bg-muted/60 border border-transparent"
+          : "hover:bg-muted/60 border border-transparent",
       )}
       onClick={onSelect}
     >
@@ -377,16 +477,20 @@ function PromptRow({
         <div className="flex items-center gap-2 mb-0.5">
           {prompt.isPinned && <Pin className="h-3 w-3 text-primary shrink-0" />}
           <span className="text-sm font-medium truncate">{prompt.name}</span>
-          {isActive && <Check className="h-3.5 w-3.5 text-primary shrink-0 ml-auto" />}
+          {isActive && (
+            <Check className="h-3.5 w-3.5 text-primary shrink-0 ml-auto" />
+          )}
         </div>
         <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
           {prompt.content}
         </p>
       </div>
-      <ChevronRight className={cn(
-        "h-4 w-4 text-muted-foreground/40 shrink-0 mt-0.5 transition-colors",
-        isActive && "text-primary"
-      )} />
+      <ChevronRight
+        className={cn(
+          "h-4 w-4 text-muted-foreground/40 shrink-0 mt-0.5 transition-colors",
+          isActive && "text-primary",
+        )}
+      />
     </button>
   );
 }
@@ -397,7 +501,9 @@ export function SystemPrompts() {
   const [searchParams] = useSearchParams();
 
   // All user prompts (reactive — reloaded on any mutation)
-  const [userPrompts, setUserPrompts] = useState<SystemPrompt[]>(() => systemPrompts.list());
+  const [userPrompts, setUserPrompts] = useState<SystemPrompt[]>(() =>
+    systemPrompts.list(),
+  );
 
   // The current entry shown in the editor panel
   const [selected, setSelected] = useState<PromptEntry | null>(null);
@@ -407,6 +513,7 @@ export function SystemPrompts() {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [successId, setSuccessId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState("Prompt saved");
 
   const reload = useCallback(() => setUserPrompts(systemPrompts.list()), []);
 
@@ -422,7 +529,13 @@ export function SystemPrompts() {
     }
     const builtin = BUILTIN_PROMPTS.find((p) => p.id === id);
     if (builtin) {
-      setSelected({ ...builtin, isBuiltin: true, createdAt: undefined, updatedAt: undefined, isPinned: false });
+      setSelected({
+        ...builtin,
+        isBuiltin: true,
+        createdAt: undefined,
+        updatedAt: undefined,
+        isPinned: false,
+      });
       setMode("edit");
     }
   }, [searchParams]);
@@ -453,11 +566,13 @@ export function SystemPrompts() {
       reload();
       setSelected({ ...created, isBuiltin: false });
       setMode("edit");
+      setSuccessMessage("Prompt created");
       setSuccessId(created.id);
       setTimeout(() => setSuccessId(null), 2500);
     } else if (mode === "edit" && selected && !selected.isBuiltin) {
       systemPrompts.update(selected.id, data);
       reload();
+      setSuccessMessage("Prompt saved");
       setSuccessId(selected.id);
       setTimeout(() => setSuccessId(null), 2500);
       // Refresh selected to show updated timestamps
@@ -481,6 +596,18 @@ export function SystemPrompts() {
     reload();
     setSelected({ ...forked, isBuiltin: false });
     setMode("edit");
+  };
+
+  const handleDuplicate = () => {
+    if (!selected || selected.isBuiltin) return;
+    const duped = systemPrompts.duplicate(selected.id);
+    if (!duped) return;
+    reload();
+    // Navigate to the new duplicate, stay in edit mode
+    setSelected({ ...duped, isBuiltin: false });
+    setSuccessMessage("Prompt duplicated");
+    setSuccessId(duped.id);
+    setTimeout(() => setSuccessId(null), 2500);
   };
 
   const handlePin = (id: string) => {
@@ -507,11 +634,12 @@ export function SystemPrompts() {
           onCancel={handleCancel}
           onDelete={handleDelete}
           onFork={handleFork}
+          onDuplicate={handleDuplicate}
         />
         {successId && (
           <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm text-white shadow-lg">
             <Check className="h-4 w-4" />
-            Prompt saved
+            {successMessage}
           </div>
         )}
       </div>
@@ -530,7 +658,10 @@ export function SystemPrompts() {
         description="Create and manage reusable system prompts for your local AI"
       >
         <Button
-          onClick={() => { setSelected(null); setMode("new"); }}
+          onClick={() => {
+            setSelected(null);
+            setMode("new");
+          }}
           className="gap-2"
         >
           <Plus className="h-4 w-4" />
@@ -559,7 +690,7 @@ export function SystemPrompts() {
                   "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors",
                   !activeCategory
                     ? "bg-primary/10 text-primary font-medium"
-                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                 )}
                 onClick={() => setActiveCategory(null)}
               >
@@ -573,7 +704,9 @@ export function SystemPrompts() {
               <Separator className="my-2" />
 
               {categories.map((cat) => {
-                const count = allEntries.filter((p) => p.category === cat).length;
+                const count = allEntries.filter(
+                  (p) => p.category === cat,
+                ).length;
                 return (
                   <button
                     key={cat}
@@ -581,9 +714,11 @@ export function SystemPrompts() {
                       "w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-colors",
                       activeCategory === cat
                         ? "bg-primary/10 text-primary font-medium"
-                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                     )}
-                    onClick={() => setActiveCategory(activeCategory === cat ? null : cat)}
+                    onClick={() =>
+                      setActiveCategory(activeCategory === cat ? null : cat)
+                    }
                   >
                     <span className="flex items-center gap-2">
                       <Tag className="h-3.5 w-3.5" />
@@ -604,7 +739,9 @@ export function SystemPrompts() {
             </div>
             <div className="flex justify-between">
               <span>Built-in</span>
-              <span className="font-medium text-foreground">{builtinCount}</span>
+              <span className="font-medium text-foreground">
+                {builtinCount}
+              </span>
             </div>
           </div>
         </div>
@@ -616,13 +753,22 @@ export function SystemPrompts() {
             <p className="text-sm text-muted-foreground">
               {activeCategory ? (
                 <span>
-                  <span className="font-medium text-foreground">{activeCategory}</span>
-                  {" · "}{filteredEntries.length} prompt{filteredEntries.length !== 1 ? "s" : ""}
+                  <span className="font-medium text-foreground">
+                    {activeCategory}
+                  </span>
+                  {" · "}
+                  {filteredEntries.length} prompt
+                  {filteredEntries.length !== 1 ? "s" : ""}
                 </span>
               ) : (
                 <span>
-                  {filteredEntries.length} prompt{filteredEntries.length !== 1 ? "s" : ""}
-                  {search && <span className="ml-1">matching <em>"{search}"</em></span>}
+                  {filteredEntries.length} prompt
+                  {filteredEntries.length !== 1 ? "s" : ""}
+                  {search && (
+                    <span className="ml-1">
+                      matching <em>"{search}"</em>
+                    </span>
+                  )}
                 </span>
               )}
             </p>
@@ -648,7 +794,10 @@ export function SystemPrompts() {
                   {!search && (
                     <Button
                       size="sm"
-                      onClick={() => { setSelected(null); setMode("new"); }}
+                      onClick={() => {
+                        setSelected(null);
+                        setMode("new");
+                      }}
                       className="gap-2 mt-2"
                     >
                       <Plus className="h-3.5 w-3.5" />
@@ -669,7 +818,9 @@ export function SystemPrompts() {
                         My Prompts
                       </h3>
                       <div className="flex-1 h-px bg-border" />
-                      <span className="text-xs text-muted-foreground">{userEntries.length}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {userEntries.length}
+                      </span>
                     </div>
                     <div className="grid gap-1">
                       {userEntries.map((p) => (
@@ -689,9 +840,12 @@ export function SystemPrompts() {
                               "opacity-0 group-hover:opacity-100",
                               p.isPinned
                                 ? "text-primary"
-                                : "text-muted-foreground hover:text-foreground"
+                                : "text-muted-foreground hover:text-foreground",
                             )}
-                            onClick={(e) => { e.stopPropagation(); handlePin(p.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePin(p.id);
+                            }}
                             title={p.isPinned ? "Unpin" : "Pin to top"}
                           >
                             <Pin className="h-3.5 w-3.5" />
@@ -705,7 +859,9 @@ export function SystemPrompts() {
 
               {/* Built-in prompts section */}
               {(() => {
-                const builtinEntries = filteredEntries.filter((p) => p.isBuiltin);
+                const builtinEntries = filteredEntries.filter(
+                  (p) => p.isBuiltin,
+                );
                 if (builtinEntries.length === 0) return null;
                 return (
                   <div>
@@ -714,7 +870,9 @@ export function SystemPrompts() {
                         Built-in
                       </h3>
                       <div className="flex-1 h-px bg-border" />
-                      <span className="text-xs text-muted-foreground">{builtinEntries.length}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {builtinEntries.length}
+                      </span>
                     </div>
                     <div className="grid gap-1">
                       {builtinEntries.map((p) => (

@@ -247,6 +247,18 @@ export const systemPrompts = {
     });
   },
 
+  /** Duplicate a user prompt, appending " (copy)" to the name. */
+  duplicate(id: string): SystemPrompt | null {
+    const all = loadAll();
+    const source = all.find((p) => p.id === id);
+    if (!source) return null;
+    return systemPrompts.create({
+      name: `${source.name} (copy)`,
+      content: source.content,
+      category: source.category,
+    });
+  },
+
   categories(): string[] {
     const cats = new Set<string>();
     BUILTIN_PROMPTS.forEach((p) => cats.add(p.category));
