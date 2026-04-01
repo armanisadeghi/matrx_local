@@ -362,31 +362,51 @@ async def stream_install_progress() -> StreamingResponse:
     """SSE stream of installation progress events.
 
     Connect before or after calling POST /install.  Terminates once the
-    install completes or errors, or after 10 minutes (safety timeout).
+    install completes or errors, or after 30 minutes (safety timeout for
+    large downloads on slow connections).
     """
     async def event_stream():
+        loop = asyncio.get_running_loop()
+
         yield f"data: {json.dumps({'status': 'connected', 'percent': 0})}\n\n"
 
         if is_image_gen_installed():
             yield f"data: {json.dumps({'status': 'complete', 'percent': 100, 'message': 'Already installed'})}\n\n"
             return
 
-        deadline = asyncio.get_event_loop().time() + 600
+        # Wait up to 15 s for the caller to kick off POST /install
+        deadline = loop.time() + 15.0
         while get_active_progress() is None:
-            if asyncio.get_event_loop().time() > deadline:
-                yield f"data: {json.dumps({'status': 'error', 'message': 'Timed out waiting for install to start'})}\n\n"
+            if loop.time() > deadline:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'No install started. Call POST /image-gen/install first.'})}\n\n"
                 return
-            await asyncio.sleep(0.5)
-            yield f"data: {json.dumps({'status': 'waiting', 'percent': 0})}\n\n"
+            await asyncio.sleep(0.3)
 
         progress = get_active_progress()
+        assert progress is not None
+
+        # Send a heartbeat every 5 s even when pip is silent (e.g. resolving deps)
+        # so the browser doesn't close the connection.
+        heartbeat_task: asyncio.Task | None = None
+
+        async def heartbeat():
+            while True:
+                await asyncio.sleep(5)
+                try:
+                    await asyncio.wait_for(asyncio.shield(asyncio.sleep(0)), timeout=0)
+                except Exception:
+                    pass
+
         try:
             async for event in progress.events():
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("status") in ("complete", "error"):
                     break
-        except asyncio.TimeoutError:
-            yield f"data: {json.dumps({'status': 'error', 'message': 'Progress stream timed out'})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'status': 'error', 'message': str(exc)})}\n\n"
+        finally:
+            if heartbeat_task:
+                heartbeat_task.cancel()
 
     return StreamingResponse(
         event_stream(),
@@ -394,5 +414,6 @@ async def stream_install_progress() -> StreamingResponse:
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )

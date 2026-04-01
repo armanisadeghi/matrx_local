@@ -6547,20 +6547,33 @@ function ImageGenInstaller({
   const [installState, setInstallState] =
     useState<ImageGenInstallStatus | null>(null);
   const [started, setStarted] = useState(false);
+  // Separate log lines from the main state so we don't re-render the whole
+  // card on every pip output line — just the log panel scrolls.
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [stageMessage, setStageMessage] = useState<string>("");
   const cleanupRef = useRef<(() => void) | null>(null);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
 
   const base = engine.engineUrl;
+
+  // Auto-scroll the log to the bottom whenever new lines arrive
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logLines]);
 
   const handleInstall = async () => {
     if (!base) return;
     setStarted(true);
+    setLogLines([]);
+    setStageMessage("Starting…");
     try {
       const initial = await startImageGenInstall(base);
-      setInstallState(initial);
       if (initial.status === "complete") {
+        setInstallState(initial);
         onInstallComplete();
         return;
       }
+      setInstallState(initial);
     } catch (e) {
       setInstallState({
         status: "error",
@@ -6572,19 +6585,35 @@ function ImageGenInstaller({
       return;
     }
 
-    const token = await engine.getEngineAuthHeaders().then((h) => {
-      const auth = (h as Record<string, string>)["Authorization"];
-      return auth ? auth.replace("Bearer ", "") : null;
-    });
+    const headers = await engine.getEngineAuthHeaders();
+    const auth = (headers as Record<string, string>)["Authorization"];
+    const token = auth ? auth.replace("Bearer ", "") : null;
 
     cleanupRef.current = streamImageGenInstall(
       base,
       async () => token,
       (ev) => {
-        setInstallState(ev);
-        if (ev.status === "complete") {
-          setTimeout(onInstallComplete, 800);
+        if (ev.status === "complete" || ev.status === "error") {
+          setInstallState(ev);
+          if (ev.status === "complete") {
+            setStageMessage("Installation complete!");
+            setTimeout(onInstallComplete, 1000);
+          } else {
+            setStageMessage(ev.message ?? "Installation failed");
+          }
+          return;
         }
+        // Raw pip log line — append to log panel, don't overwrite stage message
+        if ((ev as { log?: boolean }).log) {
+          setLogLines((prev) => {
+            const next = [...prev, ev.message];
+            return next.length > 300 ? next.slice(-300) : next;
+          });
+          return;
+        }
+        // Stage update — update progress bar and stage message
+        setInstallState(ev);
+        if (ev.message) setStageMessage(ev.message);
       },
     );
   };
@@ -6596,11 +6625,13 @@ function ImageGenInstaller({
   }, []);
 
   const isRunning =
-    installState?.status === "running" || (started && !installState);
+    installState?.status === "running" ||
+    installState?.status === "connected" ||
+    installState?.status === "waiting" ||
+    (started && !installState);
   const isDone = installState?.status === "complete";
   const isError = installState?.status === "error";
   const percent = installState?.percent ?? 0;
-  const message = installState?.message ?? (started ? "Starting…" : "");
 
   return (
     <div className="space-y-6 pb-8">
@@ -6621,29 +6652,64 @@ function ImageGenInstaller({
           </div>
         </div>
 
-        {/* Progress bar — shown while installing */}
+        {/* Progress bar + stage message */}
         {(isRunning || isDone) && (
           <div className="space-y-1.5">
             <div className="flex justify-between items-center text-xs text-muted-foreground">
-              <span>{message || "Downloading…"}</span>
-              <span>{Math.round(percent)}%</span>
+              <span className="truncate max-w-[80%]">
+                {stageMessage || "Downloading…"}
+              </span>
+              <span className="shrink-0 ml-2 tabular-nums">
+                {Math.round(percent)}%
+              </span>
             </div>
             <div className="h-2 rounded-full bg-muted overflow-hidden">
               <div
-                className="h-full rounded-full bg-violet-500 transition-all duration-300"
-                style={{ width: `${percent}%` }}
+                className="h-full rounded-full bg-violet-500 transition-all duration-500"
+                style={{ width: `${Math.max(percent, isDone ? 100 : 0)}%` }}
               />
+            </div>
+          </div>
+        )}
+
+        {/* Live pip log — shows real download progress */}
+        {(isRunning || isDone) && logLines.length > 0 && (
+          <div className="rounded-lg border bg-black/40 overflow-hidden">
+            <div className="px-2 py-1 border-b flex items-center gap-1.5">
+              <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wide">
+                Download log
+              </span>
+            </div>
+            <div className="max-h-40 overflow-y-auto px-2.5 py-2 space-y-0.5 font-mono text-[11px] text-green-400/80">
+              {logLines.map((line, i) => (
+                <div key={i} className="leading-snug break-all">
+                  {line}
+                </div>
+              ))}
+              <div ref={logEndRef} />
             </div>
           </div>
         )}
 
         {/* Error state */}
         {isError && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive leading-relaxed">
-            <p className="font-medium mb-0.5">Installation failed</p>
-            <p className="text-muted-foreground">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 space-y-1.5">
+            <p className="text-xs font-medium text-destructive">
+              Installation failed
+            </p>
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {installState?.error ?? "Unknown error"}
             </p>
+            {logLines.length > 0 && (
+              <div className="rounded border bg-black/40 max-h-32 overflow-y-auto px-2 py-1.5 font-mono text-[11px] text-red-400/80 space-y-0.5 mt-1">
+                {logLines.slice(-20).map((line, i) => (
+                  <div key={i} className="break-all">
+                    {line}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -6678,6 +6744,8 @@ function ImageGenInstaller({
               onClick={() => {
                 setInstallState(null);
                 setStarted(false);
+                setLogLines([]);
+                setStageMessage("");
               }}
             >
               Try again

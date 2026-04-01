@@ -1,6 +1,7 @@
 import { Wrench } from "lucide-react";
 import { ToolForm } from "@/components/tools/ToolForm";
 import { ToolOutput } from "@/components/tools/ToolOutput";
+import { ToolInfoPanel } from "@/components/tools/ToolInfoPanel";
 import { AiBadge } from "@/components/tools/panels/AiBadge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -50,18 +51,16 @@ export function GenericToolPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="px-5 pt-4 pb-3 space-y-3">
-        <AiBadge />
-
-        {schema.fields.length === 0 && (
-          <p className="text-xs text-muted-foreground">
-            This tool requires no inputs. Click Run to execute it.
-          </p>
-        )}
-      </div>
-
       <ScrollArea className="flex-1">
-        <div className="px-5 pb-5 space-y-4">
+        <div className="px-5 pt-4 pb-5 space-y-4">
+          <AiBadge />
+
+          {schema.fields.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              This tool requires no inputs. Click Run to execute it.
+            </p>
+          )}
+
           {schema.fields.length > 0 && (
             <div
               ref={(el) => {
@@ -118,6 +117,9 @@ export function GenericToolPanel({
           )}
         </div>
       </ScrollArea>
+
+      {/* Tool reference info — collapsible bottom panel */}
+      <ToolInfoPanel schema={schema} />
     </div>
   );
 }

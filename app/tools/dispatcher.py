@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
+import types
 from typing import Any, Callable, Coroutine
 
 from app.tools.session import ToolSession
@@ -245,6 +247,62 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
 TOOL_NAMES: list[str] = sorted(TOOL_HANDLERS.keys())
 
 
+def _coerce_tool_input(handler: Callable, tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Coerce tool_input values to match the handler's type annotations.
+
+    The UI sends all form values as JSON-decoded Python objects, but HTML inputs
+    often produce strings even for numeric/boolean fields (e.g. '5' instead of 5).
+    This pass converts them to the declared parameter types so handlers don't crash.
+    """
+    try:
+        sig = inspect.signature(handler)
+    except (ValueError, TypeError):
+        return tool_input
+
+    coerced: dict[str, Any] = {}
+    for key, value in tool_input.items():
+        param = sig.parameters.get(key)
+        if param is None or param.annotation is inspect.Parameter.empty:
+            coerced[key] = value
+            continue
+
+        ann = param.annotation
+        # Unwrap Optional[X] / X | None
+        origin = getattr(ann, "__origin__", None)
+        args = getattr(ann, "__args__", ())
+        if origin is type(None):
+            coerced[key] = value
+            continue
+        # X | None  (Python 3.10+ union syntax)
+        if isinstance(ann, types.UnionType):
+            non_none = [a for a in args if a is not type(None)]
+            ann = non_none[0] if len(non_none) == 1 else ann
+        # typing.Optional[X] / typing.Union[X, None]
+        elif str(origin) in ("<class 'typing.Union'>", "typing.Union"):
+            non_none = [a for a in args if a is not type(None)]
+            ann = non_none[0] if len(non_none) == 1 else ann
+
+        try:
+            # bool must be checked before int because bool is a subclass of int
+            if ann is bool and not isinstance(value, bool):
+                if isinstance(value, str):
+                    coerced[key] = value.lower() not in ("false", "0", "no", "")
+                else:
+                    coerced[key] = bool(value)
+            elif ann is int and not isinstance(value, int):
+                coerced[key] = int(value)
+            elif ann is float and not isinstance(value, float):
+                coerced[key] = float(value)
+            elif ann is str and not isinstance(value, str):
+                coerced[key] = str(value)
+            else:
+                coerced[key] = value
+        except (ValueError, TypeError):
+            coerced[key] = value  # keep original; let the handler surface the error
+
+    return coerced
+
+
 async def dispatch(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -256,8 +314,9 @@ async def dispatch(
             type=ToolResultType.ERROR,
             output=f"Unknown tool: {tool_name}. Available: {', '.join(TOOL_NAMES)}",
         )
+    coerced_input = _coerce_tool_input(handler, tool_input)
     try:
-        return await handler(session=session, **tool_input)
+        return await handler(session=session, **coerced_input)
     except TypeError as e:
         logger.warning("Invalid parameters for tool %s: %s", tool_name, e)
         return ToolResult(

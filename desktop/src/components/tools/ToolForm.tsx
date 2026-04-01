@@ -1,5 +1,10 @@
-import { useMemo } from "react";
-import { useForm, FormProvider } from "react-hook-form";
+import { useMemo, useState } from "react";
+import {
+  useForm,
+  FormProvider,
+  useFormContext,
+  Controller,
+} from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { schemaToZod } from "@/lib/schema-to-zod";
 import { TextField } from "./fields/TextField";
@@ -10,7 +15,118 @@ import { SelectField } from "./fields/SelectField";
 import { FilePathField } from "./fields/FilePathField";
 import { TagsField } from "./fields/TagsField";
 import { KeyValueField } from "./fields/KeyValueField";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import type { ToolFieldSchema, ToolUISchema } from "@/types/tool-schema";
+
+/** JSON textarea field with live syntax validation feedback */
+function JsonField({ field }: { field: ToolFieldSchema }) {
+  const { control } = useFormContext();
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={field.name} className="text-sm">
+        {field.label}
+        {field.required && <span className="text-destructive ml-0.5">*</span>}
+        <span className="ml-2 text-[10px] font-mono text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded border border-border/40">
+          JSON object
+        </span>
+      </Label>
+      <Controller
+        name={field.name}
+        control={control}
+        render={({ field: rhf }) => (
+          <Textarea
+            id={field.name}
+            value={
+              typeof rhf.value === "string"
+                ? rhf.value
+                : JSON.stringify(rhf.value ?? {}, null, 2)
+            }
+            onChange={(e) => {
+              rhf.onChange(e.target.value);
+              // Validate on change so user gets instant feedback
+              const trimmed = e.target.value.trim();
+              if (!trimmed) {
+                setJsonError(null);
+                return;
+              }
+              try {
+                JSON.parse(trimmed);
+                setJsonError(null);
+              } catch (err) {
+                setJsonError(
+                  err instanceof SyntaxError ? err.message : "Invalid JSON",
+                );
+              }
+            }}
+            placeholder={field.placeholder ?? '{\n  "key": "value"\n}'}
+            className="font-mono text-xs min-h-[100px] resize-y"
+          />
+        )}
+      />
+      {jsonError && (
+        <p className="text-xs text-destructive">JSON error: {jsonError}</p>
+      )}
+      {field.description && !jsonError && (
+        <p className="text-xs text-muted-foreground">{field.description}</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Coerce a raw form value to the correct JS type based on the field schema.
+ * React-hook-form captures all <input> values as strings unless explicitly
+ * configured otherwise (e.g. valueAsNumber). This pass ensures booleans,
+ * numbers, arrays, and objects are sent with the right types.
+ */
+function coerceValue(value: unknown, field: ToolFieldSchema): unknown {
+  if (value === undefined || value === null) return value;
+
+  switch (field.type) {
+    case "number": {
+      if (typeof value === "number") return value;
+      const n = Number(value);
+      return isNaN(n) ? undefined : n;
+    }
+
+    case "boolean": {
+      if (typeof value === "boolean") return value;
+      if (value === "true") return true;
+      if (value === "false") return false;
+      return Boolean(value);
+    }
+
+    case "json": {
+      // Textarea fields for json type submit a string — parse it
+      if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (!trimmed) return undefined;
+        try {
+          return JSON.parse(trimmed);
+        } catch {
+          // Invalid JSON — return as-is and let server surface the error
+          return trimmed;
+        }
+      }
+      return value;
+    }
+
+    case "tags": {
+      // Tags are already string[] — but if items need to be numbers, handle that
+      if (Array.isArray(value)) return value;
+      if (typeof value === "string" && value)
+        return value.split(",").map((s) => s.trim());
+      return [];
+    }
+
+    default:
+      // text, textarea, code, file-path, select, key-value — keep as-is
+      return value;
+  }
+}
 
 interface ToolFormProps {
   schema: ToolUISchema;
@@ -38,7 +154,7 @@ function renderField(field: ToolFieldSchema) {
     case "key-value":
       return <KeyValueField key={field.name} field={field} />;
     case "json":
-      return <TextareaField key={field.name} field={{ ...field, placeholder: field.placeholder ?? "{}" }} />;
+      return <JsonField key={field.name} field={field} />;
     default:
       return <TextField key={field.name} field={field} />;
   }
@@ -69,11 +185,18 @@ export function ToolForm({ schema, onSubmit, loading }: ToolFormProps) {
   });
 
   const handleSubmit = methods.handleSubmit((data) => {
-    // Strip out undefined/empty/null scalar values but keep arrays (even if empty)
+    // Build a name→field map for O(1) lookup
+    const fieldByName = new Map(schema.fields.map((f) => [f.name, f]));
+
+    // Coerce each value to its correct type, then strip empties
     const cleaned: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(data)) {
+    for (const [key, raw] of Object.entries(data)) {
+      const field = fieldByName.get(key);
+      const value = field ? coerceValue(raw, field) : raw;
+
       if (value === undefined || value === null) continue;
       if (typeof value === "string" && value === "") continue;
+      if (typeof value === "number" && isNaN(value)) continue;
       cleaned[key] = value;
     }
     onSubmit(cleaned);

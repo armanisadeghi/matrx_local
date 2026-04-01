@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Play, RotateCcw, Code, FormInput, Loader2 } from "lucide-react";
 import { ToolForm } from "./ToolForm";
 import { ToolOutput } from "./ToolOutput";
+import { ToolInfoPanel } from "./ToolInfoPanel";
 import { JsonFallbackEditor } from "./JsonFallbackEditor";
 import type { ToolUISchema } from "@/types/tool-schema";
 
@@ -135,6 +136,9 @@ export function ToolDetailPanel({
           )}
         </div>
       </ScrollArea>
+
+      {/* Tool reference info */}
+      <ToolInfoPanel schema={schema} />
     </div>
   );
 }
