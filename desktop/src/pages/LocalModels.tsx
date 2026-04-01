@@ -125,11 +125,14 @@ import {
   unloadImageGenModel,
   generateImage,
   generateImageFromWorkflow,
+  startImageGenInstall,
+  streamImageGenInstall,
 } from "@/lib/api";
 import type {
   ImageGenModelInfo,
   ImageGenWorkflowPreset,
   ImageGenStatus,
+  ImageGenInstallStatus,
   DocFolder,
   DocTree,
 } from "@/lib/api";
@@ -6532,6 +6535,206 @@ function StarRating({ value, max = 5 }: { value: number; max?: number }) {
   );
 }
 
+// ── ImageGenInstaller — consumer one-click installer ─────────────────────────
+
+function ImageGenInstaller({
+  models,
+  onInstallComplete,
+}: {
+  models: ImageGenModelInfo[];
+  onInstallComplete: () => void;
+}) {
+  const [installState, setInstallState] =
+    useState<ImageGenInstallStatus | null>(null);
+  const [started, setStarted] = useState(false);
+  const cleanupRef = useRef<(() => void) | null>(null);
+
+  const base = engine.engineUrl;
+
+  const handleInstall = async () => {
+    if (!base) return;
+    setStarted(true);
+    try {
+      const initial = await startImageGenInstall(base);
+      setInstallState(initial);
+      if (initial.status === "complete") {
+        onInstallComplete();
+        return;
+      }
+    } catch (e) {
+      setInstallState({
+        status: "error",
+        stage: "error",
+        percent: 0,
+        message: "",
+        error: e instanceof Error ? e.message : "Failed to start installation",
+      });
+      return;
+    }
+
+    const token = await engine.getEngineAuthHeaders().then((h) => {
+      const auth = (h as Record<string, string>)["Authorization"];
+      return auth ? auth.replace("Bearer ", "") : null;
+    });
+
+    cleanupRef.current = streamImageGenInstall(
+      base,
+      async () => token,
+      (ev) => {
+        setInstallState(ev);
+        if (ev.status === "complete") {
+          setTimeout(onInstallComplete, 800);
+        }
+      },
+    );
+  };
+
+  useEffect(() => {
+    return () => {
+      cleanupRef.current?.();
+    };
+  }, []);
+
+  const isRunning =
+    installState?.status === "running" || (started && !installState);
+  const isDone = installState?.status === "complete";
+  const isError = installState?.status === "error";
+  const percent = installState?.percent ?? 0;
+  const message = installState?.message ?? (started ? "Starting…" : "");
+
+  return (
+    <div className="space-y-6 pb-8">
+      {/* Install card */}
+      <div className="rounded-xl border border-violet-500/30 bg-violet-500/5 px-5 py-5 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 shrink-0 rounded-lg bg-violet-500/15 p-2">
+            <Image className="h-4 w-4 text-violet-500" />
+          </div>
+          <div className="space-y-1">
+            <p className="font-semibold text-sm">Set up Image Generation</p>
+            <p className="text-xs text-muted-foreground leading-relaxed max-w-lg">
+              AI Matrx can generate images directly on your computer — no cloud
+              subscription needed. Click <strong>Install now</strong> and we'll
+              download everything automatically. This is a one-time setup (~500
+              MB – 1 GB).
+            </p>
+          </div>
+        </div>
+
+        {/* Progress bar — shown while installing */}
+        {(isRunning || isDone) && (
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-center text-xs text-muted-foreground">
+              <span>{message || "Downloading…"}</span>
+              <span>{Math.round(percent)}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-violet-500 transition-all duration-300"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Error state */}
+        {isError && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive leading-relaxed">
+            <p className="font-medium mb-0.5">Installation failed</p>
+            <p className="text-muted-foreground">
+              {installState?.error ?? "Unknown error"}
+            </p>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            className="bg-violet-600 hover:bg-violet-700 text-white"
+            disabled={isRunning || isDone || !base}
+            onClick={() => void handleInstall()}
+          >
+            {isRunning ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                Installing…
+              </>
+            ) : isDone ? (
+              <>
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                Installed!
+              </>
+            ) : (
+              <>
+                <PackagePlus className="h-3.5 w-3.5 mr-1.5" />
+                Install now
+              </>
+            )}
+          </Button>
+          {isError && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setInstallState(null);
+                setStarted(false);
+              }}
+            >
+              Try again
+            </Button>
+          )}
+        </div>
+
+        <p className="text-[11px] text-muted-foreground">
+          Packages are installed to your user account — nothing is changed
+          system-wide. Internet connection required for the initial download.
+        </p>
+      </div>
+
+      {/* Preview of what will be available */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Models you'll be able to use
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {models.map((m) => (
+            <div
+              key={m.model_id}
+              className="rounded-lg border bg-card p-3.5 space-y-1.5 opacity-60"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-medium text-sm">{m.name}</p>
+                  <p className="text-xs text-muted-foreground">{m.provider}</p>
+                </div>
+                {m.requires_hf_token && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] shrink-0 border-amber-500/40 text-amber-500"
+                  >
+                    Gated
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {m.description}
+              </p>
+              <div className="flex flex-wrap gap-1.5 text-[10px]">
+                <span className="rounded bg-muted px-1.5 py-0.5">
+                  {m.vram_gb} GB VRAM
+                </span>
+                <span className="rounded bg-muted px-1.5 py-0.5">
+                  {m.ram_gb} GB RAM
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type ImageGenView = "picker" | "generate" | "workflow";
 
 function classifyImageGenLoadError(
@@ -6819,73 +7022,13 @@ function MediaModelsTab() {
     );
   }
 
-  // Not available — deps not installed
+  // Not available — deps not installed → show one-click installer
   if (igStatus && !igStatus.available) {
     return (
-      <div className="space-y-6 pb-8">
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-4 space-y-3">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-medium">
-                Image generation dependencies not installed
-              </p>
-              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                {igStatus.unavailable_reason}
-              </p>
-            </div>
-          </div>
-          <div className="rounded bg-muted/60 border px-3 py-2 font-mono text-xs text-foreground">
-            uv sync --extra image-gen
-          </div>
-          <p className="text-xs text-muted-foreground">
-            This installs PyTorch + Diffusers (~3–8 GB). Run in your matrx-local
-            repo directory, then restart the engine.
-          </p>
-        </div>
-
-        {/* Still show the model catalog so the user can plan */}
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold flex items-center gap-2">
-            <Image className="h-4 w-4 text-violet-500" />
-            Available Models
-          </h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {models.map((m) => (
-              <div
-                key={m.model_id}
-                className="rounded-lg border bg-card p-4 space-y-2 opacity-70"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-medium text-sm">{m.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {m.provider}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => openUrl(m.model_card_url)}
-                    className="shrink-0"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-                  </button>
-                </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {m.description}
-                </p>
-                <div className="flex flex-wrap gap-2 text-[10px]">
-                  <span className="rounded bg-muted px-1.5 py-0.5">
-                    VRAM: {m.vram_gb} GB
-                  </span>
-                  <span className="rounded bg-muted px-1.5 py-0.5">
-                    RAM: {m.ram_gb} GB
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <ImageGenInstaller
+        models={models}
+        onInstallComplete={() => void fetchStatus()}
+      />
     );
   }
 

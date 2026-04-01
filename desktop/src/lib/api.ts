@@ -3188,3 +3188,72 @@ export async function generateImageFromWorkflow(
     },
   );
 }
+
+export interface ImageGenInstallStatus {
+  status: "idle" | "running" | "complete" | "error" | "connected" | "waiting";
+  stage: string;
+  percent: number;
+  message: string;
+  error?: string;
+  already_installed?: boolean;
+  install_dir?: string;
+}
+
+export async function startImageGenInstall(
+  baseUrl: string,
+): Promise<ImageGenInstallStatus> {
+  return imageGenFetch<ImageGenInstallStatus>(
+    imageGenUrl(baseUrl, "/install"),
+    { method: "POST" },
+  );
+}
+
+export async function getImageGenInstallStatus(
+  baseUrl: string,
+): Promise<ImageGenInstallStatus> {
+  return imageGenFetch<ImageGenInstallStatus>(
+    imageGenUrl(baseUrl, "/install/status"),
+  );
+}
+
+/**
+ * Open an SSE stream for image-gen install progress.
+ * Returns a cleanup function.  Calls `onEvent` for each progress update.
+ */
+export function streamImageGenInstall(
+  baseUrl: string,
+  getToken: () => Promise<string | null>,
+  onEvent: (e: ImageGenInstallStatus) => void,
+): () => void {
+  let closed = false;
+  let es: EventSource | null = null;
+
+  const connect = async () => {
+    const token = await getToken();
+    const url = token
+      ? `${imageGenUrl(baseUrl, "/install/stream")}?token=${encodeURIComponent(token)}`
+      : imageGenUrl(baseUrl, "/install/stream");
+    es = new EventSource(url);
+    es.onmessage = (ev) => {
+      if (closed) return;
+      try {
+        const data = JSON.parse(ev.data) as ImageGenInstallStatus;
+        onEvent(data);
+        if (data.status === "complete" || data.status === "error") {
+          es?.close();
+        }
+      } catch {
+        // ignore parse errors
+      }
+    };
+    es.onerror = () => {
+      if (!closed) es?.close();
+    };
+  };
+
+  void connect();
+  return () => {
+    closed = true;
+    es?.close();
+  };
+}

@@ -82,3 +82,31 @@ if hasattr(sys, "_MEIPASS"):
     ffmpeg_bin_dir = os.path.join(base, "imageio_ffmpeg", "binaries")
     if os.path.isdir(ffmpeg_bin_dir):
         os.environ["PATH"] = ffmpeg_bin_dir + os.pathsep + os.environ.get("PATH", "")
+
+# ── Image generation packages (user-installed on demand) ──────────────────────
+#
+# torch + diffusers are NOT bundled in the frozen binary (they are ~1 GB+).
+# When the user installs image generation from inside the app, the packages
+# land in a dedicated user-writable directory.  Inject that directory into
+# sys.path here so subsequent `import torch` / `import diffusers` work
+# without any restart.
+#
+# This runs on every engine start.  If the directory doesn't exist yet (user
+# hasn't installed) it's a no-op — the image-gen service gracefully reports
+# "not available" instead.
+try:
+    _ig_dir_candidates = []
+    if sys.platform == "win32":
+        _local_app = os.getenv("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+        _ig_dir_candidates.append(Path(_local_app) / "AI Matrx" / "image-gen-packages")
+    else:
+        _ig_dir_candidates.append(Path.home() / ".matrx" / "image-gen-packages")
+
+    for _ig_dir in _ig_dir_candidates:
+        if (_ig_dir / ".install-complete").exists():
+            _ig_str = str(_ig_dir)
+            if _ig_str not in sys.path:
+                sys.path.insert(0, _ig_str)
+            break
+except Exception:
+    pass  # Never crash on path injection failure

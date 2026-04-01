@@ -272,6 +272,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.warning("[app/main.py] Phase 0a: User API key load failed (non-fatal)", exc_info=True)
 
+    # Phase 0a (image-gen): If the user has previously installed image-gen packages
+    # via the in-app installer, inject the packages directory into sys.path now so
+    # torch/diffusers are importable in this process.  This is a no-op when the
+    # frozen binary's runtime_hook.py already handled it, and a no-op when packages
+    # are not yet installed.
+    try:
+        from app.services.image_gen.installer import inject_image_gen_path
+        if inject_image_gen_path():
+            logger.info("[app/main.py] Phase 0a: image-gen packages injected into sys.path ✓")
+    except Exception:
+        pass  # Non-fatal — image-gen will just be unavailable until installed
+
     # Phase 0b: Ensure Playwright browsers are installed (auto-installs if missing).
     # Browsers are NOT bundled in the PyInstaller binary (bundling causes macOS
     # codesign failures with Chrome's nested framework structure). They are

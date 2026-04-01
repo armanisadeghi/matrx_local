@@ -61,6 +61,33 @@ The build script checks this env var first and skips the download entirely.
 
 ---
 
+## Consumer-Facing Optional Features with Large Dependencies
+
+### Never tell consumers to run terminal commands — install from inside the app
+
+For features that require large optional packages (torch + diffusers = ~500 MB–1 GB), the correct consumer-grade pattern is:
+
+1. **Do NOT bundle them in the PyInstaller binary.** Bundling torch/diffusers would make the installer 10+ GB. Keep them in `excludes` in every `.spec` file and in `build_with_flags` inside `build-sidecar.sh`.
+
+2. **Do NOT print `uv sync --extra image-gen` in the UI.** That message is appropriate for developers, not consumers.
+
+3. **Install into a dedicated user-writable directory on demand:**
+   - macOS/Linux: `~/.matrx/image-gen-packages/`
+   - Windows: `%LOCALAPPDATA%\AI Matrx\image-gen-packages\`
+   - Write a `.install-complete` marker when done.
+
+4. **Inject the directory into `sys.path` in two places:**
+   - `hooks/runtime_hook.py` — runs on every frozen-binary startup before any app code
+   - `app/main.py` lifespan — covers dev-mode restarts and in-session installs
+
+5. **Expose SSE progress via `/image-gen/install/stream`** so the UI shows a real-time progress bar.
+
+6. **The UI shows a "Install now" button** with a progress bar, not a terminal command.
+
+The installer lives in `app/services/image_gen/installer.py`. The UI is `ImageGenInstaller` in `LocalModels.tsx`.
+
+---
+
 ## macOS Code Signing
 
 ### Sign every binary in the app bundle, not just the dylibs

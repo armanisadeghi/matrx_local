@@ -4,15 +4,30 @@ All imports of the optional diffusers/torch packages are behind the service
 boundary — this module is safe to import even when those packages are not
 installed. Endpoints return HTTP 503 with a clear installation message when
 the optional dependencies are absent.
+
+/image-gen/install       — POST: start background install of torch + diffusers
+/image-gen/install/status — GET: current install state (polling)
+/image-gen/install/stream — GET: SSE progress stream during install
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.image_gen.service import get_image_gen_service
 from app.services.image_gen.models import IMAGE_GEN_MODELS, WORKFLOW_PRESETS
+from app.services.image_gen.installer import (
+    start_install,
+    get_active_progress,
+    is_image_gen_installed,
+    get_image_gen_packages_dir,
+    IMAGE_GEN_PACKAGES,
+)
 
 router = APIRouter(prefix="/image-gen", tags=["image-gen"])
 
@@ -251,4 +266,133 @@ async def generate_from_workflow(req: WorkflowGenerateRequest) -> GenerateRespon
         model_id=result.model_id,
         elapsed_seconds=result.elapsed_seconds,
         error=result.error,
+    )
+
+
+# ── On-demand package installer ────────────────────────────────────────────────
+
+class InstallStatusResponse(BaseModel):
+    status: str
+    """idle | running | complete | error"""
+    stage: str = ""
+    percent: float = 0.0
+    message: str = ""
+    error: str | None = None
+    already_installed: bool = False
+    install_dir: str = ""
+
+
+@router.post("/install", response_model=InstallStatusResponse)
+async def install_image_gen() -> InstallStatusResponse:
+    """Start the background installation of torch + diffusers.
+
+    Safe to call multiple times — returns current state if already running or done.
+    """
+    if is_image_gen_installed():
+        from app.services.image_gen.installer import inject_image_gen_path
+        inject_image_gen_path()
+        from app.services.image_gen import service as _svc
+        _svc.DEPS_AVAILABLE, _svc.DEPS_REASON = _svc._check_deps()
+        return InstallStatusResponse(
+            status="complete",
+            stage="done",
+            percent=100.0,
+            message="Image generation is already installed.",
+            already_installed=True,
+            install_dir=str(get_image_gen_packages_dir()),
+        )
+
+    existing = get_active_progress()
+    if existing and existing.status == "running":
+        return InstallStatusResponse(
+            status=existing.status,
+            stage=existing.stage,
+            percent=existing.percent,
+            message=existing.message,
+            install_dir=str(get_image_gen_packages_dir()),
+        )
+
+    progress = await start_install()
+    return InstallStatusResponse(
+        status=progress.status,
+        stage=progress.stage,
+        percent=progress.percent,
+        message="Installation started.",
+        install_dir=str(get_image_gen_packages_dir()),
+    )
+
+
+@router.get("/install/status", response_model=InstallStatusResponse)
+async def get_install_status() -> InstallStatusResponse:
+    """Poll current installation status."""
+    install_dir = str(get_image_gen_packages_dir())
+
+    if is_image_gen_installed():
+        return InstallStatusResponse(
+            status="complete",
+            stage="done",
+            percent=100.0,
+            message="Image generation packages are installed.",
+            already_installed=True,
+            install_dir=install_dir,
+        )
+
+    progress = get_active_progress()
+    if progress is None:
+        return InstallStatusResponse(
+            status="idle",
+            stage="",
+            percent=0.0,
+            message="No installation in progress.",
+            install_dir=install_dir,
+        )
+
+    return InstallStatusResponse(
+        status=progress.status,
+        stage=progress.stage,
+        percent=progress.percent,
+        message=progress.message,
+        error=progress.error,
+        install_dir=install_dir,
+    )
+
+
+@router.get("/install/stream")
+async def stream_install_progress() -> StreamingResponse:
+    """SSE stream of installation progress events.
+
+    Connect before or after calling POST /install.  Terminates once the
+    install completes or errors, or after 10 minutes (safety timeout).
+    """
+    async def event_stream():
+        yield f"data: {json.dumps({'status': 'connected', 'percent': 0})}\n\n"
+
+        if is_image_gen_installed():
+            yield f"data: {json.dumps({'status': 'complete', 'percent': 100, 'message': 'Already installed'})}\n\n"
+            return
+
+        deadline = asyncio.get_event_loop().time() + 600
+        while get_active_progress() is None:
+            if asyncio.get_event_loop().time() > deadline:
+                yield f"data: {json.dumps({'status': 'error', 'message': 'Timed out waiting for install to start'})}\n\n"
+                return
+            await asyncio.sleep(0.5)
+            yield f"data: {json.dumps({'status': 'waiting', 'percent': 0})}\n\n"
+
+        progress = get_active_progress()
+        try:
+            async for event in progress.events():
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("status") in ("complete", "error"):
+                    break
+        except asyncio.TimeoutError:
+            yield f"data: {json.dumps({'status': 'error', 'message': 'Progress stream timed out'})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
