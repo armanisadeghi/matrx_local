@@ -6553,7 +6553,7 @@ function classifyImageGenLoadError(
   ) {
     return {
       title: "Sign in to Matrx required",
-      hint: "This feature talks to the secure copy of the engine on your device. That requires an active Matrx account session (the same sign-in as the rest of the app). It is separate from your Hugging Face token in Configurations—which is only used when downloading certain models from Hugging Face.",
+      hint: "This feature talks to the secure copy of the engine on your device. That requires an active Matrx account session (the same sign-in as the rest of the app). Your Hugging Face read token (for gated image checkpoints) is saved under Settings → API keys — not on the Configurations page.",
       kind: "auth",
     };
   }
@@ -6798,17 +6798,10 @@ function MediaModelsTab() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => navigate("/configurations")}
-              >
-                <Settings className="h-3.5 w-3.5 mr-1.5" />
-                Open Configurations
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
                 onClick={() => navigate("/settings")}
               >
-                Open Settings
+                <KeyRound className="h-3.5 w-3.5 mr-1.5" />
+                Open Settings (account and API keys)
               </Button>
             </>
           )}

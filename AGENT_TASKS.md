@@ -19,7 +19,8 @@ These cannot be resolved by changes to this repo. They are blocked on upstream p
 
 Known broken things in the current release that need fixing.
 
-- [x] **Image gen tab: 401 "Authorization header required"** — Fixed 2026-03-31: `imageGenFetch` in `api.ts` did not attach the same `Authorization: Bearer` JWT as other engine calls; auth middleware rejected `/image-gen/*`. Also added client `emitClientLog` on failures, Python `logger.warning` on missing token, and clearer Image tab error UI (sign-in vs HF token vs engine).
+- [x] **Image gen tab: 401 "Authorization header required"** — Fixed 2026-03-31: `imageGenFetch` in `api.ts` did not attach the same `Authorization: Bearer` JWT as other engine calls; auth middleware rejected `/image-gen/*`. Also added client `emitClientLog` on failures, Python `logger.warning` on missing token, and clearer Image tab error UI (sign-in vs HF token vs engine). **Commit and push** these files if not yet on `origin/main`.
+- [x] **Image gen E2E audit follow-ups (2026-03-31)** — HunyuanDiT catalog used wrong pipeline (now `hunyuan` + `HunyuanDiTPipeline`); generation no longer holds the service lock for the full diffusion forward pass; HF UI copy points to **Settings → API keys**; `delete_user_key` clears injected `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`; removed dead `desktop/src/lib/image-gen/*` client; smoke tests use sentinel ids to avoid accidental multi-GB downloads in CI.
 
 - [ ] **Health check false-positives on slow engine start** — `isHealthy()` in `api.ts` and Rust's `check_engine_health` both call `/tools/list` with a 2-second timeout. Heavy first-load (scraper init, model warmup) can exceed 2 s and incorrectly flip the engine to "disconnected" in the UI. Fix: either switch to a lightweight `/health` endpoint, or increase the timeout to 5–8 s for the startup grace window.
 

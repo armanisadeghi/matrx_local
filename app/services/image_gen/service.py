@@ -7,7 +7,8 @@ can be imported and the route registered even when the packages are missing.
 The endpoints return clear "not available" errors when deps are absent.
 
 Supported pipeline types (see models.py):
-  - "flux"                  → FluxPipeline / FluxSchnellPipeline
+  - "flux"                  → FluxPipeline
+  - "hunyuan"               → HunyuanDiTPipeline
   - "stable-diffusion-xl"   → StableDiffusionXLPipeline
   - "stable-diffusion"      → StableDiffusionPipeline
 """
@@ -243,10 +244,11 @@ class ImageGenService:
 
                 import torch  # noqa: PLC0415
                 from diffusers import (  # noqa: PLC0415
-                    FluxPipeline,
-                    StableDiffusionXLPipeline,
-                    StableDiffusionPipeline,
                     DiffusionPipeline,
+                    FluxPipeline,
+                    HunyuanDiTPipeline,
+                    StableDiffusionPipeline,
+                    StableDiffusionXLPipeline,
                 )
 
                 hf_token = (
@@ -278,6 +280,10 @@ class ImageGenService:
 
                 if model.pipeline_type == "flux":
                     pipe = FluxPipeline.from_pretrained(
+                        model.model_id, **common_kwargs
+                    )
+                elif model.pipeline_type == "hunyuan":
+                    pipe = HunyuanDiTPipeline.from_pretrained(
                         model.model_id, **common_kwargs
                     )
                 elif model.pipeline_type in ("stable-diffusion-xl",):
@@ -356,57 +362,61 @@ class ImageGenService:
         with self._lock:
             if self._pipeline is None:
                 return GenerationResult(success=False, error="No model loaded")
+            pipe = self._pipeline
 
-            try:
-                import torch  # noqa: PLC0415
+        try:
+            import torch  # noqa: PLC0415
 
-                generator = None
-                if seed is not None:
-                    device = str(next(iter(self._pipeline.components.values())).device
-                                 if hasattr(self._pipeline, "components") else "cpu")
-                    generator = torch.Generator(device=device).manual_seed(seed)
-
-                call_kwargs: dict = {
-                    "prompt": prompt,
-                    "num_inference_steps": steps,
-                    "width": width,
-                    "height": height,
-                }
-
-                if generator is not None:
-                    call_kwargs["generator"] = generator
-
-                # Guidance / negative prompt only for applicable models
-                if model.supports_negative_prompt and negative_prompt:
-                    call_kwargs["negative_prompt"] = negative_prompt
-                if guidance > 0.0 and model.supports_negative_prompt:
-                    call_kwargs["guidance_scale"] = guidance
-                elif guidance > 0.0 and model.pipeline_type == "flux":
-                    call_kwargs["guidance_scale"] = guidance
-
-                t0 = time.monotonic()
-                output = self._pipeline(**call_kwargs)
-                elapsed = time.monotonic() - t0
-
-                image = output.images[0]
-
-                # Encode to base64 PNG
-                buf = io.BytesIO()
-                image.save(buf, format="PNG")
-                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-
-                return GenerationResult(
-                    success=True,
-                    image_b64=b64,
-                    width=image.width,
-                    height=image.height,
-                    model_id=model.model_id,
-                    elapsed_seconds=elapsed,
+            generator = None
+            if seed is not None:
+                device = str(
+                    next(iter(pipe.components.values())).device
+                    if hasattr(pipe, "components")
+                    else "cpu"
                 )
+                generator = torch.Generator(device=device).manual_seed(seed)
 
-            except Exception as exc:
-                logger.error("[image_gen] Generation failed: %s", exc, exc_info=True)
-                return GenerationResult(success=False, error=str(exc))
+            call_kwargs: dict = {
+                "prompt": prompt,
+                "num_inference_steps": steps,
+                "width": width,
+                "height": height,
+            }
+
+            if generator is not None:
+                call_kwargs["generator"] = generator
+
+            # Guidance / negative prompt only for applicable models
+            if model.supports_negative_prompt and negative_prompt:
+                call_kwargs["negative_prompt"] = negative_prompt
+            if guidance > 0.0 and model.supports_negative_prompt:
+                call_kwargs["guidance_scale"] = guidance
+            elif guidance > 0.0 and model.pipeline_type == "flux":
+                call_kwargs["guidance_scale"] = guidance
+
+            t0 = time.monotonic()
+            output = pipe(**call_kwargs)
+            elapsed = time.monotonic() - t0
+
+            image = output.images[0]
+
+            # Encode to base64 PNG
+            buf = io.BytesIO()
+            image.save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+            return GenerationResult(
+                success=True,
+                image_b64=b64,
+                width=image.width,
+                height=image.height,
+                model_id=model.model_id,
+                elapsed_seconds=elapsed,
+            )
+
+        except Exception as exc:
+            logger.error("[image_gen] Generation failed: %s", exc, exc_info=True)
+            return GenerationResult(success=False, error=str(exc))
 
 
 # ── singleton ─────────────────────────────────────────────────────────────────

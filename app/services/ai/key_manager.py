@@ -99,13 +99,15 @@ async def set_user_key(provider: str, key: str) -> None:
 
 
 async def delete_user_key(provider: str) -> None:
-    """Remove a stored key from SQLite.
+    """Remove a stored key from SQLite and clear injected env vars for that provider.
 
-    The env var is NOT cleared — any key that was set via .env / shell before
-    startup remains active.  This avoids breaking dev environments where keys
-    live in .env.  Only user-saved keys are removed.
+    Clears the same names `_inject` sets (e.g. HF_TOKEN) so image-gen and hub
+    downloads stop using a removed Hugging Face token without requiring a full
+    process restart. If you rely on a key only in shell/.env and never saved it
+    in the app, deleting in UI does not remove .env — restart would reload it.
     """
     from app.services.local_db.repositories import ApiKeysRepo
     repo = ApiKeysRepo()
     await repo.delete(provider)
-    logger.info("[key_manager] User key deleted for provider '%s'", provider)
+    _erase(provider)
+    logger.info("[key_manager] User key deleted and env cleared for provider '%s'", provider)

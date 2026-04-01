@@ -93,8 +93,15 @@ def test_image_gen_presets_list(http: httpx.Client) -> None:
 
 
 def test_image_gen_load_graceful_without_deps(http: httpx.Client) -> None:
-    """POST /image-gen/load returns 503 (not 500) when deps are missing."""
-    r = http.post("/image-gen/load", json={"model_id": "flux-schnell"})
+    """POST /image-gen/load returns 503 (not 500) when deps are missing.
+
+    Uses a non-catalog model id so CI/dev machines *with* image-gen installed
+    do not try to download multi-GB checkpoints (would timeout).
+    """
+    r = http.post(
+        "/image-gen/load",
+        json={"model_id": "__matrx_smoke_unknown_model__"},
+    )
     # 503 = expected when torch/diffusers not installed
     # 200 = would happen on a GPU machine with full deps
     assert r.status_code in (200, 503), (
@@ -105,13 +112,18 @@ def test_image_gen_load_graceful_without_deps(http: httpx.Client) -> None:
         assert "detail" in data, (
             f"503 response should have 'detail' field: {data}"
         )
+    elif r.status_code == 200:
+        data = r.json()
+        assert data.get("success") is False, (
+            f"Unknown model should return success=false: {data}"
+        )
 
 
 def test_image_gen_generate_graceful_without_deps(http: httpx.Client) -> None:
     """POST /image-gen/generate returns 503 (not 500) when deps are missing."""
     r = http.post("/image-gen/generate", json={
         "prompt": "a test prompt",
-        "model_id": "flux-schnell",
+        "model_id": "__matrx_smoke_unknown_model__",
     })
     assert r.status_code in (200, 503), (
         f"POST /image-gen/generate should return 200 or 503, got {r.status_code}: {r.text}"
@@ -119,14 +131,23 @@ def test_image_gen_generate_graceful_without_deps(http: httpx.Client) -> None:
     if r.status_code == 503:
         data = r.json()
         assert "detail" in data, f"503 response should have 'detail': {data}"
+    elif r.status_code == 200:
+        data = r.json()
+        assert data.get("success") is False, (
+            f"Unknown model should return success=false: {data}"
+        )
 
 
 def test_image_gen_workflow_graceful_without_deps(http: httpx.Client) -> None:
-    """POST /image-gen/generate-workflow returns 503 (not 500) when deps missing."""
+    """POST /image-gen/generate-workflow: fast 404 for unknown preset (no heavy download).
+
+    Real preset IDs are covered by test_image_gen_presets_list. Using an invalid
+    preset here keeps the smoke test quick when torch/diffusers are installed.
+    """
     r = http.post("/image-gen/generate-workflow", json={
-        "preset_id": "portrait",
+        "preset_id": "__matrx_smoke_unknown_preset__",
         "subject": "a cat",
     })
-    assert r.status_code in (200, 404, 503), (
+    assert r.status_code in (404, 503), (
         f"POST /image-gen/generate-workflow unexpected status {r.status_code}: {r.text}"
     )
