@@ -179,6 +179,92 @@ def get_active_progress() -> InstallProgress | None:
     return _active_progress
 
 
+# ── Find a real Python interpreter (never use sys.executable when frozen) ─────
+
+def _find_python() -> str:
+    """Return the path to a usable Python 3 interpreter for running pip.
+
+    Inside a PyInstaller --onefile binary sys.executable points to the engine
+    binary itself.  Running `engine -m pip` launches a second engine instance
+    which steals the port and kills the running server.
+
+    Resolution order:
+      1. uv-managed Python (~/.local/share/uv/python/…) — most reliable on
+         developer/end-user machines that have uv installed.
+      2. System Python 3 on PATH (python3 / python).
+      3. Common fixed locations for uv-managed Python on each platform.
+    """
+    is_frozen = getattr(sys, "frozen", False)
+
+    # In dev mode sys.executable is a real Python — safe to use directly.
+    if not is_frozen:
+        return sys.executable
+
+    # ── Frozen binary: find a real Python outside the binary ─────────────────
+
+    # 1. uv-managed Pythons — preferred (same version the engine was built with)
+    uv_python_roots = [
+        Path.home() / ".local" / "share" / "uv" / "python",
+        Path.home() / ".uv" / "python",
+    ]
+    # Prefer Python 3.13, then 3.12, then any 3.x
+    preferred = ["3.13", "3.12", "3.11", "3.10"]
+    for root in uv_python_roots:
+        if not root.exists():
+            continue
+        # Sort by preferred version
+        def _rank(p: Path) -> int:
+            name = p.name
+            for i, ver in enumerate(preferred):
+                if ver in name:
+                    return i
+            return len(preferred)
+        candidates = sorted(root.iterdir(), key=_rank)
+        for entry in candidates:
+            for rel in ("bin/python3", "bin/python", "python.exe"):
+                exe = entry / rel
+                if exe.exists():
+                    logger.debug("[image_gen_installer] Using uv Python: %s", exe)
+                    return str(exe)
+
+    # 2. System Python 3 on PATH
+    import shutil
+    for name in ("python3", "python3.13", "python3.12", "python3.11", "python"):
+        found = shutil.which(name)
+        if found and found != sys.executable:
+            # Verify it's actually Python 3 and has pip
+            try:
+                out = subprocess.check_output(
+                    [found, "-c", "import sys; print(sys.version_info.major)"],
+                    timeout=5, stderr=subprocess.DEVNULL, text=True,
+                ).strip()
+                if out == "3":
+                    logger.debug("[image_gen_installer] Using system Python: %s", found)
+                    return found
+            except Exception:
+                continue
+
+    # 3. macOS Xcode / system fixed path
+    if sys.platform == "darwin":
+        for p in [
+            "/usr/bin/python3",
+            "/Library/Developer/CommandLineTools/usr/bin/python3",
+        ]:
+            if Path(p).exists() and p != sys.executable:
+                return p
+
+    # 4. Windows: look for py launcher
+    if sys.platform == "win32":
+        py = shutil.which("py")
+        if py:
+            return py
+
+    raise RuntimeError(
+        "Could not find a Python interpreter to run pip. "
+        "Please install Python 3 from https://python.org and try again."
+    )
+
+
 # ── Subprocess runner with live output ────────────────────────────────────────
 
 def _run_pip_streaming(
@@ -191,8 +277,9 @@ def _run_pip_streaming(
 
     Raises RuntimeError on non-zero exit.
     """
+    python = _find_python()
     cmd = [
-        sys.executable, "-m", "pip", "install",
+        python, "-m", "pip", "install",
         "--target", str(target),
         "--upgrade",
         "--no-cache-dir",           # avoid stale cache masking download progress
@@ -203,7 +290,8 @@ def _run_pip_streaming(
         cmd += ["--extra-index-url", extra_index]
     cmd += packages
 
-    logger.info("[image_gen_installer] Running: %s", " ".join(cmd))
+    logger.info("[image_gen_installer] Running pip via: %s", python)
+    logger.info("[image_gen_installer] Command: %s", " ".join(cmd))
 
     proc = subprocess.Popen(
         cmd,
@@ -273,10 +361,11 @@ def _do_install(progress: InstallProgress) -> None:
 
         # ── Step 3: verify imports in a clean subprocess ──────────────────────
         progress.update("verifying", 92.0, "Verifying installation…")
+        python = _find_python()
         env = os.environ.copy()
         env["PYTHONPATH"] = str(pkg_dir) + os.pathsep + env.get("PYTHONPATH", "")
         check = subprocess.run(
-            [sys.executable, "-c",
+            [python, "-c",
              "import torch, diffusers, transformers, accelerate; print('ok')"],
             capture_output=True, text=True, env=env, timeout=60,
         )
