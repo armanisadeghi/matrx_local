@@ -84,6 +84,23 @@ export interface AppSettings {
   ttsStreamingThreshold: number; // char count above which streaming mode is used (0 = always stream)
   ttsAutoCleanMarkdown: boolean; // auto-clean markdown on TTS page before speaking
 
+  // ── Voice Assistant (wake word + audio chat mode) ────────────────────
+  /**
+   * System prompt used when the voice assistant is active (wake word triggered
+   * or voice tab open). "" = use the built-in voice-assistant prompt.
+   */
+  voiceAssistantSystemPromptId: string;
+  /**
+   * Silence duration in ms after the last Whisper segment before auto-submit
+   * fires. Users who speak quickly may want 1000ms; slower speakers 3000-5000ms.
+   */
+  voiceSilenceTimeoutMs: number;
+  /**
+   * Whether to restore the previous system prompt when exiting voice mode
+   * (true = restore; false = leave the voice prompt active).
+   */
+  voiceRestorePromptOnExit: boolean;
+
   // ── UI / Layout ─────────────────────────────────────────────────────
   sidebarCollapsed: boolean;
 }
@@ -167,6 +184,10 @@ const DEFAULTS: AppSettings = {
   ttsReadAloudAutoPlay: false,
   ttsStreamingThreshold: 200,
   ttsAutoCleanMarkdown: false,
+  // Voice Assistant
+  voiceAssistantSystemPromptId: "builtin-voice-assistant",
+  voiceSilenceTimeoutMs: 1400,
+  voiceRestorePromptOnExit: true,
   // UI
   sidebarCollapsed: false,
 };
@@ -662,6 +683,22 @@ export function mergeCloudSettings(
       "tts_auto_clean_markdown",
       local.ttsAutoCleanMarkdown,
     ),
+    // Voice Assistant
+    voiceAssistantSystemPromptId: cloudStr(
+      cloud,
+      "voice_assistant_system_prompt_id",
+      local.voiceAssistantSystemPromptId,
+    ),
+    voiceSilenceTimeoutMs: cloudNum(
+      cloud,
+      "voice_silence_timeout_ms",
+      local.voiceSilenceTimeoutMs,
+    ),
+    voiceRestorePromptOnExit: cloudBool(
+      cloud,
+      "voice_restore_prompt_on_exit",
+      local.voiceRestorePromptOnExit,
+    ),
     // UI
     sidebarCollapsed: cloudBool(
       cloud,
@@ -746,6 +783,10 @@ export function settingsToCloud(
     tts_read_aloud_auto_play: settings.ttsReadAloudAutoPlay,
     tts_streaming_threshold: settings.ttsStreamingThreshold,
     tts_auto_clean_markdown: settings.ttsAutoCleanMarkdown,
+    // Voice Assistant
+    voice_assistant_system_prompt_id: settings.voiceAssistantSystemPromptId,
+    voice_silence_timeout_ms: settings.voiceSilenceTimeoutMs,
+    voice_restore_prompt_on_exit: settings.voiceRestorePromptOnExit,
     // UI
     sidebar_collapsed: settings.sidebarCollapsed,
   };

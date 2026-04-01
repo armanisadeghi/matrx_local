@@ -103,6 +103,17 @@ Rules:
 - Do not filter ideas for feasibility unless asked — include bold and unusual ones
 - Generate at least 8 ideas unless the topic is very narrow
 `;
+
+const PROMPT_BUILTIN_VOICE_ASSISTANT = `You are a voice assistant. Your responses are spoken aloud by a text-to-speech engine, so they must be short and conversational.
+
+Critical rules:
+- Keep every response under 3 sentences unless the question strictly requires more
+- Never use bullet points, numbered lists, markdown, code blocks, or headers — plain prose only
+- Never say "Certainly!", "Great question!", "Of course!" or any filler opener — just answer directly
+- If you need to give a long answer, summarize it in 2 sentences and offer to elaborate
+- Match the pace of conversation: short question → short answer
+- If you don't know something, say so in one sentence
+`;
 // Built-in prompts that ship with the app — always available, not editable.
 // Users can "fork" them into their own library.
 export const BUILTIN_PROMPTS: Omit<
@@ -144,6 +155,12 @@ export const BUILTIN_PROMPTS: Omit<
     name: "Brainstorm",
     content: PROMPT_BUILTIN_BRAINSTORM,
     category: "Creative",
+  },
+  {
+    id: "builtin-voice-assistant",
+    name: "Voice Assistant",
+    content: PROMPT_BUILTIN_VOICE_ASSISTANT,
+    category: "Voice",
   },
 ];
 

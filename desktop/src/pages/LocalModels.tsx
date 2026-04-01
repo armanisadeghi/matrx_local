@@ -113,6 +113,7 @@ import type {
 import type { EngineToolSchema } from "@/lib/api";
 import { useNavigate } from "react-router-dom";
 import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
+import { loadSettings } from "@/lib/settings";
 import type { SystemPrompt } from "@/lib/system-prompts";
 import { usePageRefreshHandler } from "@/hooks/use-page-refresh";
 import { ModelRepoAnalyzer } from "@/components/llm/ModelRepoAnalyzer";
@@ -144,6 +145,7 @@ import { useTranscriptionApp } from "@/contexts/TranscriptionContext";
 import { useWakeWordContext } from "@/contexts/WakeWordContext";
 import { useVoiceChat } from "@/hooks/use-voice-chat";
 import { VoiceChatBar } from "@/components/voice/VoiceChatBar";
+import { WakeWordActivePopup } from "@/components/voice/WakeWordActivePopup";
 import { RecordingMicButton } from "@/components/recording/RecordingMicButton";
 
 // ── Shared LLM context (single hook instance for all tabs) ───────────────
@@ -3540,26 +3542,109 @@ function InferenceTab() {
     transcriptionState.fullTranscript,
   ]);
 
-  // Wake word → switch to Voice tab and start recording through the state machine
+  // ── Voice assistant system prompt ────────────────────────────────────────
+  // When entering voice mode (wake word or clicking the Voice tab), automatically
+  // apply the configured voice assistant system prompt.  When leaving, restore
+  // the previous prompt (if voiceRestorePromptOnExit is set).
+  // We use refs to avoid forward-reference issues with systemPrompt/setSystemPrompt
+  // which are declared later in the component body.
+  const preVoiceSystemPromptRef = useRef<string | null>(null);
+  // Stable ref to setSystemPrompt so callbacks don't go stale
+  const setSystemPromptRef = useRef<((v: string) => void) | null>(null);
+  const getCurrentSystemPromptRef = useRef<(() => string) | null>(null);
+
+  const applyVoiceSystemPrompt = useCallback(async () => {
+    const settings = await loadSettings();
+    const promptId =
+      settings.voiceAssistantSystemPromptId || "builtin-voice-assistant";
+    const content = systemPrompts.resolve(promptId) ?? "";
+    if (content && setSystemPromptRef.current) {
+      // Only save pre-voice prompt once per activation
+      if (preVoiceSystemPromptRef.current === null) {
+        preVoiceSystemPromptRef.current =
+          getCurrentSystemPromptRef.current?.() ?? "";
+      }
+      setSystemPromptRef.current(content);
+    }
+  }, []);
+
+  const restoreVoiceSystemPrompt = useCallback(async () => {
+    const settings = await loadSettings();
+    if (
+      settings.voiceRestorePromptOnExit &&
+      preVoiceSystemPromptRef.current !== null &&
+      setSystemPromptRef.current
+    ) {
+      setSystemPromptRef.current(preVoiceSystemPromptRef.current);
+    }
+    preVoiceSystemPromptRef.current = null;
+  }, []);
+
+  // ── Voice popup (shown from any tab when wake word fires or voice mode active) ─
+  const [voicePopupVisible, setVoicePopupVisible] = useState(false);
+
+  // Track current assistant content for the popup (streaming + completed)
+  const [popupAssistantContent, setPopupAssistantContent] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    if (!voicePopupVisible) return;
+    // Show streaming content live, then the completed message
+    const streaming = messages.find(
+      (m) => m.role === "assistant" && m.isStreaming,
+    );
+    if (streaming) {
+      setPopupAssistantContent(streaming.content);
+      return;
+    }
+    const last = [...messages].reverse().find((m) => m.role === "assistant");
+    setPopupAssistantContent(last?.content ?? null);
+  }, [voicePopupVisible, messages, isGenerating]);
+
+  // pendingStartRecordingRef: set to true when we want to start recording
+  // as soon as voice chat becomes active.  Avoids the 50ms setTimeout race
+  // where activate() might not have committed before toggleRecording() fires.
+  const pendingStartRecordingRef = useRef(false);
+
+  // When isActive flips to true and we have a pending start, kick off recording.
+  useEffect(() => {
+    if (voiceChatState.isActive && pendingStartRecordingRef.current) {
+      pendingStartRecordingRef.current = false;
+      voiceChatActions.toggleRecording();
+    }
+  }, [voiceChatState.isActive, voiceChatActions]);
+
+  // Wake word → show popup + switch to Voice tab + start recording
   const prevWwUiModeRef = useRef(wwState.uiMode);
   useEffect(() => {
     const prev = prevWwUiModeRef.current;
     prevWwUiModeRef.current = wwState.uiMode;
     if (prev !== "active" && wwState.uiMode === "active") {
+      // Show the floating popup so the user sees live activity from any tab
+      setVoicePopupVisible(true);
       // Switch to the voice tab so the full UI is visible
       setMode("voice");
-      // Activate the voice chat panel if not already active
-      if (!voiceChatState.isActive) {
+      // Apply the voice assistant system prompt
+      void applyVoiceSystemPrompt();
+      if (voiceChatState.isActive) {
+        // Already active — start recording immediately
+        voiceChatActions.toggleRecording();
+      } else {
+        // Activate first; the pendingStart effect above will kick off
+        // recording once isActive commits (no magic number timeout).
+        pendingStartRecordingRef.current = true;
         voiceChatActions.activate();
       }
-      // Use toggleRecording (not startRecording directly) so the hook
-      // snapshots the transcript base and manages the phase correctly.
-      // Give React one tick to commit activate() before starting.
-      setTimeout(() => {
-        voiceChatActions.toggleRecording();
-      }, 50);
+    }
+    // When wake word goes back to listening/idle, hide the popup
+    if (prev === "active" && wwState.uiMode !== "active") {
+      setVoicePopupVisible(false);
     }
   }, [wwState.uiMode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A ref we update with the current mode so the popup-visibility effect
+  // below can read it without `mode` being in scope yet.
+  const modeRef = useRef<string>("chat");
   const [switchingModel, setSwitchingModel] = useState(false);
   const [showPromptPicker, setShowPromptPicker] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -3571,10 +3656,24 @@ function InferenceTab() {
   const [systemPrompt, setSystemPrompt] = useState(
     activeConv?.systemPrompt ?? "",
   );
+  // Wire the voice system prompt helpers (declared earlier) to these setters.
+  setSystemPromptRef.current = setSystemPrompt;
+  getCurrentSystemPromptRef.current = () => systemPrompt;
   const [temperature, setTemperature] = useState(0.7);
   const [topP, setTopP] = useState(0.8);
   const [maxTokens, setMaxTokens] = useState(8000);
   const [mode, setMode] = useState<InferenceMode>("chat");
+  modeRef.current = mode;
+
+  // Show popup whenever voice mode is active and voice chat is running
+  useEffect(() => {
+    if (mode === "voice" && voiceChatState.isActive) {
+      setVoicePopupVisible(true);
+    } else if (wwState.uiMode !== "active") {
+      // Hide popup only when not triggered by wake word
+      setVoicePopupVisible(false);
+    }
+  }, [mode, voiceChatState.isActive, wwState.uiMode]);
 
   // ── Agentic tools mode state ──────────────────────────────────────────
   const [toolSchemasByCategory, setToolSchemasByCategory] = useState<
@@ -4622,7 +4721,25 @@ function InferenceTab() {
 
   // ── Full playground layout ─────────────────────────────────────────────
   return (
-    <div className="flex h-full gap-0 rounded-xl border overflow-hidden bg-background">
+    <div className="flex h-full gap-0 rounded-xl border overflow-hidden bg-background relative">
+      {/* ── Voice Assistant floating popup (visible from any tab when voice active) ── */}
+      <WakeWordActivePopup
+        visible={voicePopupVisible}
+        voiceChatState={voiceChatState}
+        voiceChatActions={voiceChatActions}
+        transcriptionState={transcriptionState}
+        isGenerating={isGenerating}
+        stopGeneration={() => {
+          stopRef.current = true;
+        }}
+        ttsPlaybackState={ttsPlaybackState}
+        assistantContent={popupAssistantContent}
+        onDismiss={() => {
+          setVoicePopupVisible(false);
+          if (voiceChatState.isActive) voiceChatActions.deactivate();
+          void restoreVoiceSystemPrompt();
+        }}
+      />
       {/* ── Left sidebar: conversation list ── */}
       <div className="w-56 shrink-0 flex flex-col border-r bg-muted/20">
         <div className="flex items-center justify-between px-3 py-2.5 border-b">
@@ -4697,13 +4814,22 @@ function InferenceTab() {
                     }`}
                     onClick={() => {
                       setMode(m);
-                      // Entering voice mode → auto-activate voice chat
+                      // Entering voice mode → auto-activate voice chat + apply voice system prompt
                       if (m === "voice" && !voiceChatState.isActive) {
                         voiceChatActions.activate();
+                        void applyVoiceSystemPrompt();
                       }
-                      // Leaving voice mode → deactivate
-                      if (m !== "voice" && voiceChatState.isActive) {
+                      // Leaving voice mode → deactivate + restore previous system prompt.
+                      // Guard: if the wake word is currently active, the voice session is
+                      // running independently (popup still visible) — don't kill it just
+                      // because the user navigated to another tab.
+                      if (
+                        m !== "voice" &&
+                        voiceChatState.isActive &&
+                        wwState.uiMode !== "active"
+                      ) {
                         voiceChatActions.deactivate();
+                        void restoreVoiceSystemPrompt();
                       }
                     }}
                   >

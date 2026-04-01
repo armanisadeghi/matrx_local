@@ -78,6 +78,7 @@ import type { Theme } from "@/hooks/use-theme";
 
 declare const __APP_VERSION__: string;
 import { isTauri } from "@/lib/sidecar";
+import { systemPrompts, BUILTIN_PROMPTS } from "@/lib/system-prompts";
 import type {
   AutoUpdateState,
   AutoUpdateActions,
@@ -872,6 +873,7 @@ export function Settings({
   const settingsTabs = [
     { value: "general", label: "General" },
     { value: "system", label: "System" },
+    { value: "voice-assistant", label: "Voice Assistant" },
     { value: "api-keys", label: "API Keys" },
     { value: "storage", label: "Storage" },
     { value: "proxy", label: "Proxy" },
@@ -1649,6 +1651,14 @@ export function Settings({
                 </>
               )}
             </>
+          )}
+
+          {/* ── Voice Assistant Tab ──────────────────────────── */}
+          {activeTab === "voice-assistant" && (
+            <VoiceAssistantSettingsTab
+              settings={settings}
+              updateSetting={updateSetting}
+            />
           )}
 
           {/* ── API Keys Tab ─────────────────────────────────── */}
@@ -3866,5 +3876,307 @@ export function Settings({
         </div>
       </ScrollArea>
     </div>
+  );
+}
+
+// ── Voice Assistant Settings Tab ──────────────────────────────────────────────
+
+interface VoiceAssistantSettingsTabProps {
+  settings: AppSettings;
+  updateSetting: <K extends keyof AppSettings>(
+    key: K,
+    value: AppSettings[K],
+  ) => void;
+}
+
+function VoiceAssistantSettingsTab({
+  settings,
+  updateSetting,
+}: VoiceAssistantSettingsTabProps) {
+  const [userPrompts, setUserPrompts] = useState(systemPrompts.list());
+  const [newPromptName, setNewPromptName] = useState("");
+  const [newPromptContent, setNewPromptContent] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editContent, setEditContent] = useState("");
+
+  const allPrompts = [...BUILTIN_PROMPTS, ...userPrompts];
+  const selectedPromptId =
+    settings.voiceAssistantSystemPromptId || "builtin-voice-assistant";
+  const selectedPrompt = allPrompts.find((p) => p.id === selectedPromptId);
+
+  const reload = () => setUserPrompts(systemPrompts.list());
+
+  const handleCreate = () => {
+    if (!newPromptName.trim() || !newPromptContent.trim()) return;
+    systemPrompts.create({
+      name: newPromptName.trim(),
+      content: newPromptContent.trim(),
+      category: "Voice",
+    });
+    setNewPromptName("");
+    setNewPromptContent("");
+    reload();
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingId) return;
+    systemPrompts.update(editingId, {
+      name: editName.trim(),
+      content: editContent.trim(),
+    });
+    setEditingId(null);
+    reload();
+  };
+
+  const handleDelete = (id: string) => {
+    systemPrompts.delete(id);
+    if (settings.voiceAssistantSystemPromptId === id) {
+      updateSetting("voiceAssistantSystemPromptId", "builtin-voice-assistant");
+    }
+    reload();
+  };
+
+  const silenceMs = settings.voiceSilenceTimeoutMs ?? 1400;
+
+  return (
+    <>
+      {/* ── Silence Timeout ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Mic className="h-4 w-4 text-primary" />
+            Auto-Submit Silence Timeout
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            In auto mode, the voice assistant waits this long after your last
+            spoken word before automatically submitting the transcript. Increase
+            it if you speak slowly or pause mid-sentence.
+          </p>
+          <div className="flex items-center gap-4">
+            <input
+              type="range"
+              min={400}
+              max={30000}
+              step={100}
+              value={silenceMs}
+              onChange={(e) =>
+                updateSetting("voiceSilenceTimeoutMs", Number(e.target.value))
+              }
+              className="flex-1 h-2 rounded-lg accent-primary"
+            />
+            <span className="w-20 text-right text-sm font-mono tabular-nums text-foreground">
+              {silenceMs >= 1000
+                ? `${(silenceMs / 1000).toFixed(1)} s`
+                : `${silenceMs} ms`}
+            </span>
+          </div>
+          <div className="flex justify-between text-[11px] text-muted-foreground">
+            <span>0.4 s (fast)</span>
+            <span>1.4 s (default)</span>
+            <span>30 s (very slow)</span>
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Restore system prompt on exit</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                When you leave voice mode, restore the previous system prompt
+              </p>
+            </div>
+            <Switch
+              checked={settings.voiceRestorePromptOnExit ?? true}
+              onCheckedChange={(v) =>
+                updateSetting("voiceRestorePromptOnExit", v)
+              }
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── System Prompt Selection ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Speaker className="h-4 w-4 text-primary" />
+            Voice Assistant System Prompt
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            This prompt is automatically applied whenever voice mode activates
+            (wake word or Voice tab). It tells the model to keep responses short
+            and conversational for audio playback.
+          </p>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Active prompt</Label>
+            <Select
+              value={selectedPromptId}
+              onValueChange={(v) =>
+                updateSetting("voiceAssistantSystemPromptId", v)
+              }
+            >
+              <SelectTrigger className="text-sm">
+                <SelectValue placeholder="Select a prompt…" />
+              </SelectTrigger>
+              <SelectContent>
+                {BUILTIN_PROMPTS.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}{" "}
+                    <span className="text-muted-foreground text-xs ml-1">
+                      (built-in)
+                    </span>
+                  </SelectItem>
+                ))}
+                {userPrompts.length > 0 && (
+                  <>
+                    <Separator className="my-1" />
+                    {userPrompts.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {selectedPrompt && (
+            <div className="rounded-md bg-muted/40 border px-3 py-2">
+              <p className="text-[11px] font-semibold text-muted-foreground mb-1">
+                Preview
+              </p>
+              <p className="text-xs text-foreground whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">
+                {selectedPrompt.content}
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── User Prompt Library ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Layers className="h-4 w-4 text-primary" />
+            Custom Voice Prompts
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Create custom system prompts for different voice assistant
+            personalities or use cases.
+          </p>
+
+          {/* Existing user prompts */}
+          {userPrompts.length > 0 && (
+            <div className="space-y-2">
+              {userPrompts.map((p) => (
+                <div
+                  key={p.id}
+                  className="rounded-lg border bg-muted/20 p-3 space-y-2"
+                >
+                  {editingId === p.id ? (
+                    <>
+                      <Input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        placeholder="Prompt name"
+                        className="h-7 text-sm"
+                      />
+                      <textarea
+                        value={editContent}
+                        onChange={(e) => setEditContent(e.target.value)}
+                        placeholder="System prompt content…"
+                        className="w-full rounded-md border bg-background px-3 py-2 text-xs resize-none h-24 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={handleSaveEdit}
+                          className="h-7 text-xs"
+                        >
+                          <Check className="h-3 w-3 mr-1" /> Save
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setEditingId(null)}
+                          className="h-7 text-xs"
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{p.name}</p>
+                        <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                          {p.content}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => {
+                            setEditingId(p.id);
+                            setEditName(p.name);
+                            setEditContent(p.content);
+                          }}
+                          className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
+                          title="Edit"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(p.id)}
+                          className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-destructive transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Separator />
+
+          {/* Create new prompt */}
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold">New custom prompt</Label>
+            <Input
+              value={newPromptName}
+              onChange={(e) => setNewPromptName(e.target.value)}
+              placeholder="Prompt name (e.g. 'Concise Assistant')"
+              className="h-8 text-sm"
+            />
+            <textarea
+              value={newPromptContent}
+              onChange={(e) => setNewPromptContent(e.target.value)}
+              placeholder="Write the system prompt here…"
+              className="w-full rounded-md border bg-background px-3 py-2 text-xs resize-none h-28 focus:outline-none focus:ring-2 focus:ring-primary/40"
+            />
+            <Button
+              size="sm"
+              onClick={handleCreate}
+              disabled={!newPromptName.trim() || !newPromptContent.trim()}
+              className="h-8"
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" /> Create Prompt
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </>
   );
 }
