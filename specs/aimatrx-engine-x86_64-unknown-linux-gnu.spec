@@ -58,6 +58,9 @@ a = Analysis(
         'app.tools.tools.file_watch', 'app.tools.tools.app_integration',
         'app.tools.tools.scheduler', 'app.tools.tools.media',
         'app.tools.tools.wifi_bluetooth',
+        # stdlib modules not auto-discovered by PyInstaller but required by
+        # user-installed image-gen packages (transformers uses filecmp directly)
+        'filecmp', 'doctest',
     ],
     hookspath=[],
     hooksconfig={},

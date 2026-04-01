@@ -73,13 +73,22 @@ def inject_image_gen_path() -> bool:
 
     Called from runtime_hook.py and at engine startup.
     Returns True if path was injected, False if packages not yet installed.
+    Also applies the filecmp compatibility patch to transformers on first call
+    so that users who installed before the patch was introduced are fixed
+    automatically without needing to reinstall.
     """
+    pkg_dir_path = get_image_gen_packages_dir()
     if not is_image_gen_installed():
         return False
-    pkg_dir = str(get_image_gen_packages_dir())
+    pkg_dir = str(pkg_dir_path)
     if pkg_dir not in sys.path:
         sys.path.insert(0, pkg_dir)
         logger.debug("[image_gen_installer] Injected %s into sys.path", pkg_dir)
+    # Apply compatibility patch every startup — idempotent, fast (skips if already done)
+    try:
+        _patch_transformers_filecmp(pkg_dir_path)
+    except Exception as patch_err:
+        logger.warning("[image_gen_installer] filecmp patch attempt failed: %s", patch_err)
     return True
 
 
@@ -122,8 +131,8 @@ class InstallProgress:
         """Forward a raw pip output line to the SSE stream and engine log."""
         with self._lock:
             self.log_lines.append(line)
-            if len(self.log_lines) > 500:
-                self.log_lines = self.log_lines[-500:]
+            if len(self.log_lines) > 2000:
+                self.log_lines = self.log_lines[-2000:]
         logger.debug("[pip] %s", line)
         self._emit({
             "status": self.status,
@@ -314,6 +323,72 @@ def _run_pip_streaming(
         )
 
 
+# ── Compatibility patches ─────────────────────────────────────────────────────
+
+def _patch_transformers_filecmp(pkg_dir: Path) -> None:
+    """Patch transformers/dynamic_module_utils.py to handle missing `filecmp`.
+
+    `filecmp` is a Python stdlib module that PyInstaller may not bundle when it
+    never appears in the engine's own import graph.  `transformers` imports it
+    unconditionally at the top of dynamic_module_utils.py, which causes an
+    ImportError inside a frozen binary even though the transformers package
+    itself was successfully installed.
+
+    The patch replaces the bare `import filecmp` with a try/except that falls
+    back to an always-copy stub.  The always-copy behaviour is safe and correct
+    — it's slightly redundant (copies a file even when it hasn't changed) but
+    produces identical results.
+
+    This function is idempotent — running it on an already-patched file is safe.
+    """
+    target = pkg_dir / "transformers" / "dynamic_module_utils.py"
+    if not target.exists():
+        logger.warning("[image_gen_installer] Could not find dynamic_module_utils.py to patch")
+        return
+
+    src = target.read_text(encoding="utf-8")
+
+    # Already patched?
+    if "_files_equal" in src:
+        logger.debug("[image_gen_installer] dynamic_module_utils.py already patched — skipping")
+        return
+
+    old_import = "import filecmp"
+    new_import = (
+        "try:\n"
+        "    import filecmp as _filecmp_mod\n"
+        "    def _files_equal(a: str, b: str) -> bool:\n"
+        "        return _filecmp_mod.cmp(a, b)\n"
+        "except ModuleNotFoundError:\n"
+        "    # filecmp is excluded from some frozen binaries (e.g. PyInstaller).\n"
+        "    # Always-copy fallback is safe: slightly redundant but functionally correct.\n"
+        "    def _files_equal(a: str, b: str) -> bool:  # type: ignore[misc]\n"
+        "        return False"
+    )
+
+    if old_import not in src:
+        logger.warning(
+            "[image_gen_installer] 'import filecmp' not found in dynamic_module_utils.py — "
+            "transformers version may have changed; skipping patch"
+        )
+        return
+
+    patched = src.replace(old_import, new_import, 1)
+    patched = patched.replace("filecmp.cmp(", "_files_equal(", 100)
+    target.write_text(patched, encoding="utf-8")
+
+    # Remove stale .pyc so Python uses our patched source
+    pyc_dir = target.parent / "__pycache__"
+    if pyc_dir.exists():
+        for pyc in pyc_dir.glob("dynamic_module_utils*.pyc"):
+            try:
+                pyc.unlink()
+            except OSError:
+                pass
+
+    logger.info("[image_gen_installer] Patched transformers/dynamic_module_utils.py ✓")
+
+
 # ── Main installer (runs in a thread) ────────────────────────────────────────
 
 def _do_install(progress: InstallProgress) -> None:
@@ -374,6 +449,16 @@ def _do_install(progress: InstallProgress) -> None:
                 f"Post-install import check failed:\n{check.stderr[-2000:]}"
             )
         progress.update("verifying", 97.0, "All imports verified ✓")
+
+        # ── Step 3.5: patch transformers for frozen-binary compatibility ─────────
+        # transformers/dynamic_module_utils.py imports `filecmp` at the top level.
+        # filecmp is a stdlib module that PyInstaller may not auto-collect when it
+        # doesn't appear in the engine's own import graph.  We patch the installed
+        # copy to guard the import so it degrades gracefully inside the frozen binary
+        # (always-copy fallback is safe and correct).
+        progress.update("verifying", 94.0, "Applying compatibility patches…")
+        _patch_transformers_filecmp(pkg_dir)
+        progress.update("verifying", 97.0, "Compatibility patches applied ✓")
 
         # ── Step 4: write marker + inject path ────────────────────────────────
         marker.write_text(json.dumps({"packages": IMAGE_GEN_PACKAGES}))

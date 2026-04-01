@@ -555,7 +555,7 @@ def _start_parent_watchdog() -> None:
 
     def _watch() -> None:
         while not _shutdown_event.is_set():
-            time.sleep(2)
+            time.sleep(0.5)
             parent_gone = False
 
             if sys.platform == "win32":

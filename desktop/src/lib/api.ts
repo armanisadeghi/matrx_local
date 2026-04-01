@@ -3197,6 +3197,9 @@ export interface ImageGenInstallStatus {
   error?: string;
   already_installed?: boolean;
   install_dir?: string;
+  log_lines?: string[];
+  /** True when this event is a raw pip log line, not a stage update */
+  log?: boolean;
 }
 
 export async function startImageGenInstall(

@@ -86,6 +86,14 @@ For features that require large optional packages (torch + diffusers = ~500 MB�
 
 The installer lives in `app/services/image_gen/installer.py`. The UI is `ImageGenInstaller` in `LocalModels.tsx`.
 
+7. **PyInstaller may not collect stdlib modules unused by the engine itself.** The installed packages run inside the frozen binary's Python interpreter. If they need a stdlib module (e.g. `filecmp`) that PyInstaller didn't bundle — because the engine never imports it — they'll fail with `ModuleNotFoundError` at runtime even though it's a stdlib module that "always exists" in normal Python.
+
+   **Fix in two ways:**
+   - Add to `hiddenimports` in all 4 `.spec` files and in `build-sidecar.sh` so the next build includes it.
+   - Patch the installed package source at install time (and on every `inject_image_gen_path()` call) to handle the missing module gracefully. This fixes existing installs without a rebuild.
+
+   Known case: `transformers/dynamic_module_utils.py` imports `filecmp` at the top level. The patch in `_patch_transformers_filecmp()` makes it fall back to an always-copy stub.
+
 ---
 
 ## macOS Code Signing

@@ -244,6 +244,12 @@ export function useLlm(): [LlmState, LlmActions] {
 
     let mounted = true;
     const setupListeners = async () => {
+      // Remove any previously registered listeners before adding new ones.
+      // This prevents accumulation if the effect ever re-runs (e.g. due to
+      // dependency identity change).  The separate cleanup useEffect at [] also
+      // handles the unmount case; this guard covers the re-run case.
+      const existing = unlistenRef.current.splice(0);
+      existing.forEach((fn) => fn());
       const unlistenReady = await tauriListen<LlmServerStatus>(
         "llm-server-ready",
         (event) => {
@@ -340,6 +346,11 @@ export function useLlm(): [LlmState, LlmActions] {
 
     return () => {
       mounted = false;
+      // Also unlisten here so that if this effect re-runs (dependency change),
+      // listeners from this run are removed before the next run adds new ones.
+      // The [] cleanup useEffect is the final guard for the unmount case.
+      unlistenRef.current.forEach((fn) => fn());
+      unlistenRef.current = [];
     };
   }, [refreshHfTokenConfigured]);
 

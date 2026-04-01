@@ -562,29 +562,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.debug("[app/main.py] Document watcher cleanup skipped or timed out")
 
     # ── Phase S5: Stop network services (proxy, tunnel, scraper) ─────────
+    # Each stop is wrapped in asyncio.wait_for with a hard timeout to prevent
+    # a stuck service (hung TCP connection, blocked I/O, zombie Playwright
+    # process) from blocking the entire teardown sequence.  Without these
+    # timeouts, a single hung stop can exhaust the entire 25-second force-exit
+    # budget and cause Python to be SIGKILL'd with ports still bound.
     try:
         proxy = get_proxy_server()
-        await proxy.stop()
+        await asyncio.wait_for(proxy.stop(), timeout=5.0)
         logger.info("[app/main.py] HTTP proxy stopped ✓")
+    except asyncio.TimeoutError:
+        logger.warning("[app/main.py] HTTP proxy stop timed out after 5s — forcing teardown")
     except Exception:
         logger.error("[app/main.py] HTTP proxy failed to stop cleanly", exc_info=True)
 
     try:
         tm = get_tunnel_manager()
         if tm.running:
-            await tm.stop()
+            await asyncio.wait_for(tm.stop(), timeout=7.0)
             logger.info("[app/main.py] Tunnel stopped ✓")
             try:
                 from app.services.cloud_sync.instance_manager import get_instance_manager as _get_im
-                await _get_im().update_tunnel_url(None, active=False)
-            except Exception:
+                await asyncio.wait_for(_get_im().update_tunnel_url(None, active=False), timeout=2.0)
+            except (asyncio.TimeoutError, Exception):
                 pass
+    except asyncio.TimeoutError:
+        logger.warning("[app/main.py] Tunnel stop timed out after 7s — forcing teardown")
     except Exception:
         logger.error("[app/main.py] Tunnel failed to stop cleanly", exc_info=True)
 
     try:
-        await engine.stop()
+        await asyncio.wait_for(engine.stop(), timeout=8.0)
         logger.info("[app/main.py] Scraper engine stopped ✓")
+    except asyncio.TimeoutError:
+        logger.warning("[app/main.py] Scraper engine stop timed out after 8s — forcing teardown")
     except Exception:
         logger.error(
             "[app/main.py] Scraper engine failed to stop cleanly", exc_info=True

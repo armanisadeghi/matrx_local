@@ -280,6 +280,35 @@ class InstallStatusResponse(BaseModel):
     error: str | None = None
     already_installed: bool = False
     install_dir: str = ""
+    log_lines: list[str] = []
+    """All accumulated pip output lines — returned on every poll so the UI can
+    reconstruct the full log after a reconnect or tab switch."""
+
+
+def _make_status(
+    *,
+    status: str,
+    stage: str = "",
+    percent: float = 0.0,
+    message: str = "",
+    error: str | None = None,
+    already_installed: bool = False,
+    progress=None,
+) -> InstallStatusResponse:
+    log_lines: list[str] = []
+    if progress is not None:
+        with progress._lock:
+            log_lines = list(progress.log_lines)
+    return InstallStatusResponse(
+        status=status,
+        stage=stage,
+        percent=percent,
+        message=message,
+        error=error,
+        already_installed=already_installed,
+        install_dir=str(get_image_gen_packages_dir()),
+        log_lines=log_lines,
+    )
 
 
 @router.post("/install", response_model=InstallStatusResponse)
@@ -293,67 +322,52 @@ async def install_image_gen() -> InstallStatusResponse:
         inject_image_gen_path()
         from app.services.image_gen import service as _svc
         _svc.DEPS_AVAILABLE, _svc.DEPS_REASON = _svc._check_deps()
-        return InstallStatusResponse(
-            status="complete",
-            stage="done",
-            percent=100.0,
+        return _make_status(
+            status="complete", stage="done", percent=100.0,
             message="Image generation is already installed.",
             already_installed=True,
-            install_dir=str(get_image_gen_packages_dir()),
         )
 
     existing = get_active_progress()
     if existing and existing.status == "running":
-        return InstallStatusResponse(
-            status=existing.status,
-            stage=existing.stage,
-            percent=existing.percent,
-            message=existing.message,
-            install_dir=str(get_image_gen_packages_dir()),
+        return _make_status(
+            status=existing.status, stage=existing.stage,
+            percent=existing.percent, message=existing.message,
+            progress=existing,
         )
 
     progress = await start_install()
-    return InstallStatusResponse(
-        status=progress.status,
-        stage=progress.stage,
-        percent=progress.percent,
-        message="Installation started.",
-        install_dir=str(get_image_gen_packages_dir()),
+    return _make_status(
+        status=progress.status, stage=progress.stage,
+        percent=progress.percent, message="Installation started.",
+        progress=progress,
     )
 
 
 @router.get("/install/status", response_model=InstallStatusResponse)
 async def get_install_status() -> InstallStatusResponse:
-    """Poll current installation status."""
-    install_dir = str(get_image_gen_packages_dir())
+    """Poll current installation status — includes all accumulated log lines.
 
+    Call this when reconnecting after a tab switch to restore the full log.
+    """
     if is_image_gen_installed():
-        return InstallStatusResponse(
-            status="complete",
-            stage="done",
-            percent=100.0,
+        return _make_status(
+            status="complete", stage="done", percent=100.0,
             message="Image generation packages are installed.",
             already_installed=True,
-            install_dir=install_dir,
         )
 
     progress = get_active_progress()
     if progress is None:
-        return InstallStatusResponse(
-            status="idle",
-            stage="",
-            percent=0.0,
+        return _make_status(
+            status="idle", stage="", percent=0.0,
             message="No installation in progress.",
-            install_dir=install_dir,
         )
 
-    return InstallStatusResponse(
-        status=progress.status,
-        stage=progress.stage,
-        percent=progress.percent,
-        message=progress.message,
-        error=progress.error,
-        install_dir=install_dir,
+    return _make_status(
+        status=progress.status, stage=progress.stage,
+        percent=progress.percent, message=progress.message,
+        error=progress.error, progress=progress,
     )
 
 

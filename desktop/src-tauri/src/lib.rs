@@ -864,7 +864,18 @@ fn get_pending_oauth_url(state: tauri::State<'_, PendingOAuthUrl>) -> Option<Str
 /// so the window appears but receives no focus. We must call both `show()` and
 /// `set_focus()`, and additionally `unminimize()` in case the window was
 /// minimized into the Dock rather than hidden.
+///
+/// On macOS, we also switch the activation policy back to Regular so the Dock
+/// icon appears (it was set to Accessory when the window was hidden to tray).
 fn show_main_window(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        // Switch to Regular policy BEFORE show() so the Dock icon appears
+        // at the same moment the window becomes visible.  Must be called on
+        // the main thread — all callers of show_main_window run on the main
+        // thread (tray event, Reopen event, single-instance callback).
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
@@ -903,23 +914,40 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 show_main_window(app);
             }
             "quit" => {
-                // Kill llama-server + whisper GGML state + Python sidecar before exit.
-                // See graceful_shutdown_sync() for full explanation.
-                let sidecar_state = app.state::<SidecarState>();
-                let transcription_state = app.state::<TranscriptionState>();
-                let llm_process = app.state::<llm::commands::LlmProcessHandle>();
-                let llm_server = app.try_state::<llm::commands::LlmServerState>();
-                let wake_word_state = app.try_state::<WakeWordAppState>();
-                let recording_state = app.try_state::<RecordingState>();
-                graceful_shutdown_sync(
-                    &sidecar_state,
-                    &transcription_state,
-                    &llm_process,
-                    llm_server.as_deref(),
-                    wake_word_state.as_deref(),
-                    recording_state.as_deref(),
-                );
-                app.exit(0);
+                // Run graceful shutdown on a background thread so the main thread
+                // stays responsive to macOS's NSApplication watchdog (which sends
+                // SIGKILL if the main thread is unresponsive for ~5-10s).
+                //
+                // If SHUTDOWN_DONE is already true (e.g. the window CloseRequested
+                // handler already started cleanup), we exit immediately instead of
+                // spawning a redundant thread.
+                if SHUTDOWN_DONE.load(Ordering::SeqCst) {
+                    app.exit(0);
+                    return;
+                }
+                let app_handle = app.clone();
+                // AppHandle implements Send+Sync and can retrieve managed state
+                // from any thread — use it instead of raw pointer casts.
+                std::thread::spawn(move || {
+                    if let (Some(sidecar), Some(transcription), Some(llm_proc)) = (
+                        app_handle.try_state::<SidecarState>(),
+                        app_handle.try_state::<TranscriptionState>(),
+                        app_handle.try_state::<llm::commands::LlmProcessHandle>(),
+                    ) {
+                        let llm_srv = app_handle.try_state::<llm::commands::LlmServerState>();
+                        let ww = app_handle.try_state::<WakeWordAppState>();
+                        let rec = app_handle.try_state::<RecordingState>();
+                        graceful_shutdown_sync(
+                            &sidecar,
+                            &transcription,
+                            &llm_proc,
+                            llm_srv.as_deref(),
+                            ww.as_deref(),
+                            rec.as_deref(),
+                        );
+                    }
+                    app_handle.exit(0);
+                });
             }
             _ => {}
         })
@@ -1253,6 +1281,12 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Only act on the main window.  The transcript overlay has its own
+                // lifecycle and should close freely without triggering app shutdown.
+                if window.label() != "main" {
+                    return;
+                }
+
                 let close_to_tray = window
                     .app_handle()
                     .try_state::<CloseToTray>()
@@ -1264,36 +1298,62 @@ pub fn run() {
                     // in the background (accessible via the system tray icon).
                     // We do NOT kill the sidecar — it serves as the "server" half and must
                     // stay alive for background jobs and cloud connectivity.
-                    // The Webview/frontend (npm-side) is effectively paused by the OS when
-                    // the window is hidden; no explicit kill is needed for the UI half.
                     let _ = window.hide();
                     api.prevent_close();
-                } else {
-                    // User explicitly chose "Quit" — run graceful shutdown before exit.
-                    // Must kill llama-server + drop whisper GGML state before process
-                    // terminates to prevent ggml_abort → SIGABRT crash reports.
-                    if let (Some(sidecar), Some(transcription), Some(llm_proc)) = (
-                        window.app_handle().try_state::<SidecarState>(),
-                        window.app_handle().try_state::<TranscriptionState>(),
-                        window
-                            .app_handle()
-                            .try_state::<llm::commands::LlmProcessHandle>(),
-                    ) {
-                        let llm_srv = window
-                            .app_handle()
-                            .try_state::<llm::commands::LlmServerState>();
-                        let ww = window.app_handle().try_state::<WakeWordAppState>();
-                        let rec = window.app_handle().try_state::<RecordingState>();
-                        graceful_shutdown_sync(
-                            &sidecar,
-                            &transcription,
-                            &llm_proc,
-                            llm_srv.as_deref(),
-                            ww.as_deref(),
-                            rec.as_deref(),
-                        );
+
+                    // On macOS: switch to Accessory policy so the Dock icon disappears
+                    // when the window is hidden.  This prevents the confusing state where
+                    // the Dock shows an icon for a window the user cannot find, which
+                    // causes them to relaunch the app and produce two Dock icons.
+                    // Must be called on the main thread — on_window_event runs on the main thread.
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = window.app_handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
                     }
-                    // Fall through: window closes normally, app exits when last window closes.
+                } else {
+                    // User explicitly chose "Quit" — run graceful shutdown on a background
+                    // thread so the main thread stays responsive to the macOS watchdog.
+                    // Prevent the close until cleanup is done, then close programmatically.
+                    //
+                    // If SHUTDOWN_DONE is already true (tray quit handler beat us here),
+                    // let the close proceed immediately — cleanup is already running.
+                    if SHUTDOWN_DONE.load(Ordering::SeqCst) {
+                        // Cleanup already in progress — let window close naturally.
+                        return;
+                    }
+
+                    // Prevent the close now; we will close the window after cleanup.
+                    api.prevent_close();
+
+                    let app_handle = window.app_handle().clone();
+                    let window_label = window.label().to_string();
+
+                    // AppHandle is Send+Sync — use it to retrieve state inside the thread.
+                    std::thread::spawn(move || {
+                        if let (Some(sidecar), Some(transcription), Some(llm_proc)) = (
+                            app_handle.try_state::<SidecarState>(),
+                            app_handle.try_state::<TranscriptionState>(),
+                            app_handle.try_state::<llm::commands::LlmProcessHandle>(),
+                        ) {
+                            let llm_srv = app_handle.try_state::<llm::commands::LlmServerState>();
+                            let ww = app_handle.try_state::<WakeWordAppState>();
+                            let rec = app_handle.try_state::<RecordingState>();
+                            graceful_shutdown_sync(
+                                &sidecar,
+                                &transcription,
+                                &llm_proc,
+                                llm_srv.as_deref(),
+                                ww.as_deref(),
+                                rec.as_deref(),
+                            );
+                        }
+                        // Cleanup done — close the window programmatically.
+                        // This fires CloseRequested again, but SHUTDOWN_DONE=true
+                        // causes it to be a no-op, allowing the close to proceed.
+                        if let Some(w) = app_handle.get_webview_window(&window_label) {
+                            let _ = w.close();
+                        }
+                    });
                 }
             }
         })
@@ -1326,33 +1386,50 @@ pub fn run() {
                 //
                 // We intentionally do NOT call api.prevent_exit() here — we just
                 // run cleanup synchronously before the exit proceeds.
-                tauri::RunEvent::ExitRequested { api: _, code, .. } => {
-                    // Run cleanup before the process exits. The SHUTDOWN_DONE atomic
-                    // inside graceful_shutdown_sync makes this idempotent — if the
-                    // tray / window close handler already ran cleanup, this is a no-op.
+                tauri::RunEvent::ExitRequested { api, code: _, .. } => {
+                    // If SHUTDOWN_DONE is true, cleanup has already run (from the tray
+                    // quit handler or the window CloseRequested handler).  Let this
+                    // ExitRequested proceed immediately — calling prevent_exit here would
+                    // create an infinite loop: app.exit(0) → ExitRequested → prevent_exit
+                    // → app.exit(0) → ExitRequested → …
                     //
-                    // We do NOT skip based on `code` here because:
-                    //   - code=None  → native Cmd+Q / NSApplication terminate: → needs cleanup
-                    //   - code=Some(0) → app.exit(0) from our own tray handler → SHUTDOWN_DONE=true, no-op
-                    //   - code=Some(_) → update restart (request_restart) → SHUTDOWN_DONE=true, no-op
-                    let _ = code;
-                    if let (Some(sidecar), Some(transcription), Some(llm_proc)) = (
-                        app.try_state::<SidecarState>(),
-                        app.try_state::<TranscriptionState>(),
-                        app.try_state::<llm::commands::LlmProcessHandle>(),
-                    ) {
-                        let llm_srv = app.try_state::<llm::commands::LlmServerState>();
-                        let ww = app.try_state::<WakeWordAppState>();
-                        let rec = app.try_state::<RecordingState>();
-                        graceful_shutdown_sync(
-                            &sidecar,
-                            &transcription,
-                            &llm_proc,
-                            llm_srv.as_deref(),
-                            ww.as_deref(),
-                            rec.as_deref(),
-                        );
+                    // code mapping:
+                    //   code=None     → native Cmd+Q / NSApplication terminate: → needs cleanup
+                    //   code=Some(0)  → app.exit(0) from our own handlers → SHUTDOWN_DONE=true
+                    //   code=Some(_)  → update restart (request_restart) → SHUTDOWN_DONE=true
+                    if SHUTDOWN_DONE.load(Ordering::SeqCst) {
+                        // Cleanup already complete — let the exit proceed.
+                        return;
                     }
+
+                    // Native OS quit (Cmd+Q, Activity Monitor, system shutdown).
+                    // Prevent the exit, run cleanup on a background thread so the
+                    // main thread stays responsive to macOS's NSApplication watchdog,
+                    // then call app.exit(0) from the background thread when done.
+                    api.prevent_exit();
+
+                    let app_handle = app.clone();
+                    // AppHandle is Send+Sync — use it to retrieve state inside the thread.
+                    std::thread::spawn(move || {
+                        if let (Some(sidecar), Some(transcription), Some(llm_proc)) = (
+                            app_handle.try_state::<SidecarState>(),
+                            app_handle.try_state::<TranscriptionState>(),
+                            app_handle.try_state::<llm::commands::LlmProcessHandle>(),
+                        ) {
+                            let llm_srv = app_handle.try_state::<llm::commands::LlmServerState>();
+                            let ww = app_handle.try_state::<WakeWordAppState>();
+                            let rec = app_handle.try_state::<RecordingState>();
+                            graceful_shutdown_sync(
+                                &sidecar,
+                                &transcription,
+                                &llm_proc,
+                                llm_srv.as_deref(),
+                                ww.as_deref(),
+                                rec.as_deref(),
+                            );
+                        }
+                        app_handle.exit(0);
+                    });
                 }
 
                 _ => {}

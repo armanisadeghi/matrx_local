@@ -346,6 +346,10 @@ args = [
     "--hidden-import", "app.tools.tools.media",
     "--hidden-import", "app.tools.tools.wifi_bluetooth",
     "--hidden-import", "pydantic_settings",
+    # stdlib modules missed by PyInstaller auto-analysis; required by
+    # user-installed image-gen packages (transformers imports filecmp at top level)
+    "--hidden-import", "filecmp",
+    "--hidden-import", "doctest",
     "--add-data", "app:app",
     "--add-data", "scraper-service/app:scraper-service/app",
 ]
