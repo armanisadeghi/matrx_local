@@ -1,8 +1,7 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
 import { Play, RotateCcw, Code, FormInput, Loader2 } from "lucide-react";
 import { ToolForm } from "./ToolForm";
 import { ToolOutput } from "./ToolOutput";
@@ -32,11 +31,16 @@ export function ToolDetailPanel({
   const [jsonInput, setJsonInput] = useState("{}");
   const formRef = useRef<HTMLFormElement | null>(null);
 
+  // Reset JSON input when switching to a different tool
+  useEffect(() => {
+    setJsonInput("{}");
+  }, [schema.toolName]);
+
   const handleFormSubmit = useCallback(
     (values: Record<string, unknown>) => {
       onInvoke(schema.toolName, values);
     },
-    [schema.toolName, onInvoke]
+    [schema.toolName, onInvoke],
   );
 
   const handleJsonSubmit = useCallback(() => {
@@ -59,41 +63,37 @@ export function ToolDetailPanel({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Tool Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b">
-        <div>
-          <h2 className="text-base font-semibold">{schema.displayName}</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">{schema.description}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-[10px]">
-            {schema.category}
-          </Badge>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1"
-            onClick={() => setMode(mode === "form" ? "json" : "form")}
-          >
-            {mode === "form" ? (
-              <>
-                <Code className="h-3 w-3" /> JSON
-              </>
-            ) : (
-              <>
-                <FormInput className="h-3 w-3" /> Form
-              </>
-            )}
-          </Button>
-        </div>
+      {/* Mode toggle */}
+      <div className="flex items-center justify-end px-4 py-2 border-b">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          onClick={() => setMode(mode === "form" ? "json" : "form")}
+        >
+          {mode === "form" ? (
+            <>
+              <Code className="h-3 w-3" /> Raw JSON
+            </>
+          ) : (
+            <>
+              <FormInput className="h-3 w-3" /> Form
+            </>
+          )}
+        </Button>
       </div>
 
       {/* Form / JSON Area */}
       <ScrollArea className="flex-1">
         <div className="p-4 space-y-4">
           {mode === "form" ? (
-            <div ref={(el) => { formRef.current = el?.querySelector("form") ?? null; }}>
+            <div
+              ref={(el) => {
+                formRef.current = el?.querySelector("form") ?? null;
+              }}
+            >
               <ToolForm
+                key={schema.toolName}
                 schema={schema}
                 onSubmit={handleFormSubmit}
                 loading={loading}
@@ -107,11 +107,7 @@ export function ToolDetailPanel({
 
           {/* Action Buttons */}
           <div className="flex gap-2">
-            <Button
-              onClick={handleRun}
-              disabled={loading}
-              className="flex-1"
-            >
+            <Button onClick={handleRun} disabled={loading} className="flex-1">
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (

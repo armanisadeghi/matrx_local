@@ -88,7 +88,7 @@ Nice-to-haves and exploratory ideas. Not on the immediate roadmap.
 
 - [ ] **Cloud-assigned job queue** — Cloud pushes scrape jobs to the desktop app for background execution. Needs a durable job queue and status callbacks.
 
-- [ ] **Tools tab UX overhaul** — The Tools page is developer-heavy (raw JSON input forms). A per-tool UI with labeled fields and inline docs would make it usable by non-developers.
+- [x] **Tools tab UX overhaul** — Fixed 2026-03-31: `ConsumerPanel` in `Tools.tsx` was dispatching by category instead of by selected tool — all category panels (FilesPanel, NetworkPanel, etc.) ignored `selectedSchema` and showed a fixed tab UI regardless of which tool was clicked. Replaced with `GenericToolPanel` for all tools, which renders a schema-driven form for the exact selected tool. `key={schema.toolName}` on `ToolForm` ensures clean state resets on tool switches. Only `SystemResources`/`TopProcesses` retain the live-gauge MonitoringPanel. Both simple (form) and advanced (JSON) modes now respond correctly to per-tool selection.
 
 - [ ] **Welcome cards → agent IDs + Settings favorites** — Chat page welcome screen should deep-link to specific agents and surface user-pinned settings. Product design needed first.
 

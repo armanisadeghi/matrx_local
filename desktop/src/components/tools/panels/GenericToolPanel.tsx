@@ -11,7 +11,10 @@ import type { ToolUISchema } from "@/types/tool-schema";
 
 interface GenericToolPanelProps {
   schema: ToolUISchema;
-  onInvoke: (toolName: string, params: Record<string, unknown>) => Promise<void>;
+  onInvoke: (
+    toolName: string,
+    params: Record<string, unknown>,
+  ) => Promise<void>;
   loading: boolean;
   result: unknown;
   error: string | null;
@@ -34,7 +37,7 @@ export function GenericToolPanel({
     (values: Record<string, unknown>) => {
       onInvoke(schema.toolName, values);
     },
-    [onInvoke, schema.toolName]
+    [onInvoke, schema.toolName],
   );
 
   const handleRun = useCallback(() => {
@@ -60,21 +63,41 @@ export function GenericToolPanel({
       <ScrollArea className="flex-1">
         <div className="px-5 pb-5 space-y-4">
           {schema.fields.length > 0 && (
-            <div ref={(el) => { formRef.current = el?.querySelector("form") ?? null; }}>
-              <ToolForm schema={schema} onSubmit={handleFormSubmit} loading={loading} />
+            <div
+              ref={(el) => {
+                formRef.current = el?.querySelector("form") ?? null;
+              }}
+            >
+              <ToolForm
+                key={schema.toolName}
+                schema={schema}
+                onSubmit={handleFormSubmit}
+                loading={loading}
+              />
             </div>
           )}
 
           <Separator />
 
           <div className="flex gap-2">
-            <Button onClick={handleRun} disabled={loading} className="flex-1 gap-2">
-              {loading
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : <Play className="h-4 w-4" />}
+            <Button
+              onClick={handleRun}
+              disabled={loading}
+              className="flex-1 gap-2"
+            >
+              {loading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
               {loading ? "Running…" : "Run"}
             </Button>
-            <Button variant="outline" size="icon" onClick={onReset} disabled={loading}>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={onReset}
+              disabled={loading}
+            >
               <RotateCcw className="h-4 w-4" />
             </Button>
           </div>
