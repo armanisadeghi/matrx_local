@@ -7119,29 +7119,45 @@ function MediaModelsTab() {
     }
   }, []);
 
-  // If packages are installed on disk but the status says unavailable, it means
-  // the engine hasn't finished initializing yet. Re-poll once after a short delay
-  // so the user goes directly to the model picker instead of seeing the installer.
+  // On first load, if packages are installed on disk but the service says
+  // unavailable, the service reload in main.py may not have run yet (race on
+  // first startup).  Re-poll the status once, after a short delay, to give the
+  // service time to reload DEPS_AVAILABLE.
+  //
+  // IMPORTANT: this effect must NOT re-run every time igStatus changes — that
+  // would create an infinite loop (fetchStatus → igStatus update → effect fires
+  // → fetchStatus again).  Run only once on mount via an empty dep array, guarded
+  // by a ref so the re-poll only happens when the initial status is unavailable.
+  const _didStartupRepoll = useRef(false);
   useEffect(() => {
+    if (_didStartupRepoll.current) return;
+    // Wait for the first igStatus to arrive before deciding
     if (!igStatus) return;
-    if (igStatus.available) return;
+    // If already available, nothing to do
+    if (igStatus.available) {
+      _didStartupRepoll.current = true;
+      return;
+    }
+    _didStartupRepoll.current = true;
     const base = getBaseUrl();
     if (!base) return;
-    // Check if packages are actually installed (installer marker exists)
+    // Check whether packages are physically installed on disk
     void getImageGenInstallStatus(base)
       .then((installResp) => {
         if (
           installResp.status === "complete" ||
           installResp.already_installed
         ) {
-          // Packages are there but service hasn't reloaded yet — re-poll status
-          setTimeout(() => void fetchStatus(), 1000);
+          // Packages are there but DEPS_AVAILABLE hasn't been reloaded yet —
+          // wait briefly for main.py's reload to complete, then re-poll
+          setTimeout(() => void fetchStatus(), 1500);
         }
       })
       .catch(() => {
         /* non-fatal */
       });
-  }, [igStatus, fetchStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [igStatus]);
 
   useEffect(() => {
     void fetchStatus();

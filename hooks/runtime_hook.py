@@ -107,6 +107,41 @@ try:
             _ig_str = str(_ig_dir)
             if _ig_str not in sys.path:
                 sys.path.insert(0, _ig_str)
+
+            # Patch transformers/dynamic_module_utils.py to guard against `import filecmp`.
+            # filecmp is a stdlib module that PyInstaller may not bundle when it doesn't
+            # appear in the engine's own import graph.  transformers imports it unconditionally
+            # at the top level, causing an ImportError during _check_deps() in service.py
+            # even though the packages installed correctly.  The patch is idempotent.
+            try:
+                _dmu = _ig_dir / "transformers" / "dynamic_module_utils.py"
+                if _dmu.exists():
+                    _src = _dmu.read_text(encoding="utf-8")
+                    if "import filecmp" in _src and "_files_equal" not in _src:
+                        _old = "import filecmp"
+                        _new = (
+                            "try:\n"
+                            "    import filecmp as _filecmp_mod\n"
+                            "    def _files_equal(a, b):\n"
+                            "        return _filecmp_mod.cmp(a, b)\n"
+                            "except ModuleNotFoundError:\n"
+                            "    def _files_equal(a, b):\n"
+                            "        return False"
+                        )
+                        _patched = _src.replace(_old, _new, 1)
+                        _patched = _patched.replace("filecmp.cmp(", "_files_equal(", 100)
+                        _dmu.write_text(_patched, encoding="utf-8")
+                        # Remove stale .pyc
+                        _pyc_dir = _dmu.parent / "__pycache__"
+                        if _pyc_dir.exists():
+                            for _pyc in _pyc_dir.glob("dynamic_module_utils*.pyc"):
+                                try:
+                                    _pyc.unlink()
+                                except OSError:
+                                    pass
+            except Exception:
+                pass  # patch failure is non-fatal; import will fail naturally if filecmp is missing
+
             break
 except Exception:
     pass  # Never crash on path injection failure

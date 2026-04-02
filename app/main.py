@@ -281,6 +281,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from app.services.image_gen.installer import inject_image_gen_path
         if inject_image_gen_path():
             logger.info("[app/main.py] Phase 0a: image-gen packages injected into sys.path ✓")
+            # CRITICAL: service.py runs _check_deps() at import time (line 52), before
+            # this path injection. Reload DEPS_AVAILABLE now that sys.path is correct.
+            try:
+                from app.services.image_gen import service as _ig_svc
+                _ig_svc.DEPS_AVAILABLE, _ig_svc.DEPS_REASON = _ig_svc._check_deps()
+                logger.info(
+                    "[app/main.py] Phase 0a: image-gen service deps reloaded: available=%s",
+                    _ig_svc.DEPS_AVAILABLE,
+                )
+            except Exception as _reload_err:
+                logger.warning(
+                    "[app/main.py] Phase 0a: image-gen service deps reload failed: %s",
+                    _reload_err,
+                )
     except Exception:
         pass  # Non-fatal — image-gen will just be unavailable until installed
 
