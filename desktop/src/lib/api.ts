@@ -161,6 +161,12 @@ class EngineAPI {
     return this.authHeaders();
   }
 
+  /** Expose the current access token for SSE/EventSource connections that need ?token=. */
+  async getAccessToken(): Promise<string | null> {
+    if (!this._getAccessToken) return null;
+    return this._getAccessToken();
+  }
+
   /**
    * Discover the engine port by scanning the known range.
    *

@@ -262,22 +262,26 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
     let retryDelay = 2000;
     let cancelled = false;
 
-    const connect = () => {
+    const connect = async () => {
       const engineUrl = engine.engineUrl;
       if (!engineUrl) {
-        // Engine not discovered yet — retry
         retryTimeout = setTimeout(connect, 3000);
         return;
       }
 
-      es = new EventSource(`${engineUrl}/downloads/stream`);
+      const token = await engine.getAccessToken();
+      const url = token
+        ? `${engineUrl}/downloads/stream?token=${encodeURIComponent(token)}`
+        : `${engineUrl}/downloads/stream`;
+
+      es = new EventSource(url);
       sseRef.current = es;
 
       es.onmessage = (evt) => {
         try {
           const payload = JSON.parse(evt.data);
           handleEvent(payload);
-          retryDelay = 2000; // Reset backoff on success
+          retryDelay = 2000;
         } catch {
           // Ignore malformed events
         }
@@ -294,7 +298,6 @@ export function DownloadManagerProvider({ children }: { children: ReactNode }) {
       };
     };
 
-    // Delay initial connect slightly to let engine discovery complete
     retryTimeout = setTimeout(connect, 1000);
 
     return () => {

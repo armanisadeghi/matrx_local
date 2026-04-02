@@ -57,12 +57,15 @@ async def tunnel_start(body: TunnelStartRequest | None = None) -> TunnelStatus:
     logger.info("[tunnel] Starting tunnel on port %d", port)
     url = await tm.start(port)
 
-    if not url and not tm.running:
-        raise HTTPException(
-            status_code=503,
-            detail="Failed to start tunnel — cloudflared could not be launched. "
-                   "Check logs for details.",
+    if not url:
+        detail = (
+            "Failed to start tunnel — cloudflared exited before producing a URL. "
+            "Check logs for details."
+            if not tm.running
+            else "cloudflared is running but did not produce a tunnel URL within 30s. "
+            "Check firewall or network settings."
         )
+        raise HTTPException(status_code=503, detail=detail)
 
     # Persist the user's preference so it auto-starts on next engine boot.
     try:

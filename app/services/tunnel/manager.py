@@ -235,6 +235,7 @@ class TunnelManager:
             bin_path = await asyncio.get_event_loop().run_in_executor(
                 None, _ensure_binary
             )
+            logger.info("cloudflared binary resolved: %s (exists=%s)", bin_path, bin_path.exists())
         except Exception as exc:
             logger.error("Failed to acquire cloudflared binary: %s", exc)
             return None
@@ -242,12 +243,18 @@ class TunnelManager:
         cmd = self._build_command(bin_path, port)
         logger.info("Starting cloudflared: %s", " ".join(str(c) for c in cmd))
 
-        try:
-            self._process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
+        kwargs: dict = dict(
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        if PLATFORM["is_windows"]:
+            import subprocess as _sp
+            kwargs["creationflags"] = (
+                _sp.CREATE_NO_WINDOW | _sp.CREATE_NEW_PROCESS_GROUP
             )
+
+        try:
+            self._process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
         except Exception as exc:
             logger.error("Failed to launch cloudflared: %s", exc)
             return None
@@ -255,11 +262,30 @@ class TunnelManager:
         self._started_at = time.time()
         self._reader_task = asyncio.create_task(self._read_output())
 
-        # Wait up to 30s for the URL to appear in output
+        # Wait up to 30s for the URL, but bail early if cloudflared exits
         try:
-            await asyncio.wait_for(self._url_ready.wait(), timeout=30.0)
-        except asyncio.TimeoutError:
-            logger.warning("cloudflared did not emit a tunnel URL within 30s")
+            exit_task = asyncio.create_task(self._process.wait())
+            url_task = asyncio.create_task(self._url_ready.wait())
+            done, pending = await asyncio.wait(
+                [exit_task, url_task],
+                timeout=30.0,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+
+            if url_task in done:
+                pass  # URL captured
+            elif exit_task in done:
+                rc = exit_task.result()
+                logger.error(
+                    "cloudflared exited with code %s before emitting a tunnel URL",
+                    rc,
+                )
+            else:
+                logger.warning("cloudflared did not emit a tunnel URL within 30s")
+        except Exception as exc:
+            logger.error("Error waiting for cloudflared URL: %s", exc)
 
         if self._url:
             logger.info("Tunnel active: %s", self._url)
@@ -317,18 +343,23 @@ class TunnelManager:
         if not self._process or not self._process.stdout:
             return
 
+        line_count = 0
         try:
             async for raw_line in self._process.stdout:
                 line = raw_line.decode("utf-8", errors="replace").rstrip()
-                if line:
+                if not line:
+                    continue
+
+                line_count += 1
+                if line_count <= 30 or not self._url:
+                    logger.info("[cloudflared] %s", line)
+                else:
                     logger.debug("[cloudflared] %s", line)
 
-                # Try patterns in order: boxed quick-tunnel URL, named tunnel url= field, broad fallback
                 match = _TUNNEL_URL_RE.search(line) or _NAMED_URL_RE.search(line) or _FALLBACK_URL_RE.search(line)
                 if match and not self._url:
                     url = match.group(1).rstrip("/")
                     self._url = url
-                    # Convert https → wss for WebSocket
                     self._ws_url = url.replace("https://", "wss://") + "/ws"
                     self._url_ready.set()
                     logger.info("Tunnel URL captured: %s", url)
@@ -336,7 +367,13 @@ class TunnelManager:
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            logger.debug("cloudflared output reader error: %s", exc)
+            logger.error("cloudflared output reader error: %s", exc)
+
+        rc = self._process.returncode if self._process else "N/A"
+        logger.info(
+            "[cloudflared] output reader finished — %d lines read, exit code: %s, url found: %s",
+            line_count, rc, bool(self._url),
+        )
 
 
 # ---------------------------------------------------------------------------
