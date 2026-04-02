@@ -410,7 +410,7 @@ export function NoteEditor({
                     ? dictationText
                       ? "Click the mic to keep recording, or insert below"
                       : "Click the mic to start dictating"
-                    : "Voice model not loaded. Go to Voice → Setup first."}
+                    : "Voice model not loaded. Go to Speech to Text → Setup first."}
                 </span>
               )}
             {transcriptionState.isProcessingTail && (

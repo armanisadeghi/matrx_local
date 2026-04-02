@@ -29,7 +29,10 @@ import { useTheme } from "@/hooks/use-theme";
 import { useNotifications } from "@/hooks/use-notifications";
 import { useAutoUpdate } from "@/hooks/use-auto-update";
 import { useTranscriptionSessions } from "@/hooks/use-transcription-sessions";
-import { TranscriptionProvider, useTranscriptionApp } from "@/contexts/TranscriptionContext";
+import {
+  TranscriptionProvider,
+  useTranscriptionApp,
+} from "@/contexts/TranscriptionContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EngineMonitor } from "@/components/EngineRecoveryModal";
 import { UpdateDialog } from "@/components/UpdateDialog";
@@ -38,7 +41,10 @@ import { RestartingOverlay } from "@/components/RestartingOverlay";
 import { NotificationToastContainer } from "@/components/notifications/NotificationCenter";
 import { StartupScreen } from "@/components/StartupScreen";
 import { FirstRunScreen } from "@/components/FirstRunScreen";
-import { DevTerminalPanel, DevTerminalProvider } from "@/components/DevTerminalPanel";
+import {
+  DevTerminalPanel,
+  DevTerminalProvider,
+} from "@/components/DevTerminalPanel";
 import { CompactRecorderWindow } from "@/components/CompactRecorderWindow";
 import { PermissionsProvider } from "@/contexts/PermissionsContext";
 import { AudioDevicesProvider } from "@/contexts/AudioDevicesContext";
@@ -50,7 +56,12 @@ import { TtsProvider } from "@/contexts/TtsContext";
 import { DownloadManagerModal } from "@/components/downloads/DownloadManagerModal";
 import { engine } from "@/lib/api";
 import { isTauri } from "@/lib/sidecar";
-import { initUnifiedLog, initTauriLogStream, stopEngineStreams, stopTauriStream } from "@/hooks/use-unified-log";
+import {
+  initUnifiedLog,
+  initTauriLogStream,
+  stopEngineStreams,
+  stopTauriStream,
+} from "@/hooks/use-unified-log";
 import supabase from "@/lib/supabase";
 
 const SETUP_DISMISSED_KEY = "matrx-setup-dismissed";
@@ -88,14 +99,18 @@ export default function App() {
   // Compact recorder mode
   // ---------------------------------------------------------------------------
   const [isCompact, setIsCompact] = useState(false);
-  const { state: transcriptionState, actions: transcriptionActions } = useTranscriptionApp();
+  const { state: transcriptionState, actions: transcriptionActions } =
+    useTranscriptionApp();
   const [, bgSessActions] = useTranscriptionSessions();
 
   const [compactTranscript, setCompactTranscript] = useState("");
   useEffect(() => {
     if (isCompact && transcriptionState.segments.length > 0) {
       setCompactTranscript(
-        transcriptionState.segments.map((s) => s.text).join(" ").trim()
+        transcriptionState.segments
+          .map((s) => s.text)
+          .join(" ")
+          .trim(),
       );
     }
   }, [transcriptionState.segments, isCompact]);
@@ -111,7 +126,9 @@ export default function App() {
   useEffect(() => {
     if (!bgRecording || !bgSessionIdRef.current) return;
     if (transcriptionState.segments.length > bgSegmentCountRef.current) {
-      const newSegs = transcriptionState.segments.slice(bgSegmentCountRef.current);
+      const newSegs = transcriptionState.segments.slice(
+        bgSegmentCountRef.current,
+      );
       bgSegmentCountRef.current = transcriptionState.segments.length;
       bgSessActions.append(bgSessionIdRef.current, newSegs);
     }
@@ -119,20 +136,33 @@ export default function App() {
 
   const addNotification = notif.addNotification;
   useEffect(() => {
-    if (!bgRecording && bgSessionIdRef.current && !transcriptionState.isRecording && !transcriptionState.isProcessingTail) {
-      const durationSecs = Math.round((Date.now() - bgStartTimeRef.current) / 1000);
+    if (
+      !bgRecording &&
+      bgSessionIdRef.current &&
+      !transcriptionState.isRecording &&
+      !transcriptionState.isProcessingTail
+    ) {
+      const durationSecs = Math.round(
+        (Date.now() - bgStartTimeRef.current) / 1000,
+      );
       const mins = Math.floor(durationSecs / 60);
       const secs = durationSecs % 60;
       bgSessActions.finalize(bgSessionIdRef.current, durationSecs);
       addNotification(
         "Recording Saved",
-        `${mins}m ${secs}s transcription saved. Open Voice → Transcripts to review.`,
+        `${mins}m ${secs}s transcription saved. Open Speech to Text → Transcripts to review.`,
         "success",
       );
       bgSessionIdRef.current = null;
       bgSegmentCountRef.current = 0;
     }
-  }, [bgRecording, transcriptionState.isRecording, transcriptionState.isProcessingTail, addNotification, bgSessActions]);
+  }, [
+    bgRecording,
+    transcriptionState.isRecording,
+    transcriptionState.isProcessingTail,
+    addNotification,
+    bgSessActions,
+  ]);
 
   const toggleBackgroundRecording = useCallback(async () => {
     if (bgRecording || transcriptionState.isRecording) {
@@ -149,7 +179,15 @@ export default function App() {
       setBgRecording(true);
       await transcriptionActions.startRecording();
     }
-  }, [bgRecording, transcriptionState.isRecording, transcriptionState.segments.length, transcriptionState.activeModel, transcriptionState.selectedDevice, transcriptionActions, bgSessActions]);
+  }, [
+    bgRecording,
+    transcriptionState.isRecording,
+    transcriptionState.segments.length,
+    transcriptionState.activeModel,
+    transcriptionState.selectedDevice,
+    transcriptionActions,
+    bgSessActions,
+  ]);
 
   const invokeSetCompactMode = useCallback(async (enabled: boolean) => {
     if (!isTauri()) return;
@@ -165,12 +203,20 @@ export default function App() {
     setCompactTranscript("");
     setIsCompact(true);
     await invokeSetCompactMode(true);
-    if (!transcriptionState.isRecording && !transcriptionState.isProcessingTail) {
+    if (
+      !transcriptionState.isRecording &&
+      !transcriptionState.isProcessingTail
+    ) {
       setTimeout(() => {
         transcriptionActions.startRecording().catch(() => {});
       }, 150);
     }
-  }, [invokeSetCompactMode, transcriptionState.isRecording, transcriptionState.isProcessingTail, transcriptionActions]);
+  }, [
+    invokeSetCompactMode,
+    transcriptionState.isRecording,
+    transcriptionState.isProcessingTail,
+    transcriptionActions,
+  ]);
 
   const exitCompactMode = useCallback(async () => {
     if (transcriptionState.isRecording) {
@@ -178,7 +224,11 @@ export default function App() {
     }
     setIsCompact(false);
     await invokeSetCompactMode(false);
-  }, [invokeSetCompactMode, transcriptionState.isRecording, transcriptionActions]);
+  }, [
+    invokeSetCompactMode,
+    transcriptionState.isRecording,
+    transcriptionActions,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Unified log streams
@@ -193,7 +243,9 @@ export default function App() {
   useEffect(() => {
     if (status === "connected" && url) {
       const getToken = async () => {
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
         return session?.access_token ?? null;
       };
       initUnifiedLog(url, getToken);
@@ -214,11 +266,14 @@ export default function App() {
   useEffect(() => {
     if (status === "connected" && url && !setupCheckedRef.current) {
       setupCheckedRef.current = true;
-      engine.getSetupStatus().then((s) => {
-        setSetupComplete(s?.setup_complete ?? true);
-      }).catch(() => {
-        setSetupComplete(true);
-      });
+      engine
+        .getSetupStatus()
+        .then((s) => {
+          setSetupComplete(s?.setup_complete ?? true);
+        })
+        .catch(() => {
+          setSetupComplete(true);
+        });
     }
   }, [status, url]);
 
@@ -251,97 +306,93 @@ export default function App() {
   const handleOpenMonitor = useCallback(() => setMonitorOpen(true), []);
 
   // Persistent pages
-  const appPages: PageEntry[] = useMemo(() => [
-    {
-      path: "/",
-      element: (
-        <Dashboard
-          engineStatus={status}
-          engineUrl={url}
-          tools={tools}
-          systemInfo={systemInfo}
-          browserStatus={browserStatus}
-          onRefresh={refresh}
-          user={auth.user}
-          onSignOut={auth.signOut}
-        />
-      ),
-    },
-    {
-      path: "/chat",
-      element: (
-        <Chat
-          engineStatus={status}
-          engineUrl={url}
-          tools={tools}
-        />
-      ),
-    },
-    {
-      path: "/notes",
-      element: (
-        <Documents
-          engineStatus={status}
-          userId={auth.user?.id ?? null}
-        />
-      ),
-    },
-    {
-      path: "/scraping",
-      element: <Scraping engineStatus={status} engineUrl={url} />,
-    },
-    {
-      path: "/tools",
-      element: (
-        <Tools
-          engineStatus={status}
-          engineUrl={url}
-          tools={tools}
-        />
-      ),
-    },
-    {
-      path: "/activity",
-      element: <Activity engineStatus={status} engineUrl={url} />,
-    },
-    {
-      path: "/ports",
-      element: <Ports engineStatus={status} engineUrl={url} />,
-    },
-    {
-      path: "/devices",
-      element: <Devices engineStatus={status} engineUrl={url} />,
-    },
-    { path: "/voice", element: <Voice /> },
-    { path: "/tts", element: <TextToSpeech /> },
-    { path: "/local-models", element: <LocalModels /> },
-    { path: "/system-prompts", element: <SystemPrompts /> },
-    { path: "/aimatrx", element: <AiMatrx /> },
-    { path: "/browser", element: <BrowserLab /> },
-    { path: "/browser/tauri", element: <TauriFetchBrowser /> },
-    { path: "/configurations", element: <Configurations /> },
-    {
-      path: "/settings",
-      element: (
-        <Settings
-          engineStatus={status}
-          engineUrl={url}
-          engineVersion={engineVersion}
-          onRefresh={refresh}
-          auth={auth}
-          theme={themeCtx.theme}
-          setTheme={themeCtx.setTheme}
-          updateState={updateState}
-          updateActions={updateActions}
-        />
-      ),
-    },
-  ], [
-    status, url, tools, systemInfo, browserStatus,
-    refresh, auth, engineVersion,
-    themeCtx.theme, themeCtx.setTheme,
-    updateState, updateActions,
-  ]);
+  const appPages: PageEntry[] = useMemo(
+    () => [
+      {
+        path: "/",
+        element: (
+          <Dashboard
+            engineStatus={status}
+            engineUrl={url}
+            tools={tools}
+            systemInfo={systemInfo}
+            browserStatus={browserStatus}
+            onRefresh={refresh}
+            user={auth.user}
+            onSignOut={auth.signOut}
+          />
+        ),
+      },
+      {
+        path: "/chat",
+        element: <Chat engineStatus={status} engineUrl={url} tools={tools} />,
+      },
+      {
+        path: "/notes",
+        element: (
+          <Documents engineStatus={status} userId={auth.user?.id ?? null} />
+        ),
+      },
+      {
+        path: "/scraping",
+        element: <Scraping engineStatus={status} engineUrl={url} />,
+      },
+      {
+        path: "/tools",
+        element: <Tools engineStatus={status} engineUrl={url} tools={tools} />,
+      },
+      {
+        path: "/activity",
+        element: <Activity engineStatus={status} engineUrl={url} />,
+      },
+      {
+        path: "/ports",
+        element: <Ports engineStatus={status} engineUrl={url} />,
+      },
+      {
+        path: "/devices",
+        element: <Devices engineStatus={status} engineUrl={url} />,
+      },
+      { path: "/voice", element: <Voice /> },
+      { path: "/tts", element: <TextToSpeech /> },
+      { path: "/local-models", element: <LocalModels /> },
+      { path: "/system-prompts", element: <SystemPrompts /> },
+      { path: "/aimatrx", element: <AiMatrx /> },
+      { path: "/browser", element: <BrowserLab /> },
+      { path: "/browser/tauri", element: <TauriFetchBrowser /> },
+      { path: "/configurations", element: <Configurations /> },
+      {
+        path: "/settings",
+        element: (
+          <Settings
+            engineStatus={status}
+            engineUrl={url}
+            engineVersion={engineVersion}
+            onRefresh={refresh}
+            auth={auth}
+            theme={themeCtx.theme}
+            setTheme={themeCtx.setTheme}
+            updateState={updateState}
+            updateActions={updateActions}
+          />
+        ),
+      },
+    ],
+    [
+      status,
+      url,
+      tools,
+      systemInfo,
+      browserStatus,
+      refresh,
+      auth,
+      engineVersion,
+      themeCtx.theme,
+      themeCtx.setTheme,
+      updateState,
+      updateActions,
+    ],
+  );
 
   const isCallbackRoute =
     typeof window !== "undefined" &&
@@ -364,21 +415,13 @@ export default function App() {
     !isCallbackRoute;
 
   if ((auth.loading && !isCallbackRoute) || isEngineStarting) {
-    return (
-      <StartupScreen
-        authLoading={auth.loading}
-        engineStatus={status}
-      />
-    );
+    return <StartupScreen authLoading={auth.loading} engineStatus={status} />;
   }
 
   if (isFirstRun) {
     return (
       <ErrorBoundary>
-        <FirstRunScreen
-          engineUrl={url!}
-          onComplete={handleFirstRunComplete}
-        />
+        <FirstRunScreen engineUrl={url!} onComplete={handleFirstRunComplete} />
       </ErrorBoundary>
     );
   }
@@ -403,81 +446,105 @@ export default function App() {
   return (
     <ErrorBoundary>
       <DevTerminalProvider>
-      <DownloadManagerProvider>
-      <TtsProvider>
-      <LlmProvider>
-      <WakeWordProvider>
-      <TranscriptionSessionsProvider>
-      <PermissionsProvider>
-      <AudioDevicesProvider>
-      <TranscriptionProvider>
-      <TooltipProvider delayDuration={150}>
-        <HashRouter>
-          <Routes>
-            <Route path="/overlay" element={<TranscriptOverlay />} />
-            <Route path="/auth/callback" element={<AuthCallback />} />
+        <DownloadManagerProvider>
+          <TtsProvider>
+            <LlmProvider>
+              <WakeWordProvider>
+                <TranscriptionSessionsProvider>
+                  <PermissionsProvider>
+                    <AudioDevicesProvider>
+                      <TranscriptionProvider>
+                        <TooltipProvider delayDuration={150}>
+                          <HashRouter>
+                            <Routes>
+                              <Route
+                                path="/overlay"
+                                element={<TranscriptOverlay />}
+                              />
+                              <Route
+                                path="/auth/callback"
+                                element={<AuthCallback />}
+                              />
 
-            {!auth.isAuthenticated ? (
-              <Route path="*" element={<Login auth={auth} />} />
-            ) : (
-              <>
-                <Route
-                  path="/*"
-                  element={
-                    <AppLayout
-                      engineStatus={status}
-                      engineUrl={url}
-                      engineVersion={engineVersion}
-                      onRefresh={refresh}
-                      user={auth.user}
-                      onSignOut={auth.signOut}
-                      isRecording={transcriptionState.isRecording}
-                      onRecord={enterCompactMode}
-                      onBackgroundRecord={toggleBackgroundRecording}
-                      isBackgroundRecording={bgRecording}
-                      transcriptionState={transcriptionState}
-                      transcriptionActions={transcriptionActions}
-                      tools={tools}
-                      updateState={updateState}
-                      updateActions={updateActions}
-                      notifications={notif.notifications}
-                      unreadCount={notif.unreadCount}
-                      onMarkRead={notif.markRead}
-                      onMarkAllRead={notif.markAllRead}
-                      onDismissNotification={notif.dismiss}
-                      onClearAllNotifications={notif.clearAll}
-                      onOpenMonitor={handleOpenMonitor}
-                      pages={appPages}
-                    />
-                  }
-                />
-              </>
-            )}
-          </Routes>
-        </HashRouter>
-        <NotificationToastContainer toasts={toasts} onDismiss={notif.dismiss} />
-        <EngineMonitor
-          open={monitorOpen}
-          onOpenChange={setMonitorOpen}
-          engineStatus={status}
-          engineError={engineError}
-          onRestartEngine={restartEngine}
-          onRefresh={refresh}
-        />
-        <RestartingOverlay visible={updateState.restarting} />
-        <UpdateBanner state={updateState} actions={updateActions} />
-        <UpdateDialog state={updateState} actions={updateActions} />
-        <DownloadManagerModal />
-        <DevTerminalPanel />
-      </TooltipProvider>
-      </TranscriptionProvider>
-      </AudioDevicesProvider>
-      </PermissionsProvider>
-      </TranscriptionSessionsProvider>
-      </WakeWordProvider>
-      </LlmProvider>
-      </TtsProvider>
-      </DownloadManagerProvider>
+                              {!auth.isAuthenticated ? (
+                                <Route
+                                  path="*"
+                                  element={<Login auth={auth} />}
+                                />
+                              ) : (
+                                <>
+                                  <Route
+                                    path="/*"
+                                    element={
+                                      <AppLayout
+                                        engineStatus={status}
+                                        engineUrl={url}
+                                        engineVersion={engineVersion}
+                                        onRefresh={refresh}
+                                        user={auth.user}
+                                        onSignOut={auth.signOut}
+                                        isRecording={
+                                          transcriptionState.isRecording
+                                        }
+                                        onRecord={enterCompactMode}
+                                        onBackgroundRecord={
+                                          toggleBackgroundRecording
+                                        }
+                                        isBackgroundRecording={bgRecording}
+                                        transcriptionState={transcriptionState}
+                                        transcriptionActions={
+                                          transcriptionActions
+                                        }
+                                        tools={tools}
+                                        updateState={updateState}
+                                        updateActions={updateActions}
+                                        notifications={notif.notifications}
+                                        unreadCount={notif.unreadCount}
+                                        onMarkRead={notif.markRead}
+                                        onMarkAllRead={notif.markAllRead}
+                                        onDismissNotification={notif.dismiss}
+                                        onClearAllNotifications={notif.clearAll}
+                                        onOpenMonitor={handleOpenMonitor}
+                                        pages={appPages}
+                                      />
+                                    }
+                                  />
+                                </>
+                              )}
+                            </Routes>
+                          </HashRouter>
+                          <NotificationToastContainer
+                            toasts={toasts}
+                            onDismiss={notif.dismiss}
+                          />
+                          <EngineMonitor
+                            open={monitorOpen}
+                            onOpenChange={setMonitorOpen}
+                            engineStatus={status}
+                            engineError={engineError}
+                            onRestartEngine={restartEngine}
+                            onRefresh={refresh}
+                          />
+                          <RestartingOverlay visible={updateState.restarting} />
+                          <UpdateBanner
+                            state={updateState}
+                            actions={updateActions}
+                          />
+                          <UpdateDialog
+                            state={updateState}
+                            actions={updateActions}
+                          />
+                          <DownloadManagerModal />
+                          <DevTerminalPanel />
+                        </TooltipProvider>
+                      </TranscriptionProvider>
+                    </AudioDevicesProvider>
+                  </PermissionsProvider>
+                </TranscriptionSessionsProvider>
+              </WakeWordProvider>
+            </LlmProvider>
+          </TtsProvider>
+        </DownloadManagerProvider>
       </DevTerminalProvider>
     </ErrorBoundary>
   );

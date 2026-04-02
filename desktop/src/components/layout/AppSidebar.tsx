@@ -55,7 +55,7 @@ const navItems = [
   { to: "/activity", icon: Radio, label: "Activity" },
   { to: "/ports", icon: Network, label: "Ports" },
   { to: "/devices", icon: Cpu, label: "Devices" },
-  { to: "/voice", icon: Mic, label: "Voice" },
+  { to: "/voice", icon: Mic, label: "Speech to Text" },
   { to: "/tts", icon: AudioLines, label: "Text to Speech" },
   { to: "/local-models", icon: BrainCircuit, label: "Local Models" },
   { to: "/system-prompts", icon: BookOpen, label: "Prompts" },

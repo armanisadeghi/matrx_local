@@ -398,8 +398,8 @@ export function Voice() {
       />
 
       <PageHeader
-        title="Voice"
-        description="Local speech-to-text transcription powered by Whisper"
+        title="Speech to Text"
+        description="Confidential speech-to-text transcription on your computer"
       >
         {/* Wake word controls strip — lives in the header action area */}
         <div className="flex items-center gap-2">

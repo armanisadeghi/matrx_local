@@ -2784,7 +2784,8 @@ function AudioChatMode({
           <p className="text-xs text-muted-foreground text-center">
             {!transcriptionState.activeModel ? (
               <span className="text-amber-500">
-                Transcription model not ready — go to Voice tab to set up
+                Transcription model not ready — go to Speech to Text tab to set
+                up
               </span>
             ) : autoMode ? (
               "Speak, then pause for ~1.5s — I'll send automatically. Response plays back, speak any time to interrupt."
@@ -3543,7 +3544,7 @@ function InferenceTab() {
   ]);
 
   // ── Voice assistant system prompt ────────────────────────────────────────
-  // When entering voice mode (wake word or clicking the Voice tab), automatically
+  // When entering voice mode (wake word or clicking the Speech to Text tab), automatically
   // apply the configured voice assistant system prompt.  When leaving, restore
   // the previous prompt (if voiceRestorePromptOnExit is set).
   // We use refs to avoid forward-reference issues with systemPrompt/setSystemPrompt
@@ -3614,7 +3615,7 @@ function InferenceTab() {
     }
   }, [voiceChatState.isActive, voiceChatActions]);
 
-  // Wake word → show popup + switch to Voice tab + start recording
+  // Wake word → show popup + switch to Speech to Text tab + start recording
   const prevWwUiModeRef = useRef(wwState.uiMode);
   useEffect(() => {
     const prev = prevWwUiModeRef.current;

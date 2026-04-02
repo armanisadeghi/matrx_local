@@ -275,7 +275,7 @@ export function WakeWordActivePopup({
       {/* ── Model not ready warning ── */}
       {!transcriptionState.activeModel && (
         <div className="px-3 pb-2 text-[10px] text-amber-500 text-center">
-          Transcription model not ready — go to Voice tab to set up
+          Transcription model not ready — go to Speech to Text tab to set up
         </div>
       )}
     </div>

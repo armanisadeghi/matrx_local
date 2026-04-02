@@ -4009,8 +4009,8 @@ function VoiceAssistantSettingsTab({
         <CardContent className="space-y-4">
           <p className="text-xs text-muted-foreground">
             This prompt is automatically applied whenever voice mode activates
-            (wake word or Voice tab). It tells the model to keep responses short
-            and conversational for audio playback.
+            (wake word or Speech to Text tab). It tells the model to keep
+            responses short and conversational for audio playback.
           </p>
 
           <div className="space-y-1">

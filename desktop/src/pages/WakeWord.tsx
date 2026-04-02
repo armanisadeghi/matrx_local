@@ -11,9 +11,19 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Mic, MicOff, Volume2, Zap, Download, CheckCircle2,
-  AlertCircle, Loader2, RefreshCw, Info, ChevronRight,
-  Radio, Settings2,
+  Mic,
+  MicOff,
+  Volume2,
+  Zap,
+  Download,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  RefreshCw,
+  Info,
+  ChevronRight,
+  Radio,
+  Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -24,7 +34,10 @@ import type {
   WakeWordSettings,
   OwwModelInfo,
 } from "@/lib/transcription/types";
-import type { WakeWordHookState, WakeWordHookActions } from "@/hooks/use-wake-word";
+import type {
+  WakeWordHookState,
+  WakeWordHookActions,
+} from "@/hooks/use-wake-word";
 
 // ── Sub-tab bar ───────────────────────────────────────────────────────────────
 
@@ -59,9 +72,12 @@ export function WakeWordPage({ wwState, wwActions }: WakeWordPageProps) {
   // Load settings on mount
   useEffect(() => {
     if (!isTauri()) return;
-    engineAPI.getWakeWordSettings()
+    engineAPI
+      .getWakeWordSettings()
       .then(setSettings)
-      .catch(() => { /* engine not yet discovered — use defaults */ });
+      .catch(() => {
+        /* engine not yet discovered — use defaults */
+      });
   }, []);
 
   const saveSettings = useCallback(async (updated: WakeWordSettings) => {
@@ -77,12 +93,15 @@ export function WakeWordPage({ wwState, wwActions }: WakeWordPageProps) {
     }
   }, []);
 
-  const handleEngineSwitch = useCallback(async (e: WakeWordEngine) => {
-    const updated = { ...settings, engine: e };
-    setSettings(updated);
-    await wwActions.setEngine(e);
-    await saveSettings(updated);
-  }, [settings, wwActions, saveSettings]);
+  const handleEngineSwitch = useCallback(
+    async (e: WakeWordEngine) => {
+      const updated = { ...settings, engine: e };
+      setSettings(updated);
+      await wwActions.setEngine(e);
+      await saveSettings(updated);
+    },
+    [settings, wwActions, saveSettings],
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -104,7 +123,7 @@ export function WakeWordPage({ wwState, wwActions }: WakeWordPageProps) {
                 "flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-colors",
                 innerTab === value
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted",
               )}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -143,7 +162,10 @@ export function WakeWordPage({ wwState, wwActions }: WakeWordPageProps) {
           />
         )}
         {innerTab === "models" && (
-          <ModelsTab engine={settings.engine} currentModel={settings.owwModel} />
+          <ModelsTab
+            engine={settings.engine}
+            currentModel={settings.owwModel}
+          />
         )}
       </div>
     </div>
@@ -181,7 +203,9 @@ function EngineBanner({
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground/70">
             {isListening && (
-              <span className="text-yellow-500">Stop listening to switch engines.&ensp;</span>
+              <span className="text-yellow-500">
+                Stop listening to switch engines.&ensp;
+              </span>
             )}
             Changes take effect immediately.
           </p>
@@ -228,11 +252,16 @@ function EngineButton({
         "flex flex-col items-start rounded px-3 py-1.5 text-left transition-colors",
         active
           ? "bg-primary text-primary-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed",
       )}
     >
       <span className="text-sm font-medium">{label}</span>
-      <span className={cn("text-xs", active ? "text-primary-foreground/70" : "text-muted-foreground/70")}>
+      <span
+        className={cn(
+          "text-xs",
+          active ? "text-primary-foreground/70" : "text-muted-foreground/70",
+        )}
+      >
         {sublabel}
       </span>
     </button>
@@ -290,11 +319,11 @@ function ControlsTab({
 
   const { label, color, dot } = statusConfig[uiMode];
   const isIdle = uiMode === "idle";
-  const isListening = uiMode === "listening" || uiMode === "active" || uiMode === "dismissed";
+  const isListening =
+    uiMode === "listening" || uiMode === "active" || uiMode === "dismissed";
   const isMuted = uiMode === "muted";
 
-  const notReady =
-    engine === "whisper" && !kmsModelReady && uiMode === "idle";
+  const notReady = engine === "whisper" && !kmsModelReady && uiMode === "idle";
 
   return (
     <div className="space-y-6 p-6">
@@ -302,27 +331,31 @@ function ControlsTab({
       <div className="rounded-xl border border-border bg-muted/20 p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className={cn("inline-block h-2.5 w-2.5 rounded-full", dot)} />
+            <span
+              className={cn("inline-block h-2.5 w-2.5 rounded-full", dot)}
+            />
             <span className={cn("text-sm font-medium", color)}>{label}</span>
           </div>
           {/* RMS bar — visible while listening */}
-          {uiMode !== "idle" && (
-            <RmsBar rms={listenRms} />
-          )}
+          {uiMode !== "idle" && <RmsBar rms={listenRms} />}
         </div>
 
         {/* Engine badge */}
         <div className="mt-3 flex items-center gap-2">
           <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-            {engine === "whisper" ? "Whisper-tiny engine" : "openWakeWord engine"}
+            {engine === "whisper"
+              ? "Whisper-tiny engine"
+              : "openWakeWord engine"}
           </span>
           {engine === "whisper" && (
-            <span className={cn(
-              "rounded-full px-2 py-0.5 text-xs",
-              kmsModelReady
-                ? "bg-green-500/10 text-green-500"
-                : "bg-yellow-500/10 text-yellow-500"
-            )}>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-xs",
+                kmsModelReady
+                  ? "bg-green-500/10 text-green-500"
+                  : "bg-yellow-500/10 text-yellow-500",
+              )}
+            >
               {kmsModelReady ? "Model ready" : "Model not downloaded"}
             </span>
           )}
@@ -334,10 +367,12 @@ function ControlsTab({
         <div className="flex items-start gap-3 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-500" />
           <div>
-            <p className="text-sm font-medium text-yellow-500">Voice setup required</p>
+            <p className="text-sm font-medium text-yellow-500">
+              Voice setup required
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Complete Voice → Setup → Quick Setup to download ggml-tiny.en.bin before
-              enabling wake word detection.
+              Complete Speech to Text → Setup → Quick Setup to download
+              ggml-tiny.en.bin before enabling wake word detection.
             </p>
           </div>
         </div>
@@ -446,7 +481,10 @@ function ConfigTab({
     setDirty(false);
   }, [settings]);
 
-  const update = <K extends keyof WakeWordSettings>(k: K, v: WakeWordSettings[K]) => {
+  const update = <K extends keyof WakeWordSettings>(
+    k: K,
+    v: WakeWordSettings[K],
+  ) => {
     setLocal((prev) => ({ ...prev, [k]: v }));
     setDirty(true);
   };
@@ -461,13 +499,19 @@ function ConfigTab({
           modelName: local.owwModel,
           threshold: local.owwThreshold,
         });
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
     } else {
       // Push custom keyword to Rust engine
       try {
         const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
-        await tauriInvoke("configure_wake_word", { keyword: local.customKeyword });
-      } catch { /* non-critical */ }
+        await tauriInvoke("configure_wake_word", {
+          keyword: local.customKeyword,
+        });
+      } catch {
+        /* non-critical */
+      }
     }
   };
 
@@ -475,8 +519,14 @@ function ConfigTab({
     <div className="space-y-6 p-6">
       {/* Whisper engine config */}
       {engine === "whisper" && (
-        <Section title="Whisper Engine" description="Keyword matched against Whisper transcription output.">
-          <Field label="Wake keyword" description="Case-insensitive substring match on Whisper's output. Use real English words.">
+        <Section
+          title="Whisper Engine"
+          description="Keyword matched against Whisper transcription output."
+        >
+          <Field
+            label="Wake keyword"
+            description="Case-insensitive substring match on Whisper's output. Use real English words."
+          >
             <input
               type="text"
               value={local.customKeyword}
@@ -486,8 +536,9 @@ function ConfigTab({
             />
           </Field>
           <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
-            <strong className="text-blue-400">Tip:</strong> Whisper transcribes "matrx" as "matrix" — use
-            the common spelling for reliable detection.  Avoid made-up words or unusual proper nouns.
+            <strong className="text-blue-400">Tip:</strong> Whisper transcribes
+            "matrx" as "matrix" — use the common spelling for reliable
+            detection. Avoid made-up words or unusual proper nouns.
           </div>
         </Section>
       )}
@@ -495,8 +546,14 @@ function ConfigTab({
       {/* OWW engine config */}
       {engine === "oww" && (
         <>
-          <Section title="openWakeWord Engine" description="ONNX-based keyword spotter — faster and more accurate than Whisper for fixed phrases.">
-            <Field label="Active model" description="The .onnx model file to use for detection.">
+          <Section
+            title="openWakeWord Engine"
+            description="ONNX-based keyword spotter — faster and more accurate than Whisper for fixed phrases."
+          >
+            <Field
+              label="Active model"
+              description="The .onnx model file to use for detection."
+            >
               <OwwModelPicker
                 current={local.owwModel}
                 onChange={(v) => update("owwModel", v)}
@@ -513,7 +570,9 @@ function ConfigTab({
                 max={0.99}
                 step={0.01}
                 value={local.owwThreshold}
-                onChange={(e) => update("owwThreshold", parseFloat(e.target.value))}
+                onChange={(e) =>
+                  update("owwThreshold", parseFloat(e.target.value))
+                }
                 className="w-full accent-primary"
               />
               <div className="mt-1 flex justify-between text-xs text-muted-foreground">
@@ -534,7 +593,11 @@ function ConfigTab({
           size="sm"
           className="gap-2"
         >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+          {saving ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          )}
           Save
         </Button>
         {!dirty && !saving && (
@@ -558,7 +621,8 @@ function OwwModelPicker({
 
   useEffect(() => {
     if (!isTauri()) return;
-    engineAPI.owwListModels()
+    engineAPI
+      .owwListModels()
       .then((r) => setModels(r.models))
       .catch(() => {});
   }, []);
@@ -580,7 +644,8 @@ function OwwModelPicker({
     >
       {downloaded.map((m) => (
         <option key={m.name} value={m.name}>
-          {m.name}{m.is_custom ? " (custom)" : ""}
+          {m.name}
+          {m.is_custom ? " (custom)" : ""}
         </option>
       ))}
     </select>
@@ -604,30 +669,38 @@ function ModelsTab({
   const refresh = useCallback(() => {
     if (!isTauri()) return;
     setLoading(true);
-    engineAPI.owwListModels()
+    engineAPI
+      .owwListModels()
       .then((r) => setModels(r.models))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const handleDownload = useCallback(async (name: string) => {
-    setDownloadError(null);
-    setDownloading((prev) => new Set([...prev, name]));
-    try {
-      await engineAPI.owwDownloadModel(name);
-      refresh();
-    } catch (e) {
-      setDownloadError(`Failed to download ${name}: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setDownloading((prev) => {
-        const next = new Set(prev);
-        next.delete(name);
-        return next;
-      });
-    }
+  useEffect(() => {
+    refresh();
   }, [refresh]);
+
+  const handleDownload = useCallback(
+    async (name: string) => {
+      setDownloadError(null);
+      setDownloading((prev) => new Set([...prev, name]));
+      try {
+        await engineAPI.owwDownloadModel(name);
+        refresh();
+      } catch (e) {
+        setDownloadError(
+          `Failed to download ${name}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      } finally {
+        setDownloading((prev) => {
+          const next = new Set(prev);
+          next.delete(name);
+          return next;
+        });
+      }
+    },
+    [refresh],
+  );
 
   if (engine === "whisper") {
     return (
@@ -635,10 +708,10 @@ function ModelsTab({
         <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/20 p-4">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">
-            The Whisper engine reuses the <strong>ggml-tiny.en.bin</strong> model you
-            already downloaded during Voice Setup — no separate models are needed.
-            Switch to the <strong>openWakeWord</strong> engine above to use dedicated
-            wake word models.
+            The Whisper engine reuses the <strong>ggml-tiny.en.bin</strong>{" "}
+            model you already downloaded during Voice Setup — no separate models
+            are needed. Switch to the <strong>openWakeWord</strong> engine above
+            to use dedicated wake word models.
           </p>
         </div>
       </div>
@@ -651,17 +724,27 @@ function ModelsTab({
         <div>
           <h3 className="text-sm font-semibold">openWakeWord Models</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Each model is ~3 MB and downloaded to <code className="text-xs">~/.matrx/oww_models/</code>
+            Each model is ~3 MB and downloaded to{" "}
+            <code className="text-xs">~/.matrx/oww_models/</code>
           </p>
         </div>
-        <Button variant="ghost" size="sm" onClick={refresh} disabled={loading} className="gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={refresh}
+          disabled={loading}
+          className="gap-1.5"
+        >
           <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
           Refresh
         </Button>
       </div>
 
       {downloadError && (
-        <ErrorBanner message={downloadError} onDismiss={() => setDownloadError(null)} />
+        <ErrorBanner
+          message={downloadError}
+          onDismiss={() => setDownloadError(null)}
+        />
       )}
 
       {loading ? (
@@ -685,9 +768,11 @@ function ModelsTab({
 
       {/* Custom model hint */}
       <div className="rounded-lg border border-border bg-muted/10 p-4 text-xs text-muted-foreground">
-        <strong className="text-foreground">Custom models:</strong> Place any <code>.onnx</code> file
-        in <code>~/.matrx/oww_models/</code> and it will appear here automatically after refreshing.
-        See the <strong>Training Guide</strong> tab to train your own "hey matrix" model.
+        <strong className="text-foreground">Custom models:</strong> Place any{" "}
+        <code>.onnx</code> file in <code>~/.matrx/oww_models/</code> and it will
+        appear here automatically after refreshing. See the{" "}
+        <strong>Training Guide</strong> tab to train your own "hey matrix"
+        model.
       </div>
     </div>
   );
@@ -710,18 +795,23 @@ function ModelCard({
         "flex items-center gap-3 rounded-lg border p-3 transition-colors",
         isActive
           ? "border-primary/40 bg-primary/5"
-          : "border-border bg-muted/10 hover:bg-muted/20"
+          : "border-border bg-muted/10 hover:bg-muted/20",
       )}
     >
       {/* Icon */}
-      <div className={cn(
-        "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-        model.downloaded ? "bg-green-500/10 text-green-500" : "bg-muted text-muted-foreground"
-      )}>
-        {model.downloaded
-          ? <CheckCircle2 className="h-4 w-4" />
-          : <Download className="h-4 w-4" />
-        }
+      <div
+        className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+          model.downloaded
+            ? "bg-green-500/10 text-green-500"
+            : "bg-muted text-muted-foreground",
+        )}
+      >
+        {model.downloaded ? (
+          <CheckCircle2 className="h-4 w-4" />
+        ) : (
+          <Download className="h-4 w-4" />
+        )}
       </div>
 
       {/* Info */}
@@ -739,8 +829,12 @@ function ModelCard({
             </span>
           )}
         </div>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">{model.description}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground/60">{model.size_mb} MB</p>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+          {model.description}
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground/60">
+          {model.size_mb} MB
+        </p>
       </div>
 
       {/* Action */}
@@ -752,10 +846,15 @@ function ModelCard({
           disabled={isDownloading}
           className="shrink-0 gap-1.5"
         >
-          {isDownloading
-            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Downloading</>
-            : <><Download className="h-3.5 w-3.5" /> Download</>
-          }
+          {isDownloading ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Downloading
+            </>
+          ) : (
+            <>
+              <Download className="h-3.5 w-3.5" /> Download
+            </>
+          )}
         </Button>
       )}
     </div>
@@ -774,40 +873,55 @@ function HowItWorks({ engine }: { engine: WakeWordEngine }) {
       >
         <span className="flex items-center gap-1.5">
           <Info className="h-3.5 w-3.5" />
-          How does {engine === "whisper" ? "the Whisper engine" : "openWakeWord"} work?
+          How does{" "}
+          {engine === "whisper" ? "the Whisper engine" : "openWakeWord"} work?
         </span>
-        <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
+        <ChevronRight
+          className={cn(
+            "h-3.5 w-3.5 transition-transform",
+            open && "rotate-90",
+          )}
+        />
       </button>
       {open && (
         <div className="border-t border-border px-4 py-3 text-xs text-muted-foreground space-y-2">
           {engine === "whisper" ? (
             <>
               <p>
-                The Whisper-tiny model listens in <strong>2-second windows</strong>.  Every 2 seconds
-                it transcribes the captured audio to text and checks whether that text contains the
-                configured keyword (case-insensitive substring match).
+                The Whisper-tiny model listens in{" "}
+                <strong>2-second windows</strong>. Every 2 seconds it
+                transcribes the captured audio to text and checks whether that
+                text contains the configured keyword (case-insensitive substring
+                match).
               </p>
               <p>
-                <strong>Latency:</strong> up to 2 seconds from speaking the wake word to detection.
+                <strong>Latency:</strong> up to 2 seconds from speaking the wake
+                word to detection.
                 <br />
-                <strong>Model size:</strong> 75 MB (ggml-tiny.en.bin — already downloaded for Voice).
+                <strong>Model size:</strong> 75 MB (ggml-tiny.en.bin — already
+                downloaded for Voice).
                 <br />
-                <strong>False positives:</strong> any phrase that transcribes to contain the keyword string.
+                <strong>False positives:</strong> any phrase that transcribes to
+                contain the keyword string.
               </p>
             </>
           ) : (
             <>
               <p>
-                openWakeWord runs a tiny ONNX neural network on <strong>80 ms audio frames</strong>
-                continuously, producing a confidence score 12× per second.  When the score exceeds
-                the threshold, the wake word fires.
+                openWakeWord runs a tiny ONNX neural network on{" "}
+                <strong>80 ms audio frames</strong>
+                continuously, producing a confidence score 12× per second. When
+                the score exceeds the threshold, the wake word fires.
               </p>
               <p>
-                <strong>Latency:</strong> ~80–160 ms — you hear the beep before you finish saying the phrase.
+                <strong>Latency:</strong> ~80–160 ms — you hear the beep before
+                you finish saying the phrase.
                 <br />
-                <strong>Model size:</strong> ~3 MB per wake word (dedicated ONNX classifier).
+                <strong>Model size:</strong> ~3 MB per wake word (dedicated ONNX
+                classifier).
                 <br />
-                <strong>CPU usage:</strong> minimal — designed to run permanently in the background.
+                <strong>CPU usage:</strong> minimal — designed to run
+                permanently in the background.
               </p>
             </>
           )}
@@ -837,11 +951,16 @@ function CtrlBtn({
   const styles: Record<typeof variant, string> = {
     outline: "border-border bg-muted/20 text-foreground hover:bg-muted",
     accent: "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20",
-    destructive: "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20",
+    destructive:
+      "border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20",
     secondary: "border-border bg-muted/20 text-foreground hover:bg-muted",
   };
   return (
-    <button onClick={onClick} disabled={disabled} className={cn(base, styles[variant])}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(base, styles[variant])}
+    >
       {icon}
       {label}
     </button>
@@ -861,7 +980,9 @@ function Section({
     <div className="space-y-3">
       <div>
         <h3 className="text-sm font-semibold">{title}</h3>
-        {description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}
+        {description && (
+          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+        )}
       </div>
       {children}
     </div>
@@ -880,7 +1001,9 @@ function Field({
   return (
     <div className="space-y-1.5">
       <label className="text-xs font-medium">{label}</label>
-      {description && <p className="text-xs text-muted-foreground">{description}</p>}
+      {description && (
+        <p className="text-xs text-muted-foreground">{description}</p>
+      )}
       {children}
     </div>
   );
@@ -897,7 +1020,10 @@ function ErrorBanner({
     <div className="flex items-start gap-3 border-b border-destructive/20 bg-destructive/5 px-4 py-3">
       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
       <p className="flex-1 text-xs text-destructive">{message}</p>
-      <button onClick={onDismiss} className="text-xs text-muted-foreground hover:text-foreground">
+      <button
+        onClick={onDismiss}
+        className="text-xs text-muted-foreground hover:text-foreground"
+      >
         Dismiss
       </button>
     </div>

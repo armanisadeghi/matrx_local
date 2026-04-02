@@ -38,7 +38,10 @@ import { engine as engineAPI } from "@/lib/api";
 
 // ── Tauri IPC helpers (only used for whisper engine) ─────────────────────────
 
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function invoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
   const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
   return tauriInvoke<T>(cmd, args);
 }
@@ -59,12 +62,12 @@ const ACTIVE_TIMEOUT_MS = 30_000;
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export type WakeWordUIMode =
-  | "idle"       // not started
-  | "setup"      // loading / downloading model
-  | "listening"  // waiting for wake word
-  | "muted"      // explicitly muted
-  | "dismissed"  // false trigger cooldown
-  | "active";    // wake word heard, transcription live
+  | "idle" // not started
+  | "setup" // loading / downloading model
+  | "listening" // waiting for wake word
+  | "muted" // explicitly muted
+  | "dismissed" // false trigger cooldown
+  | "active"; // wake word heard, transcription live
 
 export interface WakeWordHookState {
   uiMode: WakeWordUIMode;
@@ -121,7 +124,9 @@ export function useWakeWord(
 
   const activeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks the engine-switch restart delay so it can be cancelled on unmount.
-  const engineSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const engineSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const deviceNameRef = useRef<string | undefined>(undefined);
   // Prevent duplicate active→sleep transitions
   const isActiveRef = useRef(false);
@@ -200,7 +205,9 @@ export function useWakeWord(
     try {
       const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
       await tauriInvoke("hide_transcript_overlay");
-    } catch { /* ok */ }
+    } catch {
+      /* ok */
+    }
   }, []);
 
   // ── Shared wake / sleep logic (same for both engines) ─────────────────
@@ -231,7 +238,14 @@ export function useWakeWord(
         setUiMode("listening");
       }
     }, ACTIVE_TIMEOUT_MS);
-  }, [onWake, onSleep, clearActiveTimeout, fireOsNotification, showFloatingOverlay, hideFloatingOverlay]);
+  }, [
+    onWake,
+    onSleep,
+    clearActiveTimeout,
+    fireOsNotification,
+    showFloatingOverlay,
+    hideFloatingOverlay,
+  ]);
 
   // ── Load settings + check whisper model on mount ───────────────────────
 
@@ -242,7 +256,8 @@ export function useWakeWord(
     (async () => {
       // Load persisted engine preference
       try {
-        const settings: WakeWordSettings = await engineAPI.getWakeWordSettings();
+        const settings: WakeWordSettings =
+          await engineAPI.getWakeWordSettings();
         if (!cancelled) setActiveEngine(settings.engine);
       } catch {
         // Engine not yet discovered — keep default "whisper"
@@ -257,7 +272,9 @@ export function useWakeWord(
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Whisper engine: attach Tauri events ───────────────────────────────
@@ -269,9 +286,12 @@ export function useWakeWord(
       setListenRms(Math.min(e.payload, 1));
     });
 
-    const detectedUL = await listen<WakeWordDetectedEvent>("wake-word-detected", () => {
-      void handleDetected();
-    });
+    const detectedUL = await listen<WakeWordDetectedEvent>(
+      "wake-word-detected",
+      () => {
+        void handleDetected();
+      },
+    );
 
     const modeUL = await listen<WakeWordMode>("wake-word-mode", (e) => {
       const m = e.payload;
@@ -300,7 +320,9 @@ export function useWakeWord(
       try {
         const val = JSON.parse(ev.data) as number;
         setListenRms(Math.min(val, 1));
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     });
 
     es.addEventListener("wake-word-detected", () => {
@@ -313,13 +335,17 @@ export function useWakeWord(
         if (m === "listening") setUiMode("listening");
         else if (m === "muted") setUiMode("muted");
         else if (m === "dismissed") setUiMode("dismissed");
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     });
 
     es.addEventListener("wake-word-error", (ev: MessageEvent) => {
       try {
         setError(JSON.parse(ev.data) as string);
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     });
 
     es.onerror = () => {
@@ -339,7 +365,7 @@ export function useWakeWord(
       const ready = await invoke<boolean>("check_kws_model_exists");
       if (!ready) {
         setError(
-          "Voice setup not complete. Go to Voice → Setup tab and run Quick Setup first."
+          "Speech to Text setup not complete. Go to Speech to Text → Setup tab and run Quick Setup first.",
         );
         setUiMode("idle");
         return;
@@ -350,34 +376,41 @@ export function useWakeWord(
     await startListening(deviceNameRef.current);
   }, [activeEngine]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const startListening = useCallback(async (deviceName?: string) => {
-    if (!isTauri()) return;
-    deviceNameRef.current = deviceName;
-    setError(null);
-    teardownAll();
-
-    try {
-      if (activeEngine === "whisper") {
-        await attachWhisperListeners();
-        await invoke("start_wake_word", { deviceName: deviceName ?? null });
-      } else {
-        await engineAPI.owwStart({ deviceName });
-        attachOwwStream();
-      }
-      setUiMode("listening");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+  const startListening = useCallback(
+    async (deviceName?: string) => {
+      if (!isTauri()) return;
+      deviceNameRef.current = deviceName;
+      setError(null);
       teardownAll();
-      setUiMode("idle");
-    }
-  }, [activeEngine, attachWhisperListeners, attachOwwStream, teardownAll]);
+
+      try {
+        if (activeEngine === "whisper") {
+          await attachWhisperListeners();
+          await invoke("start_wake_word", { deviceName: deviceName ?? null });
+        } else {
+          await engineAPI.owwStart({ deviceName });
+          attachOwwStream();
+        }
+        setUiMode("listening");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        teardownAll();
+        setUiMode("idle");
+      }
+    },
+    [activeEngine, attachWhisperListeners, attachOwwStream, teardownAll],
+  );
 
   const stopListening = useCallback(async () => {
     if (!isTauri()) return;
     clearActiveTimeout();
     isActiveRef.current = false;
 
-    try { await onSleep(); } catch { /* already stopped */ }
+    try {
+      await onSleep();
+    } catch {
+      /* already stopped */
+    }
 
     try {
       if (activeEngine === "whisper") {
@@ -385,13 +418,21 @@ export function useWakeWord(
       } else {
         await engineAPI.owwStop();
       }
-    } catch { /* already stopped */ }
+    } catch {
+      /* already stopped */
+    }
 
     teardownAll();
     void hideFloatingOverlay();
     setUiMode("idle");
     setListenRms(0);
-  }, [activeEngine, clearActiveTimeout, onSleep, teardownAll, hideFloatingOverlay]);
+  }, [
+    activeEngine,
+    clearActiveTimeout,
+    onSleep,
+    teardownAll,
+    hideFloatingOverlay,
+  ]);
 
   const mute = useCallback(async () => {
     if (!isTauri()) return;
@@ -425,7 +466,11 @@ export function useWakeWord(
     if (!isTauri()) return;
     clearActiveTimeout();
     isActiveRef.current = false;
-    try { await onSleep(); } catch { /* ok */ }
+    try {
+      await onSleep();
+    } catch {
+      /* ok */
+    }
     void hideFloatingOverlay();
     try {
       if (activeEngine === "whisper") {
@@ -452,41 +497,48 @@ export function useWakeWord(
     }
   }, [activeEngine]);
 
-  const setEngine = useCallback(async (newEngine: WakeWordEngine) => {
-    if (newEngine === activeEngine) return;
+  const setEngine = useCallback(
+    async (newEngine: WakeWordEngine) => {
+      if (newEngine === activeEngine) return;
 
-    // Stop the currently running engine
-    const wasListening = uiMode !== "idle";
-    if (wasListening) {
-      try {
-        if (activeEngine === "whisper") {
-          await invoke("stop_wake_word");
-        } else {
-          await engineAPI.owwStop();
+      // Stop the currently running engine
+      const wasListening = uiMode !== "idle";
+      if (wasListening) {
+        try {
+          if (activeEngine === "whisper") {
+            await invoke("stop_wake_word");
+          } else {
+            await engineAPI.owwStop();
+          }
+        } catch {
+          /* ok */
         }
-      } catch { /* ok */ }
-      teardownAll();
-      setUiMode("idle");
-    }
+        teardownAll();
+        setUiMode("idle");
+      }
 
-    setActiveEngine(newEngine);
+      setActiveEngine(newEngine);
 
-    // Persist to SQLite
-    try {
-      const current = await engineAPI.getWakeWordSettings();
-      await engineAPI.saveWakeWordSettings({ ...current, engine: newEngine });
-    } catch { /* non-critical — preference just won't survive restart */ }
+      // Persist to SQLite
+      try {
+        const current = await engineAPI.getWakeWordSettings();
+        await engineAPI.saveWakeWordSettings({ ...current, engine: newEngine });
+      } catch {
+        /* non-critical — preference just won't survive restart */
+      }
 
-    // Auto-start the new engine if we were previously listening.
-    // Track the timer so teardownAll can cancel it if the component unmounts
-    // in the 200ms window (prevents startListening on an unmounted hook).
-    if (wasListening) {
-      engineSwitchTimerRef.current = setTimeout(() => {
-        engineSwitchTimerRef.current = null;
-        void startListening(deviceNameRef.current);
-      }, 200);
-    }
-  }, [activeEngine, uiMode, teardownAll, startListening]);
+      // Auto-start the new engine if we were previously listening.
+      // Track the timer so teardownAll can cancel it if the component unmounts
+      // in the 200ms window (prevents startListening on an unmounted hook).
+      if (wasListening) {
+        engineSwitchTimerRef.current = setTimeout(() => {
+          engineSwitchTimerRef.current = null;
+          void startListening(deviceNameRef.current);
+        }, 200);
+      }
+    },
+    [activeEngine, uiMode, teardownAll, startListening],
+  );
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -517,7 +569,17 @@ export function useWakeWord(
       setEngine,
       clearError,
     }),
-    [setup, startListening, stopListening, mute, unmute, dismiss, manualTrigger, setEngine, clearError],
+    [
+      setup,
+      startListening,
+      stopListening,
+      mute,
+      unmute,
+      dismiss,
+      manualTrigger,
+      setEngine,
+      clearError,
+    ],
   );
 
   return [state, actions];

@@ -6,7 +6,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Copy, FileText, Sparkles, Loader2, Check, ExternalLink } from "lucide-react";
+import {
+  Copy,
+  FileText,
+  Sparkles,
+  Loader2,
+  Check,
+  ExternalLink,
+} from "lucide-react";
 import { RecordingMicButton } from "@/components/recording/RecordingMicButton";
 import { RmsLevelBar } from "@/components/recording/RmsLevelBar";
 import { useSessionsContext } from "@/contexts/TranscriptionSessionsContext";
@@ -15,7 +22,10 @@ import { useLlmPipeline, parsePolishOutput } from "@/hooks/use-llm-pipeline";
 import { engine } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { TranscriptPolishOutput } from "@/hooks/use-llm-pipeline";
-import type { TranscriptionState, TranscriptionActions } from "@/hooks/use-transcription";
+import type {
+  TranscriptionState,
+  TranscriptionActions,
+} from "@/hooks/use-transcription";
 
 interface QuickTranscriptModalProps {
   open: boolean;
@@ -36,7 +46,9 @@ export function QuickTranscriptModal({
   const [llmState] = useLlmApp();
   const llmPort = llmState.serverStatus?.port ?? null;
   const llmRunning = llmState.serverStatus?.running ?? false;
-  const { run: runPipeline, running: polishing } = useLlmPipeline(() => llmPort);
+  const { run: runPipeline, running: polishing } = useLlmPipeline(
+    () => llmPort,
+  );
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const prevSegCountRef = useRef(0);
@@ -48,8 +60,15 @@ export function QuickTranscriptModal({
   const [pushSuccess, setPushSuccess] = useState(false);
   const [polishSuccess, setPolishSuccess] = useState(false);
 
-  const { isRecording, isProcessingTail, fullTranscript, liveRms, activeModel, selectedDevice, isCalibrating } =
-    transcriptionState;
+  const {
+    isRecording,
+    isProcessingTail,
+    fullTranscript,
+    liveRms,
+    activeModel,
+    selectedDevice,
+    isCalibrating,
+  } = transcriptionState;
 
   const canRecord = !!activeModel && !isProcessingTail;
   const hasText = fullTranscript.trim().length > 0;
@@ -68,13 +87,24 @@ export function QuickTranscriptModal({
     if (!open) {
       autoStartedRef.current = false;
     }
-  }, [open, canRecord, isRecording, activeModel, selectedDevice, sessionsActions, transcriptionActions, transcriptionState.segments.length]);
+  }, [
+    open,
+    canRecord,
+    isRecording,
+    activeModel,
+    selectedDevice,
+    sessionsActions,
+    transcriptionActions,
+    transcriptionState.segments.length,
+  ]);
 
   // Append segments to session in real-time
   useEffect(() => {
     if (!sessionId) return;
     if (transcriptionState.segments.length > prevSegCountRef.current) {
-      const newSegs = transcriptionState.segments.slice(prevSegCountRef.current);
+      const newSegs = transcriptionState.segments.slice(
+        prevSegCountRef.current,
+      );
       prevSegCountRef.current = transcriptionState.segments.length;
       sessionsActions.append(sessionId, newSegs);
     }
@@ -82,7 +112,12 @@ export function QuickTranscriptModal({
 
   // Finalize session when recording fully stops
   useEffect(() => {
-    if (sessionId && !isRecording && !isProcessingTail && recordingStartRef.current > 0) {
+    if (
+      sessionId &&
+      !isRecording &&
+      !isProcessingTail &&
+      recordingStartRef.current > 0
+    ) {
       const dur = Math.round((Date.now() - recordingStartRef.current) / 1000);
       if (dur > 0) {
         sessionsActions.finalize(sessionId, dur);
@@ -103,21 +138,33 @@ export function QuickTranscriptModal({
       recordingStartRef.current = Date.now();
       await transcriptionActions.startRecording();
     }
-  }, [isRecording, canRecord, sessionId, activeModel, selectedDevice, sessionsActions, transcriptionActions, transcriptionState.segments.length]);
+  }, [
+    isRecording,
+    canRecord,
+    sessionId,
+    activeModel,
+    selectedDevice,
+    sessionsActions,
+    transcriptionActions,
+    transcriptionState.segments.length,
+  ]);
 
-  const handleClose = useCallback(async (v: boolean) => {
-    if (!v && isRecording) {
-      await transcriptionActions.stopRecording();
-    }
-    if (!v) {
-      setSessionId(null);
-      prevSegCountRef.current = 0;
-      setCopiedId(false);
-      setPushSuccess(false);
-      setPolishSuccess(false);
-    }
-    onOpenChange(v);
-  }, [isRecording, transcriptionActions, onOpenChange]);
+  const handleClose = useCallback(
+    async (v: boolean) => {
+      if (!v && isRecording) {
+        await transcriptionActions.stopRecording();
+      }
+      if (!v) {
+        setSessionId(null);
+        prevSegCountRef.current = 0;
+        setCopiedId(false);
+        setPushSuccess(false);
+        setPolishSuccess(false);
+      }
+      onOpenChange(v);
+    },
+    [isRecording, transcriptionActions, onOpenChange],
+  );
 
   const handleCopy = useCallback(() => {
     if (!hasText) return;
@@ -164,7 +211,14 @@ export function QuickTranscriptModal({
     } catch {
       /* pipeline handles its own errors */
     }
-  }, [hasText, sessionId, llmRunning, runPipeline, fullTranscript, sessionsActions]);
+  }, [
+    hasText,
+    sessionId,
+    llmRunning,
+    runPipeline,
+    fullTranscript,
+    sessionsActions,
+  ]);
 
   const handleOpenInVoice = useCallback(() => {
     if (sessionId) {
@@ -207,7 +261,8 @@ export function QuickTranscriptModal({
           )}
           {!isRecording && !isProcessingTail && !hasText && !activeModel && (
             <p className="text-xs text-muted-foreground">
-              No transcription model loaded. Set up in the Voice tab first.
+              No transcription model loaded. Set up in the Speech to Text tab
+              first.
             </p>
           )}
           {!isRecording && !isProcessingTail && !hasText && activeModel && (
@@ -238,18 +293,31 @@ export function QuickTranscriptModal({
               onClick={handleCopy}
               disabled={!hasText}
             >
-              {copiedId ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+              {copiedId ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
               {copiedId ? "Copied!" : "Copy"}
             </Button>
 
             <Button
               variant="outline"
               size="sm"
-              className={cn("gap-1.5 text-xs", pushSuccess && "text-emerald-500")}
+              className={cn(
+                "gap-1.5 text-xs",
+                pushSuccess && "text-emerald-500",
+              )}
               onClick={handlePushToNote}
               disabled={pushingNote || !hasText}
             >
-              {pushingNote ? <Loader2 className="h-3 w-3 animate-spin" /> : pushSuccess ? <Check className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+              {pushingNote ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : pushSuccess ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
               {pushSuccess ? "Saved!" : "Save as Note"}
             </Button>
 
@@ -257,11 +325,20 @@ export function QuickTranscriptModal({
               <Button
                 variant="outline"
                 size="sm"
-                className={cn("gap-1.5 text-xs", polishSuccess && "text-emerald-500")}
+                className={cn(
+                  "gap-1.5 text-xs",
+                  polishSuccess && "text-emerald-500",
+                )}
                 onClick={handlePolish}
                 disabled={polishing || !hasText}
               >
-                {polishing ? <Loader2 className="h-3 w-3 animate-spin" /> : polishSuccess ? <Check className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
+                {polishing ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : polishSuccess ? (
+                  <Check className="h-3 w-3" />
+                ) : (
+                  <Sparkles className="h-3 w-3" />
+                )}
                 {polishSuccess ? "Polished!" : "AI Polish"}
               </Button>
             )}
@@ -274,7 +351,7 @@ export function QuickTranscriptModal({
                 onClick={handleOpenInVoice}
               >
                 <ExternalLink className="h-3 w-3" />
-                Open in Voice tab
+                Open in Speech to Text tab
               </Button>
             )}
           </div>
