@@ -3,9 +3,15 @@ import { useDownloadManager } from "@/contexts/DownloadManagerContext";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SubTabBar } from "@/components/layout/SubTabBar";
 import { useTranscriptionApp } from "@/contexts/TranscriptionContext";
-import type { TranscriptionState, TranscriptionActions } from "@/hooks/use-transcription";
+import type {
+  TranscriptionState,
+  TranscriptionActions,
+} from "@/hooks/use-transcription";
 import { useSessionsContext } from "@/contexts/TranscriptionSessionsContext";
-import type { SessionsState, SessionsActions } from "@/hooks/use-transcription-sessions";
+import type {
+  SessionsState,
+  SessionsActions,
+} from "@/hooks/use-transcription-sessions";
 import { useWakeWord } from "@/hooks/use-wake-word";
 import { usePublishWakeWord } from "@/contexts/WakeWordContext";
 import { WakeWordOverlay } from "@/components/WakeWordOverlay";
@@ -23,6 +29,14 @@ import { isTauri } from "@/lib/sidecar";
 import { useLlmApp } from "@/contexts/LlmContext";
 import { useLlmPipeline, parsePolishOutput } from "@/hooks/use-llm-pipeline";
 import type { TranscriptPolishOutput } from "@/hooks/use-llm-pipeline";
+import { usePolishPresets } from "@/hooks/use-polish-presets";
+import type { PolishPreset } from "@/hooks/use-polish-presets";
+import { POLISH_JSON_INSTRUCTION } from "@/lib/polish-presets";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
 import {
   Mic,
   MicOff,
@@ -60,6 +74,10 @@ import {
   Waves,
   AudioLines,
   CircleDot,
+  ChevronDown,
+  Star,
+  Pencil as PencilIcon,
+  Trash2 as TrashIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { emitClientLog } from "@/hooks/use-client-log";
@@ -84,11 +102,15 @@ const LOG = (level: Parameters<typeof emitClientLog>[0], msg: string) =>
 export function Voice() {
   const [tab, setTab] = useState("setup");
   const { state, actions } = useTranscriptionApp();
-  const { openModal: openDownloadModal, downloads: dmDownloads } = useDownloadManager();
+  const { openModal: openDownloadModal, downloads: dmDownloads } =
+    useDownloadManager();
   const whisperDownloads = dmDownloads.filter(
-    (d) => (d.category === "whisper") && (d.status === "active" || d.status === "queued"),
+    (d) =>
+      d.category === "whisper" &&
+      (d.status === "active" || d.status === "queued"),
   );
-  const { state: sessionsState, actions: sessionsActions } = useSessionsContext();
+  const { state: sessionsState, actions: sessionsActions } =
+    useSessionsContext();
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const recordingStartRef = useRef<number>(0);
@@ -96,7 +118,10 @@ export function Voice() {
   // ── Wake word integration ────────────────────────────────────────────────
   // onWake: called when wake word fires — starts a new transcription session
   const handleWake = useCallback(async () => {
-    const session = sessionsActions.startNew(state.activeModel, state.selectedDevice);
+    const session = sessionsActions.startNew(
+      state.activeModel,
+      state.selectedDevice,
+    );
     setActiveSessionId(session.id);
     recordingStartRef.current = Date.now();
     await actions.startRecording();
@@ -106,7 +131,9 @@ export function Voice() {
   const handleSleep = useCallback(async () => {
     await actions.stopRecording();
     if (activeSessionId) {
-      const elapsed = Math.round((Date.now() - recordingStartRef.current) / 1000);
+      const elapsed = Math.round(
+        (Date.now() - recordingStartRef.current) / 1000,
+      );
       sessionsActions.finalize(activeSessionId, elapsed);
     }
   }, [actions, activeSessionId, sessionsActions]);
@@ -131,11 +158,13 @@ export function Voice() {
     if (didAutoStartRef.current) return;
     if (!state.activeModel) return; // wait for model to be ready
     didAutoStartRef.current = true;
-    loadSettings().then((s) => {
-      if (s.wakeWordEnabled && s.wakeWordListenOnStartup) {
-        void wwActions.setup();
-      }
-    }).catch(() => {});
+    loadSettings()
+      .then((s) => {
+        if (s.wakeWordEnabled && s.wakeWordListenOnStartup) {
+          void wwActions.setup();
+        }
+      })
+      .catch(() => {});
   }, [state.activeModel]); // re-runs when model finishes loading
 
   // ── Publish transcript from the overlay directly to a note ───────────────
@@ -155,16 +184,22 @@ export function Voice() {
     if (wwState.uiMode !== "active") return;
     if (!isTauri()) return;
     if (!state.fullTranscript) return;
-    import("@tauri-apps/api/event").then(({ emit }) => {
-      void emit("overlay-transcript", state.fullTranscript);
-    }).catch(() => {});
+    import("@tauri-apps/api/event")
+      .then(({ emit }) => {
+        void emit("overlay-transcript", state.fullTranscript);
+      })
+      .catch(() => {});
   }, [state.fullTranscript, wwState.uiMode]);
 
   // ── Auto-persist transcript every 5 s during active wake-word session ─────
   // Ensures we never lose transcribed text even on a crash.
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (wwState.uiMode !== "active" || !activeSessionId || !state.fullTranscript) {
+    if (
+      wwState.uiMode !== "active" ||
+      !activeSessionId ||
+      !state.fullTranscript
+    ) {
       return;
     }
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
@@ -183,7 +218,10 @@ export function Voice() {
   useEffect(() => {
     if (state.downloadProgress) {
       try {
-        LOG("data", `[whisper] download-progress: ${JSON.stringify(state.downloadProgress)}`);
+        LOG(
+          "data",
+          `[whisper] download-progress: ${JSON.stringify(state.downloadProgress)}`,
+        );
       } catch {
         LOG("data", "[whisper] download-progress: [unserializable]");
       }
@@ -213,28 +251,34 @@ export function Voice() {
     }
   }, [actions]);
 
-  const wrappedDownloadModel = useCallback(async (filename: string) => {
-    LOG("cmd", `invoke download_whisper_model: ${filename}`);
-    LOG("info", `Starting download from HuggingFace: ggml/${filename}`);
-    try {
-      await actions.downloadModel(filename);
-      LOG("success", `Model downloaded: ${filename}`);
-    } catch (e) {
-      LOG("error", `download_whisper_model failed: ${e}`);
-      throw e;
-    }
-  }, [actions]);
+  const wrappedDownloadModel = useCallback(
+    async (filename: string) => {
+      LOG("cmd", `invoke download_whisper_model: ${filename}`);
+      LOG("info", `Starting download from HuggingFace: ggml/${filename}`);
+      try {
+        await actions.downloadModel(filename);
+        LOG("success", `Model downloaded: ${filename}`);
+      } catch (e) {
+        LOG("error", `download_whisper_model failed: ${e}`);
+        throw e;
+      }
+    },
+    [actions],
+  );
 
-  const wrappedInitTranscription = useCallback(async (filename: string) => {
-    LOG("cmd", `invoke init_transcription: ${filename}`);
-    try {
-      await actions.initTranscription(filename);
-      LOG("success", `Transcription engine initialized with: ${filename}`);
-    } catch (e) {
-      LOG("error", `init_transcription failed: ${e}`);
-      throw e;
-    }
-  }, [actions]);
+  const wrappedInitTranscription = useCallback(
+    async (filename: string) => {
+      LOG("cmd", `invoke init_transcription: ${filename}`);
+      try {
+        await actions.initTranscription(filename);
+        LOG("success", `Transcription engine initialized with: ${filename}`);
+      } catch (e) {
+        LOG("error", `init_transcription failed: ${e}`);
+        throw e;
+      }
+    },
+    [actions],
+  );
 
   const wrappedQuickSetup = useCallback(async () => {
     LOG("info", "=== Starting Voice Quick Setup ===");
@@ -247,15 +291,18 @@ export function Voice() {
     }
   }, [actions]);
 
-  const wrappedDeleteModel = useCallback(async (filename: string) => {
-    LOG("cmd", `invoke delete_model: ${filename}`);
-    try {
-      await actions.deleteModel(filename);
-      LOG("success", `Model deleted: ${filename}`);
-    } catch (e) {
-      LOG("error", `delete_model failed: ${e}`);
-    }
-  }, [actions]);
+  const wrappedDeleteModel = useCallback(
+    async (filename: string) => {
+      LOG("cmd", `invoke delete_model: ${filename}`);
+      try {
+        await actions.deleteModel(filename);
+        LOG("success", `Model deleted: ${filename}`);
+      } catch (e) {
+        LOG("error", `delete_model failed: ${e}`);
+      }
+    },
+    [actions],
+  );
 
   const wrappedActions = {
     ...actions,
@@ -270,7 +317,7 @@ export function Voice() {
   const handleStartNewRecording = useCallback(async () => {
     const session = sessionsActions.startNew(
       state.activeModel,
-      state.selectedDevice
+      state.selectedDevice,
     );
     setActiveSessionId(session.id);
     recordingStartRef.current = Date.now();
@@ -278,17 +325,22 @@ export function Voice() {
   }, [sessionsActions, state.activeModel, state.selectedDevice, actions]);
 
   // Session-aware continue recording (append to existing session)
-  const handleContinueRecording = useCallback(async (sessionId: string) => {
-    setActiveSessionId(sessionId);
-    recordingStartRef.current = Date.now();
-    await actions.startRecording();
-  }, [actions]);
+  const handleContinueRecording = useCallback(
+    async (sessionId: string) => {
+      setActiveSessionId(sessionId);
+      recordingStartRef.current = Date.now();
+      await actions.startRecording();
+    },
+    [actions],
+  );
 
   // When stopping, finalize the session
   const handleStopRecording = useCallback(async () => {
     await actions.stopRecording();
     if (activeSessionId) {
-      const elapsed = Math.round((Date.now() - recordingStartRef.current) / 1000);
+      const elapsed = Math.round(
+        (Date.now() - recordingStartRef.current) / 1000,
+      );
       sessionsActions.finalize(activeSessionId, elapsed);
     }
   }, [actions, activeSessionId, sessionsActions]);
@@ -340,7 +392,9 @@ export function Voice() {
         rms={state.liveRms || wwState.listenRms}
         transcript={state.fullTranscript}
         onDismiss={wwActions.dismiss}
-        onPublishToNote={engine.engineUrl ? handleOverlayPublishToNote : undefined}
+        onPublishToNote={
+          engine.engineUrl ? handleOverlayPublishToNote : undefined
+        }
       />
 
       <PageHeader
@@ -350,7 +404,9 @@ export function Voice() {
         {/* Wake word controls strip — lives in the header action area */}
         <div className="flex items-center gap-2">
           {/* Emergency reset — visible whenever voice subsystem is stuck */}
-          {(state.isProcessingTail || state.isCalibrating || state.isRecording) && (
+          {(state.isProcessingTail ||
+            state.isCalibrating ||
+            state.isRecording) && (
             <Button
               variant="ghost"
               size="sm"
@@ -397,9 +453,12 @@ export function Voice() {
               >
                 <span className="h-2 w-2 rounded-full bg-primary animate-pulse shrink-0" />
                 <span className="flex-1 text-left font-medium">
-                  {whisperDownloads.length} model download{whisperDownloads.length !== 1 ? "s" : ""} in progress
+                  {whisperDownloads.length} model download
+                  {whisperDownloads.length !== 1 ? "s" : ""} in progress
                 </span>
-                <span className="text-xs text-muted-foreground">View progress →</span>
+                <span className="text-xs text-muted-foreground">
+                  View progress →
+                </span>
               </button>
             )}
             <SetupTab state={state} actions={wrappedActions} />
@@ -447,7 +506,8 @@ function SetupTab({
   actions: TranscriptionActions;
 }) {
   const isSetupDone = state.setupStatus?.setup_complete ?? false;
-  const isActive = state.isDetecting || state.isDownloading || state.isInitializing;
+  const isActive =
+    state.isDetecting || state.isDownloading || state.isInitializing;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -459,7 +519,7 @@ function SetupTab({
               "flex h-12 w-12 items-center justify-center rounded-xl",
               isSetupDone
                 ? "bg-emerald-500/10 text-emerald-500"
-                : "bg-primary/10 text-primary"
+                : "bg-primary/10 text-primary",
             )}
           >
             {isSetupDone ? (
@@ -487,13 +547,25 @@ function SetupTab({
                 size="lg"
               >
                 {state.isDetecting ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Detecting hardware...</>
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Detecting hardware...
+                  </>
                 ) : state.isDownloading ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Downloading model...</>
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Downloading model...
+                  </>
                 ) : state.isInitializing ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading model...</>
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Loading model...
+                  </>
                 ) : (
-                  <><Zap className="mr-2 h-4 w-4" />One-Click Setup</>
+                  <>
+                    <Zap className="mr-2 h-4 w-4" />
+                    One-Click Setup
+                  </>
                 )}
               </Button>
             )}
@@ -523,7 +595,9 @@ function SetupTab({
           <AlertCircle className="mt-0.5 h-4 w-4 text-red-500 flex-shrink-0" />
           <div className="flex-1">
             <p className="text-sm font-medium text-red-500">Error</p>
-            <p className="text-sm text-red-400 whitespace-pre-wrap">{state.error}</p>
+            <p className="text-sm text-red-400 whitespace-pre-wrap">
+              {state.error}
+            </p>
           </div>
           <Button
             variant="ghost"
@@ -545,16 +619,34 @@ function SetupTab({
         </h3>
         <div className="space-y-3 text-sm text-muted-foreground">
           <div className="flex items-start gap-3">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">1</div>
-            <p><strong className="text-foreground">Local processing</strong> — All transcription runs on your machine using Whisper. No audio leaves your device.</p>
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">
+              1
+            </div>
+            <p>
+              <strong className="text-foreground">Local processing</strong> —
+              All transcription runs on your machine using Whisper. No audio
+              leaves your device.
+            </p>
           </div>
           <div className="flex items-start gap-3">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">2</div>
-            <p><strong className="text-foreground">Adaptive models</strong> — The system picks the best model for your hardware. Faster machines get more accurate models.</p>
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">
+              2
+            </div>
+            <p>
+              <strong className="text-foreground">Adaptive models</strong> — The
+              system picks the best model for your hardware. Faster machines get
+              more accurate models.
+            </p>
           </div>
           <div className="flex items-start gap-3">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">3</div>
-            <p><strong className="text-foreground">Every recording saved</strong> — All sessions are persisted locally. Browse your history in the Transcribe tab.</p>
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-bold flex-shrink-0">
+              3
+            </div>
+            <p>
+              <strong className="text-foreground">Every recording saved</strong>{" "}
+              — All sessions are persisted locally. Browse your history in the
+              Transcribe tab.
+            </p>
           </div>
         </div>
       </div>
@@ -646,7 +738,8 @@ function HardwareInfoCard({
             </div>
             {hw.can_upgrade && (
               <p className="text-xs text-amber-500 mt-1">
-                Your system can handle a higher-quality model. Check the Models tab for options.
+                Your system can handle a higher-quality model. Check the Models
+                tab for options.
               </p>
             )}
           </div>
@@ -707,20 +800,125 @@ function TranscribeTab({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── LLM Polish integration ─────────────────────────────────────────────
-  const [llmState] = useLlmApp();
+  const [llmState, llmActions] = useLlmApp();
   const llmServerPort = llmState.serverStatus?.port ?? null;
   const llmServerRunning = llmState.serverStatus?.running ?? false;
   const { run: runPipeline, running: polishing } = useLlmPipeline(
-    () => llmServerPort
+    () => llmServerPort,
   );
   const [polishError, setPolishError] = useState<string | null>(null);
   const [polishSuccess, setPolishSuccess] = useState<string | null>(null);
   /** When true, show the "LLM not running" modal */
   const [showLlmModal, setShowLlmModal] = useState(false);
+  /** Filename selected in the LLM modal for starting */
+  const [modalSelectedModel, setModalSelectedModel] = useState<string | null>(
+    null,
+  );
+  /** When true, run polish automatically once the server comes up */
+  const pendingPolishRef = useRef(false);
+  /** The preset ID queued for auto-polish after server start */
+  const pendingPolishPresetRef = useRef<string>("builtin-standard");
+
+  // ── Polish presets ──────────────────────────────────────────────────────
+  const polishPresets = usePolishPresets();
+  const [polishDropdownOpen, setPolishDropdownOpen] = useState(false);
+  const [showManagePresets, setShowManagePresets] = useState(false);
+  const [editingPreset, setEditingPreset] = useState<PolishPreset | null>(null);
+  const [presetDraftName, setPresetDraftName] = useState("");
+  const [presetDraftPrompt, setPresetDraftPrompt] = useState("");
+
+  // When the LLM server starts while the modal is open with a pending polish, close
+  // the modal and fire polish automatically.
+  // Shared polish execution — called by handlePolish and by the auto-fire
+  // after server start. Accepts an optional preset override; falls back to
+  // the user's default preset when omitted.
+  const executePolish = useCallback(
+    async (presetId?: string) => {
+      const session = sessionsState.viewingSession;
+      const transcriptText = textDraft.trim();
+      if (!session || !transcriptText) return;
+
+      const pid = presetId ?? polishPresets.defaultPresetId;
+      const preset =
+        polishPresets.presets.find((p) => p.id === pid) ??
+        polishPresets.defaultPreset;
+
+      // Build an inline template using the preset's system prompt
+      const template = {
+        description: preset.name,
+        system: preset.systemPrompt,
+        user: "Transcript:\n\n{{transcript}}",
+        outputSchema: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            description: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            cleaned: { type: "string" },
+          },
+          required: ["title", "description", "tags", "cleaned"],
+          additionalProperties: false,
+        },
+        maxTokens: 4096,
+        temperature: 0.2,
+      };
+
+      setPolishError(null);
+      setPolishSuccess(null);
+      try {
+        const raw = await runPipeline<TranscriptPolishOutput>(template, {
+          transcript: transcriptText,
+        });
+        const result = parsePolishOutput(
+          raw,
+          session.title ?? "",
+          transcriptText,
+        );
+        if (saveTimerRef.current) {
+          clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = null;
+          sessionsActions.updateText(session.id, textDraft);
+        }
+        sessionsActions.applyPolish(session.id, {
+          polishedText: result.cleaned,
+          aiTitle: result.title || null,
+          aiDescription: result.description || null,
+          aiTags: result.tags,
+        });
+        setTextDraft(result.cleaned);
+        textDraftSessionRef.current = session.id;
+        setPolishSuccess(session.id);
+        setTimeout(() => setPolishSuccess(null), 4000);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setPolishError(msg);
+      }
+    },
+    [
+      sessionsState.viewingSession,
+      textDraft,
+      polishPresets.defaultPresetId,
+      polishPresets.defaultPreset,
+      polishPresets.presets,
+      runPipeline,
+      sessionsActions,
+    ],
+  );
+
+  useEffect(() => {
+    if (llmServerRunning && pendingPolishRef.current) {
+      pendingPolishRef.current = false;
+      setShowLlmModal(false);
+      // Trigger polish on next tick so runPipeline sees the updated port
+      setTimeout(() => void executePolish(pendingPolishPresetRef.current), 200);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [llmServerRunning]);
 
   // Sync textDraft when the viewed session changes or gets new segments
   const viewingSession = sessionsState.viewingSession;
-  const isViewingActive = viewingSession?.id === activeSessionId && state.isRecording;
+  const isViewingActive =
+    viewingSession?.id === activeSessionId && state.isRecording;
 
   useEffect(() => {
     if (!viewingSession) return;
@@ -736,19 +934,27 @@ function TranscribeTab({
       const liveText = state.fullTranscript;
       setTextDraft(liveText);
     }
-  }, [viewingSession, viewingSession?.fullText, isViewingActive, state.fullTranscript]);
+  }, [
+    viewingSession,
+    viewingSession?.fullText,
+    isViewingActive,
+    state.fullTranscript,
+  ]);
 
   // Debounced save: persist user edits 600ms after they stop typing
-  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newText = e.target.value;
-    setTextDraft(newText);
-    if (!textDraftSessionRef.current) return;
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    const sid = textDraftSessionRef.current;
-    saveTimerRef.current = setTimeout(() => {
-      sessionsActions.updateText(sid, newText);
-    }, 600);
-  }, [sessionsActions]);
+  const handleTextChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const newText = e.target.value;
+      setTextDraft(newText);
+      if (!textDraftSessionRef.current) return;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      const sid = textDraftSessionRef.current;
+      saveTimerRef.current = setTimeout(() => {
+        sessionsActions.updateText(sid, newText);
+      }, 600);
+    },
+    [sessionsActions],
+  );
 
   // Clear the debounce timer on unmount so it doesn't fire on stale state.
   useEffect(() => {
@@ -762,7 +968,7 @@ function TranscribeTab({
     if (state.audioDevices.length === 0) {
       actions.listAudioDevices();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleStartRecording = useCallback(async () => {
@@ -778,7 +984,9 @@ function TranscribeTab({
       if (recheck === "granted") {
         await actions.startRecording();
       } else {
-        setPermError("Microphone access is required for transcription. Please allow access when prompted.");
+        setPermError(
+          "Microphone access is required for transcription. Please allow access when prompted.",
+        );
       }
       return;
     }
@@ -786,7 +994,7 @@ function TranscribeTab({
       setPermError(
         status === "restricted"
           ? "Microphone access is restricted on this device (parental controls or MDM policy)."
-          : "Microphone access was denied. Open System Settings → Privacy & Security → Microphone and enable access for Matrx Local."
+          : "Microphone access was denied. Open System Settings → Privacy & Security → Microphone and enable access for Matrx Local.",
       );
       await openSettings("microphone");
       return;
@@ -794,27 +1002,32 @@ function TranscribeTab({
     await actions.startRecording();
   }, [check, request, openSettings, actions]);
 
-  const handleContinueRecording = useCallback(async (sessionId: string) => {
-    setPermError(null);
-    const status = await check("microphone");
-    if (status === "granted") {
-      sessionsActions.open(sessionId);
-      await onContinueSession(sessionId);
-      return;
-    }
-    if (status === "not_determined") {
-      await request("microphone");
-      const recheck = await check("microphone");
-      if (recheck === "granted") {
+  const handleContinueRecording = useCallback(
+    async (sessionId: string) => {
+      setPermError(null);
+      const status = await check("microphone");
+      if (status === "granted") {
         sessionsActions.open(sessionId);
         await onContinueSession(sessionId);
-      } else {
-        setPermError("Microphone access is required for transcription.");
+        return;
       }
-      return;
-    }
-    setPermError("Microphone access denied. Check System Settings → Privacy & Security.");
-  }, [check, request, onContinueSession, sessionsActions]);
+      if (status === "not_determined") {
+        await request("microphone");
+        const recheck = await check("microphone");
+        if (recheck === "granted") {
+          sessionsActions.open(sessionId);
+          await onContinueSession(sessionId);
+        } else {
+          setPermError("Microphone access is required for transcription.");
+        }
+        return;
+      }
+      setPermError(
+        "Microphone access denied. Check System Settings → Privacy & Security.",
+      );
+    },
+    [check, request, onContinueSession, sessionsActions],
+  );
 
   const handleCopy = useCallback((text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -822,34 +1035,39 @@ function TranscribeTab({
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
-  const handlePushToNote = useCallback(async (session: TranscriptionSession, currentText: string) => {
-    if (!engine.engineUrl) {
-      console.warn("[voice] push to note skipped — engine not discovered yet");
-      return;
-    }
-    if (!currentText.trim()) {
-      console.warn("[voice] push to note skipped — empty transcript");
-      return;
-    }
-    setPushingToNote(session.id);
-    try {
-      const date = new Date(session.createdAt);
-      const label = session.title
-        ? session.title
-        : `Voice Note — ${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
-      await engine.createNote("local", {
-        label,
-        content: currentText,
-        folder_name: "Voice Notes",
-      });
-      setPushSuccess(session.id);
-      setTimeout(() => setPushSuccess(null), 3000);
-    } catch (err) {
-      console.error("[voice] push to note failed:", err);
-    } finally {
-      setPushingToNote(null);
-    }
-  }, []);
+  const handlePushToNote = useCallback(
+    async (session: TranscriptionSession, currentText: string) => {
+      if (!engine.engineUrl) {
+        console.warn(
+          "[voice] push to note skipped — engine not discovered yet",
+        );
+        return;
+      }
+      if (!currentText.trim()) {
+        console.warn("[voice] push to note skipped — empty transcript");
+        return;
+      }
+      setPushingToNote(session.id);
+      try {
+        const date = new Date(session.createdAt);
+        const label = session.title
+          ? session.title
+          : `Voice Note — ${date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+        await engine.createNote("local", {
+          label,
+          content: currentText,
+          folder_name: "Voice Notes",
+        });
+        setPushSuccess(session.id);
+        setTimeout(() => setPushSuccess(null), 3000);
+      } catch (err) {
+        console.error("[voice] push to note failed:", err);
+      } finally {
+        setPushingToNote(null);
+      }
+    },
+    [],
+  );
 
   const handleStartTitleEdit = useCallback((session: TranscriptionSession) => {
     setEditingTitleId(session.id);
@@ -862,62 +1080,36 @@ function TranscribeTab({
     setEditingTitleId(null);
   }, [editingTitleId, titleDraft, sessionsActions]);
 
-  const handlePolish = useCallback(async () => {
-    const session = sessionsState.viewingSession;
-    if (!session) return;
+  const handlePolish = useCallback(
+    async (presetId?: string) => {
+      const session = sessionsState.viewingSession;
+      if (!session) return;
+      const transcriptText = textDraft.trim();
+      if (!transcriptText) return;
 
-    const transcriptText = textDraft.trim();
-    if (!transcriptText) return;
-
-    // If LLM is not running, show the modal instead
-    if (!llmServerRunning) {
-      setShowLlmModal(true);
-      return;
-    }
-
-    setPolishError(null);
-    setPolishSuccess(null);
-
-    try {
-      const raw = await runPipeline<TranscriptPolishOutput>(
-        "polish_transcript",
-        { transcript: transcriptText }
-      );
-
-      // Use the robust parser — never throws
-      const result = parsePolishOutput(raw, session.title ?? "", transcriptText);
-
-      // Flush any pending debounced text saves before applying polish
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-        saveTimerRef.current = null;
-        sessionsActions.updateText(session.id, textDraft);
+      // If LLM is not running, open the model-picker modal
+      if (!llmServerRunning) {
+        const lastModel = llmState.serverStatus?.model_name ?? null;
+        const firstDownloaded = llmState.downloadedModels[0]?.filename ?? null;
+        setModalSelectedModel(lastModel ?? firstDownloaded);
+        pendingPolishPresetRef.current =
+          presetId ?? polishPresets.defaultPresetId;
+        setShowLlmModal(true);
+        return;
       }
 
-      sessionsActions.applyPolish(session.id, {
-        polishedText: result.cleaned,
-        aiTitle: result.title || null,
-        aiDescription: result.description || null,
-        aiTags: result.tags,
-      });
-
-      // Update local draft to show the polished text immediately
-      setTextDraft(result.cleaned);
-      textDraftSessionRef.current = session.id;
-
-      setPolishSuccess(session.id);
-      setTimeout(() => setPolishSuccess(null), 4000);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setPolishError(msg);
-    }
-  }, [
-    sessionsState.viewingSession,
-    textDraft,
-    llmServerRunning,
-    runPipeline,
-    sessionsActions,
-  ]);
+      await executePolish(presetId);
+    },
+    [
+      sessionsState.viewingSession,
+      textDraft,
+      llmServerRunning,
+      llmState.serverStatus,
+      llmState.downloadedModels,
+      polishPresets.defaultPresetId,
+      executePolish,
+    ],
+  );
 
   const handleRestoreRaw = useCallback(() => {
     const session = sessionsState.viewingSession;
@@ -931,7 +1123,8 @@ function TranscribeTab({
   const modelLoadedInMemory = state.activeModel !== null;
 
   const defaultDevice = state.audioDevices.find((d) => d.is_default);
-  const activeDeviceName = state.selectedDevice ?? defaultDevice?.name ?? "System default";
+  const activeDeviceName =
+    state.selectedDevice ?? defaultDevice?.name ?? "System default";
 
   if (setupDoneInConfig && !modelLoadedInMemory) {
     return (
@@ -965,7 +1158,8 @@ function TranscribeTab({
           <Mic className="h-12 w-12 text-muted-foreground/30" />
           <h3 className="text-lg font-semibold">Setup Required</h3>
           <p className="text-sm text-muted-foreground max-w-md">
-            Complete the voice setup first to enable transcription. Go to the Setup tab and click "One-Click Setup".
+            Complete the voice setup first to enable transcription. Go to the
+            Setup tab and click "One-Click Setup".
           </p>
         </div>
       </div>
@@ -1002,7 +1196,7 @@ function TranscribeTab({
                 "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                 state.isRecording || state.isProcessingTail
                   ? "bg-muted text-muted-foreground cursor-not-allowed"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90",
               )}
             >
               <Plus className="h-4 w-4 shrink-0" />
@@ -1015,13 +1209,17 @@ function TranscribeTab({
             {sessionsState.sessions.length === 0 ? (
               <div className="px-4 py-8 text-center">
                 <Mic className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
-                <p className="text-xs text-muted-foreground">No recordings yet</p>
+                <p className="text-xs text-muted-foreground">
+                  No recordings yet
+                </p>
               </div>
             ) : (
               <div className="p-2 space-y-0.5">
                 {sessionsState.sessions.map((session) => {
-                  const isActive = session.id === activeSessionId && state.isRecording;
-                  const isViewing = session.id === sessionsState.viewingSessionId;
+                  const isActive =
+                    session.id === activeSessionId && state.isRecording;
+                  const isViewing =
+                    session.id === sessionsState.viewingSessionId;
                   const date = new Date(session.createdAt);
 
                   return (
@@ -1032,7 +1230,7 @@ function TranscribeTab({
                         "w-full text-left rounded-lg px-3 py-2.5 transition-colors group relative",
                         isViewing
                           ? "bg-primary/10 text-primary"
-                          : "hover:bg-muted text-foreground"
+                          : "hover:bg-muted text-foreground",
                       )}
                     >
                       <div className="flex items-start gap-2">
@@ -1092,7 +1290,9 @@ function TranscribeTab({
                   <p className="text-xs text-muted-foreground">Model</p>
                   <p className="text-sm font-medium truncate">
                     {state.activeModel ?? (
-                      <span className="text-amber-500 italic">No model loaded</span>
+                      <span className="text-amber-500 italic">
+                        No model loaded
+                      </span>
                     )}
                   </p>
                 </div>
@@ -1104,7 +1304,9 @@ function TranscribeTab({
                   <p className="text-xs text-muted-foreground">
                     Microphone{state.selectedDevice ? "" : " (system default)"}
                   </p>
-                  <p className="text-sm font-medium truncate">{activeDeviceName}</p>
+                  <p className="text-sm font-medium truncate">
+                    {activeDeviceName}
+                  </p>
                 </div>
               </div>
             </div>
@@ -1133,15 +1335,15 @@ function TranscribeTab({
                 {state.isRecording
                   ? "Recording…"
                   : state.isProcessingTail
-                  ? "Processing…"
-                  : "Ready to Record"}
+                    ? "Processing…"
+                    : "Ready to Record"}
               </h3>
               <p className="text-sm text-muted-foreground mt-0.5">
                 {state.isRecording
                   ? "Listening… speak into your microphone"
                   : state.isProcessingTail
-                  ? "Processing remaining audio…"
-                  : "Each recording is automatically saved to history"}
+                    ? "Processing remaining audio…"
+                    : "Each recording is automatically saved to history"}
               </p>
             </div>
 
@@ -1154,7 +1356,7 @@ function TranscribeTab({
                     "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
                     !state.selectedDevice
                       ? "border-primary bg-primary/10 text-primary font-medium"
-                      : "border-border text-muted-foreground hover:border-primary/40"
+                      : "border-border text-muted-foreground hover:border-primary/40",
                   )}
                 >
                   <Volume2 className="h-3 w-3" />
@@ -1168,7 +1370,7 @@ function TranscribeTab({
                       "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors max-w-[200px]",
                       state.selectedDevice === dev.name
                         ? "border-primary bg-primary/10 text-primary font-medium"
-                        : "border-border text-muted-foreground hover:border-primary/40"
+                        : "border-border text-muted-foreground hover:border-primary/40",
                     )}
                   >
                     <Mic className="h-3 w-3 shrink-0" />
@@ -1180,25 +1382,30 @@ function TranscribeTab({
 
             <div className="flex flex-col items-center gap-3 py-4">
               {/* Mic permission denied banner */}
-              {permissions.get("microphone")?.status === "denied" && !state.isRecording && (
-                <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-500">
-                  <MicOff className="h-4 w-4 shrink-0" />
-                  <span>Microphone access denied.</span>
-                  <button
-                    className="underline underline-offset-2 hover:text-amber-400"
-                    onClick={() => openSettings("microphone")}
-                  >
-                    Open Settings
-                  </button>
-                </div>
-              )}
+              {permissions.get("microphone")?.status === "denied" &&
+                !state.isRecording && (
+                  <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-500">
+                    <MicOff className="h-4 w-4 shrink-0" />
+                    <span>Microphone access denied.</span>
+                    <button
+                      className="underline underline-offset-2 hover:text-amber-400"
+                      onClick={() => openSettings("microphone")}
+                    >
+                      Open Settings
+                    </button>
+                  </div>
+                )}
 
               {/* Main mic button */}
               <RecordingMicButton
                 isRecording={state.isRecording}
                 isProcessingTail={state.isProcessingTail}
                 liveRms={state.liveRms}
-                onToggle={state.isRecording ? actions.stopRecording : handleStartRecording}
+                onToggle={
+                  state.isRecording
+                    ? actions.stopRecording
+                    : handleStartRecording
+                }
                 size="lg"
               />
 
@@ -1223,7 +1430,11 @@ function TranscribeTab({
                     liveRms={state.liveRms}
                     showDot
                     showReadout
-                    label={state.isCalibrating ? "Calibrating mic level…" : "Recording"}
+                    label={
+                      state.isCalibrating
+                        ? "Calibrating mic level…"
+                        : "Recording"
+                    }
                     detail={state.selectedDevice ?? undefined}
                   />
                 </div>
@@ -1251,17 +1462,30 @@ function TranscribeTab({
                         autoFocus
                         className="flex-1 bg-transparent text-sm font-medium outline-none border-b border-primary/50 pb-0.5"
                       />
-                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={handleSaveTitle}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={handleSaveTitle}
+                      >
                         Save
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground" onClick={() => setEditingTitleId(null)}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs text-muted-foreground"
+                        onClick={() => setEditingTitleId(null)}
+                      >
                         Cancel
                       </Button>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 flex-1 min-w-0">
                       <h3 className="font-semibold truncate text-sm">
-                        {viewingSession.title ?? formatSessionTitle(new Date(viewingSession.createdAt))}
+                        {viewingSession.title ??
+                          formatSessionTitle(
+                            new Date(viewingSession.createdAt),
+                          )}
                       </h3>
                       {isViewingActive && (
                         <span className="flex items-center gap-1 text-xs text-red-500">
@@ -1282,18 +1506,22 @@ function TranscribeTab({
                   {/* Action buttons */}
                   <div className="flex items-center gap-1 shrink-0">
                     {/* Continue recording */}
-                    {!state.isRecording && !state.isProcessingTail && viewingSession.segments.length > 0 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs gap-1"
-                        onClick={() => handleContinueRecording(viewingSession.id)}
-                        title="Continue recording into this session"
-                      >
-                        <Mic className="h-3 w-3" />
-                        Continue
-                      </Button>
-                    )}
+                    {!state.isRecording &&
+                      !state.isProcessingTail &&
+                      viewingSession.segments.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() =>
+                            handleContinueRecording(viewingSession.id)
+                          }
+                          title="Continue recording into this session"
+                        >
+                          <Mic className="h-3 w-3" />
+                          Continue
+                        </Button>
+                      )}
 
                     {/* Push to note */}
                     {textDraft.length > 0 && (
@@ -1302,9 +1530,12 @@ function TranscribeTab({
                         size="sm"
                         className={cn(
                           "h-7 px-2 text-xs gap-1",
-                          pushSuccess === viewingSession.id && "text-emerald-500"
+                          pushSuccess === viewingSession.id &&
+                            "text-emerald-500",
                         )}
-                        onClick={() => handlePushToNote(viewingSession, textDraft)}
+                        onClick={() =>
+                          handlePushToNote(viewingSession, textDraft)
+                        }
                         disabled={pushingToNote === viewingSession.id}
                         title="Save transcript as a note"
                       >
@@ -1315,7 +1546,9 @@ function TranscribeTab({
                         ) : (
                           <FileText className="h-3 w-3" />
                         )}
-                        {pushSuccess === viewingSession.id ? "Saved!" : "Push to Note"}
+                        {pushSuccess === viewingSession.id
+                          ? "Saved!"
+                          : "Push to Note"}
                       </Button>
                     )}
 
@@ -1326,7 +1559,7 @@ function TranscribeTab({
                         size="sm"
                         className={cn(
                           "h-7 px-2 text-xs gap-1",
-                          copiedId === viewingSession.id && "text-emerald-500"
+                          copiedId === viewingSession.id && "text-emerald-500",
                         )}
                         onClick={() => handleCopy(textDraft, viewingSession.id)}
                         title="Copy transcript"
@@ -1340,47 +1573,126 @@ function TranscribeTab({
                       </Button>
                     )}
 
-                    {/* AI Polish */}
+                    {/* AI Polish — split button: left = run default preset, right = dropdown */}
                     {textDraft.length > 0 && !isViewingActive && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className={cn(
-                          "h-7 px-2 text-xs gap-1",
-                          polishSuccess === viewingSession.id && "text-emerald-500",
-                          !llmServerRunning && "text-muted-foreground"
-                        )}
-                        onClick={handlePolish}
-                        disabled={polishing}
-                        title={llmServerRunning ? "Process with local AI — clean up transcript and generate title, description & tags" : "Local LLM not running — click to start it"}
+                      <Popover
+                        open={polishDropdownOpen}
+                        onOpenChange={setPolishDropdownOpen}
                       >
-                        {polishing ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : polishSuccess === viewingSession.id ? (
-                          <Check className="h-3 w-3" />
-                        ) : (
-                          <Sparkles className="h-3 w-3" />
-                        )}
-                        {polishSuccess === viewingSession.id ? "Polished!" : "AI Polish"}
-                        {!llmServerRunning && (
-                          <span className="text-[9px] text-amber-500 ml-0.5">●</span>
-                        )}
-                      </Button>
+                        <div className="flex items-center">
+                          {/* Left: run default preset */}
+                          <button
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-l-md h-7 px-2 text-xs",
+                              "hover:bg-accent transition-colors",
+                              polishSuccess === viewingSession.id &&
+                                "text-emerald-500",
+                              !llmServerRunning && "text-muted-foreground",
+                              polishing && "opacity-50 cursor-not-allowed",
+                            )}
+                            onClick={() => void handlePolish()}
+                            disabled={polishing}
+                            title={
+                              llmServerRunning
+                                ? `AI Polish using "${polishPresets.defaultPreset.name}"`
+                                : "Local LLM not running — click to start it"
+                            }
+                          >
+                            {polishing ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : polishSuccess === viewingSession.id ? (
+                              <Check className="h-3 w-3" />
+                            ) : (
+                              <Sparkles className="h-3 w-3" />
+                            )}
+                            {polishSuccess === viewingSession.id
+                              ? "Polished!"
+                              : "AI Polish"}
+                            {!llmServerRunning && (
+                              <span className="text-[9px] text-amber-500 ml-0.5">
+                                ●
+                              </span>
+                            )}
+                          </button>
+                          {/* Right: dropdown chevron */}
+                          <PopoverTrigger>
+                            <button
+                              className={cn(
+                                "inline-flex items-center justify-center rounded-r-md h-7 w-5",
+                                "hover:bg-accent border-l border-border/40 transition-colors",
+                                polishing && "opacity-50 cursor-not-allowed",
+                              )}
+                              disabled={polishing}
+                              title="Choose AI Polish preset"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                              }}
+                            >
+                              <ChevronDown className="h-3 w-3" />
+                            </button>
+                          </PopoverTrigger>
+                        </div>
+
+                        <PopoverContent
+                          side="bottom"
+                          align="end"
+                          className="w-64 p-1.5 space-y-0.5"
+                        >
+                          <p className="px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                            Presets
+                          </p>
+                          {polishPresets.presets.map((preset) => (
+                            <button
+                              key={preset.id}
+                              className={cn(
+                                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-left",
+                                "hover:bg-accent transition-colors",
+                                preset.id === polishPresets.defaultPresetId &&
+                                  "font-medium",
+                              )}
+                              onClick={() => {
+                                setPolishDropdownOpen(false);
+                                void handlePolish(preset.id);
+                              }}
+                            >
+                              <span className="flex-1 truncate">
+                                {preset.name}
+                              </span>
+                              {preset.id === polishPresets.defaultPresetId && (
+                                <Star className="h-3 w-3 text-amber-500 shrink-0" />
+                              )}
+                            </button>
+                          ))}
+                          <div className="border-t border-border/50 my-1" />
+                          <button
+                            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-left text-muted-foreground hover:bg-accent transition-colors"
+                            onClick={() => {
+                              setPolishDropdownOpen(false);
+                              setShowManagePresets(true);
+                            }}
+                          >
+                            <Settings2 className="h-3 w-3" />
+                            Manage presets…
+                          </button>
+                        </PopoverContent>
+                      </Popover>
                     )}
 
                     {/* Restore original — only shown after AI polish */}
-                    {viewingSession.rawText && viewingSession.rawText !== viewingSession.fullText && !isViewingActive && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-xs gap-1 text-muted-foreground"
-                        onClick={handleRestoreRaw}
-                        title="Restore original unpolished transcript"
-                      >
-                        <Undo2 className="h-3 w-3" />
-                        Restore
-                      </Button>
-                    )}
+                    {viewingSession.rawText &&
+                      viewingSession.rawText !== viewingSession.fullText &&
+                      !isViewingActive && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1 text-muted-foreground"
+                          onClick={handleRestoreRaw}
+                          title="Restore original unpolished transcript"
+                        >
+                          <Undo2 className="h-3 w-3" />
+                          Restore
+                        </Button>
+                      )}
 
                     {/* Delete */}
                     {!isViewingActive && (
@@ -1388,7 +1700,9 @@ function TranscribeTab({
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 px-0 text-muted-foreground hover:text-red-500"
-                        onClick={() => sessionsActions.remove(viewingSession.id)}
+                        onClick={() =>
+                          sessionsActions.remove(viewingSession.id)
+                        }
                         title="Delete recording"
                       >
                         <Trash2 className="h-3 w-3" />
@@ -1402,15 +1716,21 @@ function TranscribeTab({
               <div className="flex flex-col">
                 {viewingSession && (
                   <div className="flex items-center gap-3 px-5 py-2 border-b border-border/40 text-xs text-muted-foreground">
-                    <span>{new Date(viewingSession.createdAt).toLocaleString()}</span>
+                    <span>
+                      {new Date(viewingSession.createdAt).toLocaleString()}
+                    </span>
                     {viewingSession.durationSecs > 0 && (
-                      <span>· {formatDuration(viewingSession.durationSecs)}</span>
+                      <span>
+                        · {formatDuration(viewingSession.durationSecs)}
+                      </span>
                     )}
                     {viewingSession.modelUsed && (
                       <span>· {viewingSession.modelUsed}</span>
                     )}
                     {viewingSession.charCount > 0 && (
-                      <span className="ml-auto">{viewingSession.charCount} chars</span>
+                      <span className="ml-auto">
+                        {viewingSession.charCount} chars
+                      </span>
                     )}
                   </div>
                 )}
@@ -1420,25 +1740,29 @@ function TranscribeTab({
                   <div className="px-5 py-2.5 border-b border-border/40 bg-primary/5 space-y-2">
                     {viewingSession.aiDescription && (
                       <p className="text-xs text-muted-foreground leading-relaxed">
-                        <span className="font-medium text-foreground">Summary:</span>{" "}
+                        <span className="font-medium text-foreground">
+                          Summary:
+                        </span>{" "}
                         {viewingSession.aiDescription}
                       </p>
                     )}
-                    {viewingSession.aiTags && viewingSession.aiTags.length > 0 && (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Tag className="h-3 w-3 text-muted-foreground shrink-0" />
-                        {viewingSession.aiTags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    {viewingSession.aiTags &&
+                      viewingSession.aiTags.length > 0 && (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Tag className="h-3 w-3 text-muted-foreground shrink-0" />
+                          {viewingSession.aiTags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     <p className="text-[10px] text-muted-foreground/60">
-                      AI polished · {new Date(viewingSession.aiProcessedAt).toLocaleString()}
+                      AI polished ·{" "}
+                      {new Date(viewingSession.aiProcessedAt).toLocaleString()}
                     </p>
                   </div>
                 )}
@@ -1447,7 +1771,9 @@ function TranscribeTab({
                 {polishError && (
                   <div className="flex items-start gap-2 px-5 py-2 border-b border-destructive/20 bg-destructive/5">
                     <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0 mt-0.5" />
-                    <span className="text-xs text-destructive flex-1">{polishError}</span>
+                    <span className="text-xs text-destructive flex-1">
+                      {polishError}
+                    </span>
                     <button
                       className="text-[10px] text-destructive/70 hover:text-destructive underline"
                       onClick={() => setPolishError(null)}
@@ -1462,23 +1788,28 @@ function TranscribeTab({
                   <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-red-500/5">
                     <div className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
                     <span className="text-xs text-red-500 font-medium">
-                      {state.isCalibrating ? "Calibrating microphone…" : "Listening — transcript updates as each chunk is processed"}
+                      {state.isCalibrating
+                        ? "Calibrating microphone…"
+                        : "Listening — transcript updates as each chunk is processed"}
                     </span>
                   </div>
                 )}
-                {state.isProcessingTail && viewingSession?.id === activeSessionId && (
-                  <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-amber-500/5">
-                    <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin shrink-0" />
-                    <span className="text-xs text-amber-500 font-medium">Finishing transcription of remaining audio…</span>
-                  </div>
-                )}
+                {state.isProcessingTail &&
+                  viewingSession?.id === activeSessionId && (
+                    <div className="flex items-center gap-2 px-5 py-2 border-b border-border/40 bg-amber-500/5">
+                      <Loader2 className="h-3.5 w-3.5 text-amber-500 animate-spin shrink-0" />
+                      <span className="text-xs text-amber-500 font-medium">
+                        Finishing transcription of remaining audio…
+                      </span>
+                    </div>
+                  )}
 
                 <textarea
                   className={cn(
                     "w-full resize-none bg-transparent px-5 py-4 text-sm leading-relaxed",
                     "focus:outline-none placeholder:text-muted-foreground/50",
                     "min-h-[200px]",
-                    isViewingActive && "cursor-default select-text"
+                    isViewingActive && "cursor-default select-text",
                   )}
                   value={textDraft}
                   onChange={handleTextChange}
@@ -1487,8 +1818,8 @@ function TranscribeTab({
                     state.isRecording
                       ? "Listening… transcript will appear here as you speak"
                       : state.isProcessingTail
-                      ? "Processing remaining audio…"
-                      : "No transcript yet. Start recording to begin.\n\nYou can also type or paste text here directly."
+                        ? "Processing remaining audio…"
+                        : "No transcript yet. Start recording to begin.\n\nYou can also type or paste text here directly."
                   }
                   spellCheck
                 />
@@ -1502,51 +1833,181 @@ function TranscribeTab({
             </div>
           )}
 
-          {/* LLM not-running modal */}
+          {/* LLM model-picker / startup modal */}
           {showLlmModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-              <div className="relative mx-4 w-full max-w-sm rounded-xl border bg-card p-6 shadow-2xl space-y-4">
-                <button
-                  className="absolute right-4 top-4 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowLlmModal(false)}
-                  aria-label="Close"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 shrink-0">
+              <div className="relative mx-4 w-full max-w-md rounded-xl border bg-card shadow-2xl">
+                {/* Header */}
+                <div className="flex items-start gap-3 p-5 pb-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 shrink-0 mt-0.5">
                     <Sparkles className="h-5 w-5 text-amber-500" />
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-sm">Local LLM Not Running</h3>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-sm">
+                      Choose a Model for AI Polish
+                    </h3>
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                      AI Polish uses your local language model to clean up the transcript and
-                      generate a title, summary, and tags. The model isn't running right now.
+                      {llmState.isStarting
+                        ? "Starting the model — this takes a moment on first load…"
+                        : "Select a downloaded model to start, then polish will run automatically."}
                     </p>
                   </div>
+                  {!llmState.isStarting && (
+                    <button
+                      className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        pendingPolishRef.current = false;
+                        setShowLlmModal(false);
+                      }}
+                      aria-label="Close"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
 
-                {llmState.serverStatus?.model_name && (
-                  <div className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                    Last model: <span className="font-medium text-foreground">{llmState.serverStatus.model_name}</span>
+                {/* Startup progress */}
+                {llmState.isStarting && (
+                  <div className="mx-5 mb-4 rounded-lg bg-muted/50 p-3 space-y-2">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                      <span className="truncate">
+                        {llmState.startingModelName ?? "Loading model…"}
+                      </span>
+                    </div>
+                    {llmState.serverStartProgress && (
+                      <>
+                        <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-amber-500 transition-all duration-300"
+                            style={{
+                              width: `${llmState.serverStartProgress.percent}%`,
+                            }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                          {llmState.serverStartProgress.phase} ·{" "}
+                          {Math.round(llmState.serverStartProgress.percent)}%
+                        </p>
+                      </>
+                    )}
+                    {llmState.serverLogs.length > 0 && (
+                      <p className="text-[10px] text-muted-foreground/70 truncate font-mono">
+                        {
+                          llmState.serverLogs[llmState.serverLogs.length - 1]
+                            .line
+                        }
+                      </p>
+                    )}
                   </div>
                 )}
 
-                <p className="text-xs text-muted-foreground">
-                  Go to the <span className="font-medium text-foreground">Local Models</span> tab to
-                  start a model, then come back and click AI&nbsp;Polish.
-                </p>
+                {/* Model list */}
+                {!llmState.isStarting && (
+                  <div className="mx-5 mb-4 space-y-1.5 max-h-56 overflow-y-auto">
+                    {llmState.downloadedModels.length === 0 ? (
+                      <div className="rounded-lg bg-muted/40 px-3 py-4 text-center">
+                        <p className="text-xs text-muted-foreground">
+                          No models downloaded yet.
+                        </p>
+                        <p className="text-[11px] text-muted-foreground/60 mt-1">
+                          Go to the{" "}
+                          <span className="font-medium text-foreground">
+                            Models
+                          </span>{" "}
+                          tab to download one.
+                        </p>
+                      </div>
+                    ) : (
+                      llmState.downloadedModels.map((m) => {
+                        const isSelected = modalSelectedModel === m.filename;
+                        return (
+                          <button
+                            key={m.filename}
+                            onClick={() => setModalSelectedModel(m.filename)}
+                            className={cn(
+                              "w-full flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                              isSelected
+                                ? "border-amber-500/50 bg-amber-500/5"
+                                : "border-transparent bg-muted/40 hover:bg-muted/70",
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "h-3.5 w-3.5 rounded-full border-2 shrink-0 transition-colors",
+                                isSelected
+                                  ? "border-amber-500 bg-amber-500"
+                                  : "border-muted-foreground/40",
+                              )}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium truncate">
+                                {m.name || m.filename}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {m.size_gb} GB
+                              </p>
+                            </div>
+                            {llmState.serverStatus?.model_name === m.filename &&
+                              !llmServerRunning && (
+                                <span className="text-[10px] text-muted-foreground/60 shrink-0">
+                                  last used
+                                </span>
+                              )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
 
-                <div className="flex gap-2 pt-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1"
-                    onClick={() => setShowLlmModal(false)}
-                  >
-                    Dismiss
-                  </Button>
+                {/* Footer */}
+                <div className="flex gap-2 p-5 pt-0">
+                  {!llmState.isStarting && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => {
+                        pendingPolishRef.current = false;
+                        setShowLlmModal(false);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  {!llmState.isStarting &&
+                    llmState.downloadedModels.length > 0 && (
+                      <Button
+                        size="sm"
+                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white"
+                        disabled={!modalSelectedModel}
+                        onClick={() => {
+                          if (!modalSelectedModel) return;
+                          pendingPolishRef.current = true;
+                          // Determine GPU layers from hardware result or fall back to 0
+                          const hw = llmState.hardwareResult;
+                          const gpuLayers = hw?.recommended_gpu_layers ?? 0;
+                          llmActions
+                            .startServer(modalSelectedModel, gpuLayers)
+                            .catch((e) => {
+                              pendingPolishRef.current = false;
+                              const msg =
+                                e instanceof Error ? e.message : String(e);
+                              setPolishError(msg);
+                              setShowLlmModal(false);
+                            });
+                        }}
+                      >
+                        <Play className="h-3.5 w-3.5 mr-1.5" />
+                        Start &amp; Polish
+                      </Button>
+                    )}
+                  {llmState.isStarting && (
+                    <p className="flex-1 text-center text-xs text-muted-foreground py-1">
+                      Polish will run automatically once ready…
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -1556,7 +2017,9 @@ function TranscribeTab({
           {!viewingSession && !state.isRecording && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <Mic className="h-12 w-12 text-muted-foreground/20 mb-4" />
-              <h3 className="text-sm font-medium text-muted-foreground">No recording selected</h3>
+              <h3 className="text-sm font-medium text-muted-foreground">
+                No recording selected
+              </h3>
               <p className="text-xs text-muted-foreground/60 mt-1">
                 Click "New Recording" or select one from the sidebar
               </p>
@@ -1564,6 +2027,218 @@ function TranscribeTab({
           )}
         </div>
       </div>
+
+      {/* ── Manage Presets modal ─────────────────────────────────────────── */}
+      {showManagePresets && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="relative mx-4 w-full max-w-lg rounded-xl border bg-card shadow-2xl flex flex-col max-h-[80vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+              <div>
+                <h3 className="font-semibold text-sm">AI Polish Presets</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Choose a default and create custom styles for AI Polish.
+                </p>
+              </div>
+              <button
+                className="rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setShowManagePresets(false);
+                  setEditingPreset(null);
+                }}
+                aria-label="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {editingPreset === null ? (
+              /* ── List view ── */
+              <>
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                  {polishPresets.presets.map((preset) => (
+                    <div
+                      key={preset.id}
+                      className={cn(
+                        "flex items-start gap-3 rounded-lg border px-3 py-2.5",
+                        preset.id === polishPresets.defaultPresetId
+                          ? "border-amber-500/40 bg-amber-500/5"
+                          : "border-transparent bg-muted/40",
+                      )}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium truncate">
+                            {preset.name}
+                          </span>
+                          {preset.isBuiltIn && (
+                            <span className="text-[9px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
+                              built-in
+                            </span>
+                          )}
+                          {preset.id === polishPresets.defaultPresetId && (
+                            <Star className="h-3 w-3 text-amber-500 shrink-0" />
+                          )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2 leading-relaxed">
+                          {preset.systemPrompt.slice(0, 120)}…
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {preset.id !== polishPresets.defaultPresetId && (
+                          <button
+                            className="h-6 px-2 text-[10px] rounded border border-border/60 hover:bg-accent transition-colors text-muted-foreground"
+                            onClick={() => polishPresets.setDefault(preset.id)}
+                            title="Set as default"
+                          >
+                            Set default
+                          </button>
+                        )}
+                        {!preset.isBuiltIn && (
+                          <>
+                            <button
+                              className="h-6 w-6 flex items-center justify-center rounded hover:bg-accent transition-colors text-muted-foreground"
+                              onClick={() => {
+                                setEditingPreset(preset);
+                                setPresetDraftName(preset.name);
+                                // Strip the auto-appended JSON instruction so the user
+                                // only sees and edits the meaningful part of the prompt.
+                                setPresetDraftPrompt(
+                                  preset.systemPrompt
+                                    .replace("\n" + POLISH_JSON_INSTRUCTION, "")
+                                    .trim(),
+                                );
+                              }}
+                              title="Edit"
+                            >
+                              <PencilIcon className="h-3 w-3" />
+                            </button>
+                            <button
+                              className="h-6 w-6 flex items-center justify-center rounded hover:bg-accent transition-colors text-red-500/70 hover:text-red-500"
+                              onClick={() => polishPresets.remove(preset.id)}
+                              title="Delete"
+                            >
+                              <TrashIcon className="h-3 w-3" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="px-4 pb-4 pt-2 border-t shrink-0">
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setEditingPreset({
+                        id: "",
+                        name: "",
+                        systemPrompt: "",
+                        isBuiltIn: false,
+                        updatedAt: "",
+                      });
+                      setPresetDraftName("");
+                      setPresetDraftPrompt("");
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-1.5" />
+                    New Custom Preset
+                  </Button>
+                </div>
+              </>
+            ) : (
+              /* ── Editor view ── */
+              <div className="flex flex-col flex-1 min-h-0">
+                <div className="flex items-center gap-2 px-5 py-3 border-b shrink-0">
+                  <button
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => setEditingPreset(null)}
+                  >
+                    ← Back
+                  </button>
+                  <span className="text-xs text-muted-foreground">/</span>
+                  <span className="text-xs font-medium">
+                    {editingPreset.id ? "Edit Preset" : "New Preset"}
+                  </span>
+                </div>
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium">Preset Name</label>
+                    <input
+                      type="text"
+                      value={presetDraftName}
+                      onChange={(e) => setPresetDraftName(e.target.value)}
+                      placeholder="e.g. Technical Notes"
+                      className="w-full rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium">System Prompt</label>
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">
+                      Write the instructions the model will follow. The JSON
+                      output format is automatically appended — just describe
+                      how to clean and format the text.
+                    </p>
+                    <textarea
+                      value={presetDraftPrompt}
+                      onChange={(e) => setPresetDraftPrompt(e.target.value)}
+                      placeholder="You are a transcription editor. Clean up the transcript and…"
+                      rows={8}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-xs font-mono outline-none focus:ring-1 focus:ring-ring resize-none leading-relaxed"
+                    />
+                    <div className="rounded-md bg-muted/50 px-3 py-2 text-[10px] text-muted-foreground leading-relaxed">
+                      <span className="font-medium text-foreground">
+                        Auto-appended:
+                      </span>{" "}
+                      {POLISH_JSON_INSTRUCTION}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 px-5 py-4 border-t shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => setEditingPreset(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    disabled={
+                      !presetDraftName.trim() || !presetDraftPrompt.trim()
+                    }
+                    onClick={() => {
+                      const existingId = editingPreset?.id || null;
+                      const rawPrompt = presetDraftPrompt.trim();
+                      const systemPrompt = rawPrompt.includes(
+                        POLISH_JSON_INSTRUCTION,
+                      )
+                        ? rawPrompt
+                        : rawPrompt + "\n" + POLISH_JSON_INSTRUCTION;
+                      const saved = polishPresets.save(
+                        existingId
+                          ? {
+                              id: existingId,
+                              name: presetDraftName.trim(),
+                              systemPrompt,
+                            }
+                          : { name: presetDraftName.trim(), systemPrompt },
+                      );
+                      if (!existingId) polishPresets.setDefault(saved.id);
+                      setEditingPreset(null);
+                    }}
+                  >
+                    Save Preset
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1626,7 +2301,8 @@ function ModelsTab({
       <div className="rounded-xl border bg-card p-6 space-y-4">
         <h3 className="font-semibold">Available Models</h3>
         <p className="text-sm text-muted-foreground">
-          All models use the same API — switching models only changes accuracy and speed.
+          All models use the same API — switching models only changes accuracy
+          and speed.
         </p>
 
         {/* Header row with Download All */}
@@ -1658,8 +2334,11 @@ function ModelsTab({
           {allModels.map((model) => {
             const isDownloaded = downloaded.includes(model.filename);
             const isActive = state.activeModel === model.filename;
-            const isDownloadingThis = isDownloading && downloadingFilename === model.filename;
-            const isQueued = !isDownloadingThis && downloadQueue.some((e) => e.filename === model.filename);
+            const isDownloadingThis =
+              isDownloading && downloadingFilename === model.filename;
+            const isQueued =
+              !isDownloadingThis &&
+              downloadQueue.some((e) => e.filename === model.filename);
             const isRecommended = hw?.recommended_filename === model.filename;
 
             return (
@@ -1667,13 +2346,15 @@ function ModelsTab({
                 key={model.filename}
                 className={cn(
                   "rounded-lg border p-4 space-y-3 transition-colors",
-                  isActive && "border-primary/50 bg-primary/5"
+                  isActive && "border-primary/50 bg-primary/5",
                 )}
               >
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{tierLabel(model.tier)}</span>
+                      <span className="font-medium">
+                        {tierLabel(model.tier)}
+                      </span>
                       {isRecommended && (
                         <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
                           Recommended
@@ -1685,13 +2366,21 @@ function ModelsTab({
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-muted-foreground">{model.description}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {model.description}
+                    </p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-4 gap-2 text-xs">
-                  <Stat label="Download" value={`${model.download_size_mb} MB`} />
-                  <Stat label="RAM Usage" value={`${model.ram_required_mb} MB`} />
+                  <Stat
+                    label="Download"
+                    value={`${model.download_size_mb} MB`}
+                  />
+                  <Stat
+                    label="RAM Usage"
+                    value={`${model.ram_required_mb} MB`}
+                  />
                   <Stat label="Speed" value={model.relative_speed} />
                   <Stat label="Accuracy" value={model.accuracy} />
                 </div>
@@ -1734,7 +2423,10 @@ function ModelsTab({
                       </Button>
                     </div>
                   ) : (
-                    <Button size="sm" onClick={() => handleDownloadAndActivate(model)}>
+                    <Button
+                      size="sm"
+                      onClick={() => handleDownloadAndActivate(model)}
+                    >
                       <Download className="mr-1 h-3 w-3" />
                       Download & Activate
                     </Button>
@@ -1754,7 +2446,10 @@ function ModelsTab({
 
         {allModels.length === 0 && (
           <div className="flex items-center justify-center py-8">
-            <Button onClick={actions.detectHardware} disabled={state.isDetecting}>
+            <Button
+              onClick={actions.detectHardware}
+              disabled={state.isDetecting}
+            >
               {state.isDetecting ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
@@ -1770,13 +2465,16 @@ function ModelsTab({
         <h3 className="font-semibold text-sm">Technical Details</h3>
         <div className="space-y-2 text-xs text-muted-foreground">
           <p>
-            Models are GGML format files from the whisper.cpp project. Downloaded from Hugging Face and stored locally.
+            Models are GGML format files from the whisper.cpp project.
+            Downloaded from Hugging Face and stored locally.
           </p>
           <p>
-            <code className="bg-muted px-1 py-0.5 rounded">.en</code> suffix means English-only (optimized).
+            <code className="bg-muted px-1 py-0.5 rounded">.en</code> suffix
+            means English-only (optimized).
           </p>
           <p>
-            Switching models reinitializes the transcription context. The API is identical across all models.
+            Switching models reinitializes the transcription context. The API is
+            identical across all models.
           </p>
         </div>
       </div>
@@ -1800,7 +2498,9 @@ function DevicesTab({
   // Mic test state (uses Web Audio API directly — independent of Whisper pipeline)
   const [micTestPhase, setMicTestPhase] = useState<MicTestPhase>("idle");
   const [_micTestDevice, setMicTestDevice] = useState<string | null>(null);
-  const [testLevelBars, setTestLevelBars] = useState<number[]>(Array(40).fill(0));
+  const [testLevelBars, setTestLevelBars] = useState<number[]>(
+    Array(40).fill(0),
+  );
   const [testPeakDb, setTestPeakDb] = useState<number>(-Infinity);
   const [testAvgDb, setTestAvgDb] = useState<number>(-Infinity);
   const [testRecordedBlob, setTestRecordedBlob] = useState<Blob | null>(null);
@@ -1849,7 +2549,10 @@ function DevicesTab({
       clearInterval(countdownTimerRef.current);
       countdownTimerRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
       mediaRecorderRef.current.stop();
     }
     if (mediaStreamRef.current) {
@@ -1882,7 +2585,9 @@ function DevicesTab({
         try {
           const devices = await navigator.mediaDevices.enumerateDevices();
           const match = devices.find(
-            (d) => d.kind === "audioinput" && d.label.includes(deviceName.split(" ").slice(0, 3).join(" "))
+            (d) =>
+              d.kind === "audioinput" &&
+              d.label.includes(deviceName.split(" ").slice(0, 3).join(" ")),
           );
           if (match?.deviceId) {
             audioConstraint = { deviceId: { exact: match.deviceId } };
@@ -1906,7 +2611,9 @@ function DevicesTab({
       analyserRef.current = analyser;
 
       // MediaRecorder for playback
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      const recorder = new MediaRecorder(stream, {
+        mimeType: "audio/webm;codecs=opus",
+      });
       mediaRecorderRef.current = recorder;
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -2062,8 +2769,8 @@ function DevicesTab({
 
   // The "active" device — if user explicitly selected one, use that; else the system default
   const activeDevice = state.selectedDevice
-    ? state.audioDevices.find((d) => d.name === state.selectedDevice) ?? null
-    : state.audioDevices.find((d) => d.is_default) ?? null;
+    ? (state.audioDevices.find((d) => d.name === state.selectedDevice) ?? null)
+    : (state.audioDevices.find((d) => d.is_default) ?? null);
 
   const formatDb = (db: number) => {
     if (!isFinite(db)) return "—";
@@ -2071,7 +2778,8 @@ function DevicesTab({
   };
 
   const getSignalQuality = (db: number): { label: string; color: string } => {
-    if (!isFinite(db)) return { label: "No signal", color: "text-muted-foreground" };
+    if (!isFinite(db))
+      return { label: "No signal", color: "text-muted-foreground" };
     if (db > -10) return { label: "Very loud", color: "text-red-500" };
     if (db > -20) return { label: "Loud", color: "text-amber-500" };
     if (db > -35) return { label: "Good", color: "text-emerald-500" };
@@ -2089,7 +2797,8 @@ function DevicesTab({
           <div>
             <h3 className="font-semibold text-sm">Input Devices</h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {state.audioDevices.length} device{state.audioDevices.length !== 1 ? "s" : ""} detected
+              {state.audioDevices.length} device
+              {state.audioDevices.length !== 1 ? "s" : ""} detected
             </p>
           </div>
           <Button
@@ -2116,22 +2825,31 @@ function DevicesTab({
               "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors text-left",
               !state.selectedDevice
                 ? "bg-primary text-primary-foreground"
-                : "hover:bg-muted text-foreground"
+                : "hover:bg-muted text-foreground",
             )}
           >
-            <div className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-full shrink-0",
-              !state.selectedDevice ? "bg-primary-foreground/20" : "bg-muted"
-            )}>
+            <div
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-full shrink-0",
+                !state.selectedDevice ? "bg-primary-foreground/20" : "bg-muted",
+              )}
+            >
               <Settings2 className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium leading-tight">Auto (System Default)</p>
-              <p className={cn(
-                "text-xs leading-tight mt-0.5",
-                !state.selectedDevice ? "text-primary-foreground/70" : "text-muted-foreground"
-              )}>
-                {state.audioDevices.find((d) => d.is_default)?.name ?? "OS picks automatically"}
+              <p className="text-sm font-medium leading-tight">
+                Auto (System Default)
+              </p>
+              <p
+                className={cn(
+                  "text-xs leading-tight mt-0.5",
+                  !state.selectedDevice
+                    ? "text-primary-foreground/70"
+                    : "text-muted-foreground",
+                )}
+              >
+                {state.audioDevices.find((d) => d.is_default)?.name ??
+                  "OS picks automatically"}
               </p>
             </div>
             {!state.selectedDevice && (
@@ -2150,7 +2868,9 @@ function DevicesTab({
           ) : state.audioDevices.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 gap-2">
               <Volume2 className="h-6 w-6 text-muted-foreground/30" />
-              <p className="text-xs text-muted-foreground">No devices detected</p>
+              <p className="text-xs text-muted-foreground">
+                No devices detected
+              </p>
             </div>
           ) : (
             state.audioDevices.map((device, i) => {
@@ -2164,13 +2884,17 @@ function DevicesTab({
                     "w-full flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors text-left",
                     isExplicitlySelected
                       ? "bg-primary text-primary-foreground"
-                      : "hover:bg-muted text-foreground"
+                      : "hover:bg-muted text-foreground",
                   )}
                 >
-                  <div className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-full shrink-0",
-                    isExplicitlySelected ? "bg-primary-foreground/20" : "bg-muted"
-                  )}>
+                  <div
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-full shrink-0",
+                      isExplicitlySelected
+                        ? "bg-primary-foreground/20"
+                        : "bg-muted",
+                    )}
+                  >
                     <Mic className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -2179,21 +2903,29 @@ function DevicesTab({
                         {device.name}
                       </span>
                       {device.is_default && (
-                        <span className={cn(
-                          "text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0",
-                          isExplicitlySelected
-                            ? "bg-primary-foreground/20 text-primary-foreground"
-                            : "bg-muted-foreground/20 text-muted-foreground"
-                        )}>
+                        <span
+                          className={cn(
+                            "text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0",
+                            isExplicitlySelected
+                              ? "bg-primary-foreground/20 text-primary-foreground"
+                              : "bg-muted-foreground/20 text-muted-foreground",
+                          )}
+                        >
                           default
                         </span>
                       )}
                     </div>
-                    <p className={cn(
-                      "text-xs mt-0.5 truncate",
-                      isExplicitlySelected ? "text-primary-foreground/70" : "text-muted-foreground"
-                    )}>
-                      {device.channels.length > 0 ? `${device.channels[0]}ch` : ""}
+                    <p
+                      className={cn(
+                        "text-xs mt-0.5 truncate",
+                        isExplicitlySelected
+                          ? "text-primary-foreground/70"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {device.channels.length > 0
+                        ? `${device.channels[0]}ch`
+                        : ""}
                       {device.sample_rates.length > 0
                         ? ` · ${(device.sample_rates[0] / 1000).toFixed(0)}kHz`
                         : ""}
@@ -2211,7 +2943,8 @@ function DevicesTab({
         {/* Footer note */}
         <div className="px-4 py-3 border-t shrink-0">
           <p className="text-[10px] text-muted-foreground leading-relaxed">
-            Selection is persisted across sessions. Whisper resamples all input to 16kHz mono automatically.
+            Selection is persisted across sessions. Whisper resamples all input
+            to 16kHz mono automatically.
           </p>
         </div>
       </div>
@@ -2227,7 +2960,9 @@ function DevicesTab({
                   <Mic className="h-7 w-7" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-semibold leading-tight">{activeDevice.name}</h2>
+                  <h2 className="text-lg font-semibold leading-tight">
+                    {activeDevice.name}
+                  </h2>
                   <div className="flex items-center gap-2 mt-1">
                     {activeDevice.is_default && (
                       <span className="inline-flex items-center gap-1 text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
@@ -2265,47 +3000,77 @@ function DevicesTab({
               <div className="rounded-xl border bg-card p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Activity className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Sample Rate</span>
+                  <span className="text-xs text-muted-foreground">
+                    Sample Rate
+                  </span>
                 </div>
                 <p className="text-sm font-semibold">
                   {activeDevice.sample_rates.length > 0
-                    ? activeDevice.sample_rates.map((r) => `${(r / 1000).toFixed(0)}kHz`).join(", ")
+                    ? activeDevice.sample_rates
+                        .map((r) => `${(r / 1000).toFixed(0)}kHz`)
+                        .join(", ")
                     : "—"}
                 </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Whisper uses 16kHz</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Whisper uses 16kHz
+                </p>
               </div>
               <div className="rounded-xl border bg-card p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <AudioLines className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Channels</span>
+                  <span className="text-xs text-muted-foreground">
+                    Channels
+                  </span>
                 </div>
                 <p className="text-sm font-semibold">
                   {activeDevice.channels.length > 0
-                    ? activeDevice.channels.map((c) => c === 1 ? "Mono" : c === 2 ? "Stereo" : `${c}ch`).join(" / ")
+                    ? activeDevice.channels
+                        .map((c) =>
+                          c === 1 ? "Mono" : c === 2 ? "Stereo" : `${c}ch`,
+                        )
+                        .join(" / ")
                     : "—"}
                 </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Downmixed to mono</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Downmixed to mono
+                </p>
               </div>
               <div className="rounded-xl border bg-card p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Radio className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Connection</span>
+                  <span className="text-xs text-muted-foreground">
+                    Connection
+                  </span>
                 </div>
                 <p className="text-sm font-semibold">
-                  {activeDevice.name.toLowerCase().includes("usb") ? "USB" :
-                   activeDevice.name.toLowerCase().includes("bluetooth") || activeDevice.name.toLowerCase().includes("airpod") || activeDevice.name.toLowerCase().includes("headset") ? "Bluetooth" :
-                   activeDevice.name.toLowerCase().includes("built") || activeDevice.name.toLowerCase().includes("internal") ? "Built-in" :
-                   "System"}
+                  {activeDevice.name.toLowerCase().includes("usb")
+                    ? "USB"
+                    : activeDevice.name.toLowerCase().includes("bluetooth") ||
+                        activeDevice.name.toLowerCase().includes("airpod") ||
+                        activeDevice.name.toLowerCase().includes("headset")
+                      ? "Bluetooth"
+                      : activeDevice.name.toLowerCase().includes("built") ||
+                          activeDevice.name.toLowerCase().includes("internal")
+                        ? "Built-in"
+                        : "System"}
                 </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Interface type</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Interface type
+                </p>
               </div>
               <div className="rounded-xl border bg-card p-4">
                 <div className="flex items-center gap-2 mb-1">
                   <Waves className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground">Compatibility</span>
+                  <span className="text-xs text-muted-foreground">
+                    Compatibility
+                  </span>
                 </div>
-                <p className="text-sm font-semibold text-emerald-500">Supported</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">16kHz resampled</p>
+                <p className="text-sm font-semibold text-emerald-500">
+                  Supported
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  16kHz resampled
+                </p>
               </div>
             </div>
 
@@ -2318,7 +3083,8 @@ function DevicesTab({
                     Microphone Test
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Record 5 seconds of audio and play it back to verify your mic is working
+                    Record 5 seconds of audio and play it back to verify your
+                    mic is working
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2343,7 +3109,8 @@ function DevicesTab({
                       Stop ({testCountdown}s)
                     </Button>
                   )}
-                  {(micTestPhase === "recorded" || micTestPhase === "playing") && (
+                  {(micTestPhase === "recorded" ||
+                    micTestPhase === "playing") && (
                     <div className="flex gap-2">
                       <Button
                         onClick={resetTest}
@@ -2364,7 +3131,9 @@ function DevicesTab({
                   <div className="flex items-start gap-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
                     <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-red-500">Microphone access failed</p>
+                      <p className="text-sm font-medium text-red-500">
+                        Microphone access failed
+                      </p>
                       <p className="text-xs text-red-400 mt-0.5">{testError}</p>
                     </div>
                   </div>
@@ -2376,9 +3145,12 @@ function DevicesTab({
                       <Mic className="h-8 w-8 text-muted-foreground/50" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground">Ready to test</p>
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Ready to test
+                      </p>
                       <p className="text-xs text-muted-foreground/60 mt-0.5">
-                        Click "Start Test" to record 5 seconds of audio from this microphone
+                        Click "Start Test" to record 5 seconds of audio from
+                        this microphone
                       </p>
                     </div>
                   </div>
@@ -2393,7 +3165,7 @@ function DevicesTab({
                         style={{
                           boxShadow: isFinite(testAvgDb)
                             ? `0 0 ${8 + Math.max(0, (testAvgDb + 60) * 0.8)}px ${4 + Math.max(0, (testAvgDb + 60) * 0.4)}px rgba(239,68,68,${Math.min(0.2 + Math.max(0, (testAvgDb + 60) / 100), 0.7)})`
-                            : undefined
+                            : undefined,
                         }}
                       >
                         <Mic className="h-8 w-8" />
@@ -2402,8 +3174,12 @@ function DevicesTab({
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2">
                             <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                            <span className="text-sm font-semibold">Recording…</span>
-                            <span className="text-sm text-muted-foreground">Speak into your microphone</span>
+                            <span className="text-sm font-semibold">
+                              Recording…
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                              Speak into your microphone
+                            </span>
                           </div>
                           <span className="text-2xl font-bold tabular-nums text-red-500">
                             {testCountdown}s
@@ -2411,11 +3187,14 @@ function DevicesTab({
                         </div>
                         {/* Signal quality badge */}
                         <div className="flex items-center gap-2 mt-2">
-                          <span className={cn("text-xs font-medium", quality.color)}>
+                          <span
+                            className={cn("text-xs font-medium", quality.color)}
+                          >
                             {quality.label}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {formatDb(testAvgDb)} avg · {formatDb(testPeakDb)} peak
+                            {formatDb(testAvgDb)} avg · {formatDb(testPeakDb)}{" "}
+                            peak
                           </span>
                         </div>
                         {/* dB bar */}
@@ -2423,16 +3202,20 @@ function DevicesTab({
                           <div
                             className={cn(
                               "h-full rounded-full transition-all duration-75",
-                              !isFinite(testAvgDb) ? "bg-muted-foreground/20" :
-                              testAvgDb > -20 ? "bg-red-500" :
-                              testAvgDb > -35 ? "bg-emerald-500" :
-                              testAvgDb > -50 ? "bg-yellow-500" :
-                              "bg-red-400"
+                              !isFinite(testAvgDb)
+                                ? "bg-muted-foreground/20"
+                                : testAvgDb > -20
+                                  ? "bg-red-500"
+                                  : testAvgDb > -35
+                                    ? "bg-emerald-500"
+                                    : testAvgDb > -50
+                                      ? "bg-yellow-500"
+                                      : "bg-red-400",
                             )}
                             style={{
                               width: isFinite(testAvgDb)
                                 ? `${Math.max(2, Math.min(100, (testAvgDb + 70) * 1.43))}%`
-                                : "2%"
+                                : "2%",
                             }}
                           />
                         </div>
@@ -2441,17 +3224,22 @@ function DevicesTab({
 
                     {/* Spectrum analyzer */}
                     <div className="rounded-lg bg-muted/30 border p-3">
-                      <p className="text-xs text-muted-foreground mb-2">Frequency spectrum</p>
+                      <p className="text-xs text-muted-foreground mb-2">
+                        Frequency spectrum
+                      </p>
                       <div className="flex items-end gap-0.5 h-16">
                         {testLevelBars.map((v, i) => (
                           <div
                             key={i}
                             className={cn(
                               "flex-1 rounded-t transition-all duration-75",
-                              v > 0.7 ? "bg-red-500" :
-                              v > 0.4 ? "bg-amber-500" :
-                              v > 0.1 ? "bg-emerald-500" :
-                              "bg-muted-foreground/20"
+                              v > 0.7
+                                ? "bg-red-500"
+                                : v > 0.4
+                                  ? "bg-amber-500"
+                                  : v > 0.1
+                                    ? "bg-emerald-500"
+                                    : "bg-muted-foreground/20",
                             )}
                             style={{ height: `${Math.max(4, v * 100)}%` }}
                           />
@@ -2461,16 +3249,23 @@ function DevicesTab({
 
                     {/* Rolling waveform history */}
                     <div className="rounded-lg bg-muted/30 border p-3">
-                      <p className="text-xs text-muted-foreground mb-2">Input level history</p>
+                      <p className="text-xs text-muted-foreground mb-2">
+                        Input level history
+                      </p>
                       <div className="flex items-center gap-0.5 h-8">
                         {historyBars.map((v, i) => (
                           <div
                             key={i}
                             className={cn(
                               "flex-1 rounded transition-all duration-150",
-                              v > 0.05 ? "bg-primary" : "bg-muted-foreground/15"
+                              v > 0.05
+                                ? "bg-primary"
+                                : "bg-muted-foreground/15",
                             )}
-                            style={{ height: `${Math.max(10, v * 200)}%`, maxHeight: "100%" }}
+                            style={{
+                              height: `${Math.max(10, v * 200)}%`,
+                              maxHeight: "100%",
+                            }}
                           />
                         ))}
                       </div>
@@ -2478,50 +3273,63 @@ function DevicesTab({
 
                     {/* Guidance tips */}
                     <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div className={cn(
-                        "rounded-lg border px-3 py-2 text-center transition-colors",
-                        isFinite(testAvgDb) && testAvgDb > -50
-                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
-                          : "border-border text-muted-foreground"
-                      )}>
+                      <div
+                        className={cn(
+                          "rounded-lg border px-3 py-2 text-center transition-colors",
+                          isFinite(testAvgDb) && testAvgDb > -50
+                            ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                            : "border-border text-muted-foreground",
+                        )}
+                      >
                         Signal detected
                       </div>
-                      <div className={cn(
-                        "rounded-lg border px-3 py-2 text-center transition-colors",
-                        isFinite(testAvgDb) && testAvgDb > -35 && testAvgDb < -10
-                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
-                          : "border-border text-muted-foreground"
-                      )}>
+                      <div
+                        className={cn(
+                          "rounded-lg border px-3 py-2 text-center transition-colors",
+                          isFinite(testAvgDb) &&
+                            testAvgDb > -35 &&
+                            testAvgDb < -10
+                            ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                            : "border-border text-muted-foreground",
+                        )}
+                      >
                         Good level
                       </div>
-                      <div className={cn(
-                        "rounded-lg border px-3 py-2 text-center transition-colors",
-                        isFinite(testPeakDb) && testPeakDb < -6
-                          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
-                          : isFinite(testPeakDb) && testPeakDb >= -6
-                          ? "border-red-500/30 bg-red-500/5 text-red-500"
-                          : "border-border text-muted-foreground"
-                      )}>
+                      <div
+                        className={cn(
+                          "rounded-lg border px-3 py-2 text-center transition-colors",
+                          isFinite(testPeakDb) && testPeakDb < -6
+                            ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
+                            : isFinite(testPeakDb) && testPeakDb >= -6
+                              ? "border-red-500/30 bg-red-500/5 text-red-500"
+                              : "border-border text-muted-foreground",
+                        )}
+                      >
                         No clipping
                       </div>
                     </div>
                   </div>
                 )}
 
-                {(micTestPhase === "recorded" || micTestPhase === "playing") && (
+                {(micTestPhase === "recorded" ||
+                  micTestPhase === "playing") && (
                   <div className="space-y-4">
                     {/* Test result summary */}
                     <div className="flex items-center gap-4 rounded-lg border bg-muted/20 px-4 py-3">
-                      <div className={cn(
-                        "flex h-10 w-10 items-center justify-center rounded-full shrink-0",
-                        isFinite(testPeakDb) && testPeakDb > -50
-                          ? "bg-emerald-500/10 text-emerald-500"
-                          : "bg-amber-500/10 text-amber-500"
-                      )}>
+                      <div
+                        className={cn(
+                          "flex h-10 w-10 items-center justify-center rounded-full shrink-0",
+                          isFinite(testPeakDb) && testPeakDb > -50
+                            ? "bg-emerald-500/10 text-emerald-500"
+                            : "bg-amber-500/10 text-amber-500",
+                        )}
+                      >
                         <CheckCircle2 className="h-5 w-5" />
                       </div>
                       <div className="flex-1">
-                        <p className="text-sm font-semibold">Recording complete</p>
+                        <p className="text-sm font-semibold">
+                          Recording complete
+                        </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           Peak: {formatDb(testPeakDb)}
                           {isFinite(testPeakDb) && testPeakDb > -50
@@ -2533,17 +3341,22 @@ function DevicesTab({
 
                     {/* Final spectrum snapshot */}
                     <div className="rounded-lg bg-muted/30 border p-3">
-                      <p className="text-xs text-muted-foreground mb-2">Last recorded spectrum</p>
+                      <p className="text-xs text-muted-foreground mb-2">
+                        Last recorded spectrum
+                      </p>
                       <div className="flex items-end gap-0.5 h-16">
                         {testLevelBars.map((v, i) => (
                           <div
                             key={i}
                             className={cn(
                               "flex-1 rounded-t",
-                              v > 0.7 ? "bg-red-400" :
-                              v > 0.4 ? "bg-amber-400" :
-                              v > 0.1 ? "bg-primary/60" :
-                              "bg-muted-foreground/15"
+                              v > 0.7
+                                ? "bg-red-400"
+                                : v > 0.4
+                                  ? "bg-amber-400"
+                                  : v > 0.1
+                                    ? "bg-primary/60"
+                                    : "bg-muted-foreground/15",
                             )}
                             style={{ height: `${Math.max(4, v * 100)}%` }}
                           />
@@ -2555,7 +3368,9 @@ function DevicesTab({
                     <div className="rounded-xl border bg-card p-4 space-y-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-sm font-semibold">Listen to Your Recording</p>
+                          <p className="text-sm font-semibold">
+                            Listen to Your Recording
+                          </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
                             Play back what was captured to verify audio quality
                           </p>
@@ -2597,7 +3412,9 @@ function DevicesTab({
                               />
                             ))}
                           </div>
-                          <span className="text-xs text-primary font-medium">Playing…</span>
+                          <span className="text-xs text-primary font-medium">
+                            Playing…
+                          </span>
                         </div>
                       )}
                     </div>
@@ -2605,46 +3422,69 @@ function DevicesTab({
                     {/* Level analysis */}
                     <div className="grid grid-cols-3 gap-3">
                       <div className="rounded-xl border bg-card p-4 text-center">
-                        <p className="text-xs text-muted-foreground mb-1">Peak Level</p>
-                        <p className={cn(
-                          "text-xl font-bold tabular-nums",
-                          isFinite(testPeakDb) && testPeakDb >= -6 ? "text-red-500" :
-                          isFinite(testPeakDb) && testPeakDb > -20 ? "text-amber-500" :
-                          isFinite(testPeakDb) && testPeakDb > -50 ? "text-emerald-500" :
-                          "text-muted-foreground"
-                        )}>
+                        <p className="text-xs text-muted-foreground mb-1">
+                          Peak Level
+                        </p>
+                        <p
+                          className={cn(
+                            "text-xl font-bold tabular-nums",
+                            isFinite(testPeakDb) && testPeakDb >= -6
+                              ? "text-red-500"
+                              : isFinite(testPeakDb) && testPeakDb > -20
+                                ? "text-amber-500"
+                                : isFinite(testPeakDb) && testPeakDb > -50
+                                  ? "text-emerald-500"
+                                  : "text-muted-foreground",
+                          )}
+                        >
                           {formatDb(testPeakDb)}
                         </p>
                         <p className="text-[10px] text-muted-foreground mt-1">
-                          {isFinite(testPeakDb) && testPeakDb >= -6 ? "⚠ Clipping risk" :
-                           isFinite(testPeakDb) && testPeakDb > -20 ? "Loud" :
-                           isFinite(testPeakDb) && testPeakDb > -35 ? "Good range" :
-                           isFinite(testPeakDb) && testPeakDb > -50 ? "Quiet" :
-                           "No signal"}
+                          {isFinite(testPeakDb) && testPeakDb >= -6
+                            ? "⚠ Clipping risk"
+                            : isFinite(testPeakDb) && testPeakDb > -20
+                              ? "Loud"
+                              : isFinite(testPeakDb) && testPeakDb > -35
+                                ? "Good range"
+                                : isFinite(testPeakDb) && testPeakDb > -50
+                                  ? "Quiet"
+                                  : "No signal"}
                         </p>
                       </div>
                       <div className="rounded-xl border bg-card p-4 text-center">
-                        <p className="text-xs text-muted-foreground mb-1">Signal Quality</p>
+                        <p className="text-xs text-muted-foreground mb-1">
+                          Signal Quality
+                        </p>
                         <p className={cn("text-xl font-bold", quality.color)}>
                           {isFinite(testPeakDb) ? quality.label : "—"}
                         </p>
                         <p className="text-[10px] text-muted-foreground mt-1">
-                          {isFinite(testPeakDb) ? "Transcription ready" : "No audio captured"}
+                          {isFinite(testPeakDb)
+                            ? "Transcription ready"
+                            : "No audio captured"}
                         </p>
                       </div>
                       <div className="rounded-xl border bg-card p-4 text-center">
-                        <p className="text-xs text-muted-foreground mb-1">Recommendation</p>
+                        <p className="text-xs text-muted-foreground mb-1">
+                          Recommendation
+                        </p>
                         <p className="text-sm font-semibold text-foreground">
-                          {!isFinite(testPeakDb) ? "Check mic" :
-                           testPeakDb >= -6 ? "Lower gain" :
-                           testPeakDb > -50 ? "Ready to use" :
-                           "Move closer"}
+                          {!isFinite(testPeakDb)
+                            ? "Check mic"
+                            : testPeakDb >= -6
+                              ? "Lower gain"
+                              : testPeakDb > -50
+                                ? "Ready to use"
+                                : "Move closer"}
                         </p>
                         <p className="text-[10px] text-muted-foreground mt-1">
-                          {!isFinite(testPeakDb) ? "No signal detected" :
-                           testPeakDb >= -6 ? "Reduce microphone volume" :
-                           testPeakDb > -50 ? "Optimal for Whisper" :
-                           "Signal too weak"}
+                          {!isFinite(testPeakDb)
+                            ? "No signal detected"
+                            : testPeakDb >= -6
+                              ? "Reduce microphone volume"
+                              : testPeakDb > -50
+                                ? "Optimal for Whisper"
+                                : "Signal too weak"}
                         </p>
                       </div>
                     </div>
@@ -2662,47 +3502,87 @@ function DevicesTab({
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-3">
                   <div className="flex items-start gap-2.5">
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">✓</div>
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">
+                      ✓
+                    </div>
                     <div>
-                      <p className="text-xs font-medium">Dedicated microphone</p>
-                      <p className="text-xs text-muted-foreground">External USB mics have better noise isolation than built-in laptop mics</p>
+                      <p className="text-xs font-medium">
+                        Dedicated microphone
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        External USB mics have better noise isolation than
+                        built-in laptop mics
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-start gap-2.5">
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">✓</div>
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">
+                      ✓
+                    </div>
                     <div>
-                      <p className="text-xs font-medium">Speak clearly at –20 to –35 dB</p>
-                      <p className="text-xs text-muted-foreground">Whisper performs best with clean, well-leveled audio in this range</p>
+                      <p className="text-xs font-medium">
+                        Speak clearly at –20 to –35 dB
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Whisper performs best with clean, well-leveled audio in
+                        this range
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-start gap-2.5">
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">✓</div>
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 text-xs font-bold shrink-0 mt-0.5">
+                      ✓
+                    </div>
                     <div>
                       <p className="text-xs font-medium">Quiet environment</p>
-                      <p className="text-xs text-muted-foreground">Background noise degrades accuracy significantly; Whisper's VAD helps but silence is better</p>
+                      <p className="text-xs text-muted-foreground">
+                        Background noise degrades accuracy significantly;
+                        Whisper's VAD helps but silence is better
+                      </p>
                     </div>
                   </div>
                 </div>
                 <div className="space-y-3">
                   <div className="flex items-start gap-2.5">
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">✗</div>
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">
+                      ✗
+                    </div>
                     <div>
-                      <p className="text-xs font-medium">Avoid clipping (above –6 dB)</p>
-                      <p className="text-xs text-muted-foreground">Clipped audio causes transcription artifacts and distortion</p>
+                      <p className="text-xs font-medium">
+                        Avoid clipping (above –6 dB)
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Clipped audio causes transcription artifacts and
+                        distortion
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-start gap-2.5">
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">✗</div>
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500/10 text-red-500 text-xs font-bold shrink-0 mt-0.5">
+                      ✗
+                    </div>
                     <div>
-                      <p className="text-xs font-medium">Avoid Bluetooth for long sessions</p>
-                      <p className="text-xs text-muted-foreground">Bluetooth mics switch to lower-quality SCO mode during recording, increasing latency</p>
+                      <p className="text-xs font-medium">
+                        Avoid Bluetooth for long sessions
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Bluetooth mics switch to lower-quality SCO mode during
+                        recording, increasing latency
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-start gap-2.5">
-                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/10 text-amber-500 text-xs font-bold shrink-0 mt-0.5">!</div>
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/10 text-amber-500 text-xs font-bold shrink-0 mt-0.5">
+                      !
+                    </div>
                     <div>
-                      <p className="text-xs font-medium">Auto resampling is transparent</p>
-                      <p className="text-xs text-muted-foreground">All input is resampled to 16kHz mono — no manual configuration needed</p>
+                      <p className="text-xs font-medium">
+                        Auto resampling is transparent
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        All input is resampled to 16kHz mono — no manual
+                        configuration needed
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2714,16 +3594,26 @@ function DevicesTab({
             {isRefreshing ? (
               <>
                 <Loader2 className="h-10 w-10 animate-spin text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">Scanning for audio devices…</p>
+                <p className="text-sm text-muted-foreground">
+                  Scanning for audio devices…
+                </p>
               </>
             ) : state.audioDevices.length === 0 ? (
               <>
                 <Volume2 className="h-12 w-12 text-muted-foreground/20" />
-                <h3 className="text-base font-semibold">No Audio Devices Found</h3>
+                <h3 className="text-base font-semibold">
+                  No Audio Devices Found
+                </h3>
                 <p className="text-sm text-muted-foreground max-w-sm">
-                  No microphones were detected. Make sure your device has a microphone connected and that macOS has granted audio access.
+                  No microphones were detected. Make sure your device has a
+                  microphone connected and that macOS has granted audio access.
                 </p>
-                <Button onClick={handleRefresh} variant="outline" size="sm" className="gap-1.5">
+                <Button
+                  onClick={handleRefresh}
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                >
                   <RefreshCw className="h-3.5 w-3.5" />
                   Scan Again
                 </Button>
@@ -2733,7 +3623,8 @@ function DevicesTab({
                 <Mic className="h-12 w-12 text-muted-foreground/20" />
                 <h3 className="text-base font-semibold">Select a Device</h3>
                 <p className="text-sm text-muted-foreground">
-                  Choose a microphone from the list to see details and run a test
+                  Choose a microphone from the list to see details and run a
+                  test
                 </p>
               </>
             )}
@@ -2784,12 +3675,24 @@ function formatSessionTitle(date: Date): string {
   const isThisYear = date.getFullYear() === now.getFullYear();
 
   if (isToday) {
-    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return date.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
   }
   if (isThisYear) {
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
   }
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function formatRelativeTime(date: Date): string {
