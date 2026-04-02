@@ -3,12 +3,13 @@ import { AppSidebar } from "./AppSidebar";
 import { StatusBar } from "./StatusBar";
 import { QuickActionBar } from "./QuickActionBar";
 import { useDevTerminalHeight } from "@/components/DevTerminalPanel";
-import { DownloadBadge } from "@/components/downloads/DownloadBadge";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { TranscriptionState, TranscriptionActions } from "@/hooks/use-transcription";
 import type { AutoUpdateState, AutoUpdateActions } from "@/hooks/use-auto-update";
 import type { AppNotification } from "@/hooks/use-notifications";
 import type { User } from "@supabase/supabase-js";
+
+const NOOP = () => {};
 
 export interface PageEntry {
   /** The hash path this page owns, e.g. "/" or "/voice" */
@@ -99,7 +100,7 @@ export function AppLayout({
           engineStatus={engineStatus}
           engineUrl={engineUrl}
           tools={tools}
-          onOpenMonitor={onOpenMonitor ?? (() => {})}
+          onOpenMonitor={onOpenMonitor ?? NOOP}
           transcriptionState={transcriptionState}
           transcriptionActions={transcriptionActions}
           user={user}
@@ -119,13 +120,11 @@ export function AppLayout({
             <div
               key={path}
               className="flex h-full flex-col overflow-hidden"
-              style={{ display: pageIsActive(path, location.pathname) ? "contents" : "none" }}
+              style={{ display: pageIsActive(path, location.pathname) ? "flex" : "none" }}
             >
               {element}
             </div>
           ))}
-          {/* Floating download badge — visible on any page when downloads are active */}
-          <DownloadBadge className="absolute bottom-4 right-4 z-30" />
         </main>
         <StatusBar
           engineStatus={engineStatus}

@@ -1,6 +1,6 @@
 """Universal download manager.
 
-Manages a single-worker sequential download queue backed by the local SQLite
+Manages an intelligent concurrent download queue backed by the local SQLite
 database.  All large file downloads (LLM models, Whisper models, image-gen
 weights, TTS voices, future file-sync items) funnel through this service so:
 
@@ -11,16 +11,22 @@ weights, TTS voices, future file-sync items) funnel through this service so:
   runs as a background sidecar).
 - Each download emits fine-grained byte-level progress events (real percent,
   speed, ETA) using httpx's streaming API.
+- Up to MAX_CONCURRENT downloads run in parallel; the concurrency limit is
+  raised dynamically when measured bandwidth allows it.
+- Priority is enforced: higher-priority downloads always start before
+  lower-priority ones when a slot is free.
 """
 
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import time
 import uuid
+from collections import deque
 from dataclasses import asdict, dataclass, field
-from typing import Any, AsyncIterator, Callable, Literal, Optional
+from typing import Any, AsyncIterator, Deque, Literal, Optional, Tuple
 
 import httpx
 
@@ -32,10 +38,30 @@ logger = get_logger()
 DownloadStatus = Literal["queued", "active", "completed", "failed", "cancelled"]
 DownloadCategory = Literal["llm", "whisper", "image_gen", "tts", "file_sync"]
 
+# Maximum number of simultaneous downloads.
+MAX_CONCURRENT = 3
+
 # How often (in bytes) we flush a progress event to SSE subscribers.
 # At typical LLM download speeds (10–100 MB/s) this is ~10–100 ms between
 # events — frequent enough for smooth UI without flooding the SSE connection.
 _PROGRESS_CHUNK_BYTES = 512 * 1024  # 512 KB
+
+# Rolling-window speed calculation: keep the last N byte-count samples.
+_SPEED_WINDOW_SIZE = 10
+
+# State-log interval (seconds).
+_LOG_INTERVAL_S = 15.0
+
+# Bandwidth probe: if measured speed < this fraction of peak, open another slot.
+_BANDWIDTH_UTILISATION_THRESHOLD = 0.8
+
+# Bandwidth probe cooldown — only expand slots this often.
+_SLOT_EXPAND_COOLDOWN_S = 10.0
+
+# Chunk size for the primary download slot (64 KB), and for secondary slots
+# (32 KB) to reduce buffer competition with the primary download.
+_PRIMARY_CHUNK_BYTES = 65536
+_SECONDARY_CHUNK_BYTES = 32768
 
 
 @dataclass
@@ -56,6 +82,8 @@ class DownloadEntry:
     updated_at: str = ""
     completed_at: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
+    # Transient: rolling-window speed samples — (monotonic_time, bytes_done)
+    _speed_samples: Deque[Tuple[float, int]] = field(default_factory=deque, repr=False, compare=False)
 
     @property
     def percent(self) -> float:
@@ -63,9 +91,32 @@ class DownloadEntry:
             return 0.0
         return min(100.0, self.bytes_done / self.total_bytes * 100)
 
+    def current_speed_bps(self) -> float:
+        """Rolling-window speed in bytes/sec. Returns 0.0 if not enough samples."""
+        samples = self._speed_samples
+        if len(samples) < 2:
+            return 0.0
+        dt = samples[-1][0] - samples[0][0]
+        if dt <= 0:
+            return 0.0
+        db = samples[-1][1] - samples[0][1]
+        return max(0.0, db / dt)
+
+    def record_sample(self, bytes_done: int) -> None:
+        """Record a speed sample at the current monotonic time."""
+        now = time.monotonic()
+        self._speed_samples.append((now, bytes_done))
+        while len(self._speed_samples) > _SPEED_WINDOW_SIZE:
+            self._speed_samples.popleft()
+
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+        d.pop("_speed_samples", None)
         d["percent"] = self.percent
+        d["speed_bps"] = self.current_speed_bps()
+        remaining = self.total_bytes - self.bytes_done
+        spd = self.current_speed_bps()
+        d["eta_seconds"] = (remaining / spd) if (spd > 0 and remaining > 0) else None
         return d
 
 
@@ -85,9 +136,14 @@ class ProgressEvent:
     speed_bps: float = 0.0
     eta_seconds: Optional[float] = None
     error_msg: Optional[str] = None
+    updated_at: str = ""
+    bandwidth_bps: float = 0.0
 
     def to_sse(self) -> str:
-        payload = json.dumps(asdict(self))
+        d = asdict(self)
+        if not d.get("updated_at"):
+            d["updated_at"] = _now()
+        payload = json.dumps(d)
         return f"data: {payload}\n\n"
 
 
@@ -96,15 +152,32 @@ _Subscriber = asyncio.Queue[str]
 
 
 class DownloadManager:
-    """Singleton download queue manager."""
+    """Concurrent priority-aware download queue manager."""
 
     def __init__(self) -> None:
         self._entries: dict[str, DownloadEntry] = {}
-        self._queue: asyncio.Queue[str] = asyncio.Queue()
+        # Priority-sorted list of pending IDs.
+        # Sort key stored alongside: (neg_priority, created_at, dl_id)
+        self._pending: list[Tuple[int, str, str]] = []  # (neg_priority, created_at, id)
+        self._pending_ids: set[str] = set()
+
+        self._active_ids: set[str] = set()
+        # Start with 1 permit so only 1 download runs initially.
+        # _maybe_expand_slots() releases additional permits (up to MAX_CONCURRENT)
+        # when bandwidth headroom is detected, growing concurrency incrementally.
+        self._semaphore: asyncio.Semaphore = asyncio.Semaphore(1)
+        self._active_slots = 1  # current effective concurrency (grows with bandwidth probe)
+
         self._subscribers: list[_Subscriber] = []
         self._cancel_flags: dict[str, asyncio.Event] = {}
         self._worker_task: Optional[asyncio.Task[None]] = None
+        self._log_task: Optional[asyncio.Task[None]] = None
         self._started = False
+
+        # Bandwidth tracking
+        self._peak_speed_bps: float = 0.0
+        self._last_slot_expand_time: float = 0.0
+        self._bandwidth_bps: float = 0.0  # aggregate of all active speeds
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -118,16 +191,18 @@ class DownloadManager:
         await self._load_history()
         await self._resume_incomplete()
         self._worker_task = asyncio.create_task(self._worker(), name="download-manager-worker")
-        logger.info("[downloads] Manager started")
+        self._log_task = asyncio.create_task(self._periodic_log(), name="download-manager-log")
+        logger.info("[downloads] Manager started — MAX_CONCURRENT=%d", MAX_CONCURRENT)
 
     async def stop(self) -> None:
         """Gracefully stop the worker (called during app shutdown)."""
-        if self._worker_task and not self._worker_task.done():
-            self._worker_task.cancel()
-            try:
-                await asyncio.wait_for(self._worker_task, timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
+        for task in (self._worker_task, self._log_task):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=3.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
         logger.info("[downloads] Manager stopped")
 
     # ------------------------------------------------------------------
@@ -145,12 +220,12 @@ class DownloadManager:
         priority: int = 0,
         download_id: Optional[str] = None,
     ) -> DownloadEntry:
-        """Add a download to the queue (idempotent by filename+category)."""
+        """Add a download to the priority queue (idempotent by filename+category)."""
         # Idempotency: skip if already queued/active/completed for this file
         for entry in self._entries.values():
             if entry.filename == filename and entry.category == category:
                 if entry.status in ("queued", "active"):
-                    logger.debug("[downloads] Already queued: %s", filename)
+                    logger.debug("[downloads] Already queued/active: %s", filename)
                     return entry
                 if entry.status == "completed":
                     logger.debug("[downloads] Already completed: %s", filename)
@@ -186,10 +261,11 @@ class DownloadManager:
             percent=0.0,
             part_current=1,
             part_total=len(urls) or 1,
+            updated_at=now,
         ))
 
-        await self._queue.put(dl_id)
-        logger.info("[downloads] Enqueued: %s (%s)", filename, category)
+        self._insert_pending(dl_id, priority, now)
+        logger.info("[downloads] Enqueued: %s (%s) priority=%d", filename, category, priority)
         return entry
 
     async def cancel(self, download_id: str) -> bool:
@@ -204,10 +280,14 @@ class DownloadManager:
         if flag:
             flag.set()
 
+        # Remove from pending if not yet started
+        self._remove_pending(download_id)
+
         entry.status = "cancelled"
         entry.updated_at = _now()
         await self._persist(entry)
 
+        now = _now()
         await self._broadcast(ProgressEvent(
             id=download_id,
             category=entry.category,
@@ -219,8 +299,9 @@ class DownloadManager:
             percent=entry.percent,
             part_current=entry.part_current,
             part_total=entry.part_total,
+            updated_at=now,
         ))
-        logger.info("[downloads] Cancelled: %s", entry.filename)
+        logger.info("[downloads] Cancelled: %s (id=%s)", entry.filename, download_id)
         return True
 
     def get_all(self, status: Optional[str] = None, category: Optional[str] = None) -> list[DownloadEntry]:
@@ -240,7 +321,7 @@ class DownloadManager:
 
     def subscribe(self) -> _Subscriber:
         """Open a new SSE subscription queue."""
-        q: _Subscriber = asyncio.Queue()
+        q: _Subscriber = asyncio.Queue(maxsize=500)
         self._subscribers.append(q)
         return q
 
@@ -256,6 +337,9 @@ class DownloadManager:
         try:
             # Send a snapshot of current state immediately on connect
             for entry in self.get_all():
+                spd = entry.current_speed_bps()
+                remaining = entry.total_bytes - entry.bytes_done
+                eta = (remaining / spd) if (spd > 0 and remaining > 0) else None
                 yield ProgressEvent(
                     id=entry.id,
                     category=entry.category,
@@ -267,7 +351,11 @@ class DownloadManager:
                     percent=entry.percent,
                     part_current=entry.part_current,
                     part_total=entry.part_total,
+                    speed_bps=spd,
+                    eta_seconds=eta,
                     error_msg=entry.error_msg,
+                    updated_at=entry.updated_at or _now(),
+                    bandwidth_bps=self._bandwidth_bps,
                 ).to_sse()
 
             # Yield keep-alive pings every 20s to prevent proxy/browser timeouts
@@ -283,27 +371,68 @@ class DownloadManager:
             self.unsubscribe(q)
 
     # ------------------------------------------------------------------
+    # Internal: priority-pending helpers
+    # ------------------------------------------------------------------
+
+    def _insert_pending(self, dl_id: str, priority: int, created_at: str) -> None:
+        """Insert into the sorted pending list. Higher priority = lower sort key."""
+        if dl_id in self._pending_ids:
+            return
+        key = (-priority, created_at, dl_id)
+        bisect.insort(self._pending, key)
+        self._pending_ids.add(dl_id)
+
+    def _pop_next_pending(self) -> Optional[str]:
+        """Pop the highest-priority pending ID."""
+        if not self._pending:
+            return None
+        key = self._pending.pop(0)
+        dl_id = key[2]
+        self._pending_ids.discard(dl_id)
+        return dl_id
+
+    def _remove_pending(self, dl_id: str) -> None:
+        """Remove a specific ID from the pending list (e.g., on cancel)."""
+        if dl_id not in self._pending_ids:
+            return
+        self._pending = [(np, ca, i) for (np, ca, i) in self._pending if i != dl_id]
+        self._pending_ids.discard(dl_id)
+
+    # ------------------------------------------------------------------
     # Internal: worker
     # ------------------------------------------------------------------
 
     async def _worker(self) -> None:
-        """Single-worker loop — downloads one file at a time."""
+        """Dispatcher loop: assigns pending downloads to concurrent slots."""
         while True:
             try:
-                dl_id = await self._queue.get()
+                # Wait until a slot is free
+                await self._semaphore.acquire()
             except asyncio.CancelledError:
                 break
 
-            entry = self._entries.get(dl_id)
-            if not entry:
+            dl_id = self._pop_next_pending()
+            if dl_id is None:
+                # No work; release slot and wait briefly before checking again
+                self._semaphore.release()
+                await asyncio.sleep(0.2)
                 continue
-            if entry.status in ("cancelled", "completed"):
+
+            entry = self._entries.get(dl_id)
+            if not entry or entry.status in ("cancelled", "completed"):
+                self._semaphore.release()
                 continue
 
             cancel_flag = self._cancel_flags.get(dl_id, asyncio.Event())
             if cancel_flag.is_set():
+                self._semaphore.release()
                 continue
 
+            # Determine whether this is the primary (first) slot or a secondary slot
+            is_primary = len(self._active_ids) == 0
+            chunk_size = _PRIMARY_CHUNK_BYTES if is_primary else _SECONDARY_CHUNK_BYTES
+
+            self._active_ids.add(dl_id)
             entry.status = "active"
             entry.updated_at = _now()
             await self._persist(entry)
@@ -319,32 +448,106 @@ class DownloadManager:
                 percent=entry.percent,
                 part_current=entry.part_current,
                 part_total=entry.part_total,
+                updated_at=entry.updated_at,
+                bandwidth_bps=self._bandwidth_bps,
             ))
 
-            try:
-                await self._download(entry, cancel_flag)
-            except Exception as exc:
-                if entry.status not in ("cancelled", "completed"):
-                    entry.status = "failed"
-                    entry.error_msg = str(exc)
-                    entry.updated_at = _now()
-                    await self._persist(entry)
-                    await self._broadcast(ProgressEvent(
-                        id=dl_id,
-                        category=entry.category,
-                        filename=entry.filename,
-                        display_name=entry.display_name,
-                        status="failed",
-                        bytes_done=entry.bytes_done,
-                        total_bytes=entry.total_bytes,
-                        percent=entry.percent,
-                        part_current=entry.part_current,
-                        part_total=entry.part_total,
-                        error_msg=str(exc),
-                    ))
-                    logger.error("[downloads] Failed: %s — %s", entry.filename, exc)
+            # Launch download as a separate task so the worker can keep dispatching
+            asyncio.create_task(
+                self._run_download_slot(entry, cancel_flag, chunk_size),
+                name=f"download-{dl_id[:8]}",
+            )
 
-    async def _download(self, entry: DownloadEntry, cancel_flag: asyncio.Event) -> None:
+    async def _run_download_slot(
+        self,
+        entry: DownloadEntry,
+        cancel_flag: asyncio.Event,
+        chunk_size: int,
+    ) -> None:
+        """Execute a single download and release the semaphore slot when done."""
+        dl_id = entry.id
+        try:
+            await self._download(entry, cancel_flag, chunk_size)
+        except Exception as exc:
+            if entry.status not in ("cancelled", "completed"):
+                entry.status = "failed"
+                entry.error_msg = str(exc)
+                entry.updated_at = _now()
+                await self._persist(entry)
+                await self._broadcast(ProgressEvent(
+                    id=dl_id,
+                    category=entry.category,
+                    filename=entry.filename,
+                    display_name=entry.display_name,
+                    status="failed",
+                    bytes_done=entry.bytes_done,
+                    total_bytes=entry.total_bytes,
+                    percent=entry.percent,
+                    part_current=entry.part_current,
+                    part_total=entry.part_total,
+                    error_msg=str(exc),
+                    updated_at=entry.updated_at,
+                    bandwidth_bps=self._bandwidth_bps,
+                ))
+                logger.error(
+                    "[downloads] FAILED: %s (id=%s category=%s bytes_done=%d total_bytes=%d part=%d/%d) — %s",
+                    entry.filename, dl_id, entry.category,
+                    entry.bytes_done, entry.total_bytes,
+                    entry.part_current, entry.part_total,
+                    exc,
+                    exc_info=True,
+                )
+        finally:
+            self._active_ids.discard(dl_id)
+            self._update_bandwidth()
+            self._semaphore.release()
+            await self._maybe_expand_slots()
+
+    def _update_bandwidth(self) -> None:
+        """Recalculate aggregate bandwidth from all currently active entries."""
+        total = sum(
+            self._entries[i].current_speed_bps()
+            for i in self._active_ids
+            if i in self._entries
+        )
+        self._bandwidth_bps = total
+        if total > self._peak_speed_bps:
+            self._peak_speed_bps = total
+
+    async def _maybe_expand_slots(self) -> None:
+        """Expand concurrency by 1 if bandwidth headroom allows it.
+
+        Adds an extra semaphore permit so the dispatcher loop can launch one
+        additional concurrent download beyond the initial MAX_CONCURRENT.
+        """
+        if self._active_slots >= MAX_CONCURRENT:
+            return
+        if not self._pending:
+            return
+        now = time.monotonic()
+        if now - self._last_slot_expand_time < _SLOT_EXPAND_COOLDOWN_S:
+            return
+        if self._peak_speed_bps <= 0:
+            return
+
+        # Only expand if active bandwidth is below threshold of peak
+        if self._bandwidth_bps < _BANDWIDTH_UTILISATION_THRESHOLD * self._peak_speed_bps:
+            self._active_slots += 1
+            self._last_slot_expand_time = now
+            # Release an extra semaphore permit so a new slot can actually be used.
+            self._semaphore.release()
+            logger.info(
+                "[downloads] Expanding concurrency to %d slots "
+                "(bandwidth_bps=%.0f peak_bps=%.0f)",
+                self._active_slots, self._bandwidth_bps, self._peak_speed_bps,
+            )
+
+    async def _download(
+        self,
+        entry: DownloadEntry,
+        cancel_flag: asyncio.Event,
+        chunk_size: int,
+    ) -> None:
         """Download all URL parts for a single entry with streaming progress."""
         urls = entry.urls
         if not urls:
@@ -379,7 +582,12 @@ class DownloadManager:
                         return
 
                     if attempt > 0:
-                        await asyncio.sleep(2 ** attempt)
+                        wait = 2 ** attempt
+                        logger.warning(
+                            "[downloads] Retry %d/%d for %s part %d in %ds",
+                            attempt + 1, max_retries, entry.filename, part_idx + 1, wait,
+                        )
+                        await asyncio.sleep(wait)
 
                     try:
                         part_bytes = await self._download_part(
@@ -388,6 +596,7 @@ class DownloadManager:
                             entry=entry,
                             bytes_before=bytes_before_this_part,
                             cancel_flag=cancel_flag,
+                            chunk_size=chunk_size,
                         )
                         bytes_before_this_part += part_bytes
                         last_error = None
@@ -404,7 +613,7 @@ class DownloadManager:
                 if last_error is not None:
                     raise RuntimeError(
                         f"Download failed after {max_retries} attempts. Last error: {last_error}"
-                    )
+                    ) from last_error
 
         entry.status = "completed"
         entry.bytes_done = entry.total_bytes if entry.total_bytes > 0 else bytes_before_this_part
@@ -423,8 +632,13 @@ class DownloadManager:
             percent=100.0,
             part_current=entry.part_total,
             part_total=entry.part_total,
+            updated_at=entry.completed_at,
+            bandwidth_bps=self._bandwidth_bps,
         ))
-        logger.info("[downloads] Completed: %s", entry.filename)
+        logger.info(
+            "[downloads] Completed: %s (id=%s bytes=%d)",
+            entry.filename, entry.id, entry.bytes_done,
+        )
 
     async def _download_part(
         self,
@@ -434,6 +648,7 @@ class DownloadManager:
         entry: DownloadEntry,
         bytes_before: int,
         cancel_flag: asyncio.Event,
+        chunk_size: int,
     ) -> int:
         """Stream a single URL, updating entry progress on every chunk.
         Returns the number of bytes downloaded for this part."""
@@ -446,11 +661,9 @@ class DownloadManager:
                 await self._persist_progress(entry)
 
             part_bytes_done = 0
-            start_time = time.monotonic()
             last_emit_bytes = 0
-            speed_bps = 0.0
 
-            async for chunk in response.aiter_bytes(chunk_size=65536):
+            async for chunk in response.aiter_bytes(chunk_size=chunk_size):
                 if cancel_flag.is_set():
                     raise asyncio.CancelledError()
 
@@ -458,9 +671,11 @@ class DownloadManager:
                 entry.bytes_done = bytes_before + part_bytes_done
                 entry.updated_at = _now()
 
-                elapsed = time.monotonic() - start_time
-                if elapsed > 0:
-                    speed_bps = entry.bytes_done / elapsed
+                entry.record_sample(entry.bytes_done)
+                speed_bps = entry.current_speed_bps()
+
+                # Update aggregate bandwidth
+                self._update_bandwidth()
 
                 # Emit only once per _PROGRESS_CHUNK_BYTES to avoid flooding
                 if entry.bytes_done - last_emit_bytes >= _PROGRESS_CHUNK_BYTES:
@@ -485,9 +700,87 @@ class DownloadManager:
                         part_total=entry.part_total,
                         speed_bps=speed_bps,
                         eta_seconds=eta,
+                        updated_at=entry.updated_at,
+                        bandwidth_bps=self._bandwidth_bps,
                     ))
 
             return part_bytes_done
+
+    # ------------------------------------------------------------------
+    # Internal: periodic logging
+    # ------------------------------------------------------------------
+
+    async def _periodic_log(self) -> None:
+        """Log full queue state every _LOG_INTERVAL_S seconds."""
+        while True:
+            try:
+                await asyncio.sleep(_LOG_INTERVAL_S)
+                await self._emit_state_log()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("[downloads] Periodic log error: %s", exc)
+
+    async def _emit_state_log(self) -> None:
+        """Emit a detailed structured snapshot of the download queue to the log."""
+        active_entries = [
+            self._entries[i] for i in self._active_ids if i in self._entries
+        ]
+        queued_entries = [
+            e for e in self._entries.values() if e.status == "queued"
+        ]
+        failed_entries = [
+            e for e in self._entries.values() if e.status == "failed"
+        ]
+        completed_entries = [
+            e for e in self._entries.values() if e.status == "completed"
+        ]
+        cancelled_entries = [
+            e for e in self._entries.values() if e.status == "cancelled"
+        ]
+
+        active_info = [
+            {
+                "id": e.id,
+                "filename": e.filename,
+                "category": e.category,
+                "percent": round(e.percent, 1),
+                "speed_bps": round(e.current_speed_bps()),
+                "bytes_done": e.bytes_done,
+                "total_bytes": e.total_bytes,
+                "eta_seconds": round(
+                    (e.total_bytes - e.bytes_done) / e.current_speed_bps()
+                    if e.current_speed_bps() > 0 and e.total_bytes > e.bytes_done else 0
+                ),
+            }
+            for e in active_entries
+        ]
+        queued_info = [
+            {"id": e.id, "filename": e.filename, "priority": e.priority}
+            for e in sorted(queued_entries, key=lambda x: (-x.priority, x.created_at))
+        ]
+        failed_info = [
+            {"id": e.id, "filename": e.filename, "error_msg": e.error_msg}
+            for e in failed_entries
+        ]
+
+        logger.info(
+            "[downloads] STATE | active=%d queued=%d completed=%d failed=%d cancelled=%d "
+            "bandwidth_bps=%.0f peak_bps=%.0f active_slots=%d max_concurrent=%d | "
+            "active=%s queued=%s failed=%s",
+            len(active_entries),
+            len(queued_entries),
+            len(completed_entries),
+            len(failed_entries),
+            len(cancelled_entries),
+            self._bandwidth_bps,
+            self._peak_speed_bps,
+            self._active_slots,
+            MAX_CONCURRENT,
+            json.dumps(active_info),
+            json.dumps(queued_info),
+            json.dumps(failed_info),
+        )
 
     # ------------------------------------------------------------------
     # Internal: persistence
@@ -536,8 +829,11 @@ class DownloadManager:
                 ),
             )
             await db.commit()
-        except Exception:
-            logger.debug("[downloads] DB persist failed for %s", entry.id, exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "[downloads] DB persist FAILED for %s (id=%s): %s",
+                entry.filename, entry.id, exc, exc_info=True,
+            )
 
     async def _persist_progress(self, entry: DownloadEntry) -> None:
         """Lightweight progress-only update (only writes byte counters + status)."""
@@ -548,11 +844,14 @@ class DownloadManager:
                 (entry.bytes_done, entry.total_bytes, entry.part_current, _now(), entry.id),
             )
             await db.commit()
-        except Exception:
-            logger.debug("[downloads] DB progress update failed for %s", entry.id, exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "[downloads] DB progress update FAILED for %s (id=%s): %s",
+                entry.filename, entry.id, exc, exc_info=True,
+            )
 
     async def _resume_incomplete(self) -> None:
-        """On startup, reset 'active' rows to 'queued' and re-add them to the worker queue."""
+        """On startup, reset 'active' rows to 'queued' and re-add them to the priority queue."""
         try:
             db = get_db()
             rows = await db.fetchall(
@@ -570,7 +869,7 @@ class DownloadManager:
                     display_name=row["display_name"],
                     urls=urls,
                     total_bytes=row["total_bytes"],
-                    bytes_done=0,  # Restart from beginning
+                    bytes_done=0,  # Restart from beginning (no range-request resume yet)
                     status="queued",
                     error_msg=None,
                     priority=row["priority"],
@@ -587,12 +886,12 @@ class DownloadManager:
                 )
                 self._entries[dl_id] = entry
                 self._cancel_flags[dl_id] = asyncio.Event()
-                await self._queue.put(dl_id)
-                logger.info("[downloads] Resuming incomplete download: %s", entry.filename)
+                self._insert_pending(dl_id, row["priority"], row["created_at"])
+                logger.info("[downloads] Resuming incomplete download: %s (priority=%d)", entry.filename, row["priority"])
 
             await db.commit()
-        except Exception:
-            logger.warning("[downloads] Failed to resume incomplete downloads", exc_info=True)
+        except Exception as exc:
+            logger.warning("[downloads] Failed to resume incomplete downloads: %s", exc, exc_info=True)
 
     async def _load_history(self) -> None:
         """Load completed/failed/cancelled history rows for the UI (last 50)."""
@@ -626,8 +925,8 @@ class DownloadManager:
                     metadata=metadata,
                 )
                 self._entries[row["id"]] = entry
-        except Exception:
-            logger.debug("[downloads] Failed to load history", exc_info=True)
+        except Exception as exc:
+            logger.warning("[downloads] Failed to load history: %s", exc, exc_info=True)
 
     # ------------------------------------------------------------------
     # Internal: SSE broadcast
@@ -635,11 +934,19 @@ class DownloadManager:
 
     async def _broadcast(self, event: ProgressEvent) -> None:
         msg = event.to_sse()
+        dead: list[_Subscriber] = []
         for q in list(self._subscribers):
             try:
                 q.put_nowait(msg)
             except asyncio.QueueFull:
-                pass
+                # Subscriber queue full — drop oldest message and retry
+                try:
+                    q.get_nowait()
+                    q.put_nowait(msg)
+                except Exception:
+                    dead.append(q)
+        for q in dead:
+            self.unsubscribe(q)
 
 
 # ------------------------------------------------------------------

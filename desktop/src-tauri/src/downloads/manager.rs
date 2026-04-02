@@ -1,13 +1,15 @@
 //! Universal download manager (Rust/Tauri side).
 //!
-//! Provides a sequential download queue that:
+//! Provides a concurrent priority-aware download queue that:
 //! - Survives app restarts via SQLite persistence at ~/.matrx/downloads.db
 //! - Continues running when the UI window is hidden/closed (tokio task, not window-bound)
-//! - Emits fine-grained progress via Tauri events: dm-progress, dm-queued, dm-completed,
-//!   dm-failed, dm-cancelled
+//! - Runs up to MAX_CONCURRENT downloads in parallel, respecting priority ordering
+//! - Emits fine-grained throttled progress via Tauri events: dm-progress, dm-queued,
+//!   dm-completed, dm-failed, dm-cancelled
 //! - Supports per-download cancellation tokens (one AtomicBool per download ID)
 //! - Also emits legacy aliases: llm-download-progress, llm-download-cancelled so existing
 //!   hook code keeps working during the transition
+//! - Logs full state every 15 seconds via the `log` crate
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,11 +17,42 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
+use log::{error, info, warn};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, Semaphore};
 use tokio::time::{timeout, Duration};
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+/// Maximum number of concurrent downloads.
+const MAX_CONCURRENT: usize = 3;
+
+/// Minimum bytes changed between two dm-progress events (throttle).
+/// Prevents flooding the IPC channel at high speeds.
+const PROGRESS_THROTTLE_BYTES: u64 = 256 * 1024; // 256 KB
+
+/// Also emit at least once per second even if bytes threshold not met.
+const PROGRESS_THROTTLE_SECS: u64 = 1;
+
+/// How often to log the full queue state.
+const LOG_INTERVAL_SECS: u64 = 15;
+
+/// Rolling-window size for speed calculation.
+const SPEED_WINDOW_SIZE: usize = 10;
+
+/// Chunk size for primary slot.
+const PRIMARY_CHUNK: usize = 65536; // 64 KB
+
+/// Chunk size for secondary slots (less competition with primary).
+const SECONDARY_CHUNK: usize = 32768; // 32 KB
+
+/// Bandwidth probe: fraction of peak below which we open another slot.
+const BANDWIDTH_UTILISATION_THRESHOLD: f64 = 0.8;
+
+/// Minimum seconds between slot expansions.
+const SLOT_EXPAND_COOLDOWN_SECS: u64 = 10;
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -73,6 +106,37 @@ impl DownloadEntry {
     }
 }
 
+/// A pending queue item with sort key for priority ordering.
+#[derive(Debug, Clone)]
+struct PendingItem {
+    /// Negative priority so higher priority sorts first in BTreeMap.
+    neg_priority: i32,
+    created_at: String,
+    id: String,
+}
+
+impl PartialEq for PendingItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for PendingItem {}
+
+impl PartialOrd for PendingItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PendingItem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.neg_priority
+            .cmp(&other.neg_priority)
+            .then(self.created_at.cmp(&other.created_at))
+            .then(self.id.cmp(&other.id))
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadProgressEvent {
     pub id: String,
@@ -88,48 +152,167 @@ pub struct DownloadProgressEvent {
     pub speed_bps: f64,
     pub eta_seconds: Option<f64>,
     pub error_msg: Option<String>,
+    pub updated_at: String,
+    pub bandwidth_bps: f64,
 }
 
-// ── Worker message ────────────────────────────────────────────────────────
+/// Rolling-window speed tracker (ring buffer of (instant, bytes_done) samples).
+struct SpeedTracker {
+    samples: std::collections::VecDeque<(std::time::Instant, u64)>,
+}
 
-enum WorkerMsg {
-    Enqueue(String), // download ID
+impl SpeedTracker {
+    fn new() -> Self {
+        Self {
+            samples: std::collections::VecDeque::with_capacity(SPEED_WINDOW_SIZE + 1),
+        }
+    }
+
+    fn record(&mut self, bytes_done: u64) {
+        self.samples.push_back((std::time::Instant::now(), bytes_done));
+        while self.samples.len() > SPEED_WINDOW_SIZE {
+            self.samples.pop_front();
+        }
+    }
+
+    fn speed_bps(&self) -> f64 {
+        if self.samples.len() < 2 {
+            return 0.0;
+        }
+        let (t0, b0) = self.samples.front().unwrap();
+        let (t1, b1) = self.samples.back().unwrap();
+        let dt = t1.duration_since(*t0).as_secs_f64();
+        if dt <= 0.0 {
+            return 0.0;
+        }
+        let db = b1.saturating_sub(*b0);
+        db as f64 / dt
+    }
+}
+
+// ── Shared concurrency state ────────────────────────────────────────────────
+
+struct ManagerState {
+    entries: HashMap<String, DownloadEntry>,
+    /// Priority-sorted pending queue (use BTreeSet for O(log n) insert + min).
+    pending: std::collections::BTreeSet<PendingItem>,
+    /// IDs currently being downloaded.
+    active_ids: std::collections::HashSet<String>,
+    cancel_flags: HashMap<String, Arc<AtomicBool>>,
+    /// Rolling speed trackers keyed by download ID.
+    speed_trackers: HashMap<String, SpeedTracker>,
+    /// Current effective concurrency (starts at 1, grows with bandwidth probe).
+    active_slots: usize,
+    /// Peak observed aggregate speed in bytes/sec.
+    peak_speed_bps: f64,
+    /// Aggregate current speed.
+    bandwidth_bps: f64,
+    /// Last time we expanded the active_slots.
+    last_slot_expand: std::time::Instant,
+}
+
+impl ManagerState {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            pending: std::collections::BTreeSet::new(),
+            active_ids: std::collections::HashSet::new(),
+            cancel_flags: HashMap::new(),
+            speed_trackers: HashMap::new(),
+            active_slots: 1,
+            peak_speed_bps: 0.0,
+            bandwidth_bps: 0.0,
+            last_slot_expand: std::time::Instant::now(),
+        }
+    }
+
+    fn insert_pending(&mut self, id: String, priority: i32, created_at: String) {
+        self.pending.insert(PendingItem {
+            neg_priority: -priority,
+            created_at,
+            id,
+        });
+    }
+
+    fn pop_next_pending(&mut self) -> Option<String> {
+        let item = self.pending.iter().next().cloned()?;
+        self.pending.remove(&item);
+        Some(item.id)
+    }
+
+    fn remove_pending(&mut self, id: &str) {
+        self.pending.retain(|item| item.id != id);
+    }
+
+    fn update_bandwidth(&mut self) {
+        let total: f64 = self
+            .active_ids
+            .iter()
+            .filter_map(|id| self.speed_trackers.get(id))
+            .map(|t| t.speed_bps())
+            .sum();
+        self.bandwidth_bps = total;
+        if total > self.peak_speed_bps {
+            self.peak_speed_bps = total;
+        }
+    }
+
+    fn should_expand_slots(&self) -> bool {
+        if self.active_slots >= MAX_CONCURRENT {
+            return false;
+        }
+        if self.pending.is_empty() {
+            return false;
+        }
+        if self.peak_speed_bps <= 0.0 {
+            return false;
+        }
+        if self.last_slot_expand.elapsed().as_secs() < SLOT_EXPAND_COOLDOWN_SECS {
+            return false;
+        }
+        self.bandwidth_bps < BANDWIDTH_UTILISATION_THRESHOLD * self.peak_speed_bps
+    }
 }
 
 // ── DownloadManager ────────────────────────────────────────────────────────
 
 pub struct DownloadManager {
     db_path: PathBuf,
-    entries: Arc<Mutex<HashMap<String, DownloadEntry>>>,
-    cancel_flags: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
-    tx: mpsc::UnboundedSender<WorkerMsg>,
+    state: Arc<Mutex<ManagerState>>,
+    semaphore: Arc<Semaphore>,
 }
 
 impl DownloadManager {
     /// Create and start the manager. Call once from lib.rs setup.
     pub fn new(app: AppHandle, db_path: PathBuf) -> Arc<Self> {
-        let (tx, rx) = mpsc::unbounded_channel::<WorkerMsg>();
-
-        let entries = Arc::new(Mutex::new(HashMap::new()));
-        let cancel_flags = Arc::new(Mutex::new(HashMap::new()));
+        let state = Arc::new(Mutex::new(ManagerState::new()));
+        // Start with 1 permit; _maybe_expand_slots() adds permits up to MAX_CONCURRENT
+        // as bandwidth headroom is detected, matching the Python manager's behavior.
+        let semaphore = Arc::new(Semaphore::new(1));
 
         let mgr = Arc::new(DownloadManager {
             db_path: db_path.clone(),
-            entries: entries.clone(),
-            cancel_flags: cancel_flags.clone(),
-            tx,
+            state: state.clone(),
+            semaphore: semaphore.clone(),
         });
 
         // Initialize DB schema
         if let Err(e) = init_db(&db_path) {
-            eprintln!("[downloads] DB init error: {}", e);
+            error!("[downloads] DB init error: {}", e);
         }
 
-        // Start worker
+        // Start dispatcher task
         let mgr_clone = Arc::clone(&mgr);
         let app_clone = app.clone();
         tauri::async_runtime::spawn(async move {
-            mgr_clone.worker(app_clone, rx).await;
+            mgr_clone.dispatcher(app_clone).await;
+        });
+
+        // Start periodic state-log task
+        let state_clone = Arc::clone(&mgr.state);
+        let db_path_clone = mgr.db_path.clone();
+        tauri::async_runtime::spawn(async move {
+            periodic_state_log(state_clone, db_path_clone).await;
         });
 
         // Re-queue incomplete downloads from previous session
@@ -143,10 +326,6 @@ impl DownloadManager {
     }
 
     /// Register an externally-managed download (already being downloaded by other code).
-    ///
-    /// Creates an `active` entry that the worker will NOT process.  The caller is
-    /// responsible for emitting `dm-progress` / `dm-completed` / `dm-failed` events.
-    /// Use this for LLM / Whisper commands that handle their own HTTP + file writing.
     pub async fn register_external(
         &self,
         app: &AppHandle,
@@ -156,10 +335,9 @@ impl DownloadManager {
         display_name: String,
         urls: Vec<String>,
     ) -> DownloadEntry {
-        // Idempotency
         {
-            let entries = self.entries.lock().await;
-            if let Some(existing) = entries.get(&id) {
+            let state = self.state.lock().await;
+            if let Some(existing) = state.entries.get(&id) {
                 if matches!(
                     existing.status,
                     DownloadStatus::Active | DownloadStatus::Queued | DownloadStatus::Completed
@@ -179,64 +357,80 @@ impl DownloadManager {
             urls,
             total_bytes: 0,
             bytes_done: 0,
-            status: DownloadStatus::Active, // Skip the worker queue
+            status: DownloadStatus::Active,
             error_msg: None,
             priority: 0,
             part_current: 1,
             part_total,
             created_at: now.clone(),
-            updated_at: now,
+            updated_at: now.clone(),
             completed_at: None,
         };
 
         if let Err(e) = db_upsert(&self.db_path, &entry, None) {
-            eprintln!("[downloads] DB upsert (external) failed: {}", e);
+            error!("[downloads] DB upsert (external) failed for {}: {}", entry.filename, e);
         }
         {
-            let mut flags = self.cancel_flags.lock().await;
-            flags.insert(id.clone(), Arc::new(AtomicBool::new(false)));
-        }
-        {
-            let mut entries = self.entries.lock().await;
-            entries.insert(id.clone(), entry.clone());
+            let mut state = self.state.lock().await;
+            state.cancel_flags.insert(id.clone(), Arc::new(AtomicBool::new(false)));
+            state.active_ids.insert(id.clone());
+            state.entries.insert(id.clone(), entry.clone());
         }
 
-        emit_progress(app, &entry, 0.0, None);
+        let ev = build_event(&entry, 0.0, None, 0.0, &now);
+        let _ = app.emit("dm-progress", &ev);
         entry
     }
 
     /// Mark an externally-managed download as completed.
     pub async fn mark_external_completed(&self, app: &AppHandle, id: &str, total_bytes: u64) {
         let entry_clone = {
-            let mut entries = self.entries.lock().await;
-            let Some(e) = entries.get_mut(id) else { return };
-            e.status = DownloadStatus::Completed;
-            e.bytes_done = total_bytes;
-            if total_bytes > 0 { e.total_bytes = total_bytes; }
-            e.completed_at = Some(now_str());
-            e.updated_at = now_str();
-            e.clone()
+            let mut state = self.state.lock().await;
+            // Mutate entry fields first, then clone before touching other state fields.
+            {
+                let Some(e) = state.entries.get_mut(id) else { return };
+                e.status = DownloadStatus::Completed;
+                e.bytes_done = total_bytes;
+                if total_bytes > 0 {
+                    e.total_bytes = total_bytes;
+                }
+                e.completed_at = Some(now_str());
+                e.updated_at = now_str();
+            }
+            state.active_ids.remove(id);
+            state.entries.get(id).cloned().unwrap()
         };
         let _ = db_update_status(&self.db_path, id, "completed", None);
-        let ev = build_event(&entry_clone, 100.0, None);
+        let now = now_str();
+        let ev = build_event(&entry_clone, 100.0, None, 0.0, &now);
         let _ = app.emit("dm-completed", &ev);
         let _ = app.emit("dm-progress", &ev);
+        info!("[downloads] External completed: {} (id={})", entry_clone.filename, id);
     }
 
     /// Mark an externally-managed download as failed.
-    pub async fn mark_external_failed(&self, app: &AppHandle, id: &str, error: &str) {
+    pub async fn mark_external_failed(&self, app: &AppHandle, id: &str, error_msg: &str) {
         let entry_clone = {
-            let mut entries = self.entries.lock().await;
-            let Some(e) = entries.get_mut(id) else { return };
-            e.status = DownloadStatus::Failed;
-            e.error_msg = Some(error.to_string());
-            e.updated_at = now_str();
-            e.clone()
+            let mut state = self.state.lock().await;
+            {
+                let Some(e) = state.entries.get_mut(id) else { return };
+                e.status = DownloadStatus::Failed;
+                e.error_msg = Some(error_msg.to_string());
+                e.updated_at = now_str();
+            }
+            state.active_ids.remove(id);
+            state.entries.get(id).cloned().unwrap()
         };
-        let _ = db_update_status(&self.db_path, id, "failed", Some(error));
-        let ev = build_event(&entry_clone, entry_clone.percent(), None);
+        let _ = db_update_status(&self.db_path, id, "failed", Some(error_msg));
+        let now = now_str();
+        let pct = entry_clone.percent();
+        let ev = build_event(&entry_clone, pct, None, 0.0, &now);
         let _ = app.emit("dm-failed", &ev);
         let _ = app.emit("dm-progress", &ev);
+        error!(
+            "[downloads] External FAILED: {} (id={}) — {}",
+            entry_clone.filename, id, error_msg
+        );
     }
 
     /// Enqueue a new download. Returns the entry (or existing if already queued/active).
@@ -251,21 +445,24 @@ impl DownloadManager {
         priority: i32,
         metadata: Option<String>,
     ) -> Result<DownloadEntry, String> {
-        // Idempotency check
         {
-            let entries = self.entries.lock().await;
-            if let Some(existing) = entries.get(&id) {
-                if matches!(existing.status, DownloadStatus::Queued | DownloadStatus::Active | DownloadStatus::Completed) {
+            let state = self.state.lock().await;
+            // Idempotency by ID
+            if let Some(existing) = state.entries.get(&id) {
+                if matches!(
+                    existing.status,
+                    DownloadStatus::Queued | DownloadStatus::Active | DownloadStatus::Completed
+                ) {
                     return Ok(existing.clone());
                 }
             }
-            // Also check by filename+category
-            for entry in entries.values() {
+            // Idempotency by filename+category
+            for entry in state.entries.values() {
                 if entry.filename == filename && entry.category == category {
-                    if matches!(entry.status, DownloadStatus::Queued | DownloadStatus::Active) {
-                        return Ok(entry.clone());
-                    }
-                    if entry.status == DownloadStatus::Completed {
+                    if matches!(
+                        entry.status,
+                        DownloadStatus::Queued | DownloadStatus::Active | DownloadStatus::Completed
+                    ) {
                         return Ok(entry.clone());
                     }
                 }
@@ -288,77 +485,80 @@ impl DownloadManager {
             part_current: 1,
             part_total,
             created_at: now.clone(),
-            updated_at: now,
+            updated_at: now.clone(),
             completed_at: None,
         };
 
-        // Persist to DB
         if let Err(e) = db_upsert(&self.db_path, &entry, metadata) {
-            eprintln!("[downloads] DB upsert failed: {}", e);
+            error!("[downloads] DB upsert failed for {}: {}", filename, e);
         }
 
-        // Register cancel flag
         {
-            let mut flags = self.cancel_flags.lock().await;
-            flags.insert(id.clone(), Arc::new(AtomicBool::new(false)));
+            let mut state = self.state.lock().await;
+            state.cancel_flags.insert(id.clone(), Arc::new(AtomicBool::new(false)));
+            state.entries.insert(id.clone(), entry.clone());
+            state.insert_pending(id.clone(), priority, now.clone());
         }
 
-        // Store in memory
-        {
-            let mut entries = self.entries.lock().await;
-            entries.insert(id.clone(), entry.clone());
-        }
+        let ev = build_event(&entry, 0.0, None, 0.0, &now);
+        let _ = app.emit("dm-queued", &ev);
+        let _ = app.emit("dm-progress", &ev);
 
-        // Emit queued event
-        emit_progress(app, &entry, 0.0, None);
-
-        // Send to worker
-        let _ = self.tx.send(WorkerMsg::Enqueue(id));
-
+        info!(
+            "[downloads] Enqueued: {} (id={} category={} priority={})",
+            filename, id, category, priority
+        );
         Ok(entry)
     }
 
     /// Cancel a download by ID.
     pub async fn cancel(&self, app: &AppHandle, id: &str) -> bool {
         let entry = {
-            let mut entries = self.entries.lock().await;
-            let Some(entry) = entries.get_mut(id) else {
-                return false;
-            };
-            if !matches!(entry.status, DownloadStatus::Queued | DownloadStatus::Active) {
-                return false;
+            let mut state = self.state.lock().await;
+            // Phase 1: validate and mutate the entry (scoped borrow).
+            {
+                let Some(entry) = state.entries.get_mut(id) else {
+                    return false;
+                };
+                if !matches!(entry.status, DownloadStatus::Queued | DownloadStatus::Active) {
+                    return false;
+                }
+                entry.status = DownloadStatus::Cancelled;
+                entry.updated_at = now_str();
             }
-            entry.status = DownloadStatus::Cancelled;
-            entry.updated_at = now_str();
-            entry.clone()
-        };
-
-        // Set cancel flag
-        {
-            let flags = self.cancel_flags.lock().await;
-            if let Some(flag) = flags.get(id) {
+            // Phase 2: mutate other state fields (entry borrow released).
+            state.remove_pending(id);
+            if let Some(flag) = state.cancel_flags.get(id) {
                 flag.store(true, Ordering::SeqCst);
             }
-        }
+            state.entries.get(id).cloned().unwrap()
+        };
 
         if let Err(e) = db_update_status(&self.db_path, id, "cancelled", None) {
-            eprintln!("[downloads] DB cancel update failed: {}", e);
+            warn!("[downloads] DB cancel update failed for {}: {}", id, e);
         }
 
-        emit_progress(app, &entry, entry.percent(), None);
+        let now = now_str();
+        let pct = entry.percent();
+        let ev = build_event(&entry, pct, None, 0.0, &now);
+        let _ = app.emit("dm-cancelled", &ev);
+        let _ = app.emit("dm-progress", &ev);
 
-        // Also emit legacy alias for LLM downloads
         if entry.category == "llm" {
-            let _ = app.emit("llm-download-cancelled", serde_json::json!({"reason": "user_cancelled"}));
+            let _ = app.emit(
+                "llm-download-cancelled",
+                serde_json::json!({"reason": "user_cancelled"}),
+            );
         }
 
+        info!("[downloads] Cancelled: {} (id={})", entry.filename, id);
         true
     }
 
     /// Get all entries sorted by status priority then creation time.
     pub async fn list(&self) -> Vec<DownloadEntry> {
-        let entries = self.entries.lock().await;
-        let mut list: Vec<DownloadEntry> = entries.values().cloned().collect();
+        let state = self.state.lock().await;
+        let mut list: Vec<DownloadEntry> = state.entries.values().cloned().collect();
         list.sort_by(|a, b| {
             let rank = |s: &DownloadStatus| match s {
                 DownloadStatus::Active => 0,
@@ -374,105 +574,283 @@ impl DownloadManager {
         list
     }
 
-    // ── Internal: worker loop ──────────────────────────────────────────────
+    // ── Internal: concurrent dispatcher ────────────────────────────────────
 
-    async fn worker(&self, app: AppHandle, mut rx: mpsc::UnboundedReceiver<WorkerMsg>) {
-        while let Some(msg) = rx.recv().await {
-            match msg {
-                WorkerMsg::Enqueue(id) => {
-                    // Check not cancelled before starting
-                    let cancelled = {
-                        let flags = self.cancel_flags.lock().await;
-                        flags.get(&id).map(|f| f.load(Ordering::SeqCst)).unwrap_or(false)
+    async fn dispatcher(&self, app: AppHandle) {
+        loop {
+            // Acquire a semaphore permit (blocks until one is free)
+            let permit = self.semaphore.clone().acquire_owned().await;
+            let permit = match permit {
+                Ok(p) => p,
+                Err(_) => break, // Semaphore closed
+            };
+
+            // Pop the highest-priority pending item
+            let dl_id = {
+                let mut state = self.state.lock().await;
+                state.pop_next_pending()
+            };
+
+            let dl_id = match dl_id {
+                Some(id) => id,
+                None => {
+                    // No work; drop permit and wait before polling again
+                    drop(permit);
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    continue;
+                }
+            };
+
+            // Validate and prepare entry — split into two borrows to satisfy the
+            // borrow checker: first read+validate, then mutate non-overlapping fields.
+            let (entry, cancel_flag, is_primary) = {
+                let mut state = self.state.lock().await;
+
+                // Phase 1: validate and clone the entry (releases the &mut entries borrow).
+                let entry_clone = {
+                    let Some(entry) = state.entries.get(&dl_id) else {
+                        drop(permit);
+                        continue;
                     };
-                    if cancelled {
+                    if matches!(
+                        entry.status,
+                        DownloadStatus::Cancelled | DownloadStatus::Completed
+                    ) {
+                        drop(permit);
                         continue;
                     }
+                    entry.clone()
+                };
 
-                    let entry = {
-                        let mut entries = self.entries.lock().await;
-                        let Some(e) = entries.get_mut(&id) else { continue };
-                        if !matches!(e.status, DownloadStatus::Queued) {
-                            continue;
-                        }
-                        e.status = DownloadStatus::Active;
-                        e.updated_at = now_str();
-                        e.clone()
+                let flag = state
+                    .cancel_flags
+                    .get(&dl_id)
+                    .cloned()
+                    .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+                if flag.load(Ordering::SeqCst) {
+                    drop(permit);
+                    continue;
+                }
+                let is_primary = state.active_ids.is_empty();
+
+                // Phase 2: mutate state fields now that entries borrow is released.
+                if let Some(e) = state.entries.get_mut(&dl_id) {
+                    e.status = DownloadStatus::Active;
+                    e.updated_at = now_str();
+                }
+                state.active_ids.insert(dl_id.clone());
+                state.speed_trackers.insert(dl_id.clone(), SpeedTracker::new());
+
+                (entry_clone, flag, is_primary)
+            };
+
+            let chunk_size = if is_primary {
+                PRIMARY_CHUNK
+            } else {
+                SECONDARY_CHUNK
+            };
+
+            let _ = db_update_status(&self.db_path, &dl_id, "active", None);
+            // Extract data needed for the event, then drop the lock BEFORE emitting
+            // to avoid a potential deadlock if a Tauri command handler acquires state.
+            let ev = {
+                let state = self.state.lock().await;
+                let bw = state.bandwidth_bps;
+                let now = now_str();
+                build_event(&entry, entry.percent(), None, bw, &now)
+            };
+            let _ = app.emit("dm-progress", &ev);
+
+            // Spawn the download as an independent task; permit moves in so it's
+            // released when the task finishes.
+            let mgr = Arc::new(DownloadSlotHandle {
+                db_path: self.db_path.clone(),
+                state: Arc::clone(&self.state),
+                semaphore: Arc::clone(&self.semaphore),
+            });
+            let app_clone = app.clone();
+            tauri::async_runtime::spawn(async move {
+                mgr.run(app_clone, entry, cancel_flag, chunk_size).await;
+                drop(permit);
+            });
+        }
+    }
+
+    async fn resume_incomplete(&self, app: AppHandle) {
+        let rows = match db_load_incomplete(&self.db_path) {
+            Ok(r) => r,
+            Err(e) => {
+                error!("[downloads] resume_incomplete DB error: {}", e);
+                return;
+            }
+        };
+
+        for row in rows {
+            let id = row.id.clone();
+
+            // LLM and Whisper downloads are externally managed — mark failed so UI
+            // re-offers the download instead of spinning in a queued state forever.
+            if row.category == "llm" || row.category == "whisper" {
+                warn!(
+                    "[downloads] resume_incomplete: {} (category='{}') was interrupted — marking failed so UI re-offers.",
+                    row.filename, row.category
+                );
+                let _ = db_update_status(
+                    &self.db_path,
+                    &id,
+                    "failed",
+                    Some("Interrupted: app was closed mid-download. Please re-download."),
+                );
+                continue;
+            }
+
+            let mut entry = row;
+            entry.status = DownloadStatus::Queued;
+            entry.bytes_done = 0;
+            entry.part_current = 1;
+            entry.updated_at = now_str();
+
+            let _ = db_update_status(&self.db_path, &id, "queued", None);
+
+            {
+                let mut state = self.state.lock().await;
+                state
+                    .cancel_flags
+                    .insert(id.clone(), Arc::new(AtomicBool::new(false)));
+                state.insert_pending(id.clone(), entry.priority, entry.created_at.clone());
+                state.entries.insert(id.clone(), entry.clone());
+            }
+
+            let now = now_str();
+            let ev = build_event(&entry, 0.0, None, 0.0, &now);
+            let _ = app.emit("dm-queued", &ev);
+            let _ = app.emit("dm-progress", &ev);
+            info!(
+                "[downloads] Resuming: {} (id={} priority={})",
+                entry.filename, id, entry.priority
+            );
+        }
+    }
+}
+
+// ── Download slot handle (moved into spawned tasks) ────────────────────────
+
+struct DownloadSlotHandle {
+    db_path: PathBuf,
+    state: Arc<Mutex<ManagerState>>,
+    semaphore: Arc<Semaphore>,
+}
+
+impl DownloadSlotHandle {
+    async fn run(
+        &self,
+        app: AppHandle,
+        entry: DownloadEntry,
+        cancel_flag: Arc<AtomicBool>,
+        chunk_size: usize,
+    ) {
+        let id = entry.id.clone();
+        match self.download(&app, entry, cancel_flag, chunk_size).await {
+            Ok(()) => {}
+            Err(e) => {
+                // Extract state data, then drop the lock before emitting events.
+                let (failed_entry, bw) = {
+                    let mut state = self.state.lock().await;
+                    state.active_ids.remove(&id);
+                    state.speed_trackers.remove(&id);
+                    state.update_bandwidth();
+                    let Some(e_ref) = state.entries.get_mut(&id) else {
+                        return;
                     };
+                    if matches!(e_ref.status, DownloadStatus::Active) {
+                        e_ref.status = DownloadStatus::Failed;
+                        e_ref.error_msg = Some(e.clone());
+                        e_ref.updated_at = now_str();
+                    }
+                    (e_ref.clone(), state.bandwidth_bps)
+                }; // lock drops here
 
-                    let _ = db_update_status(&self.db_path, &id, "active", None);
-                    emit_progress(&app, &entry, entry.percent(), None);
+                let _ = db_update_status(&self.db_path, &id, "failed", Some(&e));
+                let now = now_str();
+                let pct = failed_entry.percent();
+                let ev = build_event(&failed_entry, pct, None, bw, &now);
+                let _ = app.emit("dm-failed", &ev);
+                let _ = app.emit("dm-progress", &ev);
 
-                    let cancel_flag = {
-                        let flags = self.cancel_flags.lock().await;
-                        flags.get(&id).cloned().unwrap_or_else(|| Arc::new(AtomicBool::new(false)))
-                    };
+                error!(
+                    "[downloads] FAILED: {} (id={} category={} bytes_done={} total_bytes={} part={}/{}) — {}",
+                    failed_entry.filename,
+                    id,
+                    failed_entry.category,
+                    failed_entry.bytes_done,
+                    failed_entry.total_bytes,
+                    failed_entry.part_current,
+                    failed_entry.part_total,
+                    e
+                );
 
-                    match self.run_download(&app, &id, cancel_flag).await {
-                        Ok(()) => {
-                            // Status already updated inside run_download
-                        }
-                        Err(e) => {
-                            let mut entries = self.entries.lock().await;
-                            if let Some(entry) = entries.get_mut(&id) {
-                                if matches!(entry.status, DownloadStatus::Active) {
-                                    entry.status = DownloadStatus::Failed;
-                                    entry.error_msg = Some(e.clone());
-                                    entry.updated_at = now_str();
-                                    let _ = db_update_status(&self.db_path, &id, "failed", Some(&e));
-                                    let ev = build_event(entry, 0.0, None);
-                                    let _ = app.emit("dm-failed", &ev);
-                                    let _ = app.emit("dm-progress", &ev);
-                                }
-                            }
-                        }
+                // Check bandwidth probe expansion after lock is free.
+                {
+                    let mut state = self.state.lock().await;
+                    if state.should_expand_slots() {
+                        state.active_slots += 1;
+                        state.last_slot_expand = std::time::Instant::now();
+                        // Add a semaphore permit so the dispatcher can launch one more
+                        // concurrent download — mirrors the Python manager behavior.
+                        self.semaphore.add_permits(1);
+                        info!(
+                            "[downloads] Expanding concurrency to {} slots (bw={:.0} peak={:.0})",
+                            state.active_slots, state.bandwidth_bps, state.peak_speed_bps
+                        );
                     }
                 }
             }
         }
     }
 
-    async fn run_download(&self, app: &AppHandle, id: &str, cancel_flag: Arc<AtomicBool>) -> Result<(), String> {
-        let (urls, filename, display_name, category) = {
-            let entries = self.entries.lock().await;
-            let e = entries.get(id).ok_or("Entry not found")?;
-            (e.urls.clone(), e.filename.clone(), e.display_name.clone(), e.category.clone())
-        };
+    async fn download(
+        &self,
+        app: &AppHandle,
+        mut entry: DownloadEntry,
+        cancel_flag: Arc<AtomicBool>,
+        chunk_size: usize,
+    ) -> Result<(), String> {
+        let id = entry.id.clone();
 
-        if urls.is_empty() {
+        if entry.urls.is_empty() {
             return Err("No URLs provided".to_string());
         }
 
-        // Get HF token from app state if available
         let hf_token = get_hf_token_from_app(app);
 
         let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
             .timeout(Duration::from_secs(7200))
             .build()
             .map_err(|e| e.to_string())?;
 
-        // Probe total bytes
-        let total_bytes = probe_total_bytes(&client, &urls, hf_token.as_deref()).await;
-        {
-            let mut entries = self.entries.lock().await;
-            if let Some(e) = entries.get_mut(id) {
+        let total_bytes = probe_total_bytes(&client, &entry.urls, hf_token.as_deref()).await;
+        if total_bytes > 0 {
+            let mut state = self.state.lock().await;
+            if let Some(e) = state.entries.get_mut(&id) {
                 e.total_bytes = total_bytes;
             }
+            entry.total_bytes = total_bytes;
         }
 
-        let part_total = urls.len();
+        let part_total = entry.urls.len();
         let mut bytes_before: u64 = 0;
 
-        for (part_idx, url) in urls.iter().enumerate() {
+        for (part_idx, url) in entry.urls.clone().iter().enumerate() {
             if cancel_flag.load(Ordering::SeqCst) {
-                self.mark_cancelled(app, id).await;
+                self.mark_cancelled(app, &id).await;
                 return Ok(());
             }
 
             let part_num = part_idx + 1;
             {
-                let mut entries = self.entries.lock().await;
-                if let Some(e) = entries.get_mut(id) {
+                let mut state = self.state.lock().await;
+                if let Some(e) = state.entries.get_mut(&id) {
                     e.part_current = part_num;
                 }
             }
@@ -482,29 +860,41 @@ impl DownloadManager {
 
             for attempt in 0..3u32 {
                 if cancel_flag.load(Ordering::SeqCst) {
-                    self.mark_cancelled(app, id).await;
+                    self.mark_cancelled(app, &id).await;
                     return Ok(());
                 }
                 if attempt > 0 {
-                    tokio::time::sleep(Duration::from_secs(2u64.pow(attempt))).await;
+                    let wait = 2u64.pow(attempt);
+                    warn!(
+                        "[downloads] Retry {}/{} for {} part {} in {}s (last error: {})",
+                        attempt + 1,
+                        3,
+                        entry.filename,
+                        part_num,
+                        wait,
+                        last_error
+                    );
+                    tokio::time::sleep(Duration::from_secs(wait)).await;
                 }
 
-                match self.download_part(
-                    app,
-                    id,
-                    &client,
-                    url,
-                    part_num,
-                    part_total,
-                    bytes_before,
-                    total_bytes,
-                    &filename,
-                    &display_name,
-                    &category,
-                    hf_token.as_deref(),
-                    &cancel_flag,
-                )
-                .await
+                match self
+                    .download_part(
+                        app,
+                        &id,
+                        &client,
+                        url,
+                        part_num,
+                        part_total,
+                        bytes_before,
+                        total_bytes,
+                        &entry.filename,
+                        &entry.display_name,
+                        &entry.category,
+                        hf_token.as_deref(),
+                        &cancel_flag,
+                        chunk_size,
+                    )
+                    .await
                 {
                     Ok(part_bytes) => {
                         bytes_before += part_bytes;
@@ -512,40 +902,90 @@ impl DownloadManager {
                         break;
                     }
                     Err(e) if e.contains("cancelled") => {
-                        self.mark_cancelled(app, id).await;
+                        self.mark_cancelled(app, &id).await;
                         return Ok(());
                     }
                     Err(e) => {
-                        last_error = format!("Part {}/{} attempt {}: {}", part_num, part_total, attempt + 1, e);
-                        eprintln!("[downloads] {}", last_error);
+                        last_error = format!(
+                            "Part {}/{} attempt {}: {}",
+                            part_num,
+                            part_total,
+                            attempt + 1,
+                            e
+                        );
+                        warn!("[downloads] {}", last_error);
                     }
                 }
             }
 
             if !success {
-                return Err(format!("Download failed after 3 attempts. Last error: {}", last_error));
+                return Err(format!(
+                    "Download failed after 3 attempts. Last error: {}",
+                    last_error
+                ));
             }
         }
 
         // Mark completed
-        {
-            let mut entries = self.entries.lock().await;
-            if let Some(e) = entries.get_mut(id) {
+        let (bw, entry_final) = {
+            let mut state = self.state.lock().await;
+            state.active_ids.remove(&id);
+            state.speed_trackers.remove(&id);
+            state.update_bandwidth();
+
+            let maybe_expand = state.should_expand_slots();
+            if maybe_expand {
+                state.active_slots += 1;
+                state.last_slot_expand = std::time::Instant::now();
+                // Add a semaphore permit so the dispatcher can launch one more
+                // concurrent download — mirrors the Python manager behavior.
+                self.semaphore.add_permits(1);
+                info!(
+                    "[downloads] Expanding concurrency to {} slots (bw={:.0} peak={:.0})",
+                    state.active_slots, state.bandwidth_bps, state.peak_speed_bps
+                );
+            }
+
+            {
+                let Some(e) = state.entries.get_mut(&id) else {
+                    return Ok(());
+                };
                 e.status = DownloadStatus::Completed;
-                e.bytes_done = if e.total_bytes > 0 { e.total_bytes } else { bytes_before };
+                e.bytes_done = if e.total_bytes > 0 {
+                    e.total_bytes
+                } else {
+                    bytes_before
+                };
                 e.completed_at = Some(now_str());
                 e.updated_at = now_str();
-                let _ = db_update_status(&self.db_path, id, "completed", None);
-                let ev = build_event(e, 100.0, None);
-                let _ = app.emit("dm-completed", &ev);
-                let _ = app.emit("dm-progress", &ev);
-                // Legacy alias
-                if e.category == "llm" {
-                    emit_legacy_llm_progress(app, &e.filename, part_total, bytes_before, total_bytes, 100.0);
-                }
             }
+            let bw = state.bandwidth_bps;
+            let e_clone = state.entries.get(&id).cloned().unwrap();
+            (bw, e_clone)
+        };
+
+        let _ = db_update_status(&self.db_path, &id, "completed", None);
+        let now = now_str();
+        let ev = build_event(&entry_final, 100.0, None, bw, &now);
+        let _ = app.emit("dm-completed", &ev);
+        let _ = app.emit("dm-progress", &ev);
+
+        // Legacy aliases
+        if entry_final.category == "llm" {
+            emit_legacy_llm_progress(
+                app,
+                &entry_final.filename,
+                part_total,
+                bytes_before,
+                total_bytes,
+                100.0,
+            );
         }
 
+        info!(
+            "[downloads] Completed: {} (id={} bytes={})",
+            entry_final.filename, id, entry_final.bytes_done
+        );
         Ok(())
     }
 
@@ -565,6 +1005,7 @@ impl DownloadManager {
         category: &str,
         hf_token: Option<&str>,
         cancel_flag: &Arc<AtomicBool>,
+        chunk_size: usize,
     ) -> Result<u64, String> {
         let mut req = client.get(url);
         if let Some(tok) = hf_token {
@@ -576,14 +1017,16 @@ impl DownloadManager {
             return Err(format!("HTTP {}", response.status()));
         }
 
-        let part_total_bytes = response
-            .content_length()
-            .unwrap_or(0);
+        let part_total_bytes = response.content_length().unwrap_or(0);
 
         let mut stream = response.bytes_stream();
         let mut part_bytes_done: u64 = 0;
-        let start = std::time::Instant::now();
         let mut last_db_update = std::time::Instant::now();
+        let mut last_emit_bytes: u64 = 0;
+        let mut last_emit_time = std::time::Instant::now();
+
+        // Read in configurable chunk sizes
+        let mut buf = Vec::with_capacity(chunk_size);
 
         loop {
             if cancel_flag.load(Ordering::SeqCst) {
@@ -593,87 +1036,142 @@ impl DownloadManager {
             let chunk_result = timeout(Duration::from_secs(60), stream.next()).await;
             match chunk_result {
                 Err(_) => return Err("Download stalled (60s idle timeout)".to_string()),
-                Ok(None) => break, // Stream complete
+                Ok(None) => break,
                 Ok(Some(Err(e))) => return Err(e.to_string()),
                 Ok(Some(Ok(chunk))) => {
-                    part_bytes_done += chunk.len() as u64;
+                    buf.extend_from_slice(&chunk);
+
+                    // Only process when we've accumulated chunk_size bytes or stream ended
+                    if buf.len() < chunk_size {
+                        continue;
+                    }
+
+                    let consumed = buf.len() as u64;
+                    buf.clear();
+
+                    part_bytes_done += consumed;
                     let overall_bytes = bytes_before + part_bytes_done;
 
-                    // Update in-memory state
+                    // Update in-memory state and speed tracker
                     {
-                        let mut entries = self.entries.lock().await;
-                        if let Some(e) = entries.get_mut(id) {
+                        let mut state = self.state.lock().await;
+                        if let Some(e) = state.entries.get_mut(id) {
                             e.bytes_done = overall_bytes;
                             e.updated_at = now_str();
                         }
+                        if let Some(tracker) = state.speed_trackers.get_mut(id) {
+                            tracker.record(overall_bytes);
+                        }
+                        state.update_bandwidth();
                     }
 
-                    let percent = if grand_total > 0 {
-                        (overall_bytes as f64 / grand_total as f64 * 100.0).min(100.0)
-                    } else if part_total_bytes > 0 {
-                        (part_bytes_done as f64 / part_total_bytes as f64 * 100.0).min(100.0)
-                    } else {
-                        0.0
-                    };
+                    let bytes_changed = overall_bytes.saturating_sub(last_emit_bytes);
+                    let time_since_emit = last_emit_time.elapsed().as_secs();
 
-                    let elapsed = start.elapsed().as_secs_f64();
-                    let speed_bps = if elapsed > 0.0 { overall_bytes as f64 / elapsed } else { 0.0 };
-                    let remaining = if grand_total > overall_bytes { grand_total - overall_bytes } else { 0 };
-                    let eta = if speed_bps > 0.0 && remaining > 0 {
-                        Some(remaining as f64 / speed_bps)
-                    } else {
-                        None
-                    };
+                    if bytes_changed >= PROGRESS_THROTTLE_BYTES
+                        || time_since_emit >= PROGRESS_THROTTLE_SECS
+                    {
+                        last_emit_bytes = overall_bytes;
+                        last_emit_time = std::time::Instant::now();
 
-                    // Emit Tauri event on every ~512 KB
-                    let ev = DownloadProgressEvent {
-                        id: id.to_string(),
-                        category: category.to_string(),
-                        filename: filename.to_string(),
-                        display_name: display_name.to_string(),
-                        status: "active".to_string(),
-                        bytes_done: overall_bytes,
-                        total_bytes: grand_total,
-                        percent,
-                        part_current: part_num,
-                        part_total,
-                        speed_bps,
-                        eta_seconds: eta,
-                        error_msg: None,
-                    };
-                    let _ = app.emit("dm-progress", &ev);
+                        let (speed_bps, bw, pct) = {
+                            let state = self.state.lock().await;
+                            let spd = state
+                                .speed_trackers
+                                .get(id)
+                                .map(|t| t.speed_bps())
+                                .unwrap_or(0.0);
+                            let p = if grand_total > 0 {
+                                (overall_bytes as f64 / grand_total as f64 * 100.0).min(100.0)
+                            } else if part_total_bytes > 0 {
+                                (part_bytes_done as f64 / part_total_bytes as f64 * 100.0)
+                                    .min(100.0)
+                            } else {
+                                0.0
+                            };
+                            (spd, state.bandwidth_bps, p)
+                        };
 
-                    // Legacy alias for LLM downloads (existing use-llm.ts listener)
-                    if category == "llm" {
-                        let _ = app.emit("llm-download-progress", serde_json::json!({
-                            "filename": filename,
-                            "part": part_num,
-                            "total_parts": part_total,
-                            "part_bytes_downloaded": part_bytes_done,
-                            "part_total_bytes": part_total_bytes,
-                            "bytes_downloaded": overall_bytes,
-                            "total_bytes": grand_total,
-                            "percent": percent,
-                            "status": "downloading",
-                        }));
-                    }
-                    // Legacy alias for Whisper downloads
-                    if category == "whisper" {
-                        let _ = app.emit("whisper-download-progress", serde_json::json!({
-                            "filename": filename,
-                            "bytes_downloaded": overall_bytes,
-                            "total_bytes": grand_total,
-                            "percent": percent as f32,
-                        }));
-                    }
+                        let remaining = if grand_total > overall_bytes {
+                            grand_total - overall_bytes
+                        } else {
+                            0
+                        };
+                        let eta = if speed_bps > 0.0 && remaining > 0 {
+                            Some(remaining as f64 / speed_bps)
+                        } else {
+                            None
+                        };
 
-                    // Persist progress to DB every ~5s (not every chunk to avoid thrashing)
-                    if last_db_update.elapsed() > Duration::from_secs(5) {
-                        let _ = db_update_progress(&self.db_path, id, overall_bytes, grand_total, part_num);
-                        last_db_update = std::time::Instant::now();
+                        let now = now_str();
+                        let ev = DownloadProgressEvent {
+                            id: id.to_string(),
+                            category: category.to_string(),
+                            filename: filename.to_string(),
+                            display_name: display_name.to_string(),
+                            status: "active".to_string(),
+                            bytes_done: overall_bytes,
+                            total_bytes: grand_total,
+                            percent: pct,
+                            part_current: part_num,
+                            part_total,
+                            speed_bps,
+                            eta_seconds: eta,
+                            error_msg: None,
+                            updated_at: now.clone(),
+                            bandwidth_bps: bw,
+                        };
+                        let _ = app.emit("dm-progress", &ev);
+
+                        // Legacy aliases
+                        if category == "llm" {
+                            let _ = app.emit(
+                                "llm-download-progress",
+                                serde_json::json!({
+                                    "filename": filename,
+                                    "part": part_num,
+                                    "total_parts": part_total,
+                                    "part_bytes_downloaded": part_bytes_done,
+                                    "part_total_bytes": part_total_bytes,
+                                    "bytes_downloaded": overall_bytes,
+                                    "total_bytes": grand_total,
+                                    "percent": pct,
+                                    "status": "downloading",
+                                }),
+                            );
+                        }
+                        if category == "whisper" {
+                            let _ = app.emit(
+                                "whisper-download-progress",
+                                serde_json::json!({
+                                    "filename": filename,
+                                    "bytes_downloaded": overall_bytes,
+                                    "total_bytes": grand_total,
+                                    "percent": pct as f32,
+                                }),
+                            );
+                        }
+
+                        // Persist progress to DB every 5s
+                        if last_db_update.elapsed().as_secs() >= 5 {
+                            let _ = db_update_progress(
+                                &self.db_path,
+                                id,
+                                overall_bytes,
+                                grand_total,
+                                part_num,
+                            );
+                            last_db_update = std::time::Instant::now();
+                        }
                     }
                 }
             }
+        }
+
+        // Flush remaining buffer bytes
+        if !buf.is_empty() {
+            part_bytes_done += buf.len() as u64;
+            buf.clear();
         }
 
         // Final DB progress write
@@ -684,74 +1182,123 @@ impl DownloadManager {
     }
 
     async fn mark_cancelled(&self, app: &AppHandle, id: &str) {
-        let entry_clone = {
-            let mut entries = self.entries.lock().await;
-            let Some(e) = entries.get_mut(id) else { return };
-            if matches!(e.status, DownloadStatus::Active | DownloadStatus::Queued) {
-                e.status = DownloadStatus::Cancelled;
-                e.updated_at = now_str();
+        let (entry_clone, bw) = {
+            let mut state = self.state.lock().await;
+            {
+                let Some(e) = state.entries.get_mut(id) else {
+                    return;
+                };
+                if matches!(e.status, DownloadStatus::Active | DownloadStatus::Queued) {
+                    e.status = DownloadStatus::Cancelled;
+                    e.updated_at = now_str();
+                }
             }
-            e.clone()
+            state.active_ids.remove(id);
+            state.speed_trackers.remove(id);
+            state.update_bandwidth();
+            let bw = state.bandwidth_bps;
+            let e_clone = state.entries.get(id).cloned().unwrap();
+            (e_clone, bw)
         };
         let _ = db_update_status(&self.db_path, id, "cancelled", None);
-        let ev = build_event(&entry_clone, entry_clone.percent(), None);
+        let now = now_str();
+        let pct = entry_clone.percent();
+        let ev = build_event(&entry_clone, pct, None, bw, &now);
         let _ = app.emit("dm-cancelled", &ev);
         let _ = app.emit("dm-progress", &ev);
         if entry_clone.category == "llm" {
-            let _ = app.emit("llm-download-cancelled", serde_json::json!({"reason": "user_cancelled"}));
+            let _ = app.emit(
+                "llm-download-cancelled",
+                serde_json::json!({"reason": "user_cancelled"}),
+            );
         }
+        info!("[downloads] Cancelled: {} (id={})", entry_clone.filename, id);
     }
+}
 
-    async fn resume_incomplete(&self, app: AppHandle) {
-        let rows = match db_load_incomplete(&self.db_path) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[downloads] resume_incomplete DB error: {}", e);
-                return;
-            }
-        };
+// ── Periodic state log ──────────────────────────────────────────────────────
 
-        for row in rows {
-            let id = row.id.clone();
+async fn periodic_state_log(state: Arc<Mutex<ManagerState>>, _db_path: PathBuf) {
+    let mut interval = tokio::time::interval(Duration::from_secs(LOG_INTERVAL_SECS));
+    interval.tick().await; // consume first immediate tick
+    loop {
+        interval.tick().await;
+        let state_guard = state.lock().await;
 
-            // LLM and Whisper downloads use `register_external` — their actual
-            // HTTP + file-writing logic lives in the Tauri commands
-            // (`download_llm_model`, `download_whisper_model`), not in this
-            // generic worker. The worker's `run_download` has no file output path
-            // and would silently fail to write anything to disk.
-            // Mark them as failed so the UI re-offers the download on next launch
-            // instead of spinning forever in a "queued" state.
-            if row.category == "llm" || row.category == "whisper" {
-                eprintln!(
-                    "[downloads] resume_incomplete: skipping '{}' (category='{}') — handled by dedicated command, not the generic worker. Marking as failed so UI re-offers the download.",
-                    row.filename, row.category
-                );
-                let _ = db_update_status(&self.db_path, &id, "failed", Some("Interrupted: app was closed mid-download. Please re-download."));
-                continue;
-            }
+        let active_info: Vec<serde_json::Value> = state_guard
+            .active_ids
+            .iter()
+            .filter_map(|id| state_guard.entries.get(id))
+            .map(|e| {
+                let spd = state_guard
+                    .speed_trackers
+                    .get(&e.id)
+                    .map(|t| t.speed_bps())
+                    .unwrap_or(0.0);
+                let remaining = e.total_bytes.saturating_sub(e.bytes_done);
+                let eta = if spd > 0.0 && remaining > 0 {
+                    remaining as f64 / spd
+                } else {
+                    0.0
+                };
+                serde_json::json!({
+                    "id": e.id,
+                    "filename": e.filename,
+                    "category": e.category,
+                    "percent": format!("{:.1}", e.percent()),
+                    "speed_bps": spd.round() as u64,
+                    "bytes_done": e.bytes_done,
+                    "total_bytes": e.total_bytes,
+                    "eta_seconds": eta.round() as u64,
+                })
+            })
+            .collect();
 
-            // Reset to queued for generic (Python-side) downloads
-            let mut entry = row;
-            entry.status = DownloadStatus::Queued;
-            entry.bytes_done = 0;
-            entry.part_current = 1;
-            entry.updated_at = now_str();
+        let queued_info: Vec<serde_json::Value> = state_guard
+            .pending
+            .iter()
+            .filter_map(|item| state_guard.entries.get(&item.id))
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.id,
+                    "filename": e.filename,
+                    "priority": e.priority,
+                })
+            })
+            .collect();
 
-            let _ = db_update_status(&self.db_path, &id, "queued", None);
+        let failed_count = state_guard
+            .entries
+            .values()
+            .filter(|e| e.status == DownloadStatus::Failed)
+            .count();
+        let completed_count = state_guard
+            .entries
+            .values()
+            .filter(|e| e.status == DownloadStatus::Completed)
+            .count();
+        let cancelled_count = state_guard
+            .entries
+            .values()
+            .filter(|e| e.status == DownloadStatus::Cancelled)
+            .count();
 
-            {
-                let mut flags = self.cancel_flags.lock().await;
-                flags.insert(id.clone(), Arc::new(AtomicBool::new(false)));
-            }
-            {
-                let mut entries = self.entries.lock().await;
-                entries.insert(id.clone(), entry.clone());
-            }
-
-            emit_progress(&app, &entry, 0.0, None);
-            let _ = self.tx.send(WorkerMsg::Enqueue(id));
-            eprintln!("[downloads] Resuming: {}", entry.filename);
-        }
+        info!(
+            "[downloads] STATE | active={} queued={} completed={} failed={} cancelled={} \
+             bandwidth_bps={:.0} peak_bps={:.0} active_slots={} max_concurrent={} | \
+             active={} queued={}",
+            state_guard.active_ids.len(),
+            state_guard.pending.len(),
+            completed_count,
+            failed_count,
+            cancelled_count,
+            state_guard.bandwidth_bps,
+            state_guard.peak_speed_bps,
+            state_guard.active_slots,
+            MAX_CONCURRENT,
+            serde_json::to_string(&active_info).unwrap_or_default(),
+            serde_json::to_string(&queued_info).unwrap_or_default(),
+        );
     }
 }
 
@@ -813,33 +1360,61 @@ fn db_upsert(path: &Path, entry: &DownloadEntry, metadata: Option<String>) -> ru
              part_current=excluded.part_current, updated_at=excluded.updated_at,
              completed_at=excluded.completed_at, metadata=excluded.metadata",
         params![
-            entry.id, entry.category, entry.filename, entry.display_name,
-            urls_json, entry.total_bytes, entry.bytes_done,
-            entry.status.as_str(), entry.error_msg, entry.priority,
-            entry.part_current as i64, entry.part_total as i64,
-            entry.created_at, entry.updated_at, entry.completed_at,
+            entry.id,
+            entry.category,
+            entry.filename,
+            entry.display_name,
+            urls_json,
+            entry.total_bytes as i64,
+            entry.bytes_done as i64,
+            entry.status.as_str(),
+            entry.error_msg,
+            entry.priority,
+            entry.part_current as i64,
+            entry.part_total as i64,
+            entry.created_at,
+            entry.updated_at,
+            entry.completed_at,
             metadata,
         ],
     )?;
     Ok(())
 }
 
-fn db_update_status(path: &Path, id: &str, status: &str, error_msg: Option<&str>) -> rusqlite::Result<()> {
+fn db_update_status(
+    path: &Path,
+    id: &str,
+    status: &str,
+    error_msg: Option<&str>,
+) -> rusqlite::Result<()> {
     let conn = Connection::open(path)?;
     let now = now_str();
     let completed_at: Option<&str> = if status == "completed" { Some(&now) } else { None };
     conn.execute(
-        "UPDATE downloads SET status=?1, error_msg=?2, updated_at=?3, completed_at=COALESCE(?4, completed_at) WHERE id=?5",
+        "UPDATE downloads SET status=?1, error_msg=?2, updated_at=?3, \
+         completed_at=COALESCE(?4, completed_at) WHERE id=?5",
         params![status, error_msg, now, completed_at, id],
     )?;
     Ok(())
 }
 
-fn db_update_progress(path: &Path, id: &str, bytes_done: u64, total_bytes: u64, part_current: usize) -> rusqlite::Result<()> {
+fn db_update_progress(
+    path: &Path,
+    id: &str,
+    bytes_done: u64,
+    total_bytes: u64,
+    part_current: usize,
+) -> rusqlite::Result<()> {
     let conn = Connection::open(path)?;
     conn.execute(
         "UPDATE downloads SET bytes_done=?1, total_bytes=?2, part_current=?3, updated_at=?4 WHERE id=?5",
-        params![bytes_done as i64, total_bytes as i64, part_current as i64, now_str(), id],
+        params![
+            bytes_done as i64,
+            total_bytes as i64,
+            part_current as i64,
+            now_str(),
+            id
+        ],
     )?;
     Ok(())
 }
@@ -882,8 +1457,9 @@ fn db_load_incomplete(path: &Path) -> rusqlite::Result<Vec<DownloadEntry>> {
 
     let mut result = Vec::new();
     for row in rows {
-        if let Ok(entry) = row {
-            result.push(entry);
+        match row {
+            Ok(entry) => result.push(entry),
+            Err(e) => warn!("[downloads] Failed to parse DB row: {}", e),
         }
     }
     Ok(result)
@@ -893,29 +1469,33 @@ fn db_load_incomplete(path: &Path) -> rusqlite::Result<Vec<DownloadEntry>> {
 
 fn now_str() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
+    // unwrap_or_else handles the rare case where the system clock goes backwards
+    // (NTP adjustments, virtualized environments on Windows). In that case,
+    // use the absolute duration (time before epoch) to avoid returning epoch silently.
+    let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    // Format as ISO 8601 (simplified — seconds precision is fine for DB)
-    let dt = chrono_from_epoch(secs);
+        .unwrap_or_else(|e| e.duration())
+        .as_millis();
+    let secs = millis / 1000;
+    let ms = millis % 1000;
+    let dt = chrono_from_epoch(secs as u64, ms as u32);
     dt
 }
 
-fn chrono_from_epoch(secs: u64) -> String {
-    // Minimal ISO 8601 without chrono dependency
-    let s = secs;
-    let minutes = s / 60;
+fn chrono_from_epoch(secs: u64, ms: u32) -> String {
+    let minutes = secs / 60;
     let hours = minutes / 60;
     let days = hours / 24;
 
-    let sec = s % 60;
-    let min = (minutes) % 60;
+    let sec = secs % 60;
+    let min = minutes % 60;
     let hr = hours % 24;
 
-    // Days since 1970-01-01 to calendar date (Gregorian, simplified)
     let (y, mo, d) = days_to_ymd(days);
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, hr, min, sec)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        y, mo, d, hr, min, sec, ms
+    )
 }
 
 fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
@@ -930,7 +1510,20 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
         year += 1;
     }
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let months = [
+        31u64,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 1u64;
     for &days_in_month in &months {
         if days < days_in_month {
@@ -942,15 +1535,13 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     (year, month, days + 1)
 }
 
-fn emit_progress(app: &AppHandle, entry: &DownloadEntry, percent: f64, eta: Option<f64>) {
-    let ev = build_event(entry, percent, eta);
-    let _ = app.emit("dm-progress", &ev);
-    if entry.status == DownloadStatus::Queued {
-        let _ = app.emit("dm-queued", &ev);
-    }
-}
-
-fn build_event(entry: &DownloadEntry, percent: f64, eta: Option<f64>) -> DownloadProgressEvent {
+fn build_event(
+    entry: &DownloadEntry,
+    percent: f64,
+    eta: Option<f64>,
+    bandwidth_bps: f64,
+    updated_at: &str,
+) -> DownloadProgressEvent {
     DownloadProgressEvent {
         id: entry.id.clone(),
         category: entry.category.clone(),
@@ -965,24 +1556,40 @@ fn build_event(entry: &DownloadEntry, percent: f64, eta: Option<f64>) -> Downloa
         speed_bps: 0.0,
         eta_seconds: eta,
         error_msg: entry.error_msg.clone(),
+        updated_at: updated_at.to_string(),
+        bandwidth_bps,
     }
 }
 
-fn emit_legacy_llm_progress(app: &AppHandle, filename: &str, total_parts: usize, bytes: u64, total: u64, pct: f64) {
-    let _ = app.emit("llm-download-progress", serde_json::json!({
-        "filename": filename,
-        "part": total_parts,
-        "total_parts": total_parts,
-        "part_bytes_downloaded": bytes,
-        "part_total_bytes": total,
-        "bytes_downloaded": bytes,
-        "total_bytes": total,
-        "percent": pct,
-        "status": "already_complete",
-    }));
+fn emit_legacy_llm_progress(
+    app: &AppHandle,
+    filename: &str,
+    total_parts: usize,
+    bytes: u64,
+    total: u64,
+    pct: f64,
+) {
+    let _ = app.emit(
+        "llm-download-progress",
+        serde_json::json!({
+            "filename": filename,
+            "part": total_parts,
+            "total_parts": total_parts,
+            "part_bytes_downloaded": bytes,
+            "part_total_bytes": total,
+            "bytes_downloaded": bytes,
+            "total_bytes": total,
+            "percent": pct,
+            "status": "already_complete",
+        }),
+    );
 }
 
-async fn probe_total_bytes(client: &reqwest::Client, urls: &[String], hf_token: Option<&str>) -> u64 {
+async fn probe_total_bytes(
+    client: &reqwest::Client,
+    urls: &[String],
+    hf_token: Option<&str>,
+) -> u64 {
     let mut total = 0u64;
     for url in urls {
         let mut req = client.head(url);
@@ -999,9 +1606,6 @@ async fn probe_total_bytes(client: &reqwest::Client, urls: &[String], hf_token: 
 }
 
 fn get_hf_token_from_app(app: &AppHandle) -> Option<String> {
-    // Try to read from app data dir llm.json (legacy) as fallback
-    // The canonical token comes from the Python engine, but for Rust-side
-    // downloads we use the llm.json token if available.
     let config_dir = app.path().app_data_dir().ok()?;
     let config_path = config_dir.join("llm.json");
     let content = std::fs::read_to_string(config_path).ok()?;

@@ -134,6 +134,7 @@ class ImageGenService:
             return {"success": True, "model_id": model_id, "already_loaded": True}
 
         loop = asyncio.get_running_loop()
+        self._event_loop = loop  # Captured before entering the thread pool
         return await loop.run_in_executor(None, self._load_model_sync, model)
 
     async def unload_model(self) -> dict:
@@ -193,10 +194,17 @@ class ImageGenService:
 
     def _report_to_dm(self, dl_id: str, model: "ImageGenModel", status: str, percent: float, error_msg: str | None = None) -> None:
         """Report image-gen model load progress to the universal download manager (best-effort)."""
+        from datetime import datetime, timezone
+
+        def _now_str() -> str:
+            return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
         try:
             import asyncio as _asyncio
             from app.services.downloads.manager import get_download_manager
             dm = get_download_manager()
+
+            updated_at = _now_str()
 
             async def _push() -> None:
                 from app.services.downloads.manager import ProgressEvent
@@ -211,14 +219,19 @@ class ImageGenService:
                     percent=percent,
                     part_current=1,
                     part_total=1,
+                    speed_bps=0.0,
+                    eta_seconds=None,
                     error_msg=error_msg,
+                    updated_at=updated_at,
+                    bandwidth_bps=dm._bandwidth_bps,
                 )
                 await dm._broadcast(evt)
 
-            # Try to schedule on the running loop if available
+            # Use the loop captured before entering the thread pool executor.
+            # asyncio.get_event_loop() is deprecated from thread pool in Python 3.10+.
             try:
-                loop = _asyncio.get_event_loop()
-                if loop.is_running():
+                loop = getattr(self, "_event_loop", None)
+                if loop is not None and loop.is_running():
                     _asyncio.run_coroutine_threadsafe(_push(), loop)
             except Exception:
                 pass

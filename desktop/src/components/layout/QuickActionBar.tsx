@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { DownloadIndicator } from "@/components/downloads/DownloadIndicator";
 import {
   Mic,
   Ear,
@@ -267,7 +268,8 @@ export function QuickActionBar(props: QuickActionBarProps) {
     setRestarting(true);
     try {
       await restartApp();
-    } catch {
+    } finally {
+      // Reset in case restartApp resolves without actually restarting
       setRestarting(false);
     }
   }, [restarting]);
@@ -455,6 +457,9 @@ export function QuickActionBar(props: QuickActionBarProps) {
         <BarButton tooltip="Quick scrape" onClick={() => setScrapeOpen(true)}>
           <Globe2 className="h-4 w-4" />
         </BarButton>
+
+        {/* ── Download Indicator ── */}
+        <DownloadIndicator />
 
         {/* ── Spacer ── */}
         <div className="flex-1" />

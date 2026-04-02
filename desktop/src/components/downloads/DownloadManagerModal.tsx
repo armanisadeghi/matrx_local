@@ -1,126 +1,87 @@
 /**
- * Global Download Manager Modal
+ * Download Manager Modal — wide tabular layout.
  *
- * Custom overlay (no shadcn Dialog) so we control the header/close button
- * placement precisely. Shows:
- *  - Active download: large circular ring, linear bar, speed + ETA
- *  - Queue: ordered list
- *  - History: collapsible completed / failed entries
- *  - Cancel All
+ * Three always-rendered sections: In Progress / Waiting / Completed & Failed
+ * plus a collapsible live-log panel filtered to the "downloads" log source.
+ *
+ * Layout rules (no jumps):
+ * - All sections are always mounted; empty state shows a placeholder row.
+ * - Progress bars transition via CSS width only — no conditional mounts.
+ * - Text cells always render; show "—" when values are unavailable.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   X,
+  XCircle,
   CheckCircle2,
   AlertCircle,
-  Clock,
-  Download,
-  XCircle,
+  RotateCcw,
   ChevronDown,
   ChevronUp,
-  RotateCcw,
+  Copy,
+  Check,
+  Download,
   Cpu,
   Mic,
   ImageIcon,
   Volume2,
-  FolderSync,
-  Loader2,
-  Zap,
+  RefreshCw,
+  HardDrive,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { CircularProgress } from "@/components/downloads/CircularProgress";
 import { useDownloadManager } from "@/contexts/DownloadManagerContext";
+import { useClientLogSubscriber } from "@/hooks/use-unified-log";
 import type { DownloadEntry } from "@/lib/downloads/types";
 
-// ── Formatters ────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────
 
 function formatBytes(bytes: number): string {
-  if (!bytes || bytes <= 0) return "—";
+  if (bytes <= 0) return "—";
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024)
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function formatSpeed(bps: number): string {
-  if (!bps || bps <= 0) return "";
-  if (bps < 1024) return `${bps.toFixed(0)} B/s`;
-  if (bps < 1024 * 1024) return `${(bps / 1024).toFixed(0)} KB/s`;
-  return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+function formatSpeed(bps: number | undefined): string {
+  if (!bps || bps <= 0) return "—";
+  return `${formatBytes(bps)}/s`;
 }
 
-function formatEta(secs: number | null | undefined): string {
-  if (!secs || secs <= 0) return "";
-  if (secs < 60) return `${Math.round(secs)}s left`;
-  if (secs < 3600)
-    return `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s left`;
-  return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m left`;
+function formatEta(seconds: number | null | undefined): string {
+  if (seconds == null || seconds <= 0) return "—";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600)
+    return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
-// ── Category helpers ──────────────────────────────────────────────────────
+function formatPercent(pct: number): string {
+  if (pct <= 0) return "0%";
+  if (pct >= 100) return "100%";
+  return `${Math.round(pct)}%`;
+}
 
-function CategoryIcon({
-  category,
-  className = "",
-}: {
-  category: string;
-  className?: string;
-}) {
+function CategoryIcon({ category }: { category: string }) {
+  const cls = "h-3.5 w-3.5 shrink-0 text-zinc-400";
   switch (category) {
     case "llm":
-      return <Cpu className={className} />;
+      return <Cpu className={cls} />;
     case "whisper":
-      return <Mic className={className} />;
+      return <Mic className={cls} />;
     case "image_gen":
-      return <ImageIcon className={className} />;
+      return <ImageIcon className={cls} />;
     case "tts":
-      return <Volume2 className={className} />;
+      return <Volume2 className={cls} />;
     case "file_sync":
-      return <FolderSync className={className} />;
+      return <RefreshCw className={cls} />;
     default:
-      return <Download className={className} />;
+      return <HardDrive className={cls} />;
   }
 }
 
-function categoryLabel(category: string): string {
-  switch (category) {
-    case "llm":
-      return "LLM";
-    case "whisper":
-      return "Voice";
-    case "image_gen":
-      return "Image Gen";
-    case "tts":
-      return "TTS";
-    case "file_sync":
-      return "File Sync";
-    default:
-      return category;
-  }
-}
-
-function categoryColor(category: string): string {
-  switch (category) {
-    case "llm":
-      return "text-blue-500";
-    case "whisper":
-      return "text-purple-500";
-    case "image_gen":
-      return "text-rose-500";
-    case "tts":
-      return "text-amber-500";
-    case "file_sync":
-      return "text-emerald-500";
-    default:
-      return "text-primary";
-  }
-}
-
-// ── Animated progress bar ─────────────────────────────────────────────────
+// ── Inline progress bar (always rendered, no jump) ───────────────────────
 
 function ProgressBar({
   percent,
@@ -129,254 +90,358 @@ function ProgressBar({
   percent: number;
   indeterminate?: boolean;
 }) {
+  const clamped = Math.min(100, Math.max(0, percent));
   return (
-    <div className="w-full h-1 rounded-full bg-muted/50 overflow-hidden">
+    <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-zinc-700">
       {indeterminate ? (
-        <div className="h-full w-full bg-gradient-to-r from-transparent via-primary/60 to-transparent rounded-full animate-pulse" />
+        <div className="absolute inset-y-0 left-0 w-1/3 animate-[slide_1.5s_ease-in-out_infinite] rounded-full bg-blue-500" />
       ) : (
         <div
-          className="h-full bg-gradient-to-r from-primary/80 to-primary rounded-full transition-[width] duration-500 ease-out"
-          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+          className="absolute inset-y-0 left-0 rounded-full bg-blue-500 transition-[width] duration-300"
+          style={{ width: `${clamped}%` }}
         />
       )}
     </div>
   );
 }
 
-// ── Active download card ───────────────────────────────────────────────────
+// ── Section header ────────────────────────────────────────────────────────
 
-function ActiveCard({
-  entry,
-  onCancel,
+function SectionHeader({
+  label,
+  count,
 }: {
-  entry: DownloadEntry;
-  onCancel: () => void;
+  label: string;
+  count: number;
 }) {
-  const speed = formatSpeed(entry.speed_bps ?? 0);
-  const eta = formatEta(entry.eta_seconds);
-  const isStarting = entry.percent === 0 && entry.bytes_done === 0;
-  const partsLabel =
-    entry.part_total > 1
-      ? `Part ${entry.part_current} of ${entry.part_total}`
-      : null;
-
   return (
-    <div className="rounded-xl border border-border/60 bg-gradient-to-br from-card to-muted/20 p-4 space-y-3 shadow-sm">
-      <div className="flex items-start gap-3">
-        {/* Circular ring */}
-        <div className="shrink-0 relative">
-          {isStarting ? (
-            <div
-              className="relative flex items-center justify-center"
-              style={{ width: 72, height: 72 }}
-            >
-              <div className="absolute inset-0 rounded-full border-4 border-muted/40" />
-              <div className="absolute inset-0 rounded-full border-4 border-t-primary border-r-transparent border-b-transparent border-l-transparent animate-spin" />
-              <span className="text-[10px] font-medium text-muted-foreground">
-                Starting
-              </span>
-            </div>
-          ) : (
-            <CircularProgress
-              percent={entry.percent}
-              size={72}
-              strokeWidth={5}
-              label={`${Math.round(entry.percent)}%`}
-            />
-          )}
-        </div>
-
-        {/* Info column */}
-        <div className="flex-1 min-w-0 space-y-1.5 pt-0.5">
-          {/* Category + name row */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span
-              className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider ${categoryColor(entry.category)}`}
-            >
-              <CategoryIcon category={entry.category} className="h-3 w-3" />
-              {categoryLabel(entry.category)}
-            </span>
-            {partsLabel && (
-              <span className="text-[10px] text-muted-foreground bg-muted/50 rounded px-1.5 py-0.5">
-                {partsLabel}
-              </span>
-            )}
-          </div>
-
-          <p
-            className="font-semibold text-sm leading-tight truncate"
-            title={entry.display_name}
-          >
-            {entry.display_name}
-          </p>
-          <p className="text-[11px] text-muted-foreground/70 truncate font-mono">
-            {entry.filename}
-          </p>
-        </div>
-
-        {/* Cancel button */}
-        <button
-          onClick={onCancel}
-          className="shrink-0 h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-          title="Cancel download"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-
-      {/* Progress bar */}
-      <ProgressBar percent={entry.percent} indeterminate={isStarting} />
-
-      {/* Stats row */}
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
-        <div className="flex items-center gap-3">
-          {entry.total_bytes > 0 && (
-            <span>
-              <span className="text-foreground/80 font-medium">
-                {formatBytes(entry.bytes_done)}
-              </span>
-              <span className="mx-1 opacity-50">/</span>
-              {formatBytes(entry.total_bytes)}
-            </span>
-          )}
-          {speed && (
-            <span className="flex items-center gap-1 text-primary/80 font-medium">
-              <Zap className="h-2.5 w-2.5" />
-              {speed}
-            </span>
-          )}
-        </div>
-        {eta && (
-          <span className="flex items-center gap-1 opacity-70">
-            <Clock className="h-3 w-3" />
-            {eta}
-          </span>
-        )}
-      </div>
+    <div className="flex items-center gap-2 border-b border-zinc-700/50 px-4 py-2">
+      <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+        {label}
+      </span>
+      <span className="rounded-full bg-zinc-700 px-1.5 py-0.5 text-xs font-medium text-zinc-300">
+        {count}
+      </span>
     </div>
   );
 }
 
-// ── Queue row ─────────────────────────────────────────────────────────────
+// ── Column headers ────────────────────────────────────────────────────────
 
-function QueueRow({
+function TableHeader({
+  columns,
+}: {
+  columns: Array<{ label: string; className?: string }>;
+}) {
+  return (
+    <div className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900/50 px-4 py-1.5">
+      {columns.map((col) => (
+        <span
+          key={col.label}
+          className={`text-[10px] font-semibold uppercase tracking-wider text-zinc-500 ${col.className ?? ""}`}
+        >
+          {col.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ── In-Progress row ────────────────────────────────────────────────────────
+
+function ActiveRow({
+  entry,
+  onCancel,
+}: {
+  entry: DownloadEntry;
+  onCancel: (id: string) => void;
+}) {
+  const indeterminate =
+    entry.percent <= 0 && entry.bytes_done <= 0 && entry.status === "active";
+
+  return (
+    <div className="group flex h-14 items-center gap-3 border-b border-zinc-800/50 px-4 transition-colors hover:bg-zinc-800/30">
+      {/* Category icon + name */}
+      <div className="flex w-52 min-w-0 items-center gap-2">
+        <CategoryIcon category={entry.category} />
+        <span
+          className="truncate text-sm text-zinc-200"
+          title={entry.display_name || entry.filename}
+        >
+          {entry.display_name || entry.filename}
+        </span>
+      </div>
+
+      {/* Progress bar + percent */}
+      <div className="flex flex-1 items-center gap-2">
+        <ProgressBar
+          percent={entry.percent}
+          indeterminate={indeterminate}
+        />
+        <span className="w-10 shrink-0 text-right text-xs tabular-nums text-zinc-400">
+          {indeterminate ? "…" : formatPercent(entry.percent)}
+        </span>
+      </div>
+
+      {/* Bytes */}
+      <div className="w-32 shrink-0 text-right text-xs tabular-nums text-zinc-400">
+        {entry.total_bytes > 0
+          ? `${formatBytes(entry.bytes_done)} / ${formatBytes(entry.total_bytes)}`
+          : formatBytes(entry.bytes_done)}
+      </div>
+
+      {/* Speed */}
+      <div className="w-20 shrink-0 text-right text-xs tabular-nums text-zinc-400">
+        {formatSpeed(entry.speed_bps)}
+      </div>
+
+      {/* ETA */}
+      <div className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-400">
+        {formatEta(entry.eta_seconds)}
+      </div>
+
+      {/* Part info */}
+      <div className="w-12 shrink-0 text-right text-xs tabular-nums text-zinc-500">
+        {entry.part_total > 1 ? `${entry.part_current}/${entry.part_total}` : ""}
+      </div>
+
+      {/* Cancel */}
+      <button
+        onClick={() => onCancel(entry.id)}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-500 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+        aria-label={`Cancel ${entry.display_name || entry.filename}`}
+        title="Cancel"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// ── Waiting row ───────────────────────────────────────────────────────────
+
+function WaitingRow({
   entry,
   position,
   onCancel,
 }: {
   entry: DownloadEntry;
   position: number;
-  onCancel: () => void;
+  onCancel: (id: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/30 transition-colors rounded-lg group">
-      <span className="text-[11px] text-muted-foreground/40 w-5 shrink-0 text-center font-mono tabular-nums">
+    <div className="group flex h-12 items-center gap-3 border-b border-zinc-800/50 px-4 transition-colors hover:bg-zinc-800/30">
+      {/* Position badge */}
+      <div className="w-6 shrink-0 text-center text-xs text-zinc-500">
         {position}
-      </span>
-      <Loader2 className="h-3.5 w-3.5 text-muted-foreground/50 animate-spin shrink-0" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{entry.display_name}</p>
-        <p className="text-[11px] text-muted-foreground/60 truncate font-mono">
-          {entry.filename}
-        </p>
       </div>
-      <span
-        className={`text-[10px] font-semibold uppercase ${categoryColor(entry.category)} shrink-0`}
-      >
-        {categoryLabel(entry.category)}
-      </span>
+
+      {/* Category icon + name */}
+      <div className="flex flex-1 min-w-0 items-center gap-2">
+        <CategoryIcon category={entry.category} />
+        <span
+          className="truncate text-sm text-zinc-300"
+          title={entry.display_name || entry.filename}
+        >
+          {entry.display_name || entry.filename}
+        </span>
+      </div>
+
+      {/* Size */}
+      <div className="w-24 shrink-0 text-right text-xs text-zinc-500">
+        {entry.total_bytes > 0 ? formatBytes(entry.total_bytes) : "—"}
+      </div>
+
+      {/* Priority */}
+      <div className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-500">
+        {entry.priority !== 0 ? `p${entry.priority}` : "—"}
+      </div>
+
+      {/* Cancel */}
       <button
-        onClick={onCancel}
-        className="shrink-0 h-6 w-6 rounded flex items-center justify-center text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-all"
+        onClick={() => onCancel(entry.id)}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-500 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+        aria-label={`Remove ${entry.display_name || entry.filename} from queue`}
         title="Remove from queue"
       >
-        <X className="h-3 w-3" />
+        <X className="h-3.5 w-3.5" />
       </button>
     </div>
   );
 }
 
-// ── History row ───────────────────────────────────────────────────────────
+// ── Completed/Failed/Cancelled row ────────────────────────────────────────
 
 function HistoryRow({
   entry,
   onRetry,
 }: {
   entry: DownloadEntry;
-  onRetry?: () => void;
+  onRetry?: (entry: DownloadEntry) => void;
 }) {
   const isCompleted = entry.status === "completed";
   const isFailed = entry.status === "failed";
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/20 transition-colors rounded-lg group">
-      <div className="shrink-0">
+    <div className="group flex h-12 items-center gap-3 border-b border-zinc-800/50 px-4 transition-colors hover:bg-zinc-800/30">
+      {/* Status icon */}
+      <div className="w-5 shrink-0">
         {isCompleted && (
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
         )}
-        {isFailed && <AlertCircle className="h-3.5 w-3.5 text-destructive" />}
-        {!isCompleted && !isFailed && (
-          <XCircle className="h-3.5 w-3.5 text-muted-foreground/40" />
+        {isFailed && (
+          <AlertCircle className="h-4 w-4 text-red-400" />
+        )}
+        {entry.status === "cancelled" && (
+          <XCircle className="h-4 w-4 text-zinc-500" />
         )}
       </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm truncate" style={{ opacity: isFailed ? 0.7 : 1 }}>
-          {entry.display_name}
-        </p>
-        {isFailed && entry.error_msg ? (
-          <p
-            className="text-[11px] text-destructive/70 truncate"
-            title={entry.error_msg}
-          >
-            {entry.error_msg}
-          </p>
-        ) : isCompleted && entry.total_bytes > 0 ? (
-          <p className="text-[11px] text-muted-foreground/60">
-            {formatBytes(entry.total_bytes)}
-          </p>
-        ) : null}
-      </div>
-      <span
-        className={`text-[10px] font-semibold uppercase ${categoryColor(entry.category)} shrink-0 opacity-60`}
-      >
-        {categoryLabel(entry.category)}
-      </span>
-      {isFailed && onRetry && (
-        <button
-          onClick={onRetry}
-          className="shrink-0 h-6 w-6 rounded flex items-center justify-center text-muted-foreground/40 hover:text-primary hover:bg-primary/10 opacity-0 group-hover:opacity-100 transition-all"
-          title="Retry"
+
+      {/* Category icon + name */}
+      <div className="flex flex-1 min-w-0 items-center gap-2">
+        <CategoryIcon category={entry.category} />
+        <span
+          className="truncate text-sm text-zinc-400"
+          title={entry.display_name || entry.filename}
         >
-          <RotateCcw className="h-3 w-3" />
-        </button>
-      )}
+          {entry.display_name || entry.filename}
+        </span>
+      </div>
+
+      {/* Error message (only for failed) */}
+      <div className="w-48 shrink-0 truncate text-xs text-red-400">
+        {isFailed ? (entry.error_msg ?? "Unknown error") : ""}
+      </div>
+
+      {/* Size */}
+      <div className="w-24 shrink-0 text-right text-xs text-zinc-500">
+        {entry.total_bytes > 0 ? formatBytes(entry.total_bytes) : "—"}
+      </div>
+
+      {/* Retry button (failed only) */}
+      <button
+        onClick={() => isFailed && onRetry?.(entry)}
+        className={[
+          "flex h-6 w-6 shrink-0 items-center justify-center rounded text-zinc-500",
+          "transition-opacity hover:text-blue-400",
+          isFailed ? "opacity-0 group-hover:opacity-100" : "invisible",
+        ].join(" ")}
+        aria-label={isFailed ? `Retry ${entry.display_name || entry.filename}` : undefined}
+        title={isFailed ? "Retry" : undefined}
+        disabled={!isFailed}
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
 
-// ── Modal ─────────────────────────────────────────────────────────────────
+// ── Empty row ─────────────────────────────────────────────────────────────
+
+function EmptyRow({ message }: { message: string }) {
+  return (
+    <div className="flex h-10 items-center justify-center px-4 text-xs text-zinc-600">
+      {message}
+    </div>
+  );
+}
+
+// ── Log panel ──────────────────────────────────────────────────────────────
+
+function LogPanel() {
+  const allLogs = useClientLogSubscriber();
+  const [copied, setCopied] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Filter to download-source logs
+  const logs = allLogs.filter((l) => l.source === "downloads");
+
+  // Auto-scroll to bottom only if the user hasn't scrolled up
+  useEffect(() => {
+    const container = bottomRef.current?.parentElement;
+    if (!container) return;
+    const distFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distFromBottom < 80) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [logs.length]);
+
+  const handleCopy = useCallback(() => {
+    const text = logs
+      .map((l) => `[${l.time}] [${l.level.toUpperCase()}] ${l.message}`)
+      .join("\n");
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [logs]);
+
+  return (
+    <div className="flex flex-col border-t border-zinc-700/50">
+      <div className="flex items-center justify-between px-4 py-2">
+        <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+          Download Logs
+        </span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-700/50 hover:text-zinc-300"
+          title="Copy all log lines to clipboard"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 text-emerald-400" />
+              <span className="text-emerald-400">Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              Copy All
+            </>
+          )}
+        </button>
+      </div>
+
+      <div className="h-48 overflow-y-auto bg-zinc-950/60 px-4 py-2 font-mono text-[10px] leading-relaxed">
+        {logs.length === 0 ? (
+          <span className="text-zinc-600">No download logs yet.</span>
+        ) : (
+          logs.map((l) => (
+            <div
+              key={l.id}
+              className={[
+                "mb-0.5",
+                l.level === "error"
+                  ? "text-red-400"
+                  : l.level === "warn"
+                    ? "text-amber-400"
+                    : l.level === "success"
+                      ? "text-emerald-400"
+                      : "text-zinc-400",
+              ].join(" ")}
+            >
+              <span className="text-zinc-600">[{l.time}]</span>{" "}
+              <span className="text-zinc-500">[{l.level.toUpperCase()}]</span>{" "}
+              {l.message}
+            </div>
+          ))
+        )}
+        <div ref={bottomRef} />
+      </div>
+    </div>
+  );
+}
+
+// ── Main modal ────────────────────────────────────────────────────────────
 
 export function DownloadManagerModal() {
   const { downloads, isModalOpen, closeModal, cancel, enqueue } =
     useDownloadManager();
-  const [historyExpanded, setHistoryExpanded] = useState(false);
+
+  const [logsExpanded, setLogsExpanded] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  const active = downloads.find((d) => d.status === "active");
-  const queued = downloads.filter((d) => d.status === "queued");
-  const history = downloads.filter(
-    (d) =>
-      d.status === "completed" ||
-      d.status === "failed" ||
-      d.status === "cancelled",
-  );
-
-  const hasActive = active != null;
-  const hasQueued = queued.length > 0;
-  const hasHistory = history.length > 0;
-  const isEmpty = !hasActive && !hasQueued && !hasHistory;
-
-  // Close on Escape
+  // Keyboard close
   useEffect(() => {
     if (!isModalOpen) return;
     const handler = (e: KeyboardEvent) => {
@@ -386,181 +451,193 @@ export function DownloadManagerModal() {
     return () => window.removeEventListener("keydown", handler);
   }, [isModalOpen, closeModal]);
 
-  const handleCancelAll = async () => {
-    const toCancel = downloads.filter(
-      (d) => d.status === "active" || d.status === "queued",
-    );
+  const active = downloads.filter((d) => d.status === "active");
+  const queued = downloads.filter((d) => d.status === "queued");
+  const history = downloads.filter(
+    (d) =>
+      d.status === "completed" ||
+      d.status === "failed" ||
+      d.status === "cancelled",
+  );
+
+  const handleCancelAll = useCallback(async () => {
+    const toCancel = [...active, ...queued];
     await Promise.allSettled(toCancel.map((d) => cancel(d.id)));
-  };
+  }, [active, queued, cancel]);
 
-  const handleRetry = (entry: DownloadEntry) => {
-    void enqueue({
-      id: `${entry.id}-retry-${Date.now()}`,
-      category: entry.category,
-      filename: entry.filename,
-      display_name: entry.display_name,
-      urls: entry.urls,
-    });
-  };
+  const handleRetry = useCallback(
+    (entry: DownloadEntry) => {
+      void enqueue({
+        id: `${entry.id}-retry-${Date.now()}`,
+        category: entry.category,
+        filename: entry.filename,
+        display_name: entry.display_name,
+        urls: entry.urls,
+        priority: entry.priority,
+        metadata: entry.metadata,
+      });
+    },
+    [enqueue],
+  );
 
-  if (!isModalOpen) return null;
-
-  const totalActive = (hasActive ? 1 : 0) + queued.length;
-
+  // Render the modal contents always (to avoid layout shifts when toggling),
+  // but hide via pointer-events/opacity when closed so the DOM is stable.
   return (
     <div
-      ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-end justify-end sm:items-center sm:justify-center"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Download Manager"
+      role={isModalOpen ? "dialog" : undefined}
+      aria-modal={isModalOpen ? "true" : undefined}
+      aria-label={isModalOpen ? "Download Manager" : undefined}
+      aria-hidden={!isModalOpen}
+      className={[
+        "fixed inset-0 z-50 flex items-center justify-center p-4",
+        "transition-opacity duration-200",
+        isModalOpen
+          ? "pointer-events-auto opacity-100"
+          : "pointer-events-none opacity-0",
+      ].join(" ")}
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+        ref={overlayRef}
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={closeModal}
+        aria-hidden="true"
       />
 
       {/* Panel */}
-      <div className="relative z-10 w-full sm:w-[440px] max-h-[85dvh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-background border border-border/60 shadow-2xl overflow-hidden">
+      <div className="relative z-10 flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-zinc-700/60 bg-zinc-900 shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border/40 shrink-0 bg-muted/20">
-          <div className="flex items-center gap-2.5">
-            <div className="rounded-lg bg-primary/10 p-1.5">
-              <Download className="h-4 w-4 text-primary" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold leading-none">Downloads</h2>
-              {totalActive > 0 && (
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {totalActive} {totalActive === 1 ? "item" : "items"} in
-                  progress
-                </p>
-              )}
-            </div>
-            {totalActive > 0 && (
-              <Badge className="text-[10px] px-1.5 py-0 h-4 bg-primary/15 text-primary border-primary/25 font-semibold">
-                {totalActive} active
-              </Badge>
+        <div className="flex shrink-0 items-center justify-between border-b border-zinc-700/50 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <Download className="h-5 w-5 text-zinc-400" />
+            <h2 className="text-base font-semibold text-zinc-100">Downloads</h2>
+            {(active.length > 0 || queued.length > 0) && (
+              <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-xs font-medium text-blue-400">
+                {active.length + queued.length} pending
+              </span>
             )}
           </div>
-
-          <div className="flex items-center gap-1">
-            {(hasActive || hasQueued) && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-8 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 px-2.5 rounded-lg"
+          <div className="flex items-center gap-2">
+            {(active.length > 0 || queued.length > 0) && (
+              <button
                 onClick={handleCancelAll}
+                className="rounded px-3 py-1 text-xs text-zinc-400 transition-colors hover:bg-red-900/30 hover:text-red-400"
               >
                 Cancel All
-              </Button>
+              </button>
             )}
             <button
               onClick={closeModal}
-              className="h-8 w-8 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              aria-label="Close"
+              className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 transition-colors hover:bg-zinc-700/50 hover:text-zinc-200"
+              aria-label="Close downloads panel"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        {/* Content */}
-        <ScrollArea className="flex-1 overflow-auto">
-          <div className="p-4 space-y-4">
-            {/* Empty state */}
-            {isEmpty && (
-              <div className="flex flex-col items-center justify-center py-14 space-y-3 text-center">
-                <div className="rounded-2xl bg-muted/40 p-4">
-                  <Download className="h-7 w-7 text-muted-foreground/40" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">
-                    No downloads yet
-                  </p>
-                  <p className="text-xs text-muted-foreground/60 mt-1">
-                    Model and file downloads will appear here in real time.
-                  </p>
-                </div>
-              </div>
-            )}
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto">
+          {/* ── In Progress ────────────────────────────────────────────── */}
+          <SectionHeader label="In Progress" count={active.length} />
+          {active.length > 0 && (
+            <TableHeader
+              columns={[
+                { label: "Name", className: "w-52" },
+                { label: "Progress", className: "flex-1" },
+                { label: "", className: "w-10" },
+                { label: "Size", className: "w-32 text-right" },
+                { label: "Speed", className: "w-20 text-right" },
+                { label: "ETA", className: "w-16 text-right" },
+                { label: "Part", className: "w-12 text-right" },
+                { label: "", className: "w-6" },
+              ]}
+            />
+          )}
+          {active.length === 0 && (
+            <EmptyRow message="No active downloads" />
+          )}
+          {active.map((entry) => (
+            <ActiveRow key={entry.id} entry={entry} onCancel={cancel} />
+          ))}
 
-            {/* Active download */}
-            {active && (
-              <section className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-                  </span>
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Downloading
-                  </p>
-                </div>
-                <ActiveCard
-                  entry={active}
-                  onCancel={() => void cancel(active.id)}
-                />
-              </section>
-            )}
+          {/* ── Waiting ────────────────────────────────────────────────── */}
+          <SectionHeader label="Waiting" count={queued.length} />
+          {queued.length > 0 && (
+            <TableHeader
+              columns={[
+                { label: "#", className: "w-6" },
+                { label: "Name", className: "flex-1" },
+                { label: "Size", className: "w-24 text-right" },
+                { label: "Priority", className: "w-16 text-right" },
+                { label: "", className: "w-6" },
+              ]}
+            />
+          )}
+          {queued.length === 0 && (
+            <EmptyRow message="Queue is empty" />
+          )}
+          {queued.map((entry, idx) => (
+            <WaitingRow
+              key={entry.id}
+              entry={entry}
+              position={idx + 1}
+              onCancel={cancel}
+            />
+          ))}
 
-            {/* Queue */}
-            {hasQueued && (
-              <section className="space-y-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-1">
-                  Up Next ({queued.length})
-                </p>
-                <div className="rounded-xl border border-border/40 bg-muted/10 p-1 space-y-0.5">
-                  {queued.map((entry, idx) => (
-                    <QueueRow
-                      key={entry.id}
-                      entry={entry}
-                      position={idx + 1}
-                      onCancel={() => void cancel(entry.id)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
+          {/* ── Completed & Failed ─────────────────────────────────────── */}
+          <SectionHeader
+            label="Completed & Failed"
+            count={history.length}
+          />
+          {history.length > 0 && (
+            <TableHeader
+              columns={[
+                { label: "", className: "w-5" },
+                { label: "Name", className: "flex-1" },
+                { label: "Error", className: "w-48" },
+                { label: "Size", className: "w-24 text-right" },
+                { label: "", className: "w-6" },
+              ]}
+            />
+          )}
+          {history.length === 0 && (
+            <EmptyRow message="No history" />
+          )}
+          {history.map((entry) => (
+            <HistoryRow
+              key={entry.id}
+              entry={entry}
+              onRetry={handleRetry}
+            />
+          ))}
+        </div>
 
-            {/* History */}
-            {hasHistory && (
-              <section className="space-y-1">
-                <button
-                  className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors px-1 w-full text-left"
-                  onClick={() => setHistoryExpanded((e) => !e)}
-                >
-                  {historyExpanded ? (
-                    <ChevronUp className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  )}
-                  History ({history.length})
-                </button>
-                {historyExpanded && (
-                  <div className="rounded-xl border border-border/40 bg-muted/10 p-1 space-y-0.5">
-                    {history.map((entry) => (
-                      <HistoryRow
-                        key={entry.id}
-                        entry={entry}
-                        onRetry={
-                          entry.status === "failed" && entry.urls.length > 0
-                            ? () => handleRetry(entry)
-                            : undefined
-                        }
-                      />
-                    ))}
-                  </div>
-                )}
-              </section>
+        {/* ── Log panel (collapsible) ─────────────────────────────────── */}
+        <div className="shrink-0 border-t border-zinc-700/50">
+          <button
+            onClick={() => setLogsExpanded((v) => !v)}
+            className="flex w-full items-center justify-between px-4 py-2 text-xs text-zinc-500 transition-colors hover:bg-zinc-800/30 hover:text-zinc-300"
+            aria-expanded={logsExpanded}
+            aria-controls="download-log-panel"
+          >
+            <span>Logs</span>
+            {logsExpanded ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
             )}
+          </button>
+          <div
+            id="download-log-panel"
+            className={[
+              "overflow-hidden transition-[max-height] duration-300",
+              logsExpanded ? "max-h-64" : "max-h-0",
+            ].join(" ")}
+          >
+            <LogPanel />
           </div>
-        </ScrollArea>
-
-        {/* Bottom drag handle (mobile) */}
-        <div className="sm:hidden flex justify-center py-2 shrink-0">
-          <div className="w-10 h-1 rounded-full bg-muted-foreground/20" />
         </div>
       </div>
     </div>

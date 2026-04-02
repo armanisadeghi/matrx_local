@@ -1,0 +1,74 @@
+/**
+ * DownloadIndicator — always-mounted header button.
+ *
+ * - Renders at full opacity when downloads are active/queued.
+ * - Renders with opacity-0 when idle (never unmounts → no layout shift).
+ * - Shows a count badge and a thin linear progress bar for the primary active download.
+ * - Clicking opens the Download Manager modal.
+ */
+
+import { Download } from "lucide-react";
+import { useDownloadManager } from "@/contexts/DownloadManagerContext";
+
+export function DownloadIndicator() {
+  const { downloads, activeCount, openModal } = useDownloadManager();
+
+  // Primary active download (first in sorted list)
+  const primary = downloads.find((d) => d.status === "active");
+
+  // Percent for the thin progress bar
+  const percent = primary && primary.total_bytes > 0 ? primary.percent : null;
+
+  const isIdle = activeCount === 0;
+
+  return (
+    <button
+      onClick={openModal}
+      aria-label={
+        isIdle
+          ? "Download manager"
+          : `${activeCount} download${activeCount !== 1 ? "s" : ""} in progress — click to view`
+      }
+      title={
+        isIdle
+          ? "Download manager"
+          : `${activeCount} download${activeCount !== 1 ? "s" : ""} active`
+      }
+      className={[
+        "relative flex h-8 items-center gap-1.5 rounded px-2",
+        "transition-all duration-200",
+        "hover:bg-zinc-700/50",
+        isIdle
+          ? "pointer-events-none opacity-0"
+          : "pointer-events-auto opacity-100",
+      ].join(" ")}
+      tabIndex={isIdle ? -1 : 0}
+    >
+      {/* Icon */}
+      <Download className="h-4 w-4 shrink-0 text-blue-400" />
+
+      {/* Count badge */}
+      <span className="min-w-[1.25rem] rounded-full bg-blue-500/20 px-1.5 py-0.5 text-center text-[10px] font-semibold tabular-nums leading-none text-blue-400">
+        {activeCount}
+      </span>
+
+      {/* Thin progress bar — always rendered, transitions via width */}
+      <div
+        className={[
+          "absolute bottom-0 left-0 right-0 h-[2px] overflow-hidden rounded-b",
+          "transition-opacity duration-200",
+          percent !== null ? "opacity-100" : "opacity-0",
+        ].join(" ")}
+        aria-hidden="true"
+      >
+        {/* Track */}
+        <div className="absolute inset-0 bg-zinc-700/50" />
+        {/* Fill */}
+        <div
+          className="absolute inset-y-0 left-0 bg-blue-500 transition-[width] duration-300"
+          style={{ width: `${percent ?? 0}%` }}
+        />
+      </div>
+    </button>
+  );
+}

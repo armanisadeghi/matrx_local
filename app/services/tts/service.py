@@ -218,6 +218,7 @@ class TtsService:
             return {"success": False, "error": "Download already in progress"}
 
         loop = asyncio.get_running_loop()
+        self._event_loop = loop  # Captured before entering the thread pool
         return await loop.run_in_executor(None, self._download_model_sync)
 
     def _emit_dm_progress(
@@ -227,15 +228,28 @@ class TtsService:
         status: str,
         bytes_done: int,
         total_bytes: int,
+        speed_bps: float = 0.0,
     ) -> None:
-        """Emit a progress event to the universal download manager (best-effort, sync-safe)."""
+        """Emit a progress event to the universal download manager (best-effort, sync-safe).
+
+        speed_bps: actual measured download speed for this TTS download (bytes/sec).
+        """
+        from datetime import datetime, timezone
+
+        def _now_str() -> str:
+            return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
         try:
             import asyncio as _asyncio
             from app.services.downloads.manager import get_download_manager, ProgressEvent
             dm = get_download_manager()
 
+            updated_at = _now_str()
+
             async def _push() -> None:
                 percent = (bytes_done / total_bytes * 100) if total_bytes > 0 else 0.0
+                remaining = max(0, total_bytes - bytes_done)
+                eta: float | None = (remaining / speed_bps) if (speed_bps > 0 and remaining > 0) else None
                 evt = ProgressEvent(
                     id=dl_id,
                     category="tts",
@@ -247,12 +261,18 @@ class TtsService:
                     percent=percent,
                     part_current=1,
                     part_total=1,
+                    speed_bps=speed_bps,
+                    eta_seconds=eta,
+                    updated_at=updated_at,
+                    bandwidth_bps=speed_bps,
                 )
                 await dm._broadcast(evt)
 
+            # Use the event loop captured before entering the thread pool executor.
+            # asyncio.get_event_loop() is deprecated from thread pool in Python 3.10+.
             try:
-                loop = _asyncio.get_event_loop()
-                if loop.is_running():
+                loop = getattr(self, "_event_loop", None)
+                if loop is not None and loop.is_running():
                     _asyncio.run_coroutine_threadsafe(_push(), loop)
             except Exception:
                 pass
@@ -261,6 +281,7 @@ class TtsService:
 
     def _download_model_sync(self) -> dict[str, Any]:
         import httpx
+        import time as _time
 
         self._is_downloading = True
         self._download_progress = 0.0
@@ -287,6 +308,19 @@ class TtsService:
                 logger.info("[tts] Downloading %s from %s", filename, url)
                 tmp = dest.with_suffix(".tmp")
 
+                # Rolling-window speed: track (time, bytes) samples
+                _speed_samples: list[tuple[float, int]] = []
+                _SPEED_WINDOW = 10
+
+                def _calc_speed() -> float:
+                    if len(_speed_samples) < 2:
+                        return 0.0
+                    dt = _speed_samples[-1][0] - _speed_samples[0][0]
+                    if dt <= 0:
+                        return 0.0
+                    db = _speed_samples[-1][1] - _speed_samples[0][1]
+                    return max(0.0, db / dt)
+
                 with httpx.stream("GET", url, follow_redirects=True, timeout=300) as resp:
                     resp.raise_for_status()
                     last_emit = 0
@@ -295,10 +329,20 @@ class TtsService:
                             f.write(chunk)
                             downloaded += len(chunk)
                             self._download_progress = (downloaded / total_bytes) * 100
+
+                            # Update speed window
+                            _speed_samples.append((_time.monotonic(), downloaded))
+                            if len(_speed_samples) > _SPEED_WINDOW:
+                                _speed_samples.pop(0)
+
                             # Emit every 2 MB to avoid flooding
                             if downloaded - last_emit >= 2 * 1024 * 1024:
                                 last_emit = downloaded
-                                self._emit_dm_progress(dl_id, "Kokoro TTS Model", "active", downloaded, total_bytes)
+                                self._emit_dm_progress(
+                                    dl_id, "Kokoro TTS Model", "active",
+                                    downloaded, total_bytes,
+                                    speed_bps=_calc_speed(),
+                                )
 
                 import shutil
                 shutil.move(str(tmp), str(dest))
