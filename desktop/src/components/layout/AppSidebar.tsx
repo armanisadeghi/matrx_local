@@ -57,7 +57,7 @@ const navItems = [
   { to: "/devices", icon: Cpu, label: "Devices" },
   { to: "/voice", icon: Mic, label: "Speech to Text" },
   { to: "/tts", icon: AudioLines, label: "Text to Speech" },
-  { to: "/local-models", icon: BrainCircuit, label: "Local Models" },
+  { to: "/local-models", icon: BrainCircuit, label: "Confidential Chat" },
   { to: "/system-prompts", icon: BookOpen, label: "Prompts" },
   { to: "/aimatrx", icon: Sparkles, label: "AiMatrx" },
   { to: "/browser", icon: MonitorSmartphone, label: "Browser" },

@@ -428,7 +428,7 @@ function PromptEditor({
               <li className="flex gap-2">
                 <span className="text-primary shrink-0">1.</span>
                 <span>
-                  Go to <strong>Local Models → Inference</strong>
+                  Go to <strong>Confidential Chat → Inference</strong>
                 </span>
               </li>
               <li className="flex gap-2">
@@ -655,7 +655,7 @@ export function SystemPrompts() {
     <div className="flex h-full flex-col">
       <PageHeader
         title="System Prompts"
-        description="Create and manage reusable system prompts for your local AI"
+        description="Create and manage reusable system prompts for confidential chat and cloud models"
       >
         <Button
           onClick={() => {
@@ -774,7 +774,9 @@ export function SystemPrompts() {
             </p>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Sparkles className="h-3.5 w-3.5" />
-              <span>Select a prompt to use it in Local Models → Inference</span>
+              <span>
+                Select a prompt to use it in Confidential Chat → Inference
+              </span>
             </div>
           </div>
 

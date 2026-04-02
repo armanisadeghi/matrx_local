@@ -313,12 +313,12 @@ export function QuickActionBar(props: QuickActionBarProps) {
           : "System engine: Not available";
 
   const llmTip = llmStarting
-    ? "Local AI: Starting up..."
+    ? "Confidential chat: Starting up..."
     : llmRunning
-      ? `Local AI: Running — ${llmState.serverStatus?.model_name ?? "model loaded"}`
+      ? `Confidential chat: Active — ${llmState.serverStatus?.model_name ?? "model loaded"}`
       : llmHasModels
-        ? "Local AI: Available — click to start"
-        : "Local AI: No models downloaded";
+        ? "Confidential chat: Ready — click to start"
+        : "Confidential chat: No model downloaded yet";
 
   return (
     <>
@@ -442,7 +442,7 @@ export function QuickActionBar(props: QuickActionBarProps) {
         </BarButton>
 
         <BarButton
-          tooltip="Quick local AI chat"
+          tooltip="Quick confidential chat (on-device)"
           onClick={() => setLocalChatOpen(true)}
         >
           <MessageSquareDashed className="h-4 w-4" />

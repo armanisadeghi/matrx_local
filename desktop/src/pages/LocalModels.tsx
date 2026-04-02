@@ -479,7 +479,8 @@ function SetupTab() {
             Quick Setup
           </CardTitle>
           <CardDescription>
-            One click to download the recommended model and start inference.
+            Download the recommended model in one step, then start confidential
+            chat on your device.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -553,7 +554,7 @@ function SetupTab() {
           {serverStatus?.running && (
             <div className="flex items-center gap-2 text-sm text-green-600">
               <CheckCircle2 className="h-4 w-4" />
-              Server running on port {serverStatus.port} — model:{" "}
+              Confidential chat is running on port {serverStatus.port} — model:{" "}
               {serverStatus.model_name}
             </div>
           )}
@@ -577,11 +578,11 @@ function SetupTab() {
               : isDownloading
                 ? "Downloading…"
                 : isStarting
-                  ? "Starting server…"
+                  ? "Starting confidential chat…"
                   : serverStatus?.running && isModelDownloaded
                     ? "Restart with Recommended Model"
                     : isModelDownloaded
-                      ? "Start Inference Server"
+                      ? "Start confidential chat"
                       : "Download & Start"}
           </Button>
           {!hardwareResult && isDetecting && (
@@ -3974,7 +3975,7 @@ function InferenceTab() {
       setSaveNoteContent(msgContent);
     } else {
       // Format the full conversation as markdown
-      const model = serverStatus?.model_name ?? "Local Model";
+      const model = serverStatus?.model_name ?? "On-device model";
       const lines: string[] = [
         `# ${activeConv?.title ?? "Conversation"}`,
         ``,
@@ -4624,10 +4625,10 @@ function InferenceTab() {
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Server className="h-4 w-4" />
-              Start Inference Server
+              Start confidential chat
             </CardTitle>
             <CardDescription>
-              Load a model to open the playground.
+              Load a model to open the private chat playground.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -4640,7 +4641,7 @@ function InferenceTab() {
             {isStarting && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                Starting server…
+                Starting confidential chat…
               </div>
             )}
             {downloadedModels.length === 0 ? (
@@ -4922,8 +4923,8 @@ function InferenceTab() {
                       <MessageSquare className="h-6 w-6 text-primary/60" />
                     </div>
                     <p className="text-sm text-muted-foreground max-w-xs">
-                      Start a conversation with the local model. Your chats are
-                      saved automatically.
+                      Start a confidential chat. Messages stay on this device,
+                      and your history is saved automatically.
                     </p>
                   </div>
                 )}
@@ -4939,7 +4940,7 @@ function InferenceTab() {
                               className="w-full rounded-xl border bg-background px-4 py-3 text-[0.9375rem] leading-[1.75] resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-primary/50"
                               style={{
                                 fontFamily:
-                                  "'Georgia', 'Charter', 'Palatino Linotype', serif",
+                                  "var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif)",
                               }}
                               value={editingContent}
                               onChange={(e) =>
@@ -4977,7 +4978,7 @@ function InferenceTab() {
                               className="chat-prose leading-[1.75]"
                               style={{
                                 fontFamily:
-                                  "'Georgia', 'Charter', 'Palatino Linotype', serif",
+                                  "var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif)",
                                 fontSize: "0.9375rem",
                               }}
                             >
@@ -5250,7 +5251,7 @@ function InferenceTab() {
                     placeholder={
                       switchingModel
                         ? "Switching model…"
-                        : "Message the local model… (Enter to send, Shift+Enter for newline)"
+                        : "Type a confidential chat message… (Enter to send, Shift+Enter for newline)"
                     }
                     className="min-h-[2.5rem] w-full resize-none bg-transparent px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus:outline-none"
                     disabled={isGenerating || switchingModel}
@@ -5816,7 +5817,7 @@ function InferenceTab() {
                               className="chat-prose leading-[1.75]"
                               style={{
                                 fontFamily:
-                                  "'Georgia', 'Charter', 'Palatino Linotype', serif",
+                                  "var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif)",
                                 fontSize: "0.9375rem",
                               }}
                             >
@@ -7862,16 +7863,18 @@ function LocalModelsInner() {
           <div>
             <h1 className="text-2xl font-bold flex items-center gap-2">
               <Cpu className="h-6 w-6 text-blue-500" />
-              Local Models
+              Confidential Chat
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Run AI models locally on your device using llama.cpp
+              Private AI chat that runs on your device. Conversations stay on
+              your machine and are not sent to the cloud — so you can work with
+              sensitive material more comfortably.
             </p>
           </div>
           {serverStatus?.running && (
             <Badge className="bg-green-500/20 text-green-600 border-green-500/30 gap-1.5">
               <Activity className="h-3 w-3" />
-              Server running · port {serverStatus.port}
+              Confidential chat active · port {serverStatus.port}
             </Badge>
           )}
         </div>

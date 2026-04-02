@@ -1,7 +1,7 @@
 /**
  * use-voice-chat
  *
- * Owns the voice-chat state machine for the Local Models inference tab.
+ * Owns the voice-chat state machine for the Confidential Chat inference tab.
  *
  * Phases:
  *   idle        — waiting; user can click mic or speak after wake word

@@ -87,7 +87,11 @@ export function ChatInput({
   }, []);
 
   const hasText = value.trim().length > 0;
-  const canSend = (hasText || !!selectedAgentId) && !isStreaming && engineReady && (!!model || !!selectedAgentId);
+  const canSend =
+    (hasText || !!selectedAgentId) &&
+    !isStreaming &&
+    engineReady &&
+    (!!model || !!selectedAgentId);
 
   const handleSend = useCallback(() => {
     if (!canSend) return;
@@ -219,16 +223,18 @@ export function ChatInput({
                   {/* Empty state — engine not connected or models not yet synced */}
                   {availableModels.length === 0 && (
                     <div className="px-3 py-4 text-center text-[11px] text-muted-foreground">
-                      No models available.<br />Connect to engine to load models.
+                      No models available.
+                      <br />
+                      Connect to engine to load models.
                     </div>
                   )}
-                  {/* Local Models group — shown first if any exist */}
+                  {/* Confidential Chat (on-device) models — shown first if any exist */}
                   {availableModels.some((m) => m.provider === "local") && (
                     <div>
                       <div className="flex items-center gap-1.5 px-3 pt-2 pb-1">
                         <Cpu className="h-3 w-3 text-blue-500" />
                         <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-500/80">
-                          Local Models
+                          Confidential Chat
                         </span>
                         <span className="ml-1 rounded-full bg-green-500/20 px-1.5 py-0.5 text-[9px] font-medium text-green-600">
                           On-device

@@ -2,7 +2,7 @@
  * LlmContext
  *
  * Provides a single shared useLlm() instance to the entire app.
- * Both LocalModels and Voice (and any other page) read from the same state,
+ * Both Confidential Chat (LocalModels page) and Voice (and any other page) read from the same state,
  * so the LLM server port is visible everywhere once the server is started.
  */
 
@@ -14,7 +14,9 @@ const LlmAppContext = createContext<[LlmState, LlmActions] | null>(null);
 
 export function LlmProvider({ children }: { children: React.ReactNode }) {
   const llm = useLlm();
-  return <LlmAppContext.Provider value={llm}>{children}</LlmAppContext.Provider>;
+  return (
+    <LlmAppContext.Provider value={llm}>{children}</LlmAppContext.Provider>
+  );
 }
 
 /** Use the shared app-level LLM state. Throws if used outside LlmProvider. */

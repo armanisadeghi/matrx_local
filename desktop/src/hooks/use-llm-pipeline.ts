@@ -88,7 +88,9 @@ export function parsePolishOutput(
       } catch {
         // If parse fails, try to extract individual fields via regex as last resort
         const titleMatch = s.match(/"title"\s*:\s*"([^"]+)"/);
-        const cleanedMatch = s.match(/"cleaned"\s*:\s*"([\s\S]*?)(?=",\s*"|"\s*})/);
+        const cleanedMatch = s.match(
+          /"cleaned"\s*:\s*"([\s\S]*?)(?=",\s*"|"\s*})/,
+        );
         const descMatch = s.match(/"description"\s*:\s*"([^"]+)"/);
         return {
           title: titleMatch?.[1]?.trim() || fallbackTitle,
@@ -140,7 +142,8 @@ export function parsePolishOutput(
 export const PIPELINE_TEMPLATES: Record<string, PipelineTemplate> = {
   // ── Voice / transcription ────────────────────────────────────────────────
   polish_transcript: {
-    description: "Clean up a voice transcript, generate a title, description and tags",
+    description:
+      "Clean up a voice transcript, generate a title, description and tags",
     system:
       "You are an expert editor specializing in spoken-word transcripts. " +
       "Your job is to produce clean, well-punctuated prose from raw speech. " +
@@ -228,7 +231,10 @@ export const PIPELINE_TEMPLATES: Record<string, PipelineTemplate> = {
 
 // ── Variable substitution ─────────────────────────────────────────────────
 
-function substituteVars(template: string, vars: Record<string, string>): string {
+function substituteVars(
+  template: string,
+  vars: Record<string, string>,
+): string {
   return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
     return Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : match;
   });
@@ -236,7 +242,9 @@ function substituteVars(template: string, vars: Record<string, string>): string 
 
 // ── Hook types ────────────────────────────────────────────────────────────
 
-export type TemplateNameOrInline = keyof typeof PIPELINE_TEMPLATES | PipelineTemplate;
+export type TemplateNameOrInline =
+  | keyof typeof PIPELINE_TEMPLATES
+  | PipelineTemplate;
 
 export interface PipelineRunOptions {
   /** Override max tokens for this run. */
@@ -258,7 +266,7 @@ export interface UseLlmPipelineReturn {
   run: <T = string>(
     template: TemplateNameOrInline,
     vars?: Record<string, string>,
-    options?: PipelineRunOptions
+    options?: PipelineRunOptions,
   ) => Promise<T>;
 
   /** True while a run() is in progress. */
@@ -278,7 +286,9 @@ export interface UseLlmPipelineReturn {
  *   Typically: () => serverStatus?.port ?? null
  *   Pass it as a function (not value) so the hook always reads the latest state.
  */
-export function useLlmPipeline(getPort: () => number | null): UseLlmPipelineReturn {
+export function useLlmPipeline(
+  getPort: () => number | null,
+): UseLlmPipelineReturn {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -288,12 +298,12 @@ export function useLlmPipeline(getPort: () => number | null): UseLlmPipelineRetu
     async <T = string>(
       template: TemplateNameOrInline,
       vars: Record<string, string> = {},
-      options: PipelineRunOptions = {}
+      options: PipelineRunOptions = {},
     ): Promise<T> => {
       const port = getPort();
       if (!port) {
         throw new Error(
-          "Local LLM server is not running. Start it from the Local Models tab first."
+          "Confidential chat is not running. Open Confidential Chat and start your model from Setup.",
         );
       }
 
@@ -319,10 +329,17 @@ export function useLlmPipeline(getPort: () => number | null): UseLlmPipelineRetu
 
       try {
         if (tpl.outputSchema) {
-          const result = await structuredOutput<T>(port, messages, tpl.outputSchema);
+          const result = await structuredOutput<T>(
+            port,
+            messages,
+            tpl.outputSchema,
+          );
           return result;
         } else {
-          const text = await chatCompletion(port, messages, { maxTokens, temperature });
+          const text = await chatCompletion(port, messages, {
+            maxTokens,
+            temperature,
+          });
           return text as T;
         }
       } catch (e) {
@@ -333,7 +350,7 @@ export function useLlmPipeline(getPort: () => number | null): UseLlmPipelineRetu
         setRunning(false);
       }
     },
-    [getPort]
+    [getPort],
   );
 
   return { run, running, error, clearError };

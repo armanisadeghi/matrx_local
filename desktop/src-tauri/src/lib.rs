@@ -1166,7 +1166,7 @@ pub fn run() {
 
             // ── Auto-start LLM server on startup ───────────────────────────
             // If a model was previously set up and its file exists on disk,
-            // spawn llama-server in the background so the Local Models page
+            // spawn llama-server in the background so the Confidential Chat page
             // is ready without user intervention. This runs after Whisper init
             // and is fully fire-and-forget — failures are logged but do not
             // affect app startup. The frontend hook handles `llm-server-ready`
