@@ -47,6 +47,12 @@ Known broken things in the current release that need fixing.
 
 These are gaps in committed functionality — things we said the app does but it doesn't yet, or things users will expect.
 
+- [ ] **Gemma 4 llama.cpp support — awaiting upstream PR (2026-04-02)** — Gemma 4 models (E2B, E4B, 26B-A4B, 31B) have been added to the model catalog with full GGUF download URLs, mmproj vision projectors, and variant definitions. However, **llama.cpp does not yet support the `gemma4` architecture** (released Apr 2, 2026 — same week). The model catalog entries are ready and will work as soon as llama.cpp merges Gemma 4 support (expected within days, based on historical turnaround for Gemma 3/3n). Track: https://github.com/ggml-org/llama.cpp — watch for a PR adding `gemma4` arch. Once merged, rebuild the llama-server binary.
+
+- [ ] **Multimodal image input UI for local LLM (2026-04-02)** — Infrastructure for multimodal is in place: `ChatMessage.content` now supports OpenAI-compatible content arrays (`text` + `image_url` parts), `LlmModelInfo` has `mmproj_filename`/`mmproj_url` fields, `build_server_args` passes `--mmproj` to llama-server, and auto-start resolves mmproj from the catalog. Missing: (1) UI for attaching/pasting images in the chat input, (2) base64 encoding + content array construction in the API layer, (3) mmproj download integration in the download manager (download mmproj alongside the main model).
+
+- [ ] **Gemma 4 E2B/E4B audio input via llama.cpp** — The E2B and E4B models support audio input natively, but llama.cpp audio support is experimental (only Ultravox/Voxtral/Qwen2.5-Omni). Gemma 4 audio encoding will need a dedicated libmtmd integration in llama.cpp. Video input is also WIP (PR #20224). These capabilities will require llama.cpp upstream work before we can expose them.
+
 - [ ] **Chat: "Local" tab routing to llama-server** — `Chat.tsx` has no tab or mechanism to route messages to the local llama-server. Users can only use cloud providers from Chat. The LLM page runs inference but there is no in-chat UI for it. Need a "Local" mode/tab that sends messages to the running llama-server via `/v1/chat/completions`.
 
 - [ ] **Image gen: FLUX.1 Dev token gate** — FLUX.1 Dev requires a HuggingFace token AND license acceptance. Before loading the model, surface a pre-check: read the HF token from `/settings/api-keys/huggingface/value` and show a blocking warning if absent or if the license hasn't been accepted.

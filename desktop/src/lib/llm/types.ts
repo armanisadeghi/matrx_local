@@ -2,31 +2,35 @@
 
 export type LlmTier =
   // Tiny / Edge
-  | "LowAlt"    // Phi-4-mini 2.5 GB
-  | "Low"       // Qwen3-4B 2.5 GB
-  | "UltraLow"  // Gemma-3n-E4B 4.5 GB
-  | "Low2"      // DeepSeek-R1-Distill-Llama-8B 4.9 GB
-  | "Low3"      // Llama-3.1-8B 4.9 GB
+  | "LowAlt" // Phi-4-mini 2.5 GB
+  | "Low" // Qwen3-4B 2.5 GB
+  | "UltraLow" // Gemma-3n-E4B 4.5 GB
+  | "Low2" // DeepSeek-R1-Distill-Llama-8B 4.9 GB
+  | "Low3" // Llama-3.1-8B 4.9 GB
   // Mid-range
-  | "Default"   // Qwen3-8B 5.1 GB (auto-selection anchor)
-  | "Mid"       // Gemma-3-12B 7.3 GB
-  | "Mid2"      // Phi-4-Reasoning 9 GB
-  | "High"      // GPT-OSS-20B 12.1 GB
-  | "HighAlt"   // Mistral-Small-3.1-24B 14.4 GB
-  | "High2"     // Qwen3.5-27B (multi-variant)
-  | "High3"     // DeepSeek-R1-Distill-32B 19.85 GB
-  | "High4"     // Gemma-3-27B 16.55 GB
-  | "VHigh"     // Qwen3.5-35B-A3B (multi-variant)
+  | "Default" // Qwen3-8B 5.1 GB (auto-selection anchor)
+  | "Gemma4E2B" // Gemma-4-E2B 2.9 GB (text+image+audio)
+  | "Gemma4E4B" // Gemma-4-E4B 4.6 GB (text+image+audio)
+  | "Mid" // Gemma-3-12B 7.3 GB
+  | "Mid2" // Phi-4-Reasoning 9 GB
+  | "High" // GPT-OSS-20B 12.1 GB
+  | "HighAlt" // Mistral-Small-3.1-24B 14.4 GB
+  | "Gemma4A4B" // Gemma-4-26B-A4B 15.7 GB (MoE, text+image)
+  | "High2" // Qwen3.5-27B (multi-variant)
+  | "Gemma4_31B" // Gemma-4-31B 17.1 GB (dense, text+image)
+  | "High3" // DeepSeek-R1-Distill-32B 19.85 GB
+  | "High4" // Gemma-3-27B 16.55 GB
+  | "VHigh" // Qwen3.5-35B-A3B (multi-variant)
   // Uncensored
   | "UncensoredCompact"
   | "UncensoredBalanced"
   // Server-grade
-  | "Server"    // Llama-3.3-70B 42.5 GB
-  | "Server2"   // Qwen3.5-122B-A10B 39.1 GB
-  | "Server3"   // Mistral-Small-4-119B 72.6 GB
-  | "Server4"   // Llama-4-Scout-17B-16E 67.5 GB
-  | "Server5"   // GPT-OSS-120B 88 GB
-  | "Server6";  // Qwen3.5-397B-A17B 115 GB
+  | "Server" // Llama-3.3-70B 42.5 GB
+  | "Server2" // Qwen3.5-122B-A10B 39.1 GB
+  | "Server3" // Mistral-Small-4-119B 72.6 GB
+  | "Server4" // Llama-4-Scout-17B-16E 67.5 GB
+  | "Server5" // GPT-OSS-120B 88 GB
+  | "Server6"; // Qwen3.5-397B-A17B 115 GB
 
 /** A single quantization variant for a model that ships in multiple sizes. */
 export interface LlmModelVariant {
@@ -42,6 +46,12 @@ export interface LlmModelVariant {
   is_split: boolean;
   all_part_urls: string[];
   expected_size_bytes: number;
+  /** Multimodal projector filename (empty = no vision). */
+  mmproj_filename: string;
+  /** Download URL for the mmproj file (empty = no vision). */
+  mmproj_url: string;
+  /** Expected byte size of the mmproj file (0 = no mmproj). */
+  mmproj_expected_size_bytes: number;
 }
 
 export interface LlmModelInfo {
@@ -77,6 +87,13 @@ export interface LlmModelInfo {
   context_length: number;
   /** Expected size in bytes. Used to detect partial downloads. */
   expected_size_bytes: number;
+  // ── Multimodal projector ──────────────────────────────────────────────────
+  /** Multimodal projector filename (empty = no vision). */
+  mmproj_filename: string;
+  /** Download URL for the mmproj file (empty = no vision). */
+  mmproj_url: string;
+  /** Expected byte size of the mmproj file (0 = no mmproj). */
+  mmproj_expected_size_bytes: number;
   // ── Quant variants ────────────────────────────────────────────────────────
   /** Non-empty for models offered in multiple quantization sizes. */
   variants: LlmModelVariant[];
@@ -168,9 +185,27 @@ export interface DownloadedLlmModel {
 
 // ── Chat / Inference Types ────────────────────────────────────────────────
 
+/** A text-only content part in an OpenAI-compatible multimodal message. */
+export interface ChatContentText {
+  type: "text";
+  text: string;
+}
+
+/** An image content part — base64 data URI or remote URL. */
+export interface ChatContentImageUrl {
+  type: "image_url";
+  image_url: { url: string };
+}
+
+/**
+ * Content can be a plain string (text-only) or an array of multimodal parts
+ * (text + images). llama-server supports both formats via the OpenAI-compatible API.
+ */
+export type ChatContent = string | (ChatContentText | ChatContentImageUrl)[];
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: ChatContent | null;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 }
@@ -220,11 +255,17 @@ export const RATING_SCALE: Record<number, string> = {
 };
 
 export const SERVER_GRADE_TIERS = new Set<LlmTier>([
-  "Server", "Server2", "Server3", "Server4", "Server5", "Server6",
+  "Server",
+  "Server2",
+  "Server3",
+  "Server4",
+  "Server5",
+  "Server6",
 ]);
 
 export const UNCENSORED_TIERS = new Set<LlmTier>([
-  "UncensoredCompact", "UncensoredBalanced",
+  "UncensoredCompact",
+  "UncensoredBalanced",
 ]);
 
 export function isServerGrade(tier: LlmTier): boolean {

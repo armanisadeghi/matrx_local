@@ -43,6 +43,7 @@ pub async fn start_llm_server(
     model_filename: String,
     gpu_layers: i32,
     context_length: Option<u32>,
+    mmproj_filename: Option<String>,
 ) -> Result<LlmServerStatus, String> {
     let model_path = resolve_model_path(&app, &model_filename)?;
 
@@ -52,6 +53,11 @@ pub async fn start_llm_server(
             model_filename
         ));
     }
+
+    let mmproj_path = mmproj_filename
+        .filter(|f| !f.is_empty())
+        .map(|f| resolve_model_path(&app, &f))
+        .transpose()?;
 
     let port = find_free_port(11434)?;
     let ctx = context_length.unwrap_or(8192);
@@ -67,7 +73,7 @@ pub async fn start_llm_server(
 
     let mut server = state.lock().await;
     server
-        .start(&app, &model_path, gpu_layers, ctx, port)
+        .start(&app, &model_path, gpu_layers, ctx, port, mmproj_path.as_deref())
         .await?;
 
     // Persist config — reload first to preserve hf_token and any future fields,
@@ -880,6 +886,9 @@ pub async fn detect_llm_hardware() -> Result<serde_json::Value, String> {
                     "is_split": v.is_split(),
                     "all_part_urls": v.all_part_urls(),
                     "expected_size_bytes": v.expected_size_bytes,
+                    "mmproj_filename": v.mmproj_filename,
+                    "mmproj_url": v.mmproj_url,
+                    "mmproj_expected_size_bytes": v.mmproj_expected_size_bytes,
                 })
             }).collect();
 
@@ -906,6 +915,9 @@ pub async fn detect_llm_hardware() -> Result<serde_json::Value, String> {
                 "all_part_urls": m.all_part_urls(),
                 "context_length": m.context_length,
                 "expected_size_bytes": m.expected_size_bytes,
+                "mmproj_filename": m.mmproj_filename,
+                "mmproj_url": m.mmproj_url,
+                "mmproj_expected_size_bytes": m.mmproj_expected_size_bytes,
                 "variants": variants,
             })
         })

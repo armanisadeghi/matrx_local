@@ -1226,9 +1226,19 @@ pub fn run() {
                     );
 
                     let model_path_str = model_path.to_string_lossy().to_string();
+
+                    // Check if this model has an mmproj file for multimodal input
+                    let mmproj_path: Option<String> = llm::model_selector::LLM_MODELS
+                        .iter()
+                        .find(|m| m.filename == filename)
+                        .filter(|m| !m.mmproj_filename.is_empty())
+                        .map(|m| config_dir.join("models").join(m.mmproj_filename))
+                        .filter(|p| p.exists())
+                        .map(|p| p.to_string_lossy().to_string());
+
                     let mut server = llm_state.lock().await;
                     match server
-                        .start(&handle, &model_path_str, gpu_layers, ctx, port)
+                        .start(&handle, &model_path_str, gpu_layers, ctx, port, mmproj_path.as_deref())
                         .await
                     {
                         Ok(()) => {

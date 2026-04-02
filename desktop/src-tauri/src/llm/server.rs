@@ -43,10 +43,11 @@ impl LlmServer {
         gpu_layers: i32,
         context_length: u32,
         port: u16,
+        mmproj_path: Option<&str>,
     ) -> Result<(), String> {
         self.stop().await;
 
-        let args = build_server_args(model_path, gpu_layers, context_length, port);
+        let args = build_server_args(model_path, gpu_layers, context_length, port, mmproj_path);
 
         // Resolve the binaries directory so shared libraries can be found
         // regardless of where Tauri places the binary at runtime (dev vs. bundled).
@@ -229,6 +230,7 @@ fn build_server_args(
     gpu_layers: i32,
     context_length: u32,
     port: u16,
+    mmproj_path: Option<&str>,
 ) -> Vec<String> {
     let thread_count = optimal_thread_count();
 
@@ -257,6 +259,13 @@ fn build_server_args(
         // Jinja template is required for tool calling with Qwen/Phi models
         "--jinja".to_string(),
     ];
+
+    if let Some(mmproj) = mmproj_path {
+        if !mmproj.is_empty() && std::path::Path::new(mmproj).exists() {
+            args.push("--mmproj".to_string());
+            args.push(mmproj.to_string());
+        }
+    }
 
     // Flash attention — supported on all backends (Metal, CUDA, Vulkan, CPU with AVX2).
     // The llama.cpp Vulkan Windows binary (our shipped binary) supports -fa.
