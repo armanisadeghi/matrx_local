@@ -34,6 +34,7 @@ import {
   BrainCircuit,
   AlertTriangle,
   ShieldCheck,
+  Globe,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -67,7 +68,9 @@ const COMPONENT_ICONS: Record<string, React.ReactNode> = {
   core_packages: <Cpu className="h-5 w-5" />,
   browser_engine: <Chrome className="h-5 w-5" />,
   storage_dirs: <FolderOpen className="h-5 w-5" />,
-  permissions: <Shield className="h-5 w-5" />,
+  tts_model: <Sparkles className="h-5 w-5" />,
+  cloudflared: <Globe className="h-5 w-5" />,
+  permissions: <ShieldCheck className="h-5 w-5" />,
   transcription: <Mic className="h-5 w-5" />,
   local_llm: <BrainCircuit className="h-5 w-5" />,
 };
@@ -77,6 +80,8 @@ const BLOCKING_IDS = new Set([
   "core_packages",
   "browser_engine",
   "storage_dirs",
+  "tts_model",
+  "cloudflared",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -276,9 +281,12 @@ export function SetupWizard({
         `${notReady.length} required component(s) need setup — starting automatically`,
       );
 
-      // Auto-start installation on first run. We only fire this once per app
-      // session so a cancelled/errored install doesn't loop.
-      if (!autoInstallFiredRef.current) {
+      // Auto-start installation on genuine first run only — i.e. the wizard has
+      // never been dismissed before.  Existing users who previously completed
+      // setup (dismissed=true) will see the wizard reopen with TTS/cloudflared
+      // listed as "not ready" and a manual "Set Up Now" button, so they choose
+      // when to download ~370 MB rather than having it start silently.
+      if (!autoInstallFiredRef.current && !dismissed) {
         autoInstallFiredRef.current = true;
         setPhase("ready");
         // Small delay so the UI renders the component list before the
@@ -293,7 +301,7 @@ export function SetupWizard({
 
     // Load Tauri optional status after engine status loads
     await loadTauriStatus();
-  }, [engineStatus, logLine, loadTauriStatus]);
+  }, [engineStatus, logLine, loadTauriStatus, dismissed]);
 
   useEffect(() => {
     checkStatus();
@@ -312,6 +320,7 @@ export function SetupWizard({
 
     try {
       await engine.runSetupInstall({
+        mode: "first_run",
         signal: controller.signal,
         onRawLine: (line) => {
           if (
@@ -355,21 +364,9 @@ export function SetupWizard({
               pct: data.percent,
             });
           }
-
-          if (data.component !== "_system") {
-            setOverallPercent((prev) => {
-              const components =
-                setupStatus?.components.filter((c) => BLOCKING_IDS.has(c.id)) ||
-                [];
-              const total = components.length;
-              if (total === 0) return 0;
-              const idx = components.findIndex((c) => c.id === data.component);
-              if (idx < 0) return prev;
-              const base = (idx / total) * 100;
-              const contribution = (data.percent / 100) * (100 / total);
-              return Math.min(Math.round(base + contribution), 99);
-            });
-          }
+        },
+        onTotalProgress: (pct: number) => {
+          setOverallPercent(pct);
         },
         onComplete: (data: SetupCompleteEvent) => {
           setOverallPercent(100);

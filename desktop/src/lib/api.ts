@@ -2328,13 +2328,17 @@ class EngineAPI {
     onProgress: (data: SetupProgressEvent) => void;
     onComplete: (data: SetupCompleteEvent) => void;
     onError: (error: string) => void;
+    /** Fired for every total_progress event — drives the grand progress bar */
+    onTotalProgress?: (percent: number, message: string) => void;
     /** Raw SSE line callback for full transparency logging */
     onRawLine?: (line: string) => void;
     signal?: AbortSignal;
+    mode?: "standard" | "first_run";
   }): Promise<void> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
-    const resp = await fetch(`${this.baseUrl}/setup/install`, {
+    const mode = callbacks.mode ?? "standard";
+    const resp = await fetch(`${this.baseUrl}/setup/install?mode=${mode}`, {
       method: "POST",
       headers,
       signal: callbacks.signal,
@@ -2366,7 +2370,14 @@ class EngineAPI {
           try {
             const data = JSON.parse(line.slice(6));
             if (eventType === "progress") callbacks.onProgress(data);
-            else if (eventType === "complete") {
+            else if (eventType === "total_progress") {
+              if (typeof data.total_percent === "number") {
+                callbacks.onTotalProgress?.(
+                  data.total_percent as number,
+                  (data.message as string) ?? "",
+                );
+              }
+            } else if (eventType === "complete") {
               receivedComplete = true;
               callbacks.onComplete(data as SetupCompleteEvent);
             } else if (eventType === "cancelled") {

@@ -87,11 +87,16 @@ def _bin_path() -> Path:
 def _get_download_url() -> str:
     system = PLATFORM["system"]
     machine = PLATFORM["machine"]
-    # Normalise arm64 aliases
-    if machine in ("arm64", "aarch64", "ARM64"):
-        machine = "aarch64" if system == "Linux" else "arm64"
-    if machine == "amd64":
-        machine = "x86_64"
+    # Normalise machine name to match _DOWNLOAD_URLS keys per platform
+    if machine.lower() in ("arm64", "aarch64"):
+        if system == "Linux":
+            machine = "aarch64"
+        elif system == "Windows":
+            machine = "ARM64"
+        else:
+            machine = "arm64"
+    if machine.lower() == "amd64":
+        machine = "AMD64" if system == "Windows" else "x86_64"
     key = (system, machine)
     url = _DOWNLOAD_URLS.get(key)
     if not url:
@@ -101,6 +106,28 @@ def _get_download_url() -> str:
             f"and place it at {_bin_path()}"
         )
     return url
+
+
+def _finalize_binary(tmp: Path, dest: Path) -> None:
+    """Atomically move tmp → dest and make executable on non-Windows.
+
+    Uses Path.replace() which maps to MoveFileExW(MOVEFILE_REPLACE_EXISTING)
+    on Windows — safe even if dest already exists.  On POSIX this is an
+    atomic rename(2) call.
+
+    On macOS, strips the com.apple.quarantine xattr so Gatekeeper does not
+    block execution of the downloaded binary.
+    """
+    tmp.replace(dest)
+    if not PLATFORM["is_windows"]:
+        dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    if PLATFORM["system"] == "Darwin":
+        try:
+            import subprocess as _sp
+            _sp.run(["xattr", "-d", "com.apple.quarantine", str(dest)],
+                    capture_output=True, timeout=5)
+        except Exception:
+            pass
 
 
 def _find_preinstalled_cloudflared() -> Path | None:
@@ -119,10 +146,13 @@ def _find_preinstalled_cloudflared() -> Path | None:
         Path(sys.executable).parent / "cloudflared.exe",        # Windows sidecar
         Path(sys.executable).with_name("cloudflared"),          # same dir as binary
         Path(sys.executable).with_name("cloudflared.exe"),
+        # macOS .app bundle layout: sidecar is at Contents/MacOS/, Tauri resources
+        # land at Contents/Resources/ — one level up from the executable parent.
+        Path(sys.executable).parent.parent / "Resources" / "cloudflared",
     ]
     for p in resource_candidates:
         if p.exists() and p.is_file():
-            logger.debug("Found bundled cloudflared at %s", p)
+            logger.info("Found bundled cloudflared at %s", p)
             return p
 
     # 2. Our own cached download
@@ -140,7 +170,7 @@ def _find_preinstalled_cloudflared() -> Path | None:
     for path_str in system_candidates:
         p = Path(path_str)
         if p.exists() and p.is_file():
-            logger.debug("Found system cloudflared at %s", p)
+            logger.info("Found system cloudflared at %s", p)
             return p
 
     # Also check PATH (already probed at startup)
@@ -169,14 +199,15 @@ def _ensure_binary() -> Path:
     logger.info("cloudflared not found locally — downloading from %s → %s", url, dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
+    tmp = dest.with_suffix(".tmp")
+    tmp.unlink(missing_ok=True)
     try:
-        urlretrieve(url, dest)
+        urlretrieve(url, tmp)
     except Exception as exc:
-        dest.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
         raise RuntimeError(f"Failed to download cloudflared: {exc}") from exc
 
-    if not PLATFORM["is_windows"]:
-        dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    _finalize_binary(tmp, dest)
 
     logger.info("cloudflared downloaded ✓ (%s)", dest)
     return dest

@@ -62,10 +62,10 @@ class SetupStatus(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Only these three components must be "ready" before setup is considered done.
+# Components that must be "ready" for setup_complete=True.
 # Permissions are advisory-only (can't be fixed by a subprocess on macOS TCC).
-# Transcription is optional.
-_BLOCKING_COMPONENTS = {"core_packages", "browser_engine", "storage_dirs"}
+# Transcription and LLM are optional enhancements.
+_BLOCKING_COMPONENTS = {"core_packages", "browser_engine", "storage_dirs", "tts_model", "cloudflared"}
 
 
 def _browsers_path() -> str:
@@ -216,6 +216,68 @@ def _check_gpu() -> tuple[bool, str | None]:
     return False, None
 
 
+def _check_tts() -> ComponentStatus:
+    """Check if the Kokoro TTS model files are present and plausibly complete."""
+    from app.services.tts.models import (
+        ONNX_MODEL_FILENAME, VOICES_BIN_FILENAME,
+        ONNX_MODEL_SIZE_BYTES, VOICES_BIN_SIZE_BYTES,
+    )
+
+    tts_dir = MATRX_HOME_DIR / "tts"
+    model_path = tts_dir / ONNX_MODEL_FILENAME
+    voices_path = tts_dir / VOICES_BIN_FILENAME
+    model_ok = model_path.is_file() and model_path.stat().st_size >= ONNX_MODEL_SIZE_BYTES * 0.99
+    voices_ok = voices_path.is_file() and voices_path.stat().st_size >= VOICES_BIN_SIZE_BYTES * 0.99
+
+    if model_ok and voices_ok:
+        return ComponentStatus(
+            id="tts_model",
+            label="Text-to-Speech",
+            description="Kokoro neural TTS for natural-sounding speech output",
+            status="ready",
+            detail="Kokoro v1.0 model and voices ready",
+        )
+
+    missing = []
+    if not model_ok:
+        missing.append("ONNX model (~310 MB)")
+    if not voices_ok:
+        missing.append("voice pack (~27 MB)")
+
+    return ComponentStatus(
+        id="tts_model",
+        label="Text-to-Speech",
+        description="Kokoro neural TTS for natural-sounding speech output",
+        status="not_ready",
+        detail=f"Missing: {', '.join(missing)} — will be downloaded automatically",
+        size_hint="~337 MB",
+    )
+
+
+def _check_cloudflared() -> ComponentStatus:
+    """Check if the cloudflared binary is available."""
+    from app.services.tunnel.manager import _find_preinstalled_cloudflared
+
+    found = _find_preinstalled_cloudflared()
+    if found:
+        return ComponentStatus(
+            id="cloudflared",
+            label="Remote Access",
+            description="Cloudflare Tunnel for secure remote device connections",
+            status="ready",
+            detail=f"Binary: {found.name}",
+        )
+
+    return ComponentStatus(
+        id="cloudflared",
+        label="Remote Access",
+        description="Cloudflare Tunnel for secure remote device connections",
+        status="not_ready",
+        detail="cloudflared binary not found — will be downloaded automatically (~30 MB)",
+        size_hint="~30 MB",
+    )
+
+
 def _check_transcription() -> ComponentStatus:
     """Check if a GGML model is available in the shared models directory.
 
@@ -229,12 +291,15 @@ def _check_transcription() -> ComponentStatus:
     model_found = False
     model_name = None
 
+    min_model_bytes = 10_000_000  # 10 MB — any real GGML model is larger
     if os.path.isdir(model_dir):
         for f in os.listdir(model_dir):
             if f.startswith("ggml-") and f.endswith(".bin") and "silero" not in f:
-                model_found = True
-                model_name = f
-                break
+                fpath = os.path.join(model_dir, f)
+                if os.path.getsize(fpath) >= min_model_bytes:
+                    model_found = True
+                    model_name = f
+                    break
 
     if model_found:
         return ComponentStatus(
@@ -509,6 +574,8 @@ async def get_setup_status() -> SetupStatus:
         _check_core_packages(),
         _check_playwright_browsers(),
         _check_storage_directories(),
+        _check_tts(),
+        _check_cloudflared(),
         await _check_permissions(),
         _check_transcription(),
     ]
@@ -769,8 +836,13 @@ async def _download_transcription_model(model: str, request: Request):
     os.makedirs(model_dir, exist_ok=True)
     model_file = f"ggml-{model}.bin"
     model_path = os.path.join(model_dir, model_file)
+    _min_model_bytes = 10_000_000  # 10 MB — any real GGML model is larger
 
-    if os.path.isfile(model_path):
+    stale_tmp = model_path + ".tmp"
+    if os.path.exists(stale_tmp):
+        os.remove(stale_tmp)
+
+    if os.path.isfile(model_path) and os.path.getsize(model_path) >= _min_model_bytes:
         yield await _sse_event("progress", {
             "component": "transcription",
             "status": "ready",
@@ -803,13 +875,14 @@ async def _download_transcription_model(model: str, request: Request):
 
                 total = int(resp.headers.get("content-length", 0))
                 downloaded = 0
+                tmp_path = model_path + ".tmp"
 
-                with open(model_path, "wb") as f:
+                with open(tmp_path, "wb") as f:
                     async for chunk in resp.aiter_bytes(chunk_size=65536):
                         if await request.is_disconnected():
                             f.close()
-                            if os.path.exists(model_path):
-                                os.remove(model_path)
+                            if os.path.exists(tmp_path):
+                                os.remove(tmp_path)
                             yield await _sse_event("cancelled", {"message": "Download cancelled by user"})
                             return
                         f.write(chunk)
@@ -827,6 +900,8 @@ async def _download_transcription_model(model: str, request: Request):
                                 "total_bytes": total,
                             })
 
+                Path(tmp_path).replace(model_path)
+
         yield await _sse_event("progress", {
             "component": "transcription",
             "status": "ready",
@@ -835,8 +910,9 @@ async def _download_transcription_model(model: str, request: Request):
         })
 
     except Exception as e:
-        if os.path.exists(model_path):
-            os.remove(model_path)
+        tmp_cleanup = model_path + ".tmp"
+        if os.path.exists(tmp_cleanup):
+            os.remove(tmp_cleanup)
         logger.error(f"Transcription model download failed: {e}", exc_info=True)
         yield await _sse_event("progress", {
             "component": "transcription",
@@ -846,27 +922,233 @@ async def _download_transcription_model(model: str, request: Request):
         })
 
 
+async def _download_tts_model(request: Request):
+    """Download the Kokoro TTS ONNX model and voices pack, yielding SSE events."""
+    from app.services.tts.models import (
+        ONNX_MODEL_FILENAME, VOICES_BIN_FILENAME,
+        ONNX_MODEL_URL, VOICES_BIN_URL,
+        ONNX_MODEL_SIZE_BYTES, VOICES_BIN_SIZE_BYTES,
+    )
+
+    tts_dir = MATRX_HOME_DIR / "tts"
+    tts_dir.mkdir(parents=True, exist_ok=True)
+
+    for stale in tts_dir.glob("*.tmp"):
+        stale.unlink(missing_ok=True)
+
+    files = [
+        (ONNX_MODEL_URL, ONNX_MODEL_FILENAME, ONNX_MODEL_SIZE_BYTES, "Kokoro TTS model"),
+        (VOICES_BIN_URL, VOICES_BIN_FILENAME, VOICES_BIN_SIZE_BYTES, "TTS voice pack"),
+    ]
+
+    total_bytes = sum(s for _, _, s, _ in files)
+    overall_downloaded = 0
+
+    for url, filename, expected_size, label in files:
+        dest = tts_dir / filename
+        if dest.is_file() and dest.stat().st_size >= expected_size * 0.99:
+            overall_downloaded += expected_size
+            pct = int((overall_downloaded / total_bytes) * 100)
+            yield await _sse_event("progress", {
+                "component": "tts_model",
+                "status": "installing",
+                "message": f"{label} already downloaded",
+                "percent": pct,
+            })
+            continue
+
+        yield await _sse_event("progress", {
+            "component": "tts_model",
+            "status": "installing",
+            "message": f"Downloading {label}...",
+            "percent": int((overall_downloaded / total_bytes) * 100),
+        })
+
+        try:
+            import httpx
+            async with httpx.AsyncClient(follow_redirects=True, timeout=300) as client:
+                async with client.stream("GET", url) as resp:
+                    if resp.status_code != 200:
+                        yield await _sse_event("progress", {
+                            "component": "tts_model",
+                            "status": "error",
+                            "message": f"Download failed for {label}: HTTP {resp.status_code}",
+                            "percent": 0,
+                        })
+                        return
+
+                    file_total = int(resp.headers.get("content-length", expected_size))
+                    file_downloaded = 0
+                    tmp_path = dest.with_suffix(".tmp")
+
+                    with open(tmp_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=65536):
+                            if await request.is_disconnected():
+                                tmp_path.unlink(missing_ok=True)
+                                yield await _sse_event("cancelled", {"message": "Download cancelled"})
+                                return
+                            f.write(chunk)
+                            file_downloaded += len(chunk)
+                            combined = overall_downloaded + file_downloaded
+                            pct = int((combined / total_bytes) * 100)
+                            if file_downloaded % (256 * 1024) < len(chunk):
+                                mb = combined / (1024 * 1024)
+                                total_mb = total_bytes / (1024 * 1024)
+                                yield await _sse_event("progress", {
+                                    "component": "tts_model",
+                                    "status": "installing",
+                                    "message": f"Downloading {label}: {mb:.0f} / {total_mb:.0f} MB",
+                                    "percent": min(pct, 99),
+                                })
+
+            # Outside the stream context — file handle is closed, safe to rename atomically.
+            # Path.replace() overwrites an existing dest on both Windows and POSIX.
+            tmp_path.replace(dest)
+            overall_downloaded += file_downloaded
+
+        except Exception as e:
+            dest.with_suffix(".tmp").unlink(missing_ok=True)
+            logger.error("TTS model download failed: %s", e, exc_info=True)
+            yield await _sse_event("progress", {
+                "component": "tts_model",
+                "status": "error",
+                "message": f"Download failed for {label}: {e}",
+                "percent": 0,
+            })
+            return
+
+    yield await _sse_event("progress", {
+        "component": "tts_model",
+        "status": "ready",
+        "message": "Kokoro TTS model and voices installed",
+        "percent": 100,
+    })
+
+
+async def _download_cloudflared(request: Request):
+    """Download the cloudflared binary if not already present, yielding SSE events."""
+    from app.services.tunnel.manager import (
+        _find_preinstalled_cloudflared, _bin_path, _get_download_url, _finalize_binary,
+    )
+
+    existing = _find_preinstalled_cloudflared()
+    if existing:
+        yield await _sse_event("progress", {
+            "component": "cloudflared",
+            "status": "ready",
+            "message": f"cloudflared binary found: {existing.name}",
+            "percent": 100,
+        })
+        return
+
+    yield await _sse_event("progress", {
+        "component": "cloudflared",
+        "status": "installing",
+        "message": "Downloading cloudflared for remote access...",
+        "percent": 5,
+    })
+
+    dest = _bin_path()
+    try:
+        url = _get_download_url()
+    except RuntimeError as e:
+        yield await _sse_event("progress", {
+            "component": "cloudflared",
+            "status": "error",
+            "message": str(e),
+            "percent": 0,
+        })
+        return
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dest.with_suffix(".tmp")
+    tmp_path.unlink(missing_ok=True)
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    yield await _sse_event("progress", {
+                        "component": "cloudflared",
+                        "status": "error",
+                        "message": f"Download failed: HTTP {resp.status_code}",
+                        "percent": 0,
+                    })
+                    return
+
+                file_total = int(resp.headers.get("content-length", 0))
+                downloaded = 0
+
+                with open(tmp_path, "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=65536):
+                        if await request.is_disconnected():
+                            tmp_path.unlink(missing_ok=True)
+                            yield await _sse_event("cancelled", {"message": "Download cancelled"})
+                            return
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        pct = int((downloaded / file_total * 90) + 5) if file_total > 0 else 50
+                        if downloaded % (256 * 1024) < len(chunk):
+                            mb = downloaded / (1024 * 1024)
+                            yield await _sse_event("progress", {
+                                "component": "cloudflared",
+                                "status": "installing",
+                                "message": f"Downloading cloudflared: {mb:.1f} MB",
+                                "percent": min(pct, 99),
+                            })
+
+        # Outside both async-with contexts — file handle closed, safe to finalize.
+        # _finalize_binary uses Path.replace() (atomic on Windows + POSIX) and chmod.
+        _finalize_binary(tmp_path, dest)
+
+    except Exception as e:
+        tmp_path.unlink(missing_ok=True)
+        logger.error("cloudflared download failed: %s", e, exc_info=True)
+        yield await _sse_event("progress", {
+            "component": "cloudflared",
+            "status": "error",
+            "message": f"Download failed: {e}",
+            "percent": 0,
+        })
+        return
+
+    yield await _sse_event("progress", {
+        "component": "cloudflared",
+        "status": "ready",
+        "message": "cloudflared installed for remote access",
+        "percent": 100,
+    })
+
+
 async def _install_stream(request: Request, first_run: bool = False):
     """Generator that orchestrates all installation steps and yields SSE events.
 
-    first_run=True adds transcription model download to the flow so everything
-    is installed in one pass on first launch.
+    Always installs all core components: storage dirs, core packages, Playwright
+    Chromium, TTS model, cloudflared, and permissions check.
+
+    first_run=True additionally downloads the transcription model so everything
+    is ready in one pass on first launch.
 
     Guarantees: always emits a 'complete' event at the end (even if some
     components failed), so the frontend never sees 'stream ended unexpectedly'.
 
     Grand progress weighting (first_run=True):
-      storage_dirs     ~2%
-      core_packages    ~3%
-      browser_engine  ~60%
-      transcription   ~30%
-      permissions      ~5%
+      storage_dirs      ~2%     →  0–2
+      core_packages     ~1%     →  2–3
+      browser_engine   ~40%     →  3–43
+      tts_model        ~25%     →  43–68
+      cloudflared       ~2%     →  68–70
+      transcription    ~25%     →  70–95
+      permissions       ~5%     →  95–100
 
     Standard (first_run=False):
-      storage_dirs    ~5%
-      core_packages   ~5%
-      browser_engine ~85%
-      permissions     ~5%
+      storage_dirs      ~3%     →  0–3
+      core_packages     ~2%     →  3–5
+      browser_engine   ~50%     →  5–55
+      tts_model        ~35%     →  55–90
+      cloudflared       ~3%     →  90–93
+      permissions       ~7%     →  93–100
     """
     had_error = False
     error_summary: list[str] = []
@@ -887,7 +1169,8 @@ async def _install_stream(request: Request, first_run: bool = False):
                 yield await _sse_event("cancelled", {"message": "Setup cancelled by user"})
                 return
             yield event
-        yield await _emit_total(2 if first_run else 5, "Storage directories ready")
+        step1_end = 2 if first_run else 3
+        yield await _emit_total(step1_end, "Storage directories ready")
 
         # ── Step 2: Core package verification (fast) ──────────────────────────
         status = _check_core_packages()
@@ -897,32 +1180,30 @@ async def _install_stream(request: Request, first_run: bool = False):
             "message": status.detail or "Core packages verified",
             "percent": 100 if status.status == "ready" else 0,
         })
-        yield await _emit_total(5 if first_run else 10, "Core packages verified")
+        step2_end = 3 if first_run else 5
+        yield await _emit_total(step2_end, "Core packages verified")
         if status.status != "ready":
             had_error = True
             error_summary.append(f"core_packages: {status.detail}")
 
-        # ── Step 3: Playwright browsers (the big one) ─────────────────────────
+        # ── Step 3: Playwright browsers ───────────────────────────────────────
+        browser_base = step2_end
+        browser_span = 40 if first_run else 50
         browser_status = _check_playwright_browsers()
         if browser_status.status != "ready":
-            yield await _emit_total(5 if first_run else 10, "Installing browser engine (~280 MB)...")
+            yield await _emit_total(browser_base, "Installing browser engine (~280 MB)...")
             async for event in _install_playwright_browsers(_browsers_path()):
                 if await request.is_disconnected():
                     yield await _sse_event("cancelled", {"message": "Setup cancelled by user"})
                     return
                 yield event
-                # Track whether browser install errored; also update grand bar
                 try:
                     parsed = json.loads(event.split("data: ", 1)[1].split("\n")[0])
                     if parsed.get("status") == "error":
                         had_error = True
                         error_summary.append(f"browser_engine: {parsed.get('message', '')}")
-                    # Map browser sub-percent to grand bar range: 5–65 (first_run) or 10–90
                     sub = parsed.get("percent", 0)
-                    if first_run:
-                        grand = int(5 + sub * 0.60)
-                    else:
-                        grand = int(10 + sub * 0.80)
+                    grand = int(browser_base + sub * browser_span / 100)
                     yield await _emit_total(grand, parsed.get("message", "Installing browser engine..."))
                 except Exception:
                     pass
@@ -933,13 +1214,78 @@ async def _install_stream(request: Request, first_run: bool = False):
                 "message": browser_status.detail or "Already installed",
                 "percent": 100,
             })
-            yield await _emit_total(65 if first_run else 90, "Browser engine ready")
+        browser_end = browser_base + browser_span
+        yield await _emit_total(browser_end, "Browser engine ready")
 
-        # ── Step 4: Transcription model (first_run only) ───────────────────────
+        # ── Step 4: TTS model ─────────────────────────────────────────────────
+        tts_base = browser_end
+        tts_span = 25 if first_run else 35
+        tts_status = _check_tts()
+        if tts_status.status != "ready":
+            yield await _emit_total(tts_base, "Downloading text-to-speech model (~337 MB)...")
+            async for event in _download_tts_model(request):
+                if await request.is_disconnected():
+                    yield await _sse_event("cancelled", {"message": "Setup cancelled by user"})
+                    return
+                yield event
+                try:
+                    parsed = json.loads(event.split("data: ", 1)[1].split("\n")[0])
+                    if parsed.get("status") == "error":
+                        had_error = True
+                        error_summary.append(f"tts_model: {parsed.get('message', '')}")
+                    sub = parsed.get("percent", 0)
+                    grand = int(tts_base + sub * tts_span / 100)
+                    yield await _emit_total(grand, parsed.get("message", "Downloading TTS model..."))
+                except Exception:
+                    pass
+        else:
+            yield await _sse_event("progress", {
+                "component": "tts_model",
+                "status": "ready",
+                "message": tts_status.detail or "Already installed",
+                "percent": 100,
+            })
+        tts_end = tts_base + tts_span
+        yield await _emit_total(tts_end, "Text-to-speech ready")
+
+        # ── Step 5: cloudflared ───────────────────────────────────────────────
+        cf_base = tts_end
+        cf_span = 2 if first_run else 3
+        cf_status = _check_cloudflared()
+        if cf_status.status != "ready":
+            yield await _emit_total(cf_base, "Downloading remote access binary...")
+            async for event in _download_cloudflared(request):
+                if await request.is_disconnected():
+                    yield await _sse_event("cancelled", {"message": "Setup cancelled by user"})
+                    return
+                yield event
+                try:
+                    parsed = json.loads(event.split("data: ", 1)[1].split("\n")[0])
+                    if parsed.get("status") == "error":
+                        had_error = True
+                        error_summary.append(f"cloudflared: {parsed.get('message', '')}")
+                    sub = parsed.get("percent", 0)
+                    grand = int(cf_base + sub * cf_span / 100)
+                    yield await _emit_total(grand, parsed.get("message", "Downloading cloudflared..."))
+                except Exception:
+                    pass
+        else:
+            yield await _sse_event("progress", {
+                "component": "cloudflared",
+                "status": "ready",
+                "message": cf_status.detail or "Already installed",
+                "percent": 100,
+            })
+        cf_end = cf_base + cf_span
+        yield await _emit_total(cf_end, "Remote access ready")
+
+        # ── Step 6: Transcription model (first_run only) ──────────────────────
         if first_run:
+            tx_base = cf_end
+            tx_span = 95 - cf_end
             transcription_status = _check_transcription()
             if transcription_status.status != "ready":
-                yield await _emit_total(65, "Downloading transcription model (~150 MB)...")
+                yield await _emit_total(tx_base, "Downloading transcription model (~150 MB)...")
                 async for event in _download_transcription_model("base.en", request):
                     if await request.is_disconnected():
                         yield await _sse_event("cancelled", {"message": "Setup cancelled by user"})
@@ -951,7 +1297,7 @@ async def _install_stream(request: Request, first_run: bool = False):
                             had_error = True
                             error_summary.append(f"transcription: {parsed.get('message', '')}")
                         sub = parsed.get("percent", 0)
-                        grand = int(65 + sub * 0.30)
+                        grand = int(tx_base + sub * tx_span / 100)
                         yield await _emit_total(grand, parsed.get("message", "Downloading transcription model..."))
                     except Exception:
                         pass
@@ -964,7 +1310,7 @@ async def _install_stream(request: Request, first_run: bool = False):
                 })
                 yield await _emit_total(95, "Transcription model ready")
 
-        # ── Step 5: Permissions check (informational only) ────────────────────
+        # ── Step 7: Permissions check (informational only) ────────────────────
         try:
             perm_status = await _check_permissions()
         except Exception as e:
@@ -1029,8 +1375,11 @@ async def _install_stream(request: Request, first_run: bool = False):
 async def run_install(request: Request, mode: str = "standard"):
     """Run the setup installation as an SSE stream with real-time progress.
 
-    mode=first_run: also downloads transcription model in one pass.
-    mode=standard:  same as before — only Playwright + storage dirs + packages.
+    Both modes install: storage dirs, core packages, Playwright Chromium,
+    TTS model, cloudflared, and permissions check.
+
+    mode=first_run: additionally downloads the transcription model.
+    mode=standard:  everything except transcription model.
     """
     return StreamingResponse(
         _install_stream(request, first_run=(mode == "first_run")),

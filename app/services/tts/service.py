@@ -112,7 +112,12 @@ class TtsService:
     def model_downloaded(self) -> bool:
         model_path = TTS_DIR / ONNX_MODEL_FILENAME
         voices_path = TTS_DIR / VOICES_BIN_FILENAME
-        return model_path.is_file() and voices_path.is_file()
+        return (
+            model_path.is_file()
+            and model_path.stat().st_size >= ONNX_MODEL_SIZE_BYTES * 0.99
+            and voices_path.is_file()
+            and voices_path.stat().st_size >= VOICES_BIN_SIZE_BYTES * 0.99
+        )
 
     @property
     def model_loaded(self) -> bool:
@@ -272,7 +277,7 @@ class TtsService:
                 (VOICES_BIN_URL, VOICES_BIN_FILENAME, VOICES_BIN_SIZE_BYTES),
             ]:
                 dest = TTS_DIR / filename
-                if dest.is_file() and dest.stat().st_size > 1000:
+                if dest.is_file() and dest.stat().st_size >= expected_size * 0.99:
                     downloaded += expected_size
                     self._download_progress = (downloaded / total_bytes) * 100
                     self._emit_dm_progress(dl_id, "Kokoro TTS Model", "active", downloaded, total_bytes)
