@@ -9,6 +9,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.tts.service import get_tts_service
+from app.common.route_errors import safe_route
 
 router = APIRouter(prefix="/tts", tags=["tts"])
 
@@ -118,6 +119,7 @@ async def download_model() -> DownloadResponse:
 
 
 @router.post("/synthesize")
+@safe_route("tts_synthesize")
 async def synthesize(req: SynthesizeRequest) -> Response:
     """Generate speech from text.
 
@@ -172,6 +174,7 @@ async def synthesize_json(req: SynthesizeRequest) -> SynthesizeResponse:
 
 
 @router.post("/synthesize-stream")
+@safe_route("tts_synthesize_stream")
 async def synthesize_stream(req: SynthesizeRequest) -> StreamingResponse:
     """Stream speech as a sequence of WAV chunks separated by a 4-byte length prefix.
 
@@ -218,6 +221,7 @@ async def synthesize_stream(req: SynthesizeRequest) -> StreamingResponse:
 
 
 @router.post("/preview-voice")
+@safe_route("tts_preview_voice")
 async def preview_voice(req: PreviewVoiceRequest) -> Response:
     """Generate a short preview clip for a given voice."""
     svc = get_tts_service()

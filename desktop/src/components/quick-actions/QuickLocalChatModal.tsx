@@ -40,7 +40,7 @@ export function QuickLocalChatModal({
     ) {
       autoStartedRef.current = true;
       const model = llmState.downloadedModels[0];
-      llmActions.startServer(model.filename, 0).catch(() => {});
+      llmActions.startServer(model.filename, 0).catch((e) => console.warn("[local-chat] startServer failed:", e));
     }
     if (!open) {
       autoStartedRef.current = false;

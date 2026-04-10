@@ -12,7 +12,7 @@
  * isLoading=true so the UI can show a spinner.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { AgentInfo, AgentsResponse } from "@/types/agents";
 
 interface UseAgentsOptions {
@@ -105,17 +105,25 @@ export function useAgents({ engineUrl }: UseAgentsOptions): UseAgentsState {
     };
   }, [load]);
 
-  const all = [...builtins, ...userAgents, ...sharedAgents];
+  const all = useMemo(
+    () => [...builtins, ...userAgents, ...sharedAgents],
+    [builtins, userAgents, sharedAgents],
+  );
 
-  return {
-    builtins,
-    userAgents,
-    sharedAgents,
-    all,
-    isLoading,
-    error,
-    syncing,
-    source,
-    refresh: () => load(true),
-  };
+  const refresh = useCallback(() => load(true), [load]);
+
+  return useMemo(
+    () => ({
+      builtins,
+      userAgents,
+      sharedAgents,
+      all,
+      isLoading,
+      error,
+      syncing,
+      source,
+      refresh,
+    }),
+    [builtins, userAgents, sharedAgents, all, isLoading, error, syncing, source, refresh],
+  );
 }

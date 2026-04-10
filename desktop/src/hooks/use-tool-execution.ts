@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { engine } from "@/lib/api";
 
 interface ExecutionEntry {
@@ -170,15 +170,18 @@ export function useToolExecution(): UseToolExecutionReturn {
     };
   }, [stopTimer]);
 
-  return {
-    loading,
-    result,
-    error,
-    history,
-    elapsedMs,
-    invoke,
-    abort,
-    reset,
-    clearHistory,
-  };
+  return useMemo(
+    () => ({
+      loading,
+      result,
+      error,
+      history,
+      elapsedMs,
+      invoke,
+      abort,
+      reset,
+      clearHistory,
+    }),
+    [loading, result, error, history, elapsedMs, invoke, abort, reset, clearHistory],
+  );
 }

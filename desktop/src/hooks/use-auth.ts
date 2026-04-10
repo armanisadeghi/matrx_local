@@ -43,7 +43,7 @@
  * that flow does not go through OAuth.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { User, Session } from "@supabase/supabase-js";
 import supabase from "@/lib/supabase";
 import {
@@ -361,13 +361,16 @@ export function useAuth() {
     return session?.access_token ?? null;
   }, []);
 
-  return {
-    ...state,
-    signInWithOAuth,
-    completeOAuthExchange,
-    cancelOAuth,
-    signInWithEmail,
-    signOut,
-    getAccessToken,
-  };
+  return useMemo(
+    () => ({
+      ...state,
+      signInWithOAuth,
+      completeOAuthExchange,
+      cancelOAuth,
+      signInWithEmail,
+      signOut,
+      getAccessToken,
+    }),
+    [state, signInWithOAuth, completeOAuthExchange, cancelOAuth, signInWithEmail, signOut, getAccessToken],
+  );
 }

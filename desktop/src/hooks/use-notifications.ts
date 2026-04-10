@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { engine } from "@/lib/api";
 import { loadSettings, type AppSettings } from "@/lib/settings";
 
@@ -139,15 +139,20 @@ export function useNotifications() {
     return off;
   }, [addNotification]);
 
-  return {
-    notifications,
-    unreadCount,
-    addNotification,
-    markRead,
-    markAllRead,
-    dismiss,
-    clearAll,
-    setSoundEnabled: (v: boolean) => { soundEnabledRef.current = v; },
-  };
+  const setSoundEnabled = useCallback((v: boolean) => { soundEnabledRef.current = v; }, []);
+
+  return useMemo(
+    () => ({
+      notifications,
+      unreadCount,
+      addNotification,
+      markRead,
+      markAllRead,
+      dismiss,
+      clearAll,
+      setSoundEnabled,
+    }),
+    [notifications, unreadCount, addNotification, markRead, markAllRead, dismiss, clearAll, setSoundEnabled],
+  );
 }
 

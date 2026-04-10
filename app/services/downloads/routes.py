@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.common.system_logger import get_logger
+from app.common.route_errors import safe_route
 from app.services.downloads.manager import get_download_manager
 
 logger = get_logger()
@@ -63,6 +64,7 @@ async def list_downloads(status: Optional[str] = None, category: Optional[str] =
 
 
 @router.post("/downloads")
+@safe_route("downloads_enqueue")
 async def enqueue_download(req: EnqueueRequest):
     """Enqueue a new download (or return existing if already queued/active)."""
     manager = get_download_manager()
@@ -90,6 +92,7 @@ async def get_download(download_id: str):
 
 
 @router.delete("/downloads/{download_id}")
+@safe_route("downloads_cancel")
 async def cancel_download(download_id: str):
     """Cancel a queued or active download."""
     manager = get_download_manager()

@@ -10,6 +10,7 @@ import {
   unloadTts,
 } from "@/lib/tts/api";
 import { loadSettings, saveSetting } from "@/lib/settings";
+import { catchAndLog } from "@/lib/error-reporting";
 
 export interface TtsHistoryEntry {
   id: string;
@@ -168,7 +169,7 @@ export function useTts(): [UseTtsState, UseTtsActions] {
         audioRef.current = null;
       }
       if (audioCtxRef.current) {
-        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current.close().catch(catchAndLog("tts", "AudioContext close on unmount"));
         audioCtxRef.current = null;
       }
     };
@@ -223,7 +224,7 @@ export function useTts(): [UseTtsState, UseTtsActions] {
 
     // 3. Close AudioContext (frees all resources)
     if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current.close().catch(catchAndLog("tts", "AudioContext close on stop"));
       audioCtxRef.current = null;
     }
 
@@ -244,7 +245,7 @@ export function useTts(): [UseTtsState, UseTtsActions] {
    */
   const pauseAudio = useCallback(() => {
     if (!audioCtxRef.current || audioCtxRef.current.state !== "running") return;
-    audioCtxRef.current.suspend().catch(() => {});
+    audioCtxRef.current.suspend().catch(catchAndLog("tts", "AudioContext suspend"));
 
     // Also pause plain <audio> if active
     if (audioRef.current && !audioRef.current.paused) {
@@ -261,7 +262,7 @@ export function useTts(): [UseTtsState, UseTtsActions] {
   const resumeAudio = useCallback(() => {
     if (!audioCtxRef.current || audioCtxRef.current.state !== "suspended")
       return;
-    audioCtxRef.current.resume().catch(() => {});
+    audioCtxRef.current.resume().catch(catchAndLog("tts", "AudioContext resume"));
 
     // Also resume plain <audio> if it was the active playback path
     if (
@@ -269,7 +270,7 @@ export function useTts(): [UseTtsState, UseTtsActions] {
       audioRef.current.paused &&
       audioRef.current.currentTime > 0
     ) {
-      audioRef.current.play().catch(() => {});
+      audioRef.current.play().catch(catchAndLog("tts", "audio element resume play"));
     }
 
     setPlaybackState(synthDoneRef.current ? "playing" : "synthesizing");

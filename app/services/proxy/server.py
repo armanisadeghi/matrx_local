@@ -169,7 +169,7 @@ class ProxyServer:
         except (asyncio.TimeoutError, ConnectionResetError, BrokenPipeError):
             pass
         except Exception:
-            logger.debug("Proxy connection error", exc_info=True)
+            logger.warning("Proxy connection error", exc_info=True)
         finally:
             self._active_connections -= 1
             try:

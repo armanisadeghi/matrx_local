@@ -101,7 +101,7 @@ async def _poll_once() -> None:
         resp = await client.get_pending(tier="desktop", limit=_BATCH_LIMIT)
         items: list[dict[str, Any]] = resp.get("items", [])
     except Exception as exc:
-        logger.debug("RetryQueue: get_pending failed: %s", exc)
+        logger.warning("RetryQueue: get_pending failed: %s", exc)
         return
 
     if not items:
@@ -151,8 +151,8 @@ async def _poll_once() -> None:
                         content_type="html",
                         char_count=char_count,
                     )
-                except Exception:
-                    pass  # submit_result already stored it; this is just a backup
+                except Exception as exc:
+                    logger.warning("RetryQueue: save_content backup failed for %s: %s", url, exc)
 
             except Exception as exc:
                 logger.warning("RetryQueue: submit_result failed for %s: %s", url, exc)
@@ -168,7 +168,7 @@ async def _poll_once() -> None:
                 )
                 _stats["failed"] += 1
             except Exception as exc:
-                logger.debug("RetryQueue: report_failure failed: %s", exc)
+                logger.warning("RetryQueue: report_failure failed: %s", exc)
 
 
 async def _loop() -> None:

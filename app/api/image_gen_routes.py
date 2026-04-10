@@ -28,6 +28,7 @@ from app.services.image_gen.installer import (
     get_image_gen_packages_dir,
     IMAGE_GEN_PACKAGES,
 )
+from app.common.route_errors import safe_route
 
 router = APIRouter(prefix="/image-gen", tags=["image-gen"])
 
@@ -177,6 +178,7 @@ async def list_workflow_presets() -> list[WorkflowPresetInfo]:
 
 
 @router.post("/load", response_model=LoadModelResponse)
+@safe_route("image_gen_load")
 async def load_model(req: LoadModelRequest) -> LoadModelResponse:
     """Load a model into memory (downloads from HF if needed)."""
     svc = get_image_gen_service()
@@ -197,6 +199,7 @@ async def unload_model() -> dict:
 
 
 @router.post("/generate", response_model=GenerateResponse)
+@safe_route("image_gen_generate")
 async def generate_image(req: GenerateRequest) -> GenerateResponse:
     """Generate an image from a text prompt.
 

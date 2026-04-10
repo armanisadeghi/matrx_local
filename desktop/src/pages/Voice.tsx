@@ -164,7 +164,7 @@ export function Voice() {
           void wwActions.setup();
         }
       })
-      .catch(() => {});
+      .catch((e) => console.warn("[voice] loadSettings for wake word failed:", e));
   }, [state.activeModel]); // re-runs when model finishes loading
 
   // ── Publish transcript from the overlay directly to a note ───────────────
@@ -188,7 +188,7 @@ export function Voice() {
       .then(({ emit }) => {
         void emit("overlay-transcript", state.fullTranscript);
       })
-      .catch(() => {});
+      .catch((e) => console.warn("[voice] overlay-transcript emit failed:", e));
   }, [state.fullTranscript, wwState.uiMode]);
 
   // ── Auto-persist transcript every 5 s during active wake-word session ─────
@@ -2560,7 +2560,7 @@ function DevicesTab({
       mediaStreamRef.current = null;
     }
     if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current.close().catch((e) => console.warn("[voice] AudioContext close failed:", e));
       audioContextRef.current = null;
     }
     analyserRef.current = null;
@@ -2647,7 +2647,7 @@ function DevicesTab({
               mediaStreamRef.current = null;
             }
             if (audioContextRef.current) {
-              audioContextRef.current.close().catch(() => {});
+              audioContextRef.current.close().catch((e) => console.warn("[voice] AudioContext close failed:", e));
               audioContextRef.current = null;
             }
             if (animFrameRef.current !== null) {

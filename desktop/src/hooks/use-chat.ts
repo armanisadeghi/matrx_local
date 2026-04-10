@@ -18,7 +18,7 @@
  * Conversations are persisted to localStorage.
  */
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { isTauri } from "@/lib/sidecar";
 import supabase from "@/lib/supabase";
 import { streamCompletion } from "@/lib/llm/api";
@@ -374,7 +374,7 @@ export function useChat({ engineUrl }: UseChatOptions) {
 
     return () => {
       mounted = false;
-      unlistenPromises.forEach((p) => p.then((fn) => fn()).catch(() => {}));
+      unlistenPromises.forEach((p) => p.then((fn) => fn()).catch((e) => console.warn("[chat] cleanup unlisten failed:", e)));
     };
   }, [mergeLocalModel]);
 
@@ -730,6 +730,38 @@ export function useChat({ engineUrl }: UseChatOptions) {
     setActiveConversationId(null);
   }, []);
 
+  const groupedConversations = useMemo(
+    () => groupByDate(conversations),
+    [conversations],
+  );
+
+  const actions = useMemo(
+    () => ({
+      createConversation,
+      selectConversation,
+      deleteConversation,
+      renameConversation,
+      sendMessage,
+      stopStreaming,
+      clearConversations,
+      setMode,
+      setModel,
+      setToolSchemas,
+    }),
+    [
+      createConversation,
+      selectConversation,
+      deleteConversation,
+      renameConversation,
+      sendMessage,
+      stopStreaming,
+      clearConversations,
+      setMode,
+      setModel,
+      setToolSchemas,
+    ],
+  );
+
   return {
     conversations,
     activeConversation,
@@ -739,17 +771,7 @@ export function useChat({ engineUrl }: UseChatOptions) {
     model,
     toolSchemas,
     availableModels,
-    groupedConversations: groupByDate(conversations),
-
-    createConversation,
-    selectConversation,
-    deleteConversation,
-    renameConversation,
-    sendMessage,
-    stopStreaming,
-    clearConversations,
-    setMode,
-    setModel,
-    setToolSchemas,
+    groupedConversations,
+    ...actions,
   };
 }

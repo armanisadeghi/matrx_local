@@ -9,7 +9,7 @@
  * Logging: single-line INFO on success; full structured dump on any error.
  */
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import { engine, type ScrapeResultData } from "@/lib/api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -563,16 +563,19 @@ export function useScrapeMany() {
   const progress =
     entries.length > 0 ? Math.round((doneCount / entries.length) * 100) : 0;
 
-  return {
-    entries,
-    running,
-    pendingCount,
-    doneCount,
-    progress,
-    addUrls,
-    removeEntry,
-    clearAll,
-    stop,
-    startScrape,
-  };
+  return useMemo(
+    () => ({
+      entries,
+      running,
+      pendingCount,
+      doneCount,
+      progress,
+      addUrls,
+      removeEntry,
+      clearAll,
+      stop,
+      startScrape,
+    }),
+    [entries, running, pendingCount, doneCount, progress, addUrls, removeEntry, clearAll, stop, startScrape],
+  );
 }

@@ -1499,7 +1499,7 @@ class EngineAPI {
       method: "POST",
       headers,
       body: JSON.stringify({ jwt, user_id: userId }),
-    }).catch(() => {});
+    }).catch((e) => console.warn("[api] reconfigureCloudSync failed:", e));
   }
 
   /** Get cloud-synced settings. */
@@ -1709,7 +1709,7 @@ class EngineAPI {
     await fetch(`${this.baseUrl}/cloud/heartbeat`, {
       method: "POST",
       headers,
-    }).catch(() => {});
+    }).catch((e) => console.warn("[api] cloudHeartbeat failed:", e));
   }
 
   /**

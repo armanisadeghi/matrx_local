@@ -189,8 +189,13 @@ class WebSocketManager:
     async def _send(self, conn: Connection, data: dict) -> None:
         try:
             await conn.websocket.send_json(data)
-        except Exception:
-            pass
+        except Exception as exc:
+            msg_id = data.get("id", "?")
+            msg_type = data.get("type", "?")
+            logger.warning(
+                "WS send failed (id=%s type=%s): %s: %s — response lost, client will not receive this result",
+                msg_id, msg_type, type(exc).__name__, exc,
+            )
 
     async def broadcast(self, message: str) -> None:
         for conn in self.connections.values():

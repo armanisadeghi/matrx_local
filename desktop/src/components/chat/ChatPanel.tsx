@@ -58,7 +58,7 @@ export function ChatPanel({
           });
         }
       })
-      .catch(() => {});
+      .catch((e) => console.warn("[chat] getAiStatus failed:", e));
   }, [engineStatus, engineUrl, compact, forceLocalModel]);
 
   const {

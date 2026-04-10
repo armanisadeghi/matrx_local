@@ -121,7 +121,7 @@ def _fetch_contacts_sync(query: str | None, limit: int) -> list[dict[str, Any]]:
         try:
             results.append(_contact_to_dict(contact))
         except Exception as exc:
-            logger.debug("Skipping contact due to error: %s", exc)
+            logger.warning("Skipping contact due to error: %s", exc)
         if len(results) >= limit:
             break
     return results

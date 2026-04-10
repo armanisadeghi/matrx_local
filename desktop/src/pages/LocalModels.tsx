@@ -377,7 +377,7 @@ function SetupTab() {
 
   useEffect(() => {
     if (!hardwareResult && !isDetecting) {
-      detectHardware().catch(() => {});
+      detectHardware().catch((e) => console.warn("[local-models] detectHardware failed:", e));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1933,7 +1933,7 @@ function ModelsTab() {
 
   useEffect(() => {
     if (!hardwareResult && !isDetecting) {
-      detectHardware().catch(() => {});
+      detectHardware().catch((e) => console.warn("[local-models] detectHardware failed:", e));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -6455,7 +6455,7 @@ function HardwareTab() {
   useEffect(() => {
     listModels();
     if (!hardwareResult && !isDetecting) {
-      detectHardware().catch(() => {});
+      detectHardware().catch((e) => console.warn("[local-models] detectHardware failed:", e));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listModels]);

@@ -500,7 +500,7 @@ export function useTranscription(): [TranscriptionState, TranscriptionActions] {
 
   const forceReset = useCallback(() => {
     // Best-effort — don't await, don't throw
-    tauriInvoke("stop_transcription").catch(() => {});
+    tauriInvoke("stop_transcription").catch((e) => console.warn("[transcription] forceReset stop_transcription failed:", e));
     // Tear down all Tauri event listeners to prevent ghost events
     unlistenersRef.current.forEach((fn) => fn());
     unlistenersRef.current = [];

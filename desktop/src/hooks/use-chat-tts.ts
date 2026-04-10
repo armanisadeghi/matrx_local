@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { parseMarkdownToText } from "@/lib/parse-markdown-for-speech";
 import { synthesizeStream } from "@/lib/tts/api";
 import { loadSettings } from "@/lib/settings";
+import { catchAndLog } from "@/lib/error-reporting";
 import type { UseTtsActions } from "./use-tts";
 
 interface ChatMessage {
@@ -249,7 +250,7 @@ export function useChatTts(
       audioElRef.current.paused &&
       audioElRef.current.currentTime > 0
     ) {
-      audioElRef.current.play().catch(() => {});
+      audioElRef.current.play().catch(catchAndLog("chat-tts", "audio resume play"));
     }
     setIsPaused(false);
   }, []);

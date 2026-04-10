@@ -82,7 +82,7 @@ export function QuickTranscriptModal({
       setSessionId(session.id);
       prevSegCountRef.current = transcriptionState.segments.length;
       recordingStartRef.current = Date.now();
-      transcriptionActions.startRecording().catch(() => {});
+      transcriptionActions.startRecording().catch((e) => console.warn("[transcript] startRecording failed:", e));
     }
     if (!open) {
       autoStartedRef.current = false;

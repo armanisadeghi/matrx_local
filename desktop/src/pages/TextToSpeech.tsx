@@ -968,7 +968,7 @@ function BlendTab({
       const url = URL.createObjectURL(blob);
       setPreviewUrl(url);
       const audio = new Audio(url);
-      audio.play().catch(() => {});
+      audio.play().catch((e) => console.warn("[tts-page] preview play failed:", e));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

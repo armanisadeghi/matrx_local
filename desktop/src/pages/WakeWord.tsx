@@ -624,7 +624,7 @@ function OwwModelPicker({
     engineAPI
       .owwListModels()
       .then((r) => setModels(r.models))
-      .catch(() => {});
+      .catch((e) => console.warn("[wake-word] owwListModels failed:", e));
   }, []);
 
   const downloaded = models.filter((m) => m.downloaded);

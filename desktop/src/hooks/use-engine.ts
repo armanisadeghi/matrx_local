@@ -367,7 +367,7 @@ export function useEngine(authenticated = true) {
               session.user.id,
               session.refresh_token ?? undefined,
               session.expires_in ?? undefined,
-            ).catch(() => {});
+            ).catch((e) => console.warn("[engine] syncTokenToPython failed:", e));
 
             // Skip if initialize() already sent configure within the last 10s
             // to avoid a duplicate call on the INITIAL_SESSION event.
@@ -375,9 +375,9 @@ export function useEngine(authenticated = true) {
             try {
               lastCloudConfigureRef.current = Date.now();
               await engine.configureCloudSync(session.access_token, session.user.id);
-              engine.cloudHeartbeat().catch(() => {});
-            } catch {
-              // Non-critical
+              engine.cloudHeartbeat().catch((e) => console.warn("[engine] cloudHeartbeat failed:", e));
+            } catch (e) {
+              console.warn("[engine] configureCloudSync failed (non-critical):", e);
             }
           }
         } else if (event === "TOKEN_REFRESHED") {
@@ -388,15 +388,15 @@ export function useEngine(authenticated = true) {
               session.user.id,
               session.refresh_token ?? undefined,
               session.expires_in ?? undefined,
-            ).catch(() => {});
+            ).catch((e) => console.warn("[engine] syncTokenToPython (refresh) failed:", e));
             try {
               await engine.reconfigureCloudSync(session.access_token, session.user.id);
-            } catch {
-              // Non-critical
+            } catch (e) {
+              console.warn("[engine] reconfigureCloudSync failed (non-critical):", e);
             }
           }
         } else if (event === "SIGNED_OUT") {
-          engine.clearPythonToken().catch(() => {});
+          engine.clearPythonToken().catch((e) => console.warn("[engine] clearPythonToken failed:", e));
         }
       }
     );
@@ -422,7 +422,7 @@ export function useEngine(authenticated = true) {
 
     // Periodic cloud heartbeat (every 5 minutes)
     const heartbeatInterval = setInterval(() => {
-      engine.cloudHeartbeat().catch(() => {});
+      engine.cloudHeartbeat().catch((e) => console.warn("[engine] periodic heartbeat failed:", e));
     }, 300000);
 
     return () => {
