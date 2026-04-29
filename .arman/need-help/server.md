@@ -1,7 +1,15 @@
 # Scraper Server Integration — Status
 
-> Updated: 2026-04-28 by matrx-local (Python engine)
+> Updated: 2026-04-29 by matrx-local (Python engine)
 > Server: `scraper.app.matrxserver.com`
+>
+> **Server-side auth enforcement is now LIVE (2026-04-29).** Every
+> `/api/scraper/*` route returns `401 {"detail":{"error":"token_required",...}}`
+> if `Authorization: Bearer <supabase_jwt>` is missing or invalid. `/health`
+> and `/health/ready` stay public. The desktop app already forwards JWTs
+> after the lockstep migration, so this should not change desktop behavior
+> — but if you do see new 401s after sign-in, the JWT either expired or
+> wasn't fetched from `TokenRepo`.
 
 ---
 
