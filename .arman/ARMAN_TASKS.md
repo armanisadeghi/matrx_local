@@ -62,3 +62,4 @@ _Skim and check off or delete files._
 - [x] GitHub secrets: `AIDREAM_SERVER_URL_LIVE`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY`.
 - [x] Windows installer NSIS + hooks.
 - [x] First-run / setup wizard shipped in app (`FirstRunScreen` + wizard).
+
