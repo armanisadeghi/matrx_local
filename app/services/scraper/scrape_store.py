@@ -281,11 +281,24 @@ async def get_sync_summary() -> dict[str, Any]:
 
 async def _push_one_to_cloud(row: dict[str, Any]) -> None:
     """Push a single pending row to the remote scraper server."""
+    from app.services.scraper.auth_helper import get_active_user_token
     from app.services.scraper.remote_client import get_remote_scraper
 
     row_id: str = row["id"]
     url: str = row["url"]
     try:
+        # Without an active user JWT the server can't attribute the save
+        # to a real user. Defer the row instead of failing it permanently
+        # — the next push attempt (or a manual retry after sign-in) will
+        # try again.
+        auth_token = await get_active_user_token()
+        if not auth_token:
+            logger.debug(
+                "[scrape_store] Cloud sync deferred (no active user token): %s id=%s",
+                url, row_id,
+            )
+            return
+
         content = row["content"]
         if isinstance(content, str):
             content = json.loads(content)
@@ -298,6 +311,7 @@ async def _push_one_to_cloud(row: dict[str, Any]) -> None:
             content=content,
             content_type=content_type,
             char_count=char_count if char_count > 0 else None,
+            auth_token=auth_token,
         )
         await mark_cloud_synced(row_id)
         logger.info("[scrape_store] Cloud sync OK: %s (id=%s)", url, row_id)

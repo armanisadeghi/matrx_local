@@ -7,6 +7,14 @@ server's proxy pool, or accessing server-side cached content.
 
 All communication uses the scraper server's REST API with Bearer token auth.
 No direct database access — the server handles all persistence.
+
+API contract (matrx-scraper standalone microservice):
+    https://scraper.app.matrxserver.com/api/scraper/...
+
+Migrated 2026-04-29 from /api/v1/* to /api/scraper/*. Health is now
+/health/ready (the server's readiness probe). Response shapes also
+changed — see packages/matrx-scraper/MIGRATION_GUIDE.md in the
+aidream-current repo for the full diff.
 """
 
 from __future__ import annotations
@@ -22,6 +30,11 @@ from app.config import SCRAPER_API_KEY, SCRAPER_SERVER_URL
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 60.0
+
+# All scrape/queue endpoints live under this prefix on the standalone
+# matrx-scraper microservice. Health endpoints live at the app root.
+API_PREFIX = "/api/scraper"
+HEALTH_PATH = "/health/ready"
 
 
 class RemoteScraperClient:
@@ -52,7 +65,7 @@ class RemoteScraperClient:
     async def health(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
-                f"{self._server_url}/api/v1/health",
+                f"{self._server_url}{HEALTH_PATH}",
                 headers=self._headers(),
             )
             resp.raise_for_status()
@@ -64,11 +77,25 @@ class RemoteScraperClient:
         options: dict[str, Any] | None = None,
         auth_token: str | None = None,
     ) -> dict[str, Any]:
+        """Non-streaming batch scrape. Maps to the new `/api/scraper/batch`.
+
+        The response shape changed in the new contract:
+            old: {"results": [{"status": "success"|"error", "error": "..."}]}
+            new: {"status": "success", "execution_time_ms": ...,
+                  "results": [{"success": true|false, "failure_reason": "..."}]}
+
+        Callers parsing results should check `page["success"]` (bool) instead
+        of `page["status"] == "success"`, and read `page["failure_reason"]`
+        instead of `page["error"]`.
+        """
+        body: dict[str, Any] = {"urls": urls}
+        if options:
+            body.update(options)
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.post(
-                f"{self._server_url}/api/v1/scrape",
+                f"{self._server_url}{API_PREFIX}/batch",
                 headers=self._headers(auth_token),
-                json={"urls": urls, "options": options or {}},
+                json=body,
             )
             resp.raise_for_status()
             return resp.json()
@@ -82,7 +109,7 @@ class RemoteScraperClient:
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.post(
-                f"{self._server_url}/api/v1/search",
+                f"{self._server_url}{API_PREFIX}/search",
                 headers=self._headers(auth_token),
                 json={"keywords": keywords, "count": count, "country": country},
             )
@@ -98,7 +125,7 @@ class RemoteScraperClient:
     ) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
-                f"{self._server_url}/api/v1/search-and-scrape",
+                f"{self._server_url}{API_PREFIX}/search-and-scrape",
                 headers=self._headers(auth_token),
                 json={
                     "keywords": keywords,
@@ -116,11 +143,20 @@ class RemoteScraperClient:
         country: str = "US",
         auth_token: str | None = None,
     ) -> dict[str, Any]:
+        # The standalone scraper does not currently expose a dedicated
+        # /research endpoint — the closest semantic equivalent is
+        # search-and-scrape with `fast=true` (research-mode flag that skips
+        # link extraction and hashing). Caller should treat the response as
+        # search-and-scrape output, not the legacy research shape.
         async with httpx.AsyncClient(timeout=180.0) as client:
             resp = await client.post(
-                f"{self._server_url}/api/v1/research",
+                f"{self._server_url}{API_PREFIX}/search-and-scrape",
                 headers=self._headers(auth_token),
-                json={"query": query, "effort": effort, "country": country},
+                json={
+                    "keywords": [query],
+                    "country": country,
+                    "options": {"fast": True, "effort": effort},
+                },
             )
             resp.raise_for_status()
             return resp.json()
@@ -132,7 +168,12 @@ class RemoteScraperClient:
         auth_token: str | None = None,
         timeout: float = 300.0,
     ) -> AsyncIterator[bytes]:
-        """Open an SSE stream from the scraper server and yield raw lines."""
+        """Open an NDJSON stream from the scraper server and yield raw lines.
+
+        `path` should be a fully-formed path under the new API prefix, e.g.
+        `/api/scraper/quick-scrape` (the new streaming default for scrape) or
+        `/api/scraper/search-and-scrape`.
+        """
         headers = self._headers(auth_token)
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=10.0)) as client:
             async with client.stream(
@@ -148,7 +189,7 @@ class RemoteScraperClient:
     async def get_domain_configs(self, auth_token: str | None = None) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.get(
-                f"{self._server_url}/api/v1/config/domains",
+                f"{self._server_url}{API_PREFIX}/config/domains",
                 headers=self._headers(auth_token),
             )
             resp.raise_for_status()
@@ -184,7 +225,7 @@ class RemoteScraperClient:
             body["char_count"] = char_count
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.post(
-                f"{self._server_url}/api/v1/content/save",
+                f"{self._server_url}{API_PREFIX}/content/save",
                 headers=self._headers(auth_token),
                 json=body,
             )
@@ -202,7 +243,7 @@ class RemoteScraperClient:
         """Fetch URLs that failed on the server and need local retry."""
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.get(
-                f"{self._server_url}/api/v1/queue/pending",
+                f"{self._server_url}{API_PREFIX}/queue/pending",
                 headers=self._headers(auth_token),
                 params={"tier": tier, "limit": limit},
             )
@@ -219,7 +260,7 @@ class RemoteScraperClient:
         """Claim queue items (10-min TTL) so no other client picks them up."""
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.post(
-                f"{self._server_url}/api/v1/queue/claim",
+                f"{self._server_url}{API_PREFIX}/queue/claim",
                 headers=self._headers(auth_token),
                 json={
                     "item_ids": item_ids,
@@ -250,7 +291,7 @@ class RemoteScraperClient:
             body["char_count"] = char_count
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.post(
-                f"{self._server_url}/api/v1/queue/submit",
+                f"{self._server_url}{API_PREFIX}/queue/submit",
                 headers=self._headers(auth_token),
                 json=body,
             )
@@ -267,7 +308,7 @@ class RemoteScraperClient:
         """Report that a local scrape attempt failed for a queue item."""
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.post(
-                f"{self._server_url}/api/v1/queue/fail",
+                f"{self._server_url}{API_PREFIX}/queue/fail",
                 headers=self._headers(auth_token),
                 json={
                     "queue_item_id": queue_item_id,
@@ -282,7 +323,7 @@ class RemoteScraperClient:
         """Get retry queue statistics."""
         async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
             resp = await client.get(
-                f"{self._server_url}/api/v1/queue/stats",
+                f"{self._server_url}{API_PREFIX}/queue/stats",
                 headers=self._headers(auth_token),
             )
             resp.raise_for_status()

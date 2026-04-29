@@ -5,12 +5,16 @@ The remote scraper server automatically enqueues URLs it failed to scrape
 user's residential IP.
 
 This module runs a background asyncio task that:
-  1. Polls GET /api/v1/queue/pending every 30s
+  1. Polls GET /api/scraper/queue/pending every 30s
   2. Claims items (10-min TTL)
   3. Scrapes each URL locally via the ScraperEngine
-  4. On success → POST /api/v1/queue/submit  (content stored in server DB)
+  4. On success → POST /api/scraper/queue/submit  (content stored in server DB)
      On success → also save_content() directly (belt-and-suspenders)
-  5. On failure → POST /api/v1/queue/fail    (promotes to Chrome ext tier)
+  5. On failure → POST /api/scraper/queue/fail    (promotes to Chrome ext tier)
+
+All remote calls forward the active user's Supabase JWT so writes are
+attributed to the real user. If no user is logged in, the cycle is a
+no-op until they sign in.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import logging
 import uuid
 from typing import Any
 
+from app.services.scraper.auth_helper import get_active_user_token
 from app.services.scraper.remote_client import get_remote_scraper
 
 logger = logging.getLogger(__name__)
@@ -97,8 +102,19 @@ async def _poll_once() -> None:
     if not client.is_configured:
         return
 
+    # Fetch the active user's JWT once per cycle. Without it the server
+    # can't attribute writes to a real user (and once auth is enforced
+    # server-side, every queue call would 401). When no user is signed
+    # in, this poll cycle is a no-op until they sign in.
+    auth_token = await get_active_user_token()
+    if not auth_token:
+        logger.debug("RetryQueue: no active user token; skipping cycle")
+        return
+
     try:
-        resp = await client.get_pending(tier="desktop", limit=_BATCH_LIMIT)
+        resp = await client.get_pending(
+            tier="desktop", limit=_BATCH_LIMIT, auth_token=auth_token,
+        )
         items: list[dict[str, Any]] = resp.get("items", [])
     except Exception as exc:
         logger.warning("RetryQueue: get_pending failed: %s", exc)
@@ -115,6 +131,7 @@ async def _poll_once() -> None:
             item_ids=ids,
             client_id=_CLIENT_ID,
             client_type="desktop",
+            auth_token=auth_token,
         )
         _stats["claimed"] += len(ids)
     except Exception as exc:
@@ -139,6 +156,7 @@ async def _poll_once() -> None:
                     content=content,
                     content_type="html",
                     char_count=char_count,
+                    auth_token=auth_token,
                 )
                 _stats["submitted"] += 1
                 logger.info("RetryQueue: submitted %s (chars=%d)", url, char_count)
@@ -150,6 +168,7 @@ async def _poll_once() -> None:
                         content=content,
                         content_type="html",
                         char_count=char_count,
+                        auth_token=auth_token,
                     )
                 except Exception as exc:
                     logger.warning("RetryQueue: save_content backup failed for %s: %s", url, exc)
@@ -165,6 +184,7 @@ async def _poll_once() -> None:
                     queue_item_id=item_id,
                     error=reason,
                     promote_to_extension=True,
+                    auth_token=auth_token,
                 )
                 _stats["failed"] += 1
             except Exception as exc:

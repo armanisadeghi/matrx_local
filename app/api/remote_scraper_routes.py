@@ -89,7 +89,7 @@ async def remote_scrape_stream(req: ScrapeRequest, request: Request):
     client = _get_client_or_raise()
     return StreamingResponse(
         client.stream_sse(
-            "/api/v1/scrape/stream",
+            "/api/scraper/quick-scrape",
             {"urls": req.urls, "options": req.options or {}},
             auth_token=_get_user_token(request),
         ),
@@ -135,7 +135,7 @@ async def remote_search_and_scrape_stream(req: SearchAndScrapeRequest, request: 
     client = _get_client_or_raise()
     return StreamingResponse(
         client.stream_sse(
-            "/api/v1/search-and-scrape/stream",
+            "/api/scraper/search-and-scrape",
             {
                 "keywords": req.keywords,
                 "total_results_per_keyword": req.total_results_per_keyword,
@@ -168,10 +168,16 @@ async def remote_research(req: ResearchRequest, request: Request):
 async def remote_research_stream(req: ResearchRequest, request: Request):
     """Deep research via SSE stream."""
     client = _get_client_or_raise()
+    # Research endpoint not present on the new standalone scraper; use
+    # search-and-scrape with research-mode options as the closest equivalent.
     return StreamingResponse(
         client.stream_sse(
-            "/api/v1/research/stream",
-            {"query": req.query, "effort": req.effort, "country": req.country},
+            "/api/scraper/search-and-scrape",
+            {
+                "keywords": [req.query],
+                "country": req.country,
+                "options": {"fast": True, "effort": req.effort},
+            },
             auth_token=_get_user_token(request),
             timeout=300.0,
         ),

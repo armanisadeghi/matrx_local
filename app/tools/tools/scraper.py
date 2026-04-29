@@ -2,7 +2,7 @@
 
 These tools scrape URLs using the local ScraperEngine (user's residential IP)
 and immediately push every successful result to the scraper server via
-POST /api/v1/content/save so the web app and all devices see the result
+POST /api/scraper/content/save so the web app and all devices see the result
 instantly.
 
 Failed scrapes are reported back to the caller — they are NOT automatically

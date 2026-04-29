@@ -1,79 +1,106 @@
 # Scraper Server Integration — Status
 
-> Updated: 2026-02-21 by matrx-local (Python engine)
+> Updated: 2026-04-28 by matrx-local (Python engine)
 > Server: `scraper.app.matrxserver.com`
 
 ---
 
-## ✅ All Questions Answered — Integration Complete
+## ✅ Migration to new contract complete (server-side + Python client)
 
-All original questions have been answered by the server admin. Summary of confirmed facts:
+The standalone scraper service was rewritten in the `aidream-current` monorepo
+as `packages/matrx-scraper`. It is **the same package** that aidream-server
+mounts internally — the standalone microservice and the embedded routes share
+one codebase. This was deployed and verified live on 2026-04-28.
 
-| Topic            | Answer                                                                                 |
-| ---------------- | -------------------------------------------------------------------------------------- |
-| API docs         | Swagger at `/docs`, OpenAPI at `/openapi.json`, machine-readable at `/api/v1/docs/api` |
-| Base path        | `/api/v1/`                                                                             |
-| Auth             | `Authorization: Bearer <token>` (API key or Supabase JWT)                              |
-| Key scope        | Global org key; per-user via JWT                                                       |
-| Data persistence | Dedicated Postgres 17 on Coolify (not Supabase)                                        |
-| Stored data      | Parsed content in `scrape_parsed_page` (JSONB), 30-day TTL                             |
-| CORS             | N/A — Python engine is always the proxy                                                |
-| Rate limits      | No hard limits; practical: 20 concurrent scrapes, 50 URLs/batch max recommended        |
-| Proxy rotation   | Server-side; clients just send URLs                                                    |
+### What changed on the server
 
----
+| Concern             | Before                              | After                                     |
+| ------------------- | ----------------------------------- | ----------------------------------------- |
+| Base path           | `/api/v1/*`                         | `/api/scraper/*`                          |
+| Health (liveness)   | `/api/v1/health`                    | `/health`                                 |
+| Health (readiness)  | n/a                                 | `/health/ready`                           |
+| Auth                | `X-API-Key: <org_key>` OR Bearer    | `Authorization: Bearer <supabase_jwt>` only |
+| `scrape` (sync)     | `POST /api/v1/scrape`               | `POST /api/scraper/batch`                 |
+| `research` (sync)   | `POST /api/v1/research`             | `POST /api/scraper/search-and-scrape` with `{"options":{"fast":true}}` |
+| Page response field | `page.status == "success"`          | `page.success: bool`                      |
+| Page error field    | `page.error`                        | `page.failure_reason`                     |
+| Save content        | `POST /api/v1/content/save`         | `POST /api/scraper/content/save`          |
+| Queue endpoints     | `/api/v1/queue/*`                   | `/api/scraper/queue/*`                    |
 
-## ✅ What We've Implemented (Python Engine)
+### What changed in matrx-local (already pushed)
 
-### Core methods (`remote_client.py`) — all confirmed working:
+- `app/services/scraper/remote_client.py`
+  - All hardcoded `/api/v1/*` paths swapped to `/api/scraper/*`
+  - `health()` now hits `/health/ready`
+  - `scrape()` calls `/batch` (non-streaming)
+  - `research()` remapped to `search-and-scrape` with `fast=True`
+  - Docstrings updated for new response field names (`success`, `failure_reason`)
 
-| Method                 | Server Endpoint                  | Status     |
-| ---------------------- | -------------------------------- | ---------- |
-| `health()`             | `GET /api/v1/health`             | ✅ Working |
-| `scrape()`             | `POST /api/v1/scrape`            | ✅ Working |
-| `search()`             | `POST /api/v1/search`            | ✅ Working |
-| `search_and_scrape()`  | `POST /api/v1/search-and-scrape` | ✅ Working |
-| `research()`           | `POST /api/v1/research`          | ✅ Working |
-| `stream_sse()`         | `POST /api/v1/*/stream`          | ✅ Working |
-| `get_domain_configs()` | `GET /api/v1/config/domains`     | ✅ Working |
-| `save_content()`       | `POST /api/v1/content/save`      | ✅ Added   |
-| `get_pending()`        | `GET /api/v1/queue/pending`      | ✅ Added   |
-| `claim_items()`        | `POST /api/v1/queue/claim`       | ✅ Added   |
-| `submit_result()`      | `POST /api/v1/queue/submit`      | ✅ Added   |
-| `report_failure()`     | `POST /api/v1/queue/fail`        | ✅ Added   |
-| `queue_stats()`        | `GET /api/v1/queue/stats`        | ✅ Added   |
+- `app/api/remote_scraper_routes.py`
+  - Same path swap for the local FastAPI proxy used by the desktop UI
 
----
+- **`app/services/scraper/auth_helper.py` (new)**
+  - `get_active_user_token()` — pulls a non-expired Supabase JWT from the local
+    `TokenRepo` so background tasks can attribute writes to a real user.
 
-## 🔲 Remaining Work (Our Side)
+- `app/services/scraper/retry_queue.py`
+  - `_poll_once()` now fetches the active user JWT once per cycle and forwards
+    it on every server call (`get_pending`, `claim_items`, `submit_result`,
+    `save_content`, `report_failure`). If no user is signed in, the cycle is a
+    no-op.
 
-### 1. Retry Queue Background Polling (Python Engine)
+- `app/services/scraper/scrape_store.py`
+  - `_push_one_to_cloud()` now fetches the active user JWT before pushing.
+    If no user is signed in, the row stays `pending` (not failed) so it will
+    sync after sign-in.
 
-Need to build the background task that runs every ~30s:
-
-1. `get_pending(tier="desktop")` → get failed URLs
-2. `claim_items(ids)` → claim with 10-min TTL
-3. Scrape locally using residential IP
-4. On success: `submit_result()` → content stored on server
-5. On failure: `report_failure(promote_to_extension=True)`
-
-**Retryable failures** (auto-queued by server): `cloudflare_block`, `blocked`, `bad_status`, `request_error`, `proxy_error`
-
-### 2. Auto Save-Back After Local Scrapes
-
-When the local engine scrapes a page successfully (especially as fallback after remote failure), auto-call `save_content()` to push the result to the server's central DB so all clients benefit.
-
-### 3. Expose Queue Endpoints via Routes
-
-Add FastAPI routes in `remote_scraper_routes.py` to expose queue status/stats to the frontend.
+- `app/tools/tools/scraper.py`
+  - Already takes `auth_token` as a param; comment + docstring updated to point
+    at `/api/scraper/content/save`.
 
 ---
 
-## No Outstanding Questions for Server Admin
+## 🔲 What still needs verification on a real desktop
 
-All integration details are resolved. The admin tools (Directus CMS at `directus.app.matrxserver.com`, NocoDB at `nocodb.app.matrxserver.com`) are available for data browsing but not used by the desktop app.
+The server side has been smoke-tested with an admin JWT — `/health`,
+`/health/ready`, `/api/scraper/queue/stats`, `/api/scraper/queue/pending`, and
+`POST /api/scraper/quick-scrape` all return 200. What can't be tested from the
+server is **JWT retrieval from a logged-in user's local SQLite**.
 
-Routing logic confirmed:
+To verify end-to-end on a desktop:
+
+1. Sign in to the desktop app (so `TokenRepo` has a fresh Supabase JWT).
+2. Watch the desktop logs for the next retry-queue cycle. You should see
+   `RetryQueue: ...` lines without the previous `401 Unauthorized` errors.
+3. Run a local scrape from the UI — the cloud sync log should say
+   `[scrape_store] Cloud sync OK: ...` instead of being deferred.
+
+If you sign out, expect the new `RetryQueue: no active user token; skipping
+cycle` debug log every poll interval — that's the new safe default, not a bug.
+
+---
+
+## API quick reference (current)
+
+```
+GET  /health                                # liveness
+GET  /health/ready                          # readiness (used by Coolify HC)
+GET  /api/scraper/queue/pending?tier=desktop&limit=10
+POST /api/scraper/queue/claim
+POST /api/scraper/queue/submit
+POST /api/scraper/queue/fail
+GET  /api/scraper/queue/stats
+POST /api/scraper/content/save
+POST /api/scraper/batch                     # was /scrape
+POST /api/scraper/search-and-scrape         # also serves the old `research` use case
+POST /api/scraper/quick-scrape
+```
+
+All require `Authorization: Bearer <supabase_jwt>`.
+
+---
+
+## Routing logic (unchanged)
 
 1. Try remote first (faster, proxy pool, persistent cache)
 2. If `CLOUDFLARE_BLOCK` or `BLOCKED` → retry locally (residential IP)
