@@ -79,6 +79,7 @@ ALLOWED_ORIGIN_REGEX = (
     r"|https://.*-armani-sadeghis-projects\.vercel\.app"
     r"|https://.*\.vercel\.app"  # covers preview deployments
     r"|https://.*\.trycloudflare\.com"  # Cloudflare quick tunnels (remote access dev/testing)
+    r"|chrome-extension://.*"  # Chrome extensions
 )
 
 # ---------------------------------------------------------------------------

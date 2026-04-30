@@ -32,6 +32,7 @@ from app.api.image_gen_routes import router as image_gen_router
 from app.api.tts_routes import router as tts_router
 from app.api.hf_token_routes import router as hf_token_router
 from app.api.scrape_routes import router as scrape_router
+from app.api.extension_routes import router as extension_router
 from app.services.downloads.routes import router as downloads_router
 from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, MATRX_HOME_DIR, TUNNEL_ENABLED
 from app.common.system_logger import get_logger
@@ -689,6 +690,7 @@ app.include_router(image_gen_router)
 app.include_router(tts_router)
 app.include_router(hf_token_router)
 app.include_router(scrape_router)
+app.include_router(extension_router)
 app.include_router(downloads_router)
 
 # NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler

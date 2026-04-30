@@ -85,7 +85,7 @@ async def root():
 @router.get("/health")
 async def health():
     """Simple health check — returns OK if the engine is running."""
-    return {"status": "ok", "service": "matrx-local"}
+    return {"status": "ok", "service": "matrx-local", "version": _APP_VERSION}
 
 
 @router.get("/version")
