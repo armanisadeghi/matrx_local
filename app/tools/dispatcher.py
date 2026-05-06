@@ -247,6 +247,62 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
 TOOL_NAMES: list[str] = sorted(TOOL_HANDLERS.keys())
 
 
+def list_tool_specs() -> list[dict[str, Any]]:
+    """Return a list of tool specs (name, description, category, input_schema).
+
+    Public accessor used by the matrx-extend Chrome extension's `capabilities`
+    RPC command and any other consumer that wants the engine's tool catalog.
+    Delegates to `app.tools.tool_schemas.generate_all_tool_schemas` so there
+    is exactly one source of truth for tool metadata.
+
+    The import is deferred because `tool_schemas` imports `TOOL_HANDLERS`
+    from this module — module-level import would be circular.
+    """
+    from app.tools.tool_schemas import generate_all_tool_schemas
+
+    return generate_all_tool_schemas()
+
+
+# Cached catalog hash — computed lazily, then reused on every `pong`. The
+# tool table (`TOOL_HANDLERS`) is static at process startup, so a single
+# computation is correct for the lifetime of the process. If we later add
+# dynamic registration, invalidate by setting `_TOOL_CATALOG_HASH = None`
+# from the registration site.
+_TOOL_CATALOG_HASH: str | None = None
+
+
+def tool_catalog_hash() -> str:
+    """Return a 16-char sha256 prefix over the canonical tool catalog.
+
+    The matrx-extend extension reads this from every `pong` envelope and
+    compares it against the hash it observed on its last successful
+    `capabilities` RPC. A mismatch tells the extension it should refetch
+    the catalog before issuing more invocations — avoids stale-schema
+    drift after engine restarts that introduced new tools.
+
+    Output: lowercase hex, 16 chars, derived from
+    `sha256(json.dumps(list_tool_specs(), sort_keys=True))`. Truncation
+    is fine: this is a freshness check, not a security primitive.
+    """
+    import hashlib
+    import json as _json
+
+    global _TOOL_CATALOG_HASH
+    if _TOOL_CATALOG_HASH is None:
+        try:
+            specs = list_tool_specs()
+        except Exception:
+            # If catalog generation transiently fails, return a stable
+            # sentinel so callers (the WS pong builder) don't crash. The
+            # sentinel changes on every successful regeneration, so the
+            # extension will retry naturally once the engine recovers.
+            logger.exception("[dispatcher] tool_catalog_hash: list_tool_specs failed")
+            return "0" * 16
+        canonical = _json.dumps(specs, sort_keys=True, default=str).encode("utf-8")
+        _TOOL_CATALOG_HASH = hashlib.sha256(canonical).hexdigest()[:16]
+    return _TOOL_CATALOG_HASH
+
+
 def _coerce_tool_input(handler: Callable, tool_input: dict[str, Any]) -> dict[str, Any]:
     """Coerce tool_input values to match the handler's type annotations.
 

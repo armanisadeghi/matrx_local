@@ -1,5 +1,9 @@
 # Matrx Local — Task Tracker
 
+> **NOTE (2026-05-06):** The canonical task inbox is now `.matrx/AGENT_TASKS.md` (with `.matrx/TASKS_FROM_USER.md` as the user-facing inbox and `.matrx/AGENT_INSTRUCTIONS.md` as the rules). Existing entries below are read-only history; new tasks go to `.matrx/`.
+
+---
+
 > **Living doc.** Add new issues the moment you find them. Mark done items immediately.
 > Last cleaned: 2026-03-30.
 
@@ -18,6 +22,14 @@ These cannot be resolved by changes to this repo. They are blocked on upstream p
 ## 🟠 Active Bugs & Regressions
 
 Known broken things in the current release that need fixing.
+
+- [ ] **🔴 P0 — Download manager: bytes never reach disk (audit 2026-05-04)** — Both `desktop/src-tauri/src/downloads/manager.rs:download_part:993` and `app/services/downloads/manager.py:_download_part:643` read chunks from the network, count them, and discard them with no `file.write_all` in the loop (Rust `buf.clear()` → bytes vanish; Python identical pattern). The progress bar reports network reads accurately, but the file never lands on disk. Anything routed through these paths "completes" at 100% with no data → LLM/Whisper/TTS loaders hang or crash. Root cause and full architectural fix plan in [docs/DOWNLOAD_SYSTEM_AUDIT_AND_PLAN.md](docs/DOWNLOAD_SYSTEM_AUDIT_AND_PLAN.md). Phase 1 of that doc is the immediate fix (open file before loop, write per-chunk before counting). Phases 2–6 cover progress accuracy, hooking 5 orphan downloaders into the manager, unifying the dual Rust/Python managers, elastic bandwidth-aware concurrency, and a queue-aware UI panel.
+
+- [ ] **🟠 P1 — Download progress freezes on slow connections (audit 2026-05-04)** — Both managers accumulate chunks in a `chunk_size` buffer (`if buf.len() < chunk_size { continue; }`) before counting/emitting. On <1 MB/s connections the progress bar visibly freezes for 30+ seconds at a time. Also: `content_length().unwrap_or(0)` makes percent stay 0% forever for chunked-encoding responses (HF, Cloudfront). And there's no heartbeat — 60s idle timeout with nothing in between makes stalls indistinguishable from hangs. See [docs/DOWNLOAD_SYSTEM_AUDIT_AND_PLAN.md](docs/DOWNLOAD_SYSTEM_AUDIT_AND_PLAN.md) Phase 2.
+
+- [ ] **🟠 P1 — Five downloads bypass the unified manager (audit 2026-05-04)** — `desktop/src-tauri/src/transcription/downloader.rs`, `app/services/wake_word/models.py`, `app/api/setup_routes.py:_download_transcription_model`, `app/api/setup_routes.py:_download_cloudflared`, `app/tools/tools/transfer.py` all do their own downloads with progress reported via callback or custom SSE events, none appear in the global download panel; the `transfer` tool is fully silent on multi-GB files. Plus: Rust + Python managers are independent with separate SQLite stores → duplicate work and conflicting state. Audit doc Phases 3–4.
+
+- [ ] **🟡 P2 — Queue panel doesn't show pending or aggregate state (audit 2026-05-04)** — `DownloadManagerModal` lists downloads but doesn't separate active from pending or show aggregate bandwidth, stage badges (downloading vs verifying vs extracting vs moving), or stall detection. Users don't know "there are 4 more queued behind this one." Bandwidth-aware concurrency exists in `manager.rs:should_expand_slots:267` but never expands in practice — source-rate-limited downloads (HF) leave bandwidth on the table. Audit doc Phases 5–6 + UI mockup in the same doc.
 
 - [x] **Process lifecycle & shutdown overhaul (2026-04-01)** — Root-caused and fixed: (1) `graceful_shutdown_sync` was blocking the main thread for up to 28s, causing macOS to SIGKILL Tauri and log a crash/"unexpected shutdown"; (2) `activation_policy` was never changed, so the Dock icon persisted when the window was hidden to tray — users relaunched the app from Finder, producing two Dock icons and a second instance; (3) Python S5 network service stops (`proxy.stop()`, `tm.stop()`, `engine.stop()`) had no timeout caps, blocking teardown indefinitely on stuck Playwright/TCP. Fixes: all three `graceful_shutdown_sync` call sites now spawn background threads (main thread stays responsive to macOS watchdog); `set_activation_policy(Accessory)` on window-hide / `set_activation_policy(Regular)` on window-show (macOS only); `asyncio.wait_for` with 5s/7s/8s caps on proxy/tunnel/scraper stops; parent-watchdog poll reduced from 2s → 0.5s; `use-llm.ts` listener cleanup fixed to unlisten on effect re-run.
 

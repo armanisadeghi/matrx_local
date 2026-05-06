@@ -56,6 +56,12 @@ dependencies = [
     "matrx-utils>=1.0.19",
     "matrx-orm>=3.0.32",
     "matrx-ai>=0.1.26",
+    # Supabase Python client — powers the engine↔extension Broadcast plumb
+    # in `app/api/extension_broadcast.py` (C2.d substrate). Already pulled in
+    # transitively via matrx-ai/matrx-utils, but we declare it explicitly so
+    # the import graph is self-documenting and a future minor-version bump
+    # in those upstream packages can't silently drop it.
+    "supabase>=2.28.0",
     "screeninfo>=0.8.1",
     # Media downloading & video processing
     "yt-dlp>=2024.1.0",

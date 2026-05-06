@@ -145,3 +145,13 @@ Never let a discovered issue go untracked. Add it to the right file and continue
 - Keep going until done or stuck
 - OK to edit .env files — comment out, don't delete
 - Update docs when code changes
+
+---
+
+## Cross-Repo Integration with matrx-extend
+
+The matrx-extend Chrome extension is a primary client of this engine. Integration map and protocols:
+- Connection details: [docs/MATRX_EXTEND_CONNECTION.md](./docs/MATRX_EXTEND_CONNECTION.md)
+- Skill for working on this connection: `.cursor/skills/connect-matrx-extend/SKILL.md`
+- Master cross-repo doc (in matrx-extend): `/Users/armanisadeghi/code/matrx-extend/.claude/worktrees/exciting-moser-4b984f/docs/CROSS_REPO_INTEGRATION.md`
+- Task pipeline for cross-repo work: `.matrx/` (TASKS_FROM_USER → AGENT_TASKS → AGENT_INSTRUCTIONS). Note: legacy root `AGENT_TASKS.md` retained as read-only history; new tasks go in `.matrx/`.
