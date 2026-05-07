@@ -36,6 +36,7 @@ from app.api.extension_auth import (
 )
 from app.api.extension_bridge_routes import publish_event
 from app.api.extension_handlers import HANDLERS
+from app.api.extension_metrics import record as record_metric
 from app.api.extension_ws_manager import (
     register_session,
     resolve_pending_future,
@@ -88,8 +89,19 @@ async def handle_rpc(
     )
     publish_event("rpc.in", "in", {"command": request.command})
 
+    # Stamp the entry time so we can record latency on every exit branch
+    # below — unknown command, handler exception, or success.
+    t0 = time.perf_counter()
+
     handler = HANDLERS.get(request.command)
     if handler is None:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            request.command,
+            latency_ms,
+            ok=False,
+            error=f"Unknown command: {request.command}",
+        )
         publish_event(
             "rpc.out",
             "out",
@@ -102,6 +114,8 @@ async def handle_rpc(
 
     try:
         data = await handler(request.args or {}, req)
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(request.command, latency_ms, ok=True)
         publish_event(
             "rpc.out",
             "out",
@@ -109,6 +123,13 @@ async def handle_rpc(
         )
         return DesktopRpcResponse(ok=True, data=data)
     except Exception as e:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            request.command,
+            latency_ms,
+            ok=False,
+            error=f"{type(e).__name__}: {e}",
+        )
         logger.error(
             "[extension_routes] handler %r failed: %s",
             request.command,
@@ -194,6 +215,11 @@ async def extension_websocket(websocket: WebSocket) -> None:
 
     await websocket.accept()
     session = register_session(websocket, user_token=token)
+    # Track connection start so disconnect can record total duration as a
+    # "latency" — gives the metrics page a useful "how long are sessions
+    # staying alive?" signal.
+    connection_started = time.perf_counter()
+    await record_metric("ws:connect", 0.0, ok=True)
     publish_event(
         "ws.open",
         "in",
@@ -226,9 +252,28 @@ async def extension_websocket(websocket: WebSocket) -> None:
                     session.session_id,
                     exc,
                 )
+                await record_metric(
+                    "ws:message",
+                    0.0,
+                    ok=False,
+                    error=f"invalid JSON: {exc}",
+                )
                 continue
 
-            await _handle_extension_message(session.session_id, msg)
+            msg_t0 = time.perf_counter()
+            try:
+                await _handle_extension_message(session.session_id, msg)
+                msg_latency_ms = (time.perf_counter() - msg_t0) * 1000.0
+                await record_metric("ws:message", msg_latency_ms, ok=True)
+            except Exception as msg_exc:
+                msg_latency_ms = (time.perf_counter() - msg_t0) * 1000.0
+                await record_metric(
+                    "ws:message",
+                    msg_latency_ms,
+                    ok=False,
+                    error=f"{type(msg_exc).__name__}: {msg_exc}",
+                )
+                raise
     except WebSocketDisconnect as exc:
         # 1001 (Going Away) and 1012 (Service Restart) are expected
         # close codes during normal extension lifecycle (page unload,
@@ -254,6 +299,14 @@ async def extension_websocket(websocket: WebSocket) -> None:
             exc_info=True,
         )
     finally:
+        connection_duration_ms = (
+            (time.perf_counter() - connection_started) * 1000.0
+        )
+        await record_metric(
+            "ws:disconnect",
+            connection_duration_ms,
+            ok=True,
+        )
         unregister_session(session.session_id)
         publish_event(
             "ws.close",

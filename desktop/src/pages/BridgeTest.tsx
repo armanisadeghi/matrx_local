@@ -26,6 +26,7 @@ import {
   AlertCircle,
   Check,
   ChevronRight,
+  Gauge,
   Heart,
   ListTree,
   Pause,
@@ -60,7 +61,9 @@ import {
   engine,
   type BridgeEvent,
   type ExtensionBroadcastStatus,
+  type ExtensionCommandMetrics,
   type ExtensionInvokeResponse,
+  type ExtensionMetricsSnapshot,
   type ExtensionRpcResponse,
   type ExtensionSessionInfo,
 } from "@/lib/api";
@@ -172,6 +175,11 @@ export function BridgeTest({
   const [logConnected, setLogConnected] = useState(false);
   const logPausedRef = useRef(logPaused);
   logPausedRef.current = logPaused;
+
+  // Metrics (lives inside Panel 1 as a sub-section) --------------------------
+  const [metrics, setMetrics] = useState<ExtensionMetricsSnapshot>({});
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [metricsBusy, setMetricsBusy] = useState(false);
 
   const isEngineReady = engineStatus === "connected" && engineUrl !== null;
 
@@ -320,6 +328,30 @@ export function BridgeTest({
     setLogEvents([]);
   }, []);
 
+  const refreshMetrics = useCallback(async () => {
+    if (!isEngineReady) return;
+    try {
+      const snap = await engine.extensionGetMetrics();
+      setMetrics(snap);
+      setMetricsError(null);
+    } catch (e) {
+      setMetricsError(String(e));
+    }
+  }, [isEngineReady]);
+
+  const resetMetrics = useCallback(async () => {
+    if (!isEngineReady) return;
+    setMetricsBusy(true);
+    try {
+      await engine.extensionResetMetrics();
+      await refreshMetrics();
+    } catch (e) {
+      setMetricsError(String(e));
+    } finally {
+      setMetricsBusy(false);
+    }
+  }, [isEngineReady, refreshMetrics]);
+
   // -------------------------------------------------------------------------
   // Effects — narrow deps, no broad "actions" objects
   // -------------------------------------------------------------------------
@@ -329,7 +361,42 @@ export function BridgeTest({
     if (!isEngineReady) return;
     void refreshSessions();
     void refreshBroadcastStatus();
-  }, [isEngineReady, refreshSessions, refreshBroadcastStatus]);
+    void refreshMetrics();
+  }, [isEngineReady, refreshSessions, refreshBroadcastStatus, refreshMetrics]);
+
+  // Metrics polling — gated on document visibility so we don't burn
+  // cycles when the desktop window is minimized or the page is hidden.
+  useEffect(() => {
+    if (!isEngineReady) return;
+    let active = !document.hidden;
+    let id: ReturnType<typeof setInterval> | null = null;
+
+    const start = () => {
+      if (id !== null) return;
+      id = setInterval(() => void refreshMetrics(), 2000);
+    };
+    const stop = () => {
+      if (id !== null) {
+        clearInterval(id);
+        id = null;
+      }
+    };
+
+    const onVisibility = () => {
+      const visible = !document.hidden;
+      if (visible && !active) void refreshMetrics();
+      active = visible;
+      if (visible) start();
+      else stop();
+    };
+
+    if (active) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
+  }, [isEngineReady, refreshMetrics]);
 
   // Sessions auto-refresh — gated on the narrow boolean, not actions
   useEffect(() => {
@@ -494,6 +561,17 @@ export function BridgeTest({
                   names={capabilityToolNames}
                 />
               </div>
+
+              <Separator />
+
+              <MetricsSection
+                metrics={metrics}
+                error={metricsError}
+                busy={metricsBusy}
+                isEngineReady={isEngineReady}
+                onRefresh={refreshMetrics}
+                onReset={resetMetrics}
+              />
             </CardContent>
           </Card>
 
@@ -950,6 +1028,240 @@ function RpcResultCard({
         </pre>
       ) : (
         <div className="text-muted-foreground">Not run yet.</div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Metrics — sub-section inside Panel 1.
+//
+// Polls `/extension/metrics` every 2s while the page is visible (the
+// surrounding effect handles visibility gating). Renders a compact
+// table: command | total | errors | p50 ms | p95 ms | last called |
+// last error. Percentiles are computed client-side from the
+// `last_n_latencies_ms` deque snapshot — keeps the engine honest as the
+// single source of truth.
+// ---------------------------------------------------------------------------
+
+function percentileFromSamples(
+  samples: number[],
+  p: number,
+): number | null {
+  if (!samples.length) return null;
+  // Simple nearest-rank — adequate for a debug surface, doesn't need
+  // interpolation. p in [0, 100].
+  const sorted = [...samples].sort((a, b) => a - b);
+  const idx = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((p / 100) * sorted.length) - 1),
+  );
+  return sorted[idx];
+}
+
+function formatLatencyMs(value: number | null): string {
+  if (value === null) return "—";
+  if (value < 1) return `${value.toFixed(2)} ms`;
+  if (value < 10) return `${value.toFixed(1)} ms`;
+  return `${Math.round(value)} ms`;
+}
+
+function formatLastCalled(unixMs: number): string {
+  if (!unixMs) return "—";
+  const ageSec = Math.max(0, Math.round((Date.now() - unixMs) / 1000));
+  if (ageSec < 60) return `${ageSec}s ago`;
+  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
+  return `${Math.floor(ageSec / 3600)}h ago`;
+}
+
+interface MetricsSectionProps {
+  metrics: ExtensionMetricsSnapshot;
+  error: string | null;
+  busy: boolean;
+  isEngineReady: boolean;
+  onRefresh: () => void | Promise<void>;
+  onReset: () => void | Promise<void>;
+}
+
+function MetricsSection({
+  metrics,
+  error,
+  busy,
+  isEngineReady,
+  onRefresh,
+  onReset,
+}: MetricsSectionProps) {
+  const overflow =
+    "_overflow" in metrics
+      ? (metrics["_overflow"] as ExtensionCommandMetrics)
+      : null;
+
+  // Sort by total request count descending so the noisiest commands
+  // surface at the top. Skip the synthetic _overflow row — it gets its
+  // own warning banner.
+  const rows = useMemo(() => {
+    const entries = Object.entries(metrics).filter(
+      ([k]) => k !== "_overflow",
+    );
+    return entries
+      .map(([command, m]) => {
+        const samples = Array.isArray(m.last_n_latencies_ms)
+          ? m.last_n_latencies_ms
+          : [];
+        const p50 = percentileFromSamples(samples, 50);
+        const p95 = percentileFromSamples(samples, 95);
+        return {
+          command,
+          count: m.count,
+          errorCount: m.error_count,
+          p50,
+          p95,
+          lastCalledAt: m.last_called_at,
+          lastError: m.last_error,
+          sampleSize: samples.length,
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+  }, [metrics]);
+
+  const totalRequests = useMemo(
+    () => rows.reduce((acc, r) => acc + r.count, 0),
+    [rows],
+  );
+  const totalErrors = useMemo(
+    () => rows.reduce((acc, r) => acc + r.errorCount, 0),
+    [rows],
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm">
+          <Gauge className="h-4 w-4 text-amber-300" />
+          <span className="font-medium">Request metrics</span>
+          <Badge variant="secondary" className="text-[10px]">
+            {rows.length} commands
+          </Badge>
+          <Badge variant="outline" className="text-[10px]">
+            {totalRequests} total
+          </Badge>
+          {totalErrors > 0 && (
+            <Badge variant="destructive" className="text-[10px]">
+              {totalErrors} errors
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!isEngineReady}
+            onClick={() => void onRefresh()}
+          >
+            <RefreshCw className="mr-2 h-3.5 w-3.5" />
+            Refresh
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!isEngineReady || busy || rows.length === 0}
+            onClick={() => void onReset()}
+          >
+            {busy ? (
+              <RefreshCw className="mr-2 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="mr-2 h-3.5 w-3.5" />
+            )}
+            Reset
+          </Button>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        In-memory only — resets on engine restart. Latencies sampled from
+        the last 100 calls per command. Polls every 2s while this page is
+        visible.
+      </p>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          <AlertCircle className="h-3.5 w-3.5" />
+          {error}
+        </div>
+      )}
+
+      {overflow && (
+        <div className="flex items-center gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          <AlertCircle className="h-3.5 w-3.5" />
+          Distinct-command cap reached. Newer command names are being
+          dropped from metrics ({overflow.count} skipped). Reset to recover.
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <div className="rounded border border-dashed border-muted-foreground/30 px-3 py-6 text-center text-xs text-muted-foreground">
+          No metrics yet. Drive the bridge above (Health, Capabilities,
+          Invoke) to populate this table.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">Command</th>
+                <th className="px-3 py-2 text-right font-medium">Total</th>
+                <th className="px-3 py-2 text-right font-medium">Errors</th>
+                <th className="px-3 py-2 text-right font-medium">p50</th>
+                <th className="px-3 py-2 text-right font-medium">p95</th>
+                <th className="px-3 py-2 text-right font-medium">
+                  Last called
+                </th>
+                <th className="px-3 py-2 text-left font-medium">Last error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr
+                  key={r.command}
+                  className="border-t hover:bg-muted/30"
+                >
+                  <td
+                    className="px-3 py-2 font-mono"
+                    title={r.command}
+                  >
+                    {r.command}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {r.count}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-3 py-2 text-right tabular-nums",
+                      r.errorCount > 0 && "text-red-400",
+                    )}
+                  >
+                    {r.errorCount}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {formatLatencyMs(r.p50)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {formatLatencyMs(r.p95)}
+                  </td>
+                  <td className="px-3 py-2 text-right text-muted-foreground">
+                    {formatLastCalled(r.lastCalledAt)}
+                  </td>
+                  <td
+                    className="px-3 py-2 max-w-xs truncate text-muted-foreground"
+                    title={r.lastError ?? ""}
+                  >
+                    {r.lastError ?? ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

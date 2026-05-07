@@ -2620,6 +2620,25 @@ class EngineAPI {
     return this.request("/extension/broadcast/status");
   }
 
+  /**
+   * GET /extension/metrics — per-command stats snapshot.
+   *
+   * Returns a JSON map of command name -> ExtensionCommandMetrics. The
+   * shape mirrors `app/api/extension_metrics.py::get_snapshot`. The
+   * synthetic "_overflow" row is only present when the distinct-command
+   * cap (200) has been hit; UI can render a banner if so.
+   */
+  async extensionGetMetrics(): Promise<ExtensionMetricsSnapshot> {
+    return this.request("/extension/metrics");
+  }
+
+  /** POST /extension/metrics/reset — clear every recorded stat. Idempotent. */
+  async extensionResetMetrics(): Promise<{ ok: boolean }> {
+    return this.post("/extension/metrics/reset", {}) as Promise<{
+      ok: boolean;
+    }>;
+  }
+
   /** POST /extension/broadcast/test — fires a no-op publish if the flag is on. */
   async extensionBroadcastTest(
     user_id: string,
@@ -3186,6 +3205,21 @@ export interface BridgeEvent {
   direction: "in" | "out" | "internal";
   payload: Record<string, unknown>;
 }
+
+export interface ExtensionCommandMetrics {
+  count: number;
+  error_count: number;
+  last_n_latencies_ms: number[];   // ring buffer, capped at 100
+  last_called_at: number;          // unix ms; 0 if never
+  last_error: string | null;
+}
+
+/**
+ * Map of command name -> rolling stats. Includes a synthetic "_overflow"
+ * row when the engine has hit its distinct-command cap (200) — UI can
+ * render a warning when present.
+ */
+export type ExtensionMetricsSnapshot = Record<string, ExtensionCommandMetrics>;
 
 // Singleton instance
 export const engine = new EngineAPI();

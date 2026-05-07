@@ -47,6 +47,11 @@ from app.api.extension_broadcast import (
     publish_to_extension,
 )
 from app.api.extension_invoke import invoke_extension_tool
+from app.api.extension_metrics import (
+    get_snapshot as get_metrics_snapshot,
+    record as record_metric,
+    reset_metrics as reset_metrics_registry,
+)
 from app.api.extension_ws_manager import (
     disconnect_session,
     list_active_sessions,
@@ -154,7 +159,20 @@ async def get_sessions(
     principal: ExtensionPrincipal = Depends(validate_extension_principal),
 ) -> Dict[str, Any]:
     """Return a snapshot of every active extension WebSocket session."""
-    sessions = list_active_sessions()
+    t0 = time.perf_counter()
+    try:
+        sessions = list_active_sessions()
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric("bridge:sessions", latency_ms, ok=True)
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            "bridge:sessions",
+            latency_ms,
+            ok=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
     publish_event(
         "sessions.list",
         "internal",
@@ -169,10 +187,23 @@ async def post_disconnect(
     principal: ExtensionPrincipal = Depends(validate_extension_principal),
 ) -> Dict[str, Any]:
     """Close an extension WS session by id. Idempotent."""
-    found = await disconnect_session(
-        req.session_id,
-        reason=req.reason or "Closed by desktop UI",
-    )
+    t0 = time.perf_counter()
+    try:
+        found = await disconnect_session(
+            req.session_id,
+            reason=req.reason or "Closed by desktop UI",
+        )
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric("bridge:sessions/disconnect", latency_ms, ok=True)
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            "bridge:sessions/disconnect",
+            latency_ms,
+            ok=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
     publish_event(
         "ws.close",
         "internal",
@@ -213,6 +244,7 @@ async def post_invoke(
         },
     )
 
+    t0 = time.perf_counter()
     try:
         envelope = await invoke_extension_tool(
             req.tool_name,
@@ -221,6 +253,13 @@ async def post_invoke(
             timeout_seconds=timeout,
         )
     except Exception as exc:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            "bridge:invoke",
+            latency_ms,
+            ok=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
         publish_event(
             "invoke.error",
             "in",
@@ -237,15 +276,33 @@ async def post_invoke(
             error_type=type(exc).__name__,
         )
 
+    latency_ms = (time.perf_counter() - t0) * 1000.0
+    envelope_ok = (
+        envelope.get("ok") if isinstance(envelope, dict) else None
+    )
+    if envelope_ok is False:
+        # The HTTP call succeeded but the extension reported a tool-level
+        # error. Count that as a failed observation so the metrics page
+        # can highlight slow / unreliable browser tools.
+        envelope_error = (
+            envelope.get("error") if isinstance(envelope, dict) else None
+        )
+        await record_metric(
+            "bridge:invoke",
+            latency_ms,
+            ok=False,
+            error=str(envelope_error) if envelope_error else "envelope.ok=false",
+        )
+    else:
+        await record_metric("bridge:invoke", latency_ms, ok=True)
+
     publish_event(
         "invoke.result",
         "in",
         {
             "session_id": req.session_id,
             "tool_name": req.tool_name,
-            "envelope_ok": (
-                envelope.get("ok") if isinstance(envelope, dict) else None
-            ),
+            "envelope_ok": envelope_ok,
         },
     )
     return InvokeResponse(ok=True, envelope=envelope)
@@ -267,8 +324,22 @@ async def get_broadcast_status(
     state. Channel name is constructed from a placeholder when no user
     id is supplied, so the UI can show the template.
     """
+    t0 = time.perf_counter()
+    try:
+        enabled = is_broadcast_enabled()
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric("bridge:broadcast/status", latency_ms, ok=True)
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            "bridge:broadcast/status",
+            latency_ms,
+            ok=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
     return {
-        "enabled": is_broadcast_enabled(),
+        "enabled": enabled,
         "channel_template": "matrx-local-bridge:<user_id>",
         "setting_key": "extension_broadcast_enabled",
     }
@@ -285,12 +356,25 @@ async def post_broadcast_test(
     "broadcast plumb is off" from "broadcast plumb is on but the user
     is not connected" from "publish actually fired".
     """
-    enabled = is_broadcast_enabled()
-    sent = await publish_to_extension(
-        req.user_id,
-        type=req.type,
-        payload=req.payload,
-    )
+    t0 = time.perf_counter()
+    try:
+        enabled = is_broadcast_enabled()
+        sent = await publish_to_extension(
+            req.user_id,
+            type=req.type,
+            payload=req.payload,
+        )
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric("bridge:broadcast/test", latency_ms, ok=True)
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            "bridge:broadcast/test",
+            latency_ms,
+            ok=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
     publish_event(
         "broadcast.publish",
         "out",
@@ -306,6 +390,51 @@ async def post_broadcast_test(
         "sent": sent,
         "enabled": enabled,
     }
+
+
+# ---------------------------------------------------------------------------
+# Observability — in-memory request/error/latency stats per command.
+#
+# Reads/writes are gated on the same `validate_extension_principal`
+# Bearer-JWT path that protects the rest of `/extension/*`. The data is
+# in-memory only and resets on engine restart by design — see
+# `app/api/extension_metrics.py` for shape and bounds.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/metrics")
+async def get_metrics(
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, Dict[str, Any]]:
+    """Return the per-command snapshot used by the Bridge Test panel.
+
+    Shape:
+
+        {
+          "<command>": {
+            "count": int,
+            "error_count": int,
+            "last_n_latencies_ms": [float, ...],
+            "last_called_at": int,    // unix ms; 0 if never
+            "last_error": str | null
+          },
+          ...
+        }
+
+    The `_overflow` row is a synthetic entry that only appears when the
+    distinct-command cap has been hit; the UI can use it to warn the user.
+    """
+    return await get_metrics_snapshot()
+
+
+@router.post("/metrics/reset")
+async def post_reset_metrics(
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, bool]:
+    """Drop every recorded stat. Idempotent."""
+    await reset_metrics_registry()
+    publish_event("metrics.reset", "internal", {})
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

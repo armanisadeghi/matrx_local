@@ -49,6 +49,26 @@ reserved for later.
   port 22180. That's a different surface (HTTP forward proxy for the
   cloud backend, not the extension RPC).
 
+## Quick start: check live request metrics
+
+`/extension/*` calls are timed by an in-memory ring in
+`app/api/extension_metrics.py`. Snapshot the registry:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  http://127.0.0.1:22140/extension/metrics | jq .
+```
+
+Or open Settings → Bridge Test in the desktop app — the "Request
+metrics" sub-section inside Panel 1 polls this endpoint every 2s and
+renders count / errors / p50 / p95 per command. Reset with
+`POST /extension/metrics/reset` or the Reset button.
+
+When debugging a hang or timeout, check this surface FIRST: the
+`last_called_at` field tells you whether traffic is actually reaching
+the engine, and the `last_error` field surfaces the most recent failure
+without scrolling logs.
+
 ## Quick start: add a new RPC command
 
 1. Open `app/api/extension_handlers.py` (Phase 1; create if missing).

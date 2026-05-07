@@ -30,6 +30,34 @@ loading, transcription progress) stay on `/ws` and the extension reverse
 channel stays focused on tool calls. Both run through
 `app/websocket_manager.py` for connection bookkeeping.
 
+## Observability
+
+Every call into `/extension/*` (HTTP RPC, the introspection endpoints
+under `/extension/sessions|invoke|broadcast/*`, plus WebSocket lifecycle
+on `/extension/ws`) is timed and counted by an in-memory ring in
+`app/api/extension_metrics.py`. The data resets on engine restart by
+design — these are diagnostics, not audit logs.
+
+Endpoints (Bearer-JWT-gated like the rest of `/extension/*`):
+
+  * `GET  /extension/metrics`         — JSON snapshot, one row per
+    command name (`rpc.command` → `tool`, `bridge:invoke`,
+    `bridge:sessions`, `ws:connect`, `ws:disconnect`, `ws:message`,
+    etc.). Each row carries `count`, `error_count`,
+    `last_n_latencies_ms` (deque of up to 100), `last_called_at` (unix
+    ms), `last_error`.
+  * `POST /extension/metrics/reset`   — drops every row. Idempotent.
+
+Bounds: per-command latency ring caps at 100 samples; distinct command
+names cap at 200 (a synthetic `_overflow` row appears in the snapshot
+when that cap is hit so callers can warn).
+
+The desktop **Bridge Test** page (Settings → Bridge Test) has a "Request
+metrics" sub-section inside Panel 1 (Engine self-check) that polls these
+endpoints every 2s while visible and renders count / errors / p50 / p95
+per command, plus a Reset button. p50 / p95 are computed client-side
+from the latency deque.
+
 ## Substrates
 
 - **HTTP REST** — `POST /extension/rpc` on the FastAPI sidecar
