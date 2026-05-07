@@ -42,6 +42,10 @@ from app.api.extension_auth import (
     validate_extension_principal,
     validate_extension_principal_ws,
 )
+from app.api.extension_boot_check import (
+    get_cached_summary as get_cached_boot_check_summary,
+    run_extension_boot_check,
+)
 from app.api.extension_broadcast import (
     is_broadcast_enabled,
     publish_to_extension,
@@ -502,6 +506,97 @@ async def post_reset_metrics(
     await reset_metrics_registry()
     publish_event("metrics.reset", "internal", {})
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Boot self-check — last-known + on-demand re-run.
+#
+# The summary is produced once at engine startup (in the lifespan hook in
+# ``app/main.py``) and cached in ``extension_boot_check``. Reads of the
+# cache are sub-millisecond; the re-run endpoint exists so a desktop user
+# can refresh the picture without restarting the engine.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/boot-check")
+async def get_boot_check(
+    request: Request,
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, Any]:
+    """Return the cached boot-time self-check summary.
+
+    Reflects the LAST self-check run — populated at engine startup, and
+    refreshed every time ``POST /extension/boot-check/run`` fires. Cheap
+    (no engine work per request).
+
+    Shape::
+
+        {
+          "ok": bool,
+          "checks": [
+            {"name": str, "status": "ok"|"warn"|"fail", "message": str, "duration_ms": float},
+            ...
+          ],
+          "started_at": float,    # unix seconds
+          "finished_at": float,   # unix seconds
+          "duration_ms": float
+        }
+
+    Returns ``{"ok": false, "checks": []}`` with an explanatory message
+    when the engine has not yet completed a self-check (e.g. extremely
+    early in boot). Callers can re-poll or trigger ``run`` to populate.
+    """
+    cached = get_cached_boot_check_summary()
+    if cached is None:
+        return {
+            "ok": False,
+            "checks": [],
+            "started_at": 0.0,
+            "finished_at": 0.0,
+            "duration_ms": 0.0,
+            "message": "boot self-check has not yet run",
+        }
+    return cached
+
+
+@router.post("/boot-check/run")
+async def post_boot_check_run(
+    request: Request,
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, Any]:
+    """Re-run the boot self-check live and return the fresh summary.
+
+    Replaces the cached summary that ``GET /extension/boot-check`` reads.
+    Same shape as ``GET``. The check itself is fast (<1s) and side-effect
+    light — the only intentional mutation is resetting the metrics ring.
+
+    The desktop ``Bridge Test`` panel calls this when the user clicks
+    "Re-run self-check" so the UI reflects current posture (e.g. after
+    starting/stopping a tunnel or flipping ``MATRX_PREFER_TUNNEL``).
+    """
+    t0 = time.perf_counter()
+    try:
+        summary = await run_extension_boot_check(request.app)
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric("bridge:boot-check/run", latency_ms, ok=True)
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            "bridge:boot-check/run",
+            latency_ms,
+            ok=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+
+    publish_event(
+        "boot-check.run",
+        "internal",
+        {"ok": summary.ok, "check_count": len(summary.checks)},
+    )
+    # Re-read via the cache helper so the wire shape stays in lockstep.
+    cached = get_cached_boot_check_summary()
+    return cached if cached is not None else {"ok": summary.ok, "checks": []}
 
 
 # ---------------------------------------------------------------------------

@@ -58,6 +58,41 @@ endpoints every 2s while visible and renders count / errors / p50 / p95
 per command, plus a Reset button. p50 / p95 are computed client-side
 from the latency deque.
 
+### Boot self-check
+
+Every engine startup runs a single sweep that verifies the bridge is
+coherent before the first user request:
+
+  1. all expected `/extension/*` HTTP and WS routes are registered on the
+     FastAPI app
+  2. JWT validation posture (full crypto verification vs. degraded
+     permissive Bearer-presence) — including a smoke-test that confirms
+     the configured HS256 secret rejects an obviously bad token
+  3. tunnel-state singleton answers without raising
+  4. metrics module resets cleanly so this boot starts with empty counters
+  5. `~/.matrx/local.json` discovery file exists, parses as JSON, and
+     carries a valid `port`
+
+The result is logged as a multi-line `[boot] …` block at INFO level,
+with `warn` rows logged at WARNING and `fail` rows at ERROR so a degraded
+posture surfaces immediately in the startup log. The summary is also
+cached and exposed at:
+
+  * `GET  /extension/boot-check`     — last cached summary (sub-ms read)
+  * `POST /extension/boot-check/run` — re-run live, refresh the cache,
+    return the new summary
+
+Both endpoints are gated by the same Bearer-JWT path that protects the
+rest of `/extension/*`. See `app/api/extension_boot_check.py` for the
+`BootCheckSummary` dataclass and the per-check implementations. The
+desktop Bridge Test panel renders the summary as a table inside Panel 1
+(Engine self-check) with a "Re-run self-check" button that hits
+`POST /extension/boot-check/run`.
+
+A failed check sets `summary.ok = false` but never blocks startup — the
+bridge can be partially broken and the rest of the engine still needs
+to come up.
+
 ## Substrates
 
 The engine is reachable via **two URLs** at any given time:

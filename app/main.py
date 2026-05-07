@@ -523,6 +523,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # retries failed ones, surfaces sync errors to the user via /scrapes/sync-status)
     scrape_store.start_sync()
 
+    # Phase 6: Extension bridge self-check.
+    # Walks /extension/* routes, JWT posture, tunnel + metrics + discovery
+    # file in <1s and emits a single multi-line summary log block. The
+    # result is cached in app.api.extension_boot_check and surfaced via
+    # GET /extension/boot-check so the desktop UI can render the same
+    # data the user just saw scroll past in the terminal.
+    #
+    # Non-fatal: any check failure flips summary.ok to False but does not
+    # block startup — the bridge can be partially broken (e.g. tunnel
+    # down) and the rest of the engine still needs to come up.
+    try:
+        from app.api.extension_boot_check import run_extension_boot_check
+        await run_extension_boot_check(app)
+    except Exception:
+        logger.warning(
+            "[app/main.py] Phase 6: Extension bridge self-check crashed (non-fatal)",
+            exc_info=True,
+        )
+
     elapsed = _startup_time.monotonic() - _t0
     logger.info(
         "[app/main.py] ── Startup complete in %.1fs — scraper=%s, proxy=%s ──────────────",

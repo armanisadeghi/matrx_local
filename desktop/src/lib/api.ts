@@ -2656,6 +2656,39 @@ class EngineAPI {
     }>;
   }
 
+  /**
+   * GET /extension/boot-check — last cached boot self-check summary.
+   *
+   * Reflects the LAST self-check run — populated at engine startup and
+   * refreshed whenever ``extensionBootCheckRun()`` fires. Cheap (no
+   * engine work per request); the cache lives in
+   * ``app/api/extension_boot_check.py`` and resets only on engine
+   * restart.
+   *
+   * When the engine has not yet completed its first sweep (extremely
+   * early in boot), the response carries ``ok: false`` and an empty
+   * ``checks`` array with an explanatory ``message`` field.
+   */
+  async extensionBootCheckGet(): Promise<ExtensionBootCheckSummary> {
+    return this.request("/extension/boot-check");
+  }
+
+  /**
+   * POST /extension/boot-check/run — re-run the boot self-check live.
+   *
+   * Replaces the cached summary returned by ``extensionBootCheckGet()``.
+   * Intended for the desktop "Re-run self-check" button so users can
+   * refresh the picture after toggling tunnel state, flipping
+   * ``MATRX_PREFER_TUNNEL``, or rotating ``SUPABASE_JWT_SECRET`` without
+   * having to restart the engine.
+   */
+  async extensionBootCheckRun(): Promise<ExtensionBootCheckSummary> {
+    return this.post(
+      "/extension/boot-check/run",
+      {},
+    ) as Promise<ExtensionBootCheckSummary>;
+  }
+
   /** POST /extension/broadcast/test — fires a no-op publish if the flag is on. */
   async extensionBroadcastTest(
     user_id: string,
@@ -3258,6 +3291,32 @@ export interface ExtensionCommandMetrics {
  * render a warning when present.
  */
 export type ExtensionMetricsSnapshot = Record<string, ExtensionCommandMetrics>;
+
+/** One row of the boot-time self-check, as returned by the engine. */
+export interface ExtensionBootCheckResult {
+  name: string;                    // e.g. "routes_registered"
+  status: "ok" | "warn" | "fail";
+  message: string;                 // short human-readable detail
+  duration_ms: number;
+}
+
+/**
+ * Snapshot from ``GET /extension/boot-check`` and
+ * ``POST /extension/boot-check/run``.
+ *
+ * Wire-shape mirror of ``app/api/extension_boot_check.BootCheckSummary``.
+ * ``ok`` is ``true`` when every check has ``status !== 'fail'``; warnings
+ * are tolerated. ``checks`` is empty and ``message`` is populated only
+ * when the engine has not yet completed an initial sweep.
+ */
+export interface ExtensionBootCheckSummary {
+  ok: boolean;
+  checks: ExtensionBootCheckResult[];
+  started_at: number;     // unix seconds
+  finished_at: number;    // unix seconds
+  duration_ms: number;
+  message?: string;       // present only when checks is empty
+}
 
 // Singleton instance
 export const engine = new EngineAPI();

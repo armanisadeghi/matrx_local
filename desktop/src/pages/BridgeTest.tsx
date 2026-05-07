@@ -37,6 +37,7 @@ import {
   Radio,
   RefreshCw,
   Send,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -61,6 +62,7 @@ import { cn } from "@/lib/utils";
 import {
   engine,
   type BridgeEvent,
+  type ExtensionBootCheckSummary,
   type ExtensionBroadcastStatus,
   type ExtensionCommandMetrics,
   type ExtensionInvokeResponse,
@@ -190,6 +192,16 @@ export function BridgeTest({
     null,
   );
   const [tunnelStatusBusy, setTunnelStatusBusy] = useState(false);
+
+  // Boot self-check (sub-section of Panel 1) --------------------------------
+  // Cached at engine startup; the "Re-run self-check" button triggers a
+  // live re-run via POST /extension/boot-check/run. Both endpoints share
+  // the same wire shape so we render the same component for either path.
+  const [bootCheck, setBootCheck] = useState<ExtensionBootCheckSummary | null>(
+    null,
+  );
+  const [bootCheckError, setBootCheckError] = useState<string | null>(null);
+  const [bootCheckBusy, setBootCheckBusy] = useState(false);
 
   const isEngineReady = engineStatus === "connected" && engineUrl !== null;
 
@@ -376,6 +388,34 @@ export function BridgeTest({
     }
   }, [isEngineReady]);
 
+  // Boot self-check — initial fetch reads the engine-side cache; the
+  // re-run callback hits POST /extension/boot-check/run which both
+  // refreshes the cache and returns the new summary.
+  const refreshBootCheck = useCallback(async () => {
+    if (!isEngineReady) return;
+    try {
+      const summary = await engine.extensionBootCheckGet();
+      setBootCheck(summary);
+      setBootCheckError(null);
+    } catch (e) {
+      setBootCheckError(String(e));
+    }
+  }, [isEngineReady]);
+
+  const rerunBootCheck = useCallback(async () => {
+    if (!isEngineReady) return;
+    setBootCheckBusy(true);
+    try {
+      const summary = await engine.extensionBootCheckRun();
+      setBootCheck(summary);
+      setBootCheckError(null);
+    } catch (e) {
+      setBootCheckError(String(e));
+    } finally {
+      setBootCheckBusy(false);
+    }
+  }, [isEngineReady]);
+
   // -------------------------------------------------------------------------
   // Effects — narrow deps, no broad "actions" objects
   // -------------------------------------------------------------------------
@@ -387,12 +427,14 @@ export function BridgeTest({
     void refreshBroadcastStatus();
     void refreshMetrics();
     void refreshTunnelStatus();
+    void refreshBootCheck();
   }, [
     isEngineReady,
     refreshSessions,
     refreshBroadcastStatus,
     refreshMetrics,
     refreshTunnelStatus,
+    refreshBootCheck,
   ]);
 
   // Metrics polling — gated on document visibility so we don't burn
@@ -612,6 +654,16 @@ export function BridgeTest({
                 busy={tunnelStatusBusy}
                 isEngineReady={isEngineReady}
                 onRefresh={refreshTunnelStatus}
+              />
+
+              <Separator />
+
+              <BootCheckSection
+                summary={bootCheck}
+                error={bootCheckError}
+                busy={bootCheckBusy}
+                isEngineReady={isEngineReady}
+                onRerun={rerunBootCheck}
               />
             </CardContent>
           </Card>
@@ -1502,6 +1554,160 @@ function TunnelStatusSection({
               </div>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Boot self-check — sub-section inside Panel 1.
+//
+// Renders the cached summary of the engine's startup self-check (see
+// `app/api/extension_boot_check.py`). Cheap reads via
+// `GET /extension/boot-check`; "Re-run self-check" button hits
+// `POST /extension/boot-check/run` to refresh both the cache and this
+// view at the same time.
+//
+// One row per check with a coloured status badge and the engine's own
+// detail message. The summary's overall ok flag and finished_at
+// timestamp render in the section header so the user can see at a
+// glance whether the bridge is currently coherent.
+// ---------------------------------------------------------------------------
+
+interface BootCheckSectionProps {
+  summary: ExtensionBootCheckSummary | null;
+  error: string | null;
+  busy: boolean;
+  isEngineReady: boolean;
+  onRerun: () => void | Promise<void>;
+}
+
+function bootCheckStatusClass(status: "ok" | "warn" | "fail"): string {
+  if (status === "ok") return "bg-emerald-500/15 text-emerald-300";
+  if (status === "warn") return "bg-amber-500/15 text-amber-300";
+  return "bg-red-500/15 text-red-300";
+}
+
+function formatBootCheckTimestamp(unixSec: number): string {
+  if (!unixSec) return "—";
+  const ageSec = Math.max(0, Math.round(Date.now() / 1000 - unixSec));
+  if (ageSec < 60) return `${ageSec}s ago`;
+  if (ageSec < 3600) return `${Math.floor(ageSec / 60)}m ago`;
+  return `${Math.floor(ageSec / 3600)}h ago`;
+}
+
+function BootCheckSection({
+  summary,
+  error,
+  busy,
+  isEngineReady,
+  onRerun,
+}: BootCheckSectionProps) {
+  const hasChecks = !!summary && summary.checks.length > 0;
+  const overallOk = !!summary?.ok;
+  const overallBadgeVariant: "default" | "secondary" | "destructive" =
+    !summary || !hasChecks
+      ? "secondary"
+      : overallOk
+      ? "default"
+      : "destructive";
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm">
+          <ShieldCheck className="h-4 w-4 text-sky-300" />
+          <span className="font-medium">Boot self-check</span>
+          {hasChecks && (
+            <Badge variant={overallBadgeVariant} className="text-[10px]">
+              {overallOk ? "ok" : "fail"}
+            </Badge>
+          )}
+          {hasChecks && (
+            <Badge variant="outline" className="text-[10px]">
+              {summary!.checks.length} checks
+            </Badge>
+          )}
+          {hasChecks && (
+            <span className="text-[10px] text-muted-foreground">
+              {summary!.duration_ms.toFixed(0)} ms,{" "}
+              {formatBootCheckTimestamp(summary!.finished_at)}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!isEngineReady || busy}
+            onClick={() => void onRerun()}
+          >
+            {busy ? (
+              <RefreshCw className="mr-2 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />
+            )}
+            Re-run self-check
+          </Button>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        Verifies /extension/* routes registered, JWT validation posture,
+        tunnel-state singleton, metrics module, and ~/.matrx/local.json.
+        Runs once at engine startup; rerun here to refresh after changing
+        config without restarting.
+      </p>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          <AlertCircle className="h-3.5 w-3.5" />
+          {error}
+        </div>
+      )}
+
+      {!hasChecks ? (
+        <div className="rounded border border-dashed border-muted-foreground/30 px-3 py-6 text-center text-xs text-muted-foreground">
+          {summary?.message ?? "Boot self-check has not yet run."}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded border">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/50 text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">Check</th>
+                <th className="px-3 py-2 text-left font-medium">Status</th>
+                <th className="px-3 py-2 text-left font-medium">Detail</th>
+                <th className="px-3 py-2 text-right font-medium">Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary!.checks.map((c) => (
+                <tr key={c.name} className="border-t hover:bg-muted/30">
+                  <td className="px-3 py-2 font-mono">{c.name}</td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={cn(
+                        "inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                        bootCheckStatusClass(c.status),
+                      )}
+                    >
+                      {c.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {c.message}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {c.duration_ms < 1
+                      ? `${c.duration_ms.toFixed(2)} ms`
+                      : `${Math.round(c.duration_ms)} ms`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
