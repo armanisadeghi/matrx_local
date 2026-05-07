@@ -38,9 +38,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket
 
@@ -64,6 +65,11 @@ class ExtensionSession:
     user_token: Optional[str] = None
     pending_calls: Dict[str, asyncio.Future] = field(default_factory=dict)
     _send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Wall-clock timestamps (seconds-since-epoch) used by the desktop UI's
+    # Bridge Test panel to render "connected at" + "last ping" columns. Pure
+    # bookkeeping — no behaviour depends on these values.
+    connected_at: float = field(default_factory=time.time)
+    last_seen_at: float = field(default_factory=time.time)
 
     async def send(self, payload: Dict[str, Any]) -> bool:
         """Serialize + send a JSON payload. Returns True on success.
@@ -279,4 +285,69 @@ def resolve_pending_future(call_id: str, payload: Dict[str, Any]) -> bool:
     if fut is None or fut.done():
         return False
     fut.set_result(payload)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Introspection / management helpers — used by the desktop frontend's
+# Bridge Test page (`POST /extension/sessions`, etc.) to render and act on
+# the live registry. The registry methods themselves stay private; these
+# helpers form the supported surface.
+# ---------------------------------------------------------------------------
+
+
+def list_active_sessions() -> List[Dict[str, Any]]:
+    """Return a JSON-serializable snapshot of every active session.
+
+    Each entry: `{session_id, connected_at, last_seen_at, pending_calls}`.
+    Timestamps are seconds-since-epoch so the frontend can render them in
+    whatever timezone / format it wants.
+    """
+    snapshot: List[Dict[str, Any]] = []
+    for sid, session in _REGISTRY._sessions.items():  # noqa: SLF001 — module-internal
+        snapshot.append(
+            {
+                "session_id": sid,
+                "connected_at": session.connected_at,
+                "last_seen_at": session.last_seen_at,
+                "pending_calls": len(session.pending_calls),
+            }
+        )
+    return snapshot
+
+
+def touch_session(session_id: str) -> None:
+    """Record a heartbeat on the named session. No-op when missing."""
+    session = _REGISTRY.get(session_id)
+    if session is not None:
+        session.last_seen_at = time.time()
+
+
+async def disconnect_session(
+    session_id: str,
+    *,
+    code: int = 1000,
+    reason: str = "Closed by desktop UI",
+) -> bool:
+    """Close the named session's underlying WebSocket. Idempotent.
+
+    The session WS-route handler's `finally` clause invokes
+    `unregister_session`, so we don't need to do that here — closing the
+    socket triggers the same cleanup path as a client-initiated disconnect.
+
+    Returns True when a matching session was found and a close was
+    attempted. False when the session_id is unknown.
+    """
+    session = _REGISTRY.get(session_id)
+    if session is None:
+        return False
+    try:
+        await session.websocket.close(code=code, reason=reason)
+    except Exception as exc:
+        # The socket may already be half-closed — log and fall through.
+        logger.warning(
+            "[extension_ws] disconnect_session: close failed session=%s err=%s",
+            session_id,
+            exc,
+        )
     return True

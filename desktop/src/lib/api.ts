@@ -2567,6 +2567,125 @@ class EngineAPI {
     if (!resp.ok) throw new Error(`Debug state failed: ${resp.status}`);
     return resp.json();
   }
+
+  // ── matrx-extend bridge — Bridge Test page helpers ──────────────────────
+
+  /** POST /extension/rpc — synchronous RPC the extension uses for health/version/etc. */
+  async extensionRpc(
+    command: string,
+    args?: Record<string, unknown>,
+  ): Promise<ExtensionRpcResponse> {
+    return this.post("/extension/rpc", {
+      command,
+      args: args ?? {},
+    }) as Promise<ExtensionRpcResponse>;
+  }
+
+  /** GET /extension/sessions — list every active extension WS session. */
+  async extensionListSessions(): Promise<{
+    sessions: ExtensionSessionInfo[];
+    count: number;
+  }> {
+    return this.request("/extension/sessions");
+  }
+
+  /** POST /extension/sessions/disconnect — close a session by id. */
+  async extensionDisconnectSession(
+    session_id: string,
+    reason?: string,
+  ): Promise<{ ok: boolean; found: boolean }> {
+    return this.post("/extension/sessions/disconnect", {
+      session_id,
+      reason,
+    }) as Promise<{ ok: boolean; found: boolean }>;
+  }
+
+  /** POST /extension/invoke — engine→browser tool dispatch. */
+  async extensionInvoke(
+    session_id: string,
+    tool_name: string,
+    args: Record<string, unknown>,
+    timeout_seconds = 30,
+  ): Promise<ExtensionInvokeResponse> {
+    return this.post("/extension/invoke", {
+      session_id,
+      tool_name,
+      args,
+      timeout_seconds,
+    }) as Promise<ExtensionInvokeResponse>;
+  }
+
+  /** GET /extension/broadcast/status — feature-flag + channel template. */
+  async extensionBroadcastStatus(): Promise<ExtensionBroadcastStatus> {
+    return this.request("/extension/broadcast/status");
+  }
+
+  /** POST /extension/broadcast/test — fires a no-op publish if the flag is on. */
+  async extensionBroadcastTest(
+    user_id: string,
+    type = "bridge.test",
+    payload: Record<string, unknown> = {},
+  ): Promise<{ ok: boolean; sent: boolean; enabled: boolean }> {
+    return this.post("/extension/broadcast/test", {
+      user_id,
+      type,
+      payload,
+    }) as Promise<{ ok: boolean; sent: boolean; enabled: boolean }>;
+  }
+
+  /**
+   * Subscribe to the bridge live event log.
+   *
+   * Opens a dedicated WebSocket to /extension/bridge-events and invokes
+   * `onEvent` for every received envelope. Returns a teardown function
+   * that closes the socket. Auth via ?token query param (browsers can't
+   * set headers on a WS upgrade — same convention as /ws and /extension/ws).
+   *
+   * The connection is best-effort: on disconnect, callers should manage
+   * their own reconnect loop. This deliberately mirrors how the existing
+   * SSE helpers in this file behave.
+   */
+  subscribeBridgeEvents(
+    onEvent: (event: BridgeEvent) => void,
+    onError?: (error: Event) => void,
+  ): () => void {
+    if (!this.baseUrl || !this.wsUrl) {
+      throw new Error("Engine not discovered");
+    }
+    let closed = false;
+    let socket: WebSocket | null = null;
+
+    const connect = async () => {
+      const token = this._getAccessToken
+        ? await this._getAccessToken()
+        : null;
+      if (closed) return;
+      const url = token
+        ? `${this.wsUrl!.replace(/\/ws$/, "")}/extension/bridge-events?token=${encodeURIComponent(token)}`
+        : `${this.wsUrl!.replace(/\/ws$/, "")}/extension/bridge-events`;
+      socket = new WebSocket(url);
+      socket.onmessage = (ev) => {
+        try {
+          onEvent(JSON.parse(ev.data) as BridgeEvent);
+        } catch {
+          /* ignore non-JSON */
+        }
+      };
+      socket.onerror = (err) => {
+        if (onError) onError(err);
+      };
+    };
+
+    void connect();
+    return () => {
+      closed = true;
+      try {
+        socket?.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  }
 }
 
 // ---- Document types ----
@@ -3022,6 +3141,50 @@ export interface HardwareResponse {
   profile: HardwareProfile;
   cached: boolean;
   detected_at: string | null;
+}
+
+// ── matrx-extend bridge — Bridge Test types ─────────────────────────────
+
+export interface ExtensionRpcResponse {
+  ok: boolean;
+  data?: unknown;
+  error?: string;
+}
+
+export interface ExtensionSessionInfo {
+  session_id: string;
+  connected_at: number;       // seconds since epoch
+  last_seen_at: number;       // seconds since epoch
+  pending_calls: number;
+}
+
+export interface ExtensionInvokeEnvelope {
+  type?: string;
+  callId?: string;
+  ok?: boolean;
+  result?: unknown;
+  error?: string;
+  errorType?: string;
+}
+
+export interface ExtensionInvokeResponse {
+  ok: boolean;
+  envelope?: ExtensionInvokeEnvelope;
+  error?: string;
+  error_type?: string;
+}
+
+export interface ExtensionBroadcastStatus {
+  enabled: boolean;
+  channel_template: string;
+  env_var: string;
+}
+
+export interface BridgeEvent {
+  timestamp: number;          // ms since epoch
+  kind: string;               // "rpc.in", "ws.open", "invoke.send", etc.
+  direction: "in" | "out" | "internal";
+  payload: Record<string, unknown>;
 }
 
 // Singleton instance

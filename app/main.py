@@ -32,6 +32,7 @@ from app.api.image_gen_routes import router as image_gen_router
 from app.api.tts_routes import router as tts_router
 from app.api.hf_token_routes import router as hf_token_router
 from app.api.scrape_routes import router as scrape_router
+from app.api.extension_bridge_routes import router as extension_bridge_router
 from app.api.extension_routes import router as extension_router
 from app.services.downloads.routes import router as downloads_router
 from app.config import ALLOWED_ORIGINS, ALLOWED_ORIGIN_REGEX, MATRX_HOME_DIR, TUNNEL_ENABLED
@@ -691,6 +692,11 @@ app.include_router(tts_router)
 app.include_router(hf_token_router)
 app.include_router(scrape_router)
 app.include_router(extension_router)
+# Bridge-test endpoints — back the desktop frontend's "Bridge Test" page.
+# Same /extension prefix, gated by the same Bearer-token middleware. Kept
+# in a separate router file so the contract surface (extension_router)
+# stays focused on what the Chrome extension itself depends on.
+app.include_router(extension_bridge_router)
 app.include_router(downloads_router)
 
 # NOTE: app.mount("/chat/ai", build_ai_sub_app()) is called in the lifespan handler

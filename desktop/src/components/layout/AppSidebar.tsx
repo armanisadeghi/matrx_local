@@ -22,6 +22,7 @@ import {
   BookOpen,
   AudioLines,
   RefreshCw,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -61,6 +62,7 @@ const navItems = [
   { to: "/system-prompts", icon: BookOpen, label: "Prompts" },
   { to: "/aimatrx", icon: Sparkles, label: "AiMatrx" },
   { to: "/browser", icon: MonitorSmartphone, label: "Browser" },
+  { to: "/bridge-test", icon: Plug, label: "Bridge Test" },
   { to: "/configurations", icon: SlidersHorizontal, label: "Configurations" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];

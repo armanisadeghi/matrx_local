@@ -29,6 +29,7 @@ from fastapi import APIRouter, Request, WebSocket
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketDisconnect
 
+from app.api.extension_bridge_routes import publish_event
 from app.api.extension_handlers import HANDLERS
 from app.api.extension_ws_manager import (
     register_session,
@@ -68,9 +69,15 @@ async def handle_rpc(request: DesktopRpcRequest, req: Request) -> DesktopRpcResp
     Auth (Bearer token / Supabase JWT) is enforced by upstream middleware.
     """
     logger.info("[extension_routes] Received RPC command: %s", request.command)
+    publish_event("rpc.in", "in", {"command": request.command})
 
     handler = HANDLERS.get(request.command)
     if handler is None:
+        publish_event(
+            "rpc.out",
+            "out",
+            {"command": request.command, "ok": False, "error": "Unknown command"},
+        )
         return DesktopRpcResponse(
             ok=False,
             error=f"Unknown command: {request.command}",
@@ -78,6 +85,11 @@ async def handle_rpc(request: DesktopRpcRequest, req: Request) -> DesktopRpcResp
 
     try:
         data = await handler(request.args or {}, req)
+        publish_event(
+            "rpc.out",
+            "out",
+            {"command": request.command, "ok": True},
+        )
         return DesktopRpcResponse(ok=True, data=data)
     except Exception as e:
         logger.error(
@@ -85,6 +97,16 @@ async def handle_rpc(request: DesktopRpcRequest, req: Request) -> DesktopRpcResp
             request.command,
             e,
             exc_info=True,
+        )
+        publish_event(
+            "rpc.out",
+            "out",
+            {
+                "command": request.command,
+                "ok": False,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
         )
         return DesktopRpcResponse(
             ok=False,
@@ -151,6 +173,11 @@ async def extension_websocket(websocket: WebSocket) -> None:
 
     await websocket.accept()
     session = register_session(websocket, user_token=token)
+    publish_event(
+        "ws.open",
+        "in",
+        {"session_id": session.session_id},
+    )
 
     # Send the hello envelope. Failure here means the socket died during
     # accept — bail out without entering the read loop.
@@ -207,6 +234,11 @@ async def extension_websocket(websocket: WebSocket) -> None:
         )
     finally:
         unregister_session(session.session_id)
+        publish_event(
+            "ws.close",
+            "in",
+            {"session_id": session.session_id, "by": "client-or-error"},
+        )
 
 
 async def _handle_extension_message(session_id: str, msg: Dict[str, Any]) -> None:
@@ -222,6 +254,16 @@ async def _handle_extension_message(session_id: str, msg: Dict[str, Any]) -> Non
             )
             return
         resolved = resolve_pending_future(call_id, msg)
+        publish_event(
+            "ws.extension.result",
+            "in",
+            {
+                "session_id": session_id,
+                "call_id": call_id,
+                "ok": msg.get("ok"),
+                "resolved": resolved,
+            },
+        )
         if not resolved:
             logger.warning(
                 "[extension_ws] extension.result for unknown/late callId=%s session=%s",
@@ -234,11 +276,13 @@ async def _handle_extension_message(session_id: str, msg: Dict[str, Any]) -> Non
         # Heartbeat — respond inline. The send goes through the same
         # session lock as engine-initiated invocations, so frame
         # interleaving is impossible.
-        from app.api.extension_ws_manager import get_registry
+        from app.api.extension_ws_manager import get_registry, touch_session
 
         session = get_registry().get(session_id)
         if session is None:
             return
+        touch_session(session_id)
+        publish_event("ws.ping", "in", {"session_id": session_id})
         await session.send(_build_pong(msg.get("timestamp")))
         return
 

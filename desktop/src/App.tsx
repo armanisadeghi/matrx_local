@@ -23,6 +23,7 @@ import { TranscriptOverlay } from "@/components/TranscriptOverlay";
 import { SystemPrompts } from "@/pages/SystemPrompts";
 import { Configurations } from "@/pages/Configurations";
 import { TauriFetchBrowser } from "@/pages/TauriFetchBrowser";
+import { BridgeTest } from "@/pages/BridgeTest";
 import { useEngine } from "@/hooks/use-engine";
 import { useAuth } from "@/hooks/use-auth";
 import { useTheme } from "@/hooks/use-theme";
@@ -361,6 +362,16 @@ export default function App() {
       { path: "/browser", element: <BrowserLab /> },
       { path: "/browser/tauri", element: <TauriFetchBrowser /> },
       { path: "/configurations", element: <Configurations /> },
+      {
+        path: "/bridge-test",
+        element: (
+          <BridgeTest
+            engineStatus={status}
+            engineUrl={url}
+            user={auth.user}
+          />
+        ),
+      },
       {
         path: "/settings",
         element: (
