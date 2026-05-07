@@ -747,10 +747,10 @@ export function BridgeTest({
             <CardContent className="space-y-3 text-xs">
               <div className="grid gap-2 md:grid-cols-2">
                 <div>
-                  <span className="text-muted-foreground">Env flag:</span>{" "}
+                  <span className="text-muted-foreground">Setting:</span>{" "}
                   <code className="rounded bg-muted px-1.5 py-0.5 font-mono">
-                    {broadcastStatus?.env_var ??
-                      "MATRX_BRIDGE_BROADCAST_ENABLED"}
+                    {broadcastStatus?.setting_key ??
+                      "extension_broadcast_enabled"}
                   </code>
                 </div>
                 <div>
@@ -766,11 +766,9 @@ export function BridgeTest({
 
               {!broadcastStatus?.enabled && (
                 <div className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-300">
-                  Broadcast plumb is OFF. Set{" "}
-                  <code className="font-mono">
-                    MATRX_BRIDGE_BROADCAST_ENABLED=true
-                  </code>{" "}
-                  in the engine env and restart to enable cross-machine fallback.
+                  Broadcast plumb is OFF. Toggle "Enable Broadcast plumb" under
+                  Settings → Remote Access → Extension Bridge to enable
+                  cross-machine fallback.
                 </div>
               )}
 

@@ -3145,6 +3145,45 @@ export function Settings({
                   )}
                 </CardContent>
               </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Radio className="h-4 w-4 text-primary" /> Extension Bridge
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Lets the matrx-extend Chrome extension reach this engine
+                    cross-machine via Supabase Broadcast when the local
+                    WebSocket bridge isn't available.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label htmlFor="extension-broadcast-enabled">
+                        Enable Broadcast plumb
+                      </Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Default: ON. Disable only if you don't use the
+                        extension or want to reduce outbound connections.
+                      </p>
+                    </div>
+                    <Switch
+                      id="extension-broadcast-enabled"
+                      checked={settings?.extensionBroadcastEnabled ?? true}
+                      onCheckedChange={async (checked) => {
+                        await saveSetting("extensionBroadcastEnabled", checked);
+                        setSettings((prev) =>
+                          prev
+                            ? { ...prev, extensionBroadcastEnabled: checked }
+                            : prev,
+                        );
+                        broadcastSettingsChanged();
+                      }}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
             </>
           )}
 

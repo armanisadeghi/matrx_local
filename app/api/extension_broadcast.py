@@ -3,8 +3,9 @@
 Phase 2 (master plan section C2.d) ships SUBSTRATE ONLY — the helpers
 exist so future cross-machine flows have a place to land without
 rebuilding. Active routing is gated behind the
-`MATRX_BRIDGE_BROADCAST_ENABLED` environment flag, which Phase 3 will
-flip on inside the C-bridge orchestrator.
+`extension_broadcast_enabled` user setting (default: ON), surfaced in
+the desktop Settings UI under Remote Access. Phase 3's C-bridge
+orchestrator will read the same flag.
 
 Channel name: `matrx-local-bridge:<userId>` (per-user-scoped, analogous
 to the existing matrx-extension-bridge channel used for the frontend
@@ -29,11 +30,10 @@ Public API:
                          type, payload,
                          call_id=None)  -> bool
 
-When the feature flag is OFF (default), every helper returns
-immediately with a debug log line — there is no Supabase client, no
-realtime subscription, no network traffic. This keeps Phase 2 binaries
-free of additional outbound connections while leaving the import graph
-ready for Phase 3 to enable.
+When the feature flag is OFF, every helper returns immediately with a
+debug log line — there is no Supabase client, no realtime subscription,
+no network traffic. The flag is read live from settings on every call
+so the user can toggle it in the desktop UI without an engine restart.
 
 Lifecycle ownership: this module does NOT auto-connect on engine
 startup. The future C-bridge orchestrator decides when to spin a
@@ -44,20 +44,26 @@ registers and the user has a known Supabase identity).
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from typing import Any, Dict, Optional
 
 from app.common.system_logger import get_logger
 from app.config import SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL
+from app.services.cloud_sync.settings_sync import get_settings_sync
 
 logger = get_logger()
 
-# Feature flag — read once at import. Phase 3 flips this on; Phase 2
-# leaves it off so the substrate exists without active traffic.
-BROADCAST_ENABLED: bool = (
-    os.environ.get("MATRX_BRIDGE_BROADCAST_ENABLED", "false").lower() == "true"
-)
+
+def is_broadcast_enabled() -> bool:
+    """Return the live state of the broadcast plumb feature flag.
+
+    Read from the user's settings (default: True). The setting is
+    persisted in ~/.matrx/settings.json and synced to Supabase via the
+    standard cloud-settings flow, so toggling it in the desktop UI
+    takes effect immediately for new helper calls — no engine restart.
+    """
+    return bool(get_settings_sync().get("extension_broadcast_enabled", True))
+
 
 # Channel name template — `matrx-local-bridge:<user_id>`.
 _CHANNEL_PREFIX = "matrx-local-bridge"
@@ -84,7 +90,7 @@ _lock = asyncio.Lock()
 def _log_disabled(action: str) -> None:
     logger.debug(
         "[extension_broadcast] %s skipped — broadcast plumb disabled "
-        "(MATRX_BRIDGE_BROADCAST_ENABLED=false)",
+        "(extension_broadcast_enabled=false in settings)",
         action,
     )
 
@@ -103,7 +109,7 @@ async def connect_broadcast(user_id: str) -> None:
 
     Idempotent: connecting an already-connected user_id is a no-op.
     """
-    if not BROADCAST_ENABLED:
+    if not is_broadcast_enabled():
         _log_disabled(f"connect_broadcast(user_id={user_id})")
         return
 
@@ -154,12 +160,9 @@ async def connect_broadcast(user_id: str) -> None:
 async def disconnect_broadcast(user_id: str) -> None:
     """Tear down the user's bridge channel + client. Idempotent.
 
-    No-op when the feature flag is off.
+    Runs unconditionally so that toggling the feature flag OFF mid-session
+    (after a connect) still results in a clean teardown.
     """
-    if not BROADCAST_ENABLED:
-        _log_disabled(f"disconnect_broadcast(user_id={user_id})")
-        return
-
     async with _lock:
         channel = _channels.pop(user_id, None)
         client = _clients.pop(user_id, None)
@@ -207,7 +210,7 @@ async def publish_to_extension(
     direction is consumed by the broadcast listener registered in
     `connect_broadcast`.
     """
-    if not BROADCAST_ENABLED:
+    if not is_broadcast_enabled():
         _log_disabled(f"publish_to_extension(type={type})")
         return False
 

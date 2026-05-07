@@ -101,6 +101,15 @@ export interface AppSettings {
    */
   voiceRestorePromptOnExit: boolean;
 
+  // ── Extension bridge ────────────────────────────────────────────────
+  /**
+   * Enable the Supabase Broadcast plumb that lets the Chrome extension
+   * reach this engine cross-machine when the local WebSocket bridge
+   * isn't available. Default ON — only disable if you don't use the
+   * matrx-extend extension or want to reduce outbound connections.
+   */
+  extensionBroadcastEnabled: boolean;
+
   // ── UI / Layout ─────────────────────────────────────────────────────
   sidebarCollapsed: boolean;
 }
@@ -188,6 +197,8 @@ const DEFAULTS: AppSettings = {
   voiceAssistantSystemPromptId: "builtin-voice-assistant",
   voiceSilenceTimeoutMs: 1400,
   voiceRestorePromptOnExit: true,
+  // Extension bridge
+  extensionBroadcastEnabled: true,
   // UI
   sidebarCollapsed: false,
 };
@@ -699,6 +710,12 @@ export function mergeCloudSettings(
       "voice_restore_prompt_on_exit",
       local.voiceRestorePromptOnExit,
     ),
+    // Extension bridge
+    extensionBroadcastEnabled: cloudBool(
+      cloud,
+      "extension_broadcast_enabled",
+      local.extensionBroadcastEnabled,
+    ),
     // UI
     sidebarCollapsed: cloudBool(
       cloud,
@@ -787,6 +804,8 @@ export function settingsToCloud(
     voice_assistant_system_prompt_id: settings.voiceAssistantSystemPromptId,
     voice_silence_timeout_ms: settings.voiceSilenceTimeoutMs,
     voice_restore_prompt_on_exit: settings.voiceRestorePromptOnExit,
+    // Extension bridge
+    extension_broadcast_enabled: settings.extensionBroadcastEnabled,
     // UI
     sidebar_collapsed: settings.sidebarCollapsed,
   };

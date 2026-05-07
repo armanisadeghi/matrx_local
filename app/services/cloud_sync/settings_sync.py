@@ -113,6 +113,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tts_read_aloud_auto_play": False,
     "tts_streaming_threshold": 200,
     "tts_auto_clean_markdown": False,
+    # Extension bridge
+    "extension_broadcast_enabled": True,
     # UI
     "sidebar_collapsed": False,
 }

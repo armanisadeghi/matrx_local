@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketDisconnect
 
 from app.api.extension_broadcast import (
-    BROADCAST_ENABLED,
+    is_broadcast_enabled,
     publish_to_extension,
 )
 from app.api.extension_invoke import invoke_extension_tool
@@ -253,9 +253,9 @@ async def get_broadcast_status() -> Dict[str, Any]:
     id is supplied, so the UI can show the template.
     """
     return {
-        "enabled": BROADCAST_ENABLED,
+        "enabled": is_broadcast_enabled(),
         "channel_template": "matrx-local-bridge:<user_id>",
-        "env_var": "MATRX_BRIDGE_BROADCAST_ENABLED",
+        "setting_key": "extension_broadcast_enabled",
     }
 
 
@@ -264,9 +264,10 @@ async def post_broadcast_test(req: BroadcastTestRequest) -> Dict[str, Any]:
     """Publish a no-op test envelope on the user's bridge channel.
 
     Returns `{ok, sent, enabled}` so the Bridge Test UI can distinguish
-    "broadcast plumb is off" (the default) from "broadcast plumb is on
-    but the user is not connected" from "publish actually fired".
+    "broadcast plumb is off" from "broadcast plumb is on but the user
+    is not connected" from "publish actually fired".
     """
+    enabled = is_broadcast_enabled()
     sent = await publish_to_extension(
         req.user_id,
         type=req.type,
@@ -279,13 +280,13 @@ async def post_broadcast_test(req: BroadcastTestRequest) -> Dict[str, Any]:
             "user_id": req.user_id,
             "type": req.type,
             "sent": sent,
-            "enabled": BROADCAST_ENABLED,
+            "enabled": enabled,
         },
     )
     return {
         "ok": True,
         "sent": sent,
-        "enabled": BROADCAST_ENABLED,
+        "enabled": enabled,
     }
 
 

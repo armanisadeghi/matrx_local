@@ -3177,7 +3177,7 @@ export interface ExtensionInvokeResponse {
 export interface ExtensionBroadcastStatus {
   enabled: boolean;
   channel_template: string;
-  env_var: string;
+  setting_key: string;
 }
 
 export interface BridgeEvent {
