@@ -323,6 +323,94 @@ function fmtSize(gb: number): string {
   return `${gb.toFixed(1)} GB`;
 }
 
+// ── Compact fields for horizontal layouts ───────────────────────────────────
+
+function CompactSlider({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  decimals = 2,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  min: number;
+  max: number;
+  step: number;
+  decimals?: number;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs font-medium">{label}</Label>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {value.toFixed(decimals)}
+        </span>
+      </div>
+      <Slider
+        value={[value]}
+        onValueChange={([v]) => onChange(v)}
+        min={min}
+        max={max}
+        step={step}
+      />
+    </div>
+  );
+}
+
+function CompactNumber({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+  step,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-medium">{label}</Label>
+      <Input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        min={min}
+        max={max}
+        step={step}
+        className="h-9 text-right"
+      />
+    </div>
+  );
+}
+
+function CompactSwitch({
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  checked: boolean;
+  onCheckedChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-medium">{label}</Label>
+      <div className="h-9 flex items-center">
+        <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      </div>
+    </div>
+  );
+}
+
 // ── Update check interval dropdown ──────────────────────────────────────────
 
 const UPDATE_INTERVAL_PRESETS: { label: string; value: number }[] = [
@@ -686,7 +774,7 @@ export function Configurations() {
       />
 
       <ScrollArea className="flex-1">
-        <div className="p-6">
+        <div className="p-6 space-y-6">
           {/* 3-column responsive grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
             {/* ── Application ──────────────────────────────────── */}
@@ -1055,171 +1143,6 @@ export function Configurations() {
                 <SectionActions
                   section="localLlm"
                   dirty={sectionDirty.localLlm}
-                  {...sectionActionProps}
-                />
-              </CardContent>
-            </Card>
-
-            {/* ── LLM Sampling ──────────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <BrainCircuit className="h-4 w-4" />
-                  LLM Sampling
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Chat
-                </p>
-
-                <SliderRow
-                  label="Temperature"
-                  description="Higher = more creative, lower = more focused"
-                  value={draft.llmChatTemperature}
-                  onChange={(v) => set("llmChatTemperature", v)}
-                  min={0}
-                  max={2}
-                  step={0.05}
-                />
-                <SliderRow
-                  label="Top P"
-                  description="Nucleus sampling threshold"
-                  value={draft.llmChatTopP}
-                  onChange={(v) => set("llmChatTopP", v)}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                />
-                <SettingRow label="Top K" description="Vocabulary filter size">
-                  <NumberInput
-                    value={draft.llmChatTopK}
-                    onChange={(v) => set("llmChatTopK", v)}
-                    min={1}
-                    max={200}
-                  />
-                </SettingRow>
-                <SettingRow
-                  label="Max tokens"
-                  description="Maximum response length"
-                >
-                  <NumberInput
-                    value={draft.llmChatMaxTokens}
-                    onChange={(v) => set("llmChatMaxTokens", v)}
-                    min={64}
-                    max={32768}
-                    step={64}
-                  />
-                </SettingRow>
-
-                <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Reasoning Mode
-                </p>
-
-                <SettingRow
-                  label="Enable thinking"
-                  description="Use extended thinking by default"
-                >
-                  <Switch
-                    checked={draft.llmEnableThinking}
-                    onCheckedChange={(v) => set("llmEnableThinking", v)}
-                  />
-                </SettingRow>
-                <SliderRow
-                  label="Temperature"
-                  value={draft.llmReasoningTemperature}
-                  onChange={(v) => set("llmReasoningTemperature", v)}
-                  min={0}
-                  max={2}
-                  step={0.05}
-                />
-                <SliderRow
-                  label="Top P"
-                  value={draft.llmReasoningTopP}
-                  onChange={(v) => set("llmReasoningTopP", v)}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                />
-                <SettingRow label="Top K">
-                  <NumberInput
-                    value={draft.llmReasoningTopK}
-                    onChange={(v) => set("llmReasoningTopK", v)}
-                    min={1}
-                    max={200}
-                  />
-                </SettingRow>
-                <SettingRow
-                  label="Max tokens"
-                  description="Maximum response length for reasoning"
-                >
-                  <NumberInput
-                    value={draft.llmReasoningMaxTokens}
-                    onChange={(v) => set("llmReasoningMaxTokens", v)}
-                    min={64}
-                    max={32768}
-                    step={64}
-                  />
-                </SettingRow>
-
-                <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Tool Calling
-                </p>
-
-                <SliderRow
-                  label="Temperature"
-                  value={draft.llmToolCallTemperature}
-                  onChange={(v) => set("llmToolCallTemperature", v)}
-                  min={0}
-                  max={2}
-                  step={0.05}
-                />
-                <SliderRow
-                  label="Top P"
-                  value={draft.llmToolCallTopP}
-                  onChange={(v) => set("llmToolCallTopP", v)}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                />
-                <SettingRow label="Top K">
-                  <NumberInput
-                    value={draft.llmToolCallTopK}
-                    onChange={(v) => set("llmToolCallTopK", v)}
-                    min={1}
-                    max={200}
-                  />
-                </SettingRow>
-
-                <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Other
-                </p>
-
-                <SliderRow
-                  label="Structured output temp"
-                  description="For JSON schema responses"
-                  value={draft.llmStructuredOutputTemperature}
-                  onChange={(v) => set("llmStructuredOutputTemperature", v)}
-                  min={0}
-                  max={1}
-                  step={0.05}
-                />
-                <SettingRow label="Stream max tokens">
-                  <NumberInput
-                    value={draft.llmStreamMaxTokens}
-                    onChange={(v) => set("llmStreamMaxTokens", v)}
-                    min={64}
-                    max={32768}
-                    step={64}
-                  />
-                </SettingRow>
-
-                <SectionActions
-                  section="localLlmSampling"
-                  dirty={sectionDirty.localLlmSampling}
                   {...sectionActionProps}
                 />
               </CardContent>
@@ -1887,6 +1810,167 @@ export function Configurations() {
               </CardContent>
             </Card>
           </div>
+
+          {/* ── LLM Sampling (full-width, horizontal) ───────────────── */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <BrainCircuit className="h-4 w-4" />
+                LLM Sampling
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                  Chat
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <CompactSlider
+                    label="Temperature"
+                    value={draft.llmChatTemperature}
+                    onChange={(v) => set("llmChatTemperature", v)}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                  />
+                  <CompactSlider
+                    label="Top P"
+                    value={draft.llmChatTopP}
+                    onChange={(v) => set("llmChatTopP", v)}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                  />
+                  <CompactNumber
+                    label="Top K"
+                    value={draft.llmChatTopK}
+                    onChange={(v) => set("llmChatTopK", v)}
+                    min={1}
+                    max={200}
+                  />
+                  <CompactNumber
+                    label="Max tokens"
+                    value={draft.llmChatMaxTokens}
+                    onChange={(v) => set("llmChatMaxTokens", v)}
+                    min={64}
+                    max={32768}
+                    step={64}
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                  Reasoning Mode
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <CompactSwitch
+                    label="Enable thinking"
+                    checked={draft.llmEnableThinking}
+                    onCheckedChange={(v) => set("llmEnableThinking", v)}
+                  />
+                  <CompactSlider
+                    label="Temperature"
+                    value={draft.llmReasoningTemperature}
+                    onChange={(v) => set("llmReasoningTemperature", v)}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                  />
+                  <CompactSlider
+                    label="Top P"
+                    value={draft.llmReasoningTopP}
+                    onChange={(v) => set("llmReasoningTopP", v)}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                  />
+                  <CompactNumber
+                    label="Top K"
+                    value={draft.llmReasoningTopK}
+                    onChange={(v) => set("llmReasoningTopK", v)}
+                    min={1}
+                    max={200}
+                  />
+                  <CompactNumber
+                    label="Max tokens"
+                    value={draft.llmReasoningMaxTokens}
+                    onChange={(v) => set("llmReasoningMaxTokens", v)}
+                    min={64}
+                    max={32768}
+                    step={64}
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                  Tool Calling
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <CompactSlider
+                    label="Temperature"
+                    value={draft.llmToolCallTemperature}
+                    onChange={(v) => set("llmToolCallTemperature", v)}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                  />
+                  <CompactSlider
+                    label="Top P"
+                    value={draft.llmToolCallTopP}
+                    onChange={(v) => set("llmToolCallTopP", v)}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                  />
+                  <CompactNumber
+                    label="Top K"
+                    value={draft.llmToolCallTopK}
+                    onChange={(v) => set("llmToolCallTopK", v)}
+                    min={1}
+                    max={200}
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                  Other
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <CompactSlider
+                    label="Structured output temp"
+                    value={draft.llmStructuredOutputTemperature}
+                    onChange={(v) => set("llmStructuredOutputTemperature", v)}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                  />
+                  <CompactNumber
+                    label="Stream max tokens"
+                    value={draft.llmStreamMaxTokens}
+                    onChange={(v) => set("llmStreamMaxTokens", v)}
+                    min={64}
+                    max={32768}
+                    step={64}
+                  />
+                </div>
+              </div>
+
+              <SectionActions
+                section="localLlmSampling"
+                dirty={sectionDirty.localLlmSampling}
+                {...sectionActionProps}
+              />
+            </CardContent>
+          </Card>
         </div>
       </ScrollArea>
 
