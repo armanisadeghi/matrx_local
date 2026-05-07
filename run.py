@@ -416,12 +416,30 @@ def write_discovery_file(port: int, tunnel_url: str | None = None) -> None:
             payload["tunnel_ws"] = tunnel_url.replace("https://", "wss://") + "/ws"
         DISCOVERY_FILE.write_text(json.dumps(payload, indent=2))
         logger.info("Discovery file written: %s", DISCOVERY_FILE)
+
+        # Keep the runtime singleton in sync so `/extension/tunnel/status`
+        # reports the correct local + tunnel state immediately after
+        # startup, without waiting for the next tunnel update.
+        try:
+            from app.api.tunnel_state import set_local_url, set_tunnel_url
+            set_local_url(port)
+            if tunnel_url:
+                set_tunnel_url(tunnel_url)
+        except Exception:
+            logger.debug("Failed to seed tunnel state singleton", exc_info=True)
     except Exception:
         logger.warning("Failed to write discovery file", exc_info=True)
 
 
 def update_discovery_tunnel(tunnel_url: str | None) -> None:
-    """Update only the tunnel fields in the discovery file (called after tunnel starts)."""
+    """Update only the tunnel fields in the discovery file (called after tunnel starts).
+
+    Also keeps the in-memory tunnel-state singleton in sync so
+    ``GET /extension/tunnel/status`` reflects the change without a
+    filesystem read on every poll. Both the disk file (for clients that
+    discover the engine before authenticating) and the singleton (for
+    runtime introspection by authenticated clients) must agree.
+    """
     try:
         if not DISCOVERY_FILE.exists():
             return
@@ -435,6 +453,17 @@ def update_discovery_tunnel(tunnel_url: str | None) -> None:
         DISCOVERY_FILE.write_text(json.dumps(data, indent=2))
     except Exception:
         logger.debug("Failed to update tunnel in discovery file", exc_info=True)
+
+    # Mirror into the runtime singleton. Best-effort — telemetry must
+    # never block discovery-file maintenance.
+    try:
+        from app.api.tunnel_state import mark_tunnel_inactive, set_tunnel_url
+        if tunnel_url:
+            set_tunnel_url(tunnel_url)
+        else:
+            mark_tunnel_inactive()
+    except Exception:
+        logger.debug("Failed to update tunnel state singleton", exc_info=True)
 
 
 def remove_discovery_file() -> None:

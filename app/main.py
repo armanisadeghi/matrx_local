@@ -480,6 +480,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     await _get_im().update_tunnel_url(_tunnel_url, active=True)
                 except Exception:
                     pass
+                # Seed the runtime introspection singleton so
+                # ``GET /extension/tunnel/status`` reports the correct
+                # state from the very first request post-boot.
+                try:
+                    from app.api.tunnel_state import set_tunnel_url
+                    set_tunnel_url(
+                        _tunnel_url,
+                        mode="named" if _tm._token else "quick",
+                        uptime_seconds=_tm.uptime_seconds,
+                    )
+                except Exception:
+                    logger.debug(
+                        "[app/main.py] Phase 5: tunnel state singleton update failed",
+                        exc_info=True,
+                    )
             else:
                 logger.warning("[app/main.py] Phase 5: Tunnel started but no URL captured within timeout")
                 print("[phase:tunnel] Tunnel started but no URL captured", flush=True)
@@ -601,6 +616,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 from app.services.cloud_sync.instance_manager import get_instance_manager as _get_im
                 await asyncio.wait_for(_get_im().update_tunnel_url(None, active=False), timeout=2.0)
             except (asyncio.TimeoutError, Exception):
+                pass
+            # Mirror the inactive state into the runtime singleton.
+            try:
+                from app.api.tunnel_state import mark_tunnel_inactive
+                mark_tunnel_inactive()
+            except Exception:
                 pass
     except asyncio.TimeoutError:
         logger.warning("[app/main.py] Tunnel stop timed out after 7s — forcing teardown")

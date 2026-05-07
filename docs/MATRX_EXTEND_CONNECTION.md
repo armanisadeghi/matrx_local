@@ -60,15 +60,34 @@ from the latency deque.
 
 ## Substrates
 
-- **HTTP REST** — `POST /extension/rpc` on the FastAPI sidecar
-  (`127.0.0.1:22140` by default; auto-scans `22140-22159`). Single
-  request/response, JSON in / JSON out. Used for every extension-initiated
-  command.
+The engine is reachable via **two URLs** at any given time:
+
+  1. **Local loopback (always)** — `http://127.0.0.1:<port>` and
+     `ws://127.0.0.1:<port>/ws` on the FastAPI sidecar (`22140` by
+     default; auto-scans `22140-22159`). Zero-cost path for any client
+     on the same machine as the engine. Default for the extension.
+  2. **Cloudflare tunnel (when active)** — a `https://<random>.trycloudflare.com`
+     URL produced by the cloudflared subprocess, plus its
+     `wss://...trycloudflare.com/ws` equivalent. Lets a client on a
+     different network (or behind a corporate firewall that blocks
+     loopback access) reach the same engine. Quick mode (default) gets
+     a fresh URL on every restart; named mode (set
+     `CLOUDFLARE_TUNNEL_TOKEN`) produces a stable URL.
+
+Both URLs hit the same FastAPI app and the same routes — there is no
+"tunnel-only" surface. Auth, middleware, and rate limiting are
+identical regardless of which URL was dialed.
+
+The substrates within those URLs:
+
+- **HTTP REST** — `POST /extension/rpc` for the synchronous primitives
+  the extension uses (health, version, capabilities, the generic `tool`
+  passthrough). Single request/response, JSON in / JSON out.
 - **WebSocket (engine → client push)** — `/ws` is the existing broadcast
   channel for download progress, model lifecycle, transcription events, etc.
   Production-ready and unused by the extension today.
-- **WebSocket (extension reverse channel, planned)** — `/extension/ws` is
-  the dedicated bidirectional channel where the engine asks the extension
+- **WebSocket (extension reverse channel)** — `/extension/ws` is the
+  dedicated bidirectional channel where the engine asks the extension
   to run a browser tool. Envelope:
   - request: `{ "type": "extension.invoke", "callId": "<uuid>", "toolName": "...", "args": { ... } }`
   - reply: `{ "type": "extension.result", "callId": "<uuid>", "ok": true, "result": { ... } }`
@@ -76,9 +95,29 @@ from the latency deque.
   Default timeout 30 seconds; `invoke_extension_tool` rejects with a
   `TimeoutError` after that and the engine resumes whatever path called it.
 - **Future fallback — Supabase Broadcast** — when extension and engine
-  cannot reach the same loopback (different machine, locked-down corp net),
-  both sides subscribe to channel `matrx-local-bridge:<userId>` over
-  Supabase Realtime. Not implemented yet; design slot reserved.
+  cannot reach either of the two URLs above (e.g. cloudflared blocked,
+  user on a captive portal), both sides subscribe to channel
+  `matrx-local-bridge:<userId>` over Supabase Realtime. Not implemented
+  yet; design slot reserved.
+
+### Discovery primitives
+
+- **`~/.matrx/local.json` (on-disk, public)** — the bootstrap discovery
+  file. Always contains `port`, `host`, `url`, `ws`, `pid`, `version`.
+  When the Cloudflare tunnel is active, also contains `tunnel_url` and
+  `tunnel_ws`. This is what un-authenticated clients read to learn how
+  to reach the engine before they can present a token.
+- **`GET /extension/tunnel/status` (HTTP, authenticated)** — the
+  runtime introspection counterpart. Same data plus `active` (live
+  state from the tunnel manager singleton), the engine's `local_url`,
+  the `mode` (`quick` / `named`), `uptime_seconds`, and a `preferred`
+  hint (`"local"` / `"tunnel"`) telling the extension which URL it
+  *should* use right now. The hint flips to `"tunnel"` only when the
+  tunnel is up *and* the engine was started with
+  `MATRX_PREFER_TUNNEL=true` — otherwise the engine recommends the
+  cheaper loopback path. Backed by the in-memory singleton in
+  `app/api/tunnel_state.py`; updates flow from `run.py`'s discovery-file
+  writers and `app/api/tunnel_routes.py`'s start/stop handlers.
 
 ## Auth model
 
@@ -122,8 +161,16 @@ from the latency deque.
   only). The user trusts their own desktop UI / CLI on those surfaces;
   the second layer is specific to `/extension/*` because that's the
   surface the Chrome extension drives.
-- The FastAPI app binds to `127.0.0.1` only. Phase 1 stays loopback-only;
-  the cross-machine path (Supabase Broadcast) is a separate future PR.
+- **Tunnel mode preserves the same auth posture.** Cloudflare relays
+  requests to `127.0.0.1:<port>` over an outbound tunnel — every
+  request still hits the FastAPI app, still walks the upstream
+  `AuthMiddleware`, and `/extension/*` requests still go through
+  `validate_extension_principal` for the JWT signature + expiry check.
+  There is no auth bypass on the tunnel path; remote callers must
+  present a valid Supabase JWT just like local callers do. The FastAPI
+  app continues to bind `127.0.0.1` only, so no port is exposed to the
+  public internet directly — the public URL is reachable only through
+  the cloudflared subprocess that proxies inbound traffic to loopback.
 - Port discovery: the engine writes the actual chosen port to
   `~/.matrx/local.json` after startup. The extension reads that file (via
   the desktop bridge it already maintains) instead of hardcoding a port.

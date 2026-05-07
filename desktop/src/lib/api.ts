@@ -2621,6 +2621,23 @@ class EngineAPI {
   }
 
   /**
+   * GET /extension/tunnel/status — runtime introspection of the
+   * Cloudflare tunnel state.
+   *
+   * Returns ``active``, the public tunnel URL (and ws variant), the
+   * engine's bound local URL (and ws variant), and a ``preferred`` hint
+   * the extension should follow when it has a choice between local and
+   * tunnel. The hint flips to ``"tunnel"`` only when the tunnel is up
+   * AND the engine was started with ``MATRX_PREFER_TUNNEL=true`` —
+   * otherwise the recommendation is ``"local"``.
+   *
+   * Mirrors ``app/api/tunnel_state.py::get_tunnel_snapshot``.
+   */
+  async extensionTunnelStatus(): Promise<ExtensionTunnelStatus> {
+    return this.request("/extension/tunnel/status");
+  }
+
+  /**
    * GET /extension/metrics — per-command stats snapshot.
    *
    * Returns a JSON map of command name -> ExtensionCommandMetrics. The
@@ -3197,6 +3214,27 @@ export interface ExtensionBroadcastStatus {
   enabled: boolean;
   channel_template: string;
   setting_key: string;
+}
+
+/**
+ * Runtime tunnel state surfaced by ``GET /extension/tunnel/status``.
+ *
+ * Wire-shape mirror of ``app/api/tunnel_state.py::get_tunnel_snapshot``.
+ * ``preferred`` is the recommendation the extension should follow when
+ * choosing between the local loopback URL and the public tunnel URL —
+ * ``"tunnel"`` only when the tunnel is up AND the engine was started
+ * with ``MATRX_PREFER_TUNNEL=true``.
+ */
+export interface ExtensionTunnelStatus {
+  active: boolean;
+  tunnel_url: string | null;
+  tunnel_ws: string | null;
+  local_url: string;
+  local_ws: string;
+  preferred: "local" | "tunnel";
+  prefer_tunnel: boolean;
+  mode: "quick" | "named";
+  uptime_seconds: number;
 }
 
 export interface BridgeEvent {

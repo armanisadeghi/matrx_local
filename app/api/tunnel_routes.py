@@ -98,6 +98,21 @@ async def tunnel_start(body: TunnelStartRequest | None = None) -> TunnelStatus:
     except Exception:
         logger.debug("[tunnel] Could not update discovery file", exc_info=True)
 
+    # Keep the runtime singleton in sync — desktop UI / extension polls
+    # ``GET /extension/tunnel/status`` instead of re-reading the disk file.
+    try:
+        from app.api.tunnel_state import mark_tunnel_inactive, set_tunnel_url
+        if url:
+            set_tunnel_url(
+                url,
+                mode="named" if tm._token else "quick",
+                uptime_seconds=tm.uptime_seconds,
+            )
+        else:
+            mark_tunnel_inactive()
+    except Exception:
+        logger.debug("[tunnel] Could not update tunnel state singleton", exc_info=True)
+
     return TunnelStatus(**tm.get_status())
 
 
@@ -137,5 +152,12 @@ async def tunnel_stop() -> TunnelStatus:
             DISCOVERY_FILE.write_text(json.dumps(data, indent=2))
     except Exception:
         logger.debug("[tunnel] Could not update discovery file", exc_info=True)
+
+    # Mirror the inactive state into the runtime singleton.
+    try:
+        from app.api.tunnel_state import mark_tunnel_inactive
+        mark_tunnel_inactive()
+    except Exception:
+        logger.debug("[tunnel] Could not update tunnel state singleton", exc_info=True)
 
     return TunnelStatus(**tm.get_status())

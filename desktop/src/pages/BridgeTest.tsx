@@ -26,6 +26,7 @@ import {
   AlertCircle,
   Check,
   ChevronRight,
+  Cloud,
   Gauge,
   Heart,
   ListTree,
@@ -66,6 +67,7 @@ import {
   type ExtensionMetricsSnapshot,
   type ExtensionRpcResponse,
   type ExtensionSessionInfo,
+  type ExtensionTunnelStatus,
 } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
@@ -180,6 +182,14 @@ export function BridgeTest({
   const [metrics, setMetrics] = useState<ExtensionMetricsSnapshot>({});
   const [metricsError, setMetricsError] = useState<string | null>(null);
   const [metricsBusy, setMetricsBusy] = useState(false);
+
+  // Tunnel status (sub-section of Panel 1) ----------------------------------
+  const [tunnelStatus, setTunnelStatus] =
+    useState<ExtensionTunnelStatus | null>(null);
+  const [tunnelStatusError, setTunnelStatusError] = useState<string | null>(
+    null,
+  );
+  const [tunnelStatusBusy, setTunnelStatusBusy] = useState(false);
 
   const isEngineReady = engineStatus === "connected" && engineUrl !== null;
 
@@ -352,6 +362,20 @@ export function BridgeTest({
     }
   }, [isEngineReady, refreshMetrics]);
 
+  const refreshTunnelStatus = useCallback(async () => {
+    if (!isEngineReady) return;
+    setTunnelStatusBusy(true);
+    try {
+      const snap = await engine.extensionTunnelStatus();
+      setTunnelStatus(snap);
+      setTunnelStatusError(null);
+    } catch (e) {
+      setTunnelStatusError(String(e));
+    } finally {
+      setTunnelStatusBusy(false);
+    }
+  }, [isEngineReady]);
+
   // -------------------------------------------------------------------------
   // Effects — narrow deps, no broad "actions" objects
   // -------------------------------------------------------------------------
@@ -362,7 +386,14 @@ export function BridgeTest({
     void refreshSessions();
     void refreshBroadcastStatus();
     void refreshMetrics();
-  }, [isEngineReady, refreshSessions, refreshBroadcastStatus, refreshMetrics]);
+    void refreshTunnelStatus();
+  }, [
+    isEngineReady,
+    refreshSessions,
+    refreshBroadcastStatus,
+    refreshMetrics,
+    refreshTunnelStatus,
+  ]);
 
   // Metrics polling — gated on document visibility so we don't burn
   // cycles when the desktop window is minimized or the page is hidden.
@@ -571,6 +602,16 @@ export function BridgeTest({
                 isEngineReady={isEngineReady}
                 onRefresh={refreshMetrics}
                 onReset={resetMetrics}
+              />
+
+              <Separator />
+
+              <TunnelStatusSection
+                status={tunnelStatus}
+                error={tunnelStatusError}
+                busy={tunnelStatusBusy}
+                isEngineReady={isEngineReady}
+                onRefresh={refreshTunnelStatus}
               />
             </CardContent>
           </Card>
@@ -1317,6 +1358,152 @@ function CapabilitiesCard({
           ))}
         </ul>
       </ScrollArea>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tunnel status — sub-section inside Panel 1.
+//
+// Surfaces the runtime state from `GET /extension/tunnel/status`: whether
+// the Cloudflare tunnel is up, the active local + tunnel URLs, the
+// engine's preferred-mode hint, and a warning when the engine prefers
+// tunnel but the extension may not have refreshed its discovery file
+// yet. Manual refresh only — tunnel state changes are infrequent
+// enough that polling adds noise without value.
+// ---------------------------------------------------------------------------
+
+interface TunnelStatusSectionProps {
+  status: ExtensionTunnelStatus | null;
+  error: string | null;
+  busy: boolean;
+  isEngineReady: boolean;
+  onRefresh: () => void | Promise<void>;
+}
+
+function TunnelStatusSection({
+  status,
+  error,
+  busy,
+  isEngineReady,
+  onRefresh,
+}: TunnelStatusSectionProps) {
+  const showRepairHint =
+    status !== null && status.preferred === "tunnel" && status.active;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <Cloud className="h-3.5 w-3.5 text-violet-400" />
+          Tunnel status
+          {status &&
+            (status.active ? (
+              <Badge variant="outline" className="text-[10px]">
+                Active
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="text-[10px]">
+                Inactive
+              </Badge>
+            ))}
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={!isEngineReady || busy}
+          onClick={onRefresh}
+        >
+          <RefreshCw
+            className={cn(
+              "mr-2 h-3.5 w-3.5",
+              busy && "animate-spin",
+            )}
+          />
+          Refresh
+        </Button>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          <AlertCircle className="h-3.5 w-3.5" />
+          {error}
+        </div>
+      )}
+
+      {status === null ? (
+        <div className="rounded border border-dashed border-muted-foreground/30 px-3 py-4 text-center text-xs text-muted-foreground">
+          {isEngineReady
+            ? "Tunnel state has not been fetched yet."
+            : "Engine not connected — tunnel state unavailable."}
+        </div>
+      ) : (
+        <div className="grid gap-2 text-xs sm:grid-cols-2">
+          <div className="rounded border bg-muted/30 p-2">
+            <div className="mb-1 text-muted-foreground">Local URL</div>
+            <code className="block break-all font-mono text-[11px]">
+              {status.local_url}
+            </code>
+            <div className="mt-1 text-[10px] text-muted-foreground">
+              ws: <code className="font-mono">{status.local_ws}</code>
+            </div>
+          </div>
+
+          <div className="rounded border bg-muted/30 p-2">
+            <div className="mb-1 flex items-center justify-between text-muted-foreground">
+              <span>Tunnel URL</span>
+              <Badge variant="outline" className="text-[10px]">
+                {status.mode}
+              </Badge>
+            </div>
+            {status.tunnel_url ? (
+              <>
+                <code className="block break-all font-mono text-[11px]">
+                  {status.tunnel_url}
+                </code>
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  ws: <code className="font-mono">{status.tunnel_ws}</code>
+                </div>
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  uptime: {Math.round(status.uptime_seconds)}s
+                </div>
+              </>
+            ) : (
+              <div className="text-muted-foreground">No active tunnel.</div>
+            )}
+          </div>
+
+          <div className="rounded border bg-muted/30 p-2 sm:col-span-2">
+            <div className="mb-1 flex items-center gap-1.5 text-muted-foreground">
+              <span>Preferred mode</span>
+              <Badge
+                variant={status.preferred === "tunnel" ? "default" : "secondary"}
+                className="text-[10px]"
+              >
+                {status.preferred}
+              </Badge>
+              {status.prefer_tunnel && (
+                <span className="text-[10px] text-muted-foreground">
+                  (MATRX_PREFER_TUNNEL=true)
+                </span>
+              )}
+            </div>
+            {showRepairHint ? (
+              <div className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-300">
+                <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                <span>
+                  Engine prefers tunnel — the extension may need to be
+                  re-paired to pick up the latest tunnel URL.
+                </span>
+              </div>
+            ) : (
+              <div className="text-[10px] text-muted-foreground">
+                The extension should call this URL when it has a choice.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

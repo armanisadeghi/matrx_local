@@ -52,6 +52,7 @@ from app.api.extension_metrics import (
     record as record_metric,
     reset_metrics as reset_metrics_registry,
 )
+from app.api.tunnel_state import get_tunnel_snapshot
 from app.api.extension_ws_manager import (
     disconnect_session,
     list_active_sessions,
@@ -390,6 +391,72 @@ async def post_broadcast_test(
         "sent": sent,
         "enabled": enabled,
     }
+
+
+# ---------------------------------------------------------------------------
+# Tunnel introspection — runtime state of the Cloudflare tunnel.
+#
+# The discovery file at ``~/.matrx/local.json`` is the *bootstrap* source
+# of truth for clients that haven't authenticated yet (they need to know
+# the engine port + tunnel URL before they can send a Bearer token). The
+# endpoint below is the authenticated runtime equivalent: same data, but
+# behind ``validate_extension_principal`` so a tunnel-reached caller still
+# proves identity, and includes a ``preferred`` hint telling the
+# extension which URL it *should* be using right now.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/tunnel/status")
+async def get_tunnel_status_endpoint(
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, Any]:
+    """Report tunnel + local URL state with a preferred-mode hint.
+
+    Shape::
+
+        {
+          "active": bool,                  # tunnel up?
+          "tunnel_url": str | None,        # https://...trycloudflare.com
+          "tunnel_ws":  str | None,        # wss equivalent
+          "local_url":  str,               # http://127.0.0.1:<port>
+          "local_ws":   str,               # ws://127.0.0.1:<port>/ws
+          "preferred":  "local" | "tunnel",
+          "prefer_tunnel": bool,           # mirror of MATRX_PREFER_TUNNEL
+          "mode":       "quick" | "named",
+          "uptime_seconds": float,
+        }
+
+    The ``preferred`` field is the recommendation the extension should
+    follow when it has a choice between local and tunnel: ``"tunnel"``
+    iff the tunnel is up *and* the engine was started with
+    ``MATRX_PREFER_TUNNEL=true``, else ``"local"``. Most users keep the
+    flag off — local loopback is faster and free; the flag is for the
+    case where the extension lives on a different device than the engine.
+    """
+    t0 = time.perf_counter()
+    try:
+        snapshot = get_tunnel_snapshot()
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric("bridge:tunnel/status", latency_ms, ok=True)
+    except Exception as exc:
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        await record_metric(
+            "bridge:tunnel/status",
+            latency_ms,
+            ok=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    publish_event(
+        "tunnel.status",
+        "internal",
+        {
+            "active": snapshot["active"],
+            "preferred": snapshot["preferred"],
+            "mode": snapshot["mode"],
+        },
+    )
+    return snapshot
 
 
 # ---------------------------------------------------------------------------
