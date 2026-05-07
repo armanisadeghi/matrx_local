@@ -26,4 +26,4 @@ _(none)_
 
 ## Completed
 
-_(none yet)_
+- [ENH] /extension/* JWT validation: real Supabase HS256 signature + expiry check via new app/api/extension_auth.py. Loopback fallback preserved when SUPABASE_JWT_SECRET unset (loud WARNING). 2026-05-07 (commit-sha)

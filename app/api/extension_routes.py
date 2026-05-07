@@ -25,10 +25,15 @@ import json
 import time
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Request, WebSocket
+from fastapi import APIRouter, Depends, Request, WebSocket
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketDisconnect
 
+from app.api.extension_auth import (
+    ExtensionPrincipal,
+    validate_extension_principal,
+    validate_extension_principal_ws,
+)
 from app.api.extension_bridge_routes import publish_event
 from app.api.extension_handlers import HANDLERS
 from app.api.extension_ws_manager import (
@@ -56,7 +61,11 @@ class DesktopRpcResponse(BaseModel):
 
 
 @router.post("/rpc", response_model=DesktopRpcResponse)
-async def handle_rpc(request: DesktopRpcRequest, req: Request) -> DesktopRpcResponse:
+async def handle_rpc(
+    request: DesktopRpcRequest,
+    req: Request,
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> DesktopRpcResponse:
     """
     Handle RPC requests from the matrx-extend Chrome extension.
 
@@ -66,9 +75,17 @@ async def handle_rpc(request: DesktopRpcRequest, req: Request) -> DesktopRpcResp
     caught here and surfaced as `ok=False`, with the exception class name
     carried in `data.error_type` for the extension's UX.
 
-    Auth (Bearer token / Supabase JWT) is enforced by upstream middleware.
+    Auth: the upstream `AuthMiddleware` checks Bearer-token presence; this
+    route layers on cryptographic Supabase JWT validation via
+    `validate_extension_principal`. Missing / invalid / expired tokens
+    short-circuit with HTTP 401 before the handler runs.
     """
-    logger.info("[extension_routes] Received RPC command: %s", request.command)
+    logger.info(
+        "[extension_routes] Received RPC command: %s (user=%s verified=%s)",
+        request.command,
+        principal.user_id or "<unverified>",
+        principal.verified,
+    )
     publish_event("rpc.in", "in", {"command": request.command})
 
     handler = HANDLERS.get(request.command)
@@ -146,11 +163,14 @@ async def extension_websocket(websocket: WebSocket) -> None:
 
     Lifecycle:
 
-      1. Bearer token present in `?token=` query param (browsers cannot
-         set Authorization headers on a WS upgrade). Missing token =>
-         close with 1008. Production-grade JWT validation is upstream;
-         this endpoint enforces presence parity with the existing `/ws`
-         route.
+      1. Validate the Bearer token from `?token=` (browsers cannot set
+         Authorization headers on a WS upgrade). The token's Supabase
+         JWT signature + expiry are verified inline before `accept()` —
+         missing / invalid / expired tokens close with 1008. When the
+         engine is running without a JWT secret AND without
+         `SUPABASE_URL`, validation gracefully degrades to a Bearer-
+         presence check (loud one-time WARNING) so the loopback-only
+         happy path keeps working.
       2. Accept upgrade. Register a session in
          `extension_ws_manager`; the registry mints a UUID `session_id`.
       3. Send a `hello` envelope so the client can confirm connection
@@ -165,11 +185,12 @@ async def extension_websocket(websocket: WebSocket) -> None:
          with a ConnectionError so awaiting `invoke_extension_tool`
          callers don't hang forever.
     """
-    token = websocket.query_params.get("token")
-    if not token:
-        logger.warning("[extension_ws] rejected — missing token query param")
-        await websocket.close(code=1008, reason="Missing auth token")
+    principal = await validate_extension_principal_ws(websocket)
+    if principal is None:
+        # validate_extension_principal_ws already closed the socket
+        # with code 1008 on missing / invalid / expired token.
         return
+    token = principal.raw_token
 
     await websocket.accept()
     session = register_session(websocket, user_token=token)

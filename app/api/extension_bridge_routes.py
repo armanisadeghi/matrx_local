@@ -33,10 +33,15 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Request, WebSocket
+from fastapi import APIRouter, Depends, Request, WebSocket
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketDisconnect
 
+from app.api.extension_auth import (
+    ExtensionPrincipal,
+    validate_extension_principal,
+    validate_extension_principal_ws,
+)
 from app.api.extension_broadcast import (
     is_broadcast_enabled,
     publish_to_extension,
@@ -145,7 +150,9 @@ class BroadcastTestRequest(BaseModel):
 
 
 @router.get("/sessions")
-async def get_sessions() -> Dict[str, Any]:
+async def get_sessions(
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, Any]:
     """Return a snapshot of every active extension WebSocket session."""
     sessions = list_active_sessions()
     publish_event(
@@ -157,7 +164,10 @@ async def get_sessions() -> Dict[str, Any]:
 
 
 @router.post("/sessions/disconnect")
-async def post_disconnect(req: DisconnectRequest) -> Dict[str, Any]:
+async def post_disconnect(
+    req: DisconnectRequest,
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, Any]:
     """Close an extension WS session by id. Idempotent."""
     found = await disconnect_session(
         req.session_id,
@@ -177,7 +187,10 @@ async def post_disconnect(req: DisconnectRequest) -> Dict[str, Any]:
 
 
 @router.post("/invoke", response_model=InvokeResponse)
-async def post_invoke(req: InvokeRequest) -> InvokeResponse:
+async def post_invoke(
+    req: InvokeRequest,
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> InvokeResponse:
     """Dispatch a tool call to a connected extension session.
 
     Thin HTTP wrapper around `invoke_extension_tool`. Returns the FULL
@@ -244,7 +257,9 @@ async def post_invoke(req: InvokeRequest) -> InvokeResponse:
 
 
 @router.get("/broadcast/status")
-async def get_broadcast_status() -> Dict[str, Any]:
+async def get_broadcast_status(
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, Any]:
     """Report the current state of the Supabase Broadcast plumb.
 
     Always 200 — the panel renders different copy based on whether the
@@ -260,7 +275,10 @@ async def get_broadcast_status() -> Dict[str, Any]:
 
 
 @router.post("/broadcast/test")
-async def post_broadcast_test(req: BroadcastTestRequest) -> Dict[str, Any]:
+async def post_broadcast_test(
+    req: BroadcastTestRequest,
+    principal: ExtensionPrincipal = Depends(validate_extension_principal),
+) -> Dict[str, Any]:
     """Publish a no-op test envelope on the user's bridge channel.
 
     Returns `{ok, sent, enabled}` so the Bridge Test UI can distinguish
@@ -299,17 +317,20 @@ async def post_broadcast_test(req: BroadcastTestRequest) -> Dict[str, Any]:
 async def bridge_events_websocket(websocket: WebSocket) -> None:
     """Stream every bridge primitive event to subscribers.
 
-    Auth: same `?token=<jwt>` gate as the rest of the extension WS
-    surface — browsers can't set headers on a WS upgrade. Every event
+    Auth: full Supabase JWT signature + expiry verification via
+    `validate_extension_principal_ws`. Browsers can't set headers on a
+    WS upgrade so the token comes via `?token=`. Engine in degraded
+    mode (no JWT secret + no SUPABASE_URL) falls back to
+    Bearer-presence; same posture as `/extension/ws`. Every event
     matches the shape produced by `publish_event(...)`.
 
     The subscriber's queue caps at 1024 entries; on overflow the oldest
     entry is dropped (see `publish_event`). This is a diagnostic
     channel — losing events is preferable to back-pressuring the bridge.
     """
-    token = websocket.query_params.get("token")
-    if not token:
-        await websocket.close(code=1008, reason="Missing auth token")
+    principal = await validate_extension_principal_ws(websocket)
+    if principal is None:
+        # Already closed by the validator with code 1008.
         return
 
     await websocket.accept()
