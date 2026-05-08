@@ -1,10 +1,32 @@
 {
-  "app": {
-    "macOSPrivateApi": true
-  },
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/config.schema.json",
+  "$comment": [
+    "macOS-specific overlay (Tauri v2 auto-merges this with tauri.conf.json on Darwin builds).",
+    "",
+    "Why this file exists:",
+    "  On Linux + Windows the engine ships as a flat sidecar binary (matrx-engine-<triple>)",
+    "  declared in the main tauri.conf.json under bundle.externalBin. Tauri places it in",
+    "  Contents/MacOS/ alongside the desktop binary.",
+    "",
+    "  On macOS we ship the engine as a Helper .app bundle (Matrx Engine.app) so that",
+    "  Activity Monitor displays it as 'Matrx Engine' with its own icon — instead of",
+    "  inheriting the parent app's name and icon (which is what happened when the engine",
+    "  binary lived directly inside the parent's Contents/MacOS/).",
+    "",
+    "  This file therefore:",
+    "    1. Removes 'sidecar/matrx-engine' from externalBin (replacing the array — Tauri",
+    "       merges sibling overlays by replacing arrays, not appending).",
+    "    2. Adds bundle.macOS.files to copy desktop/src-tauri/sidecar/Matrx Engine.app",
+    "       into the parent's Contents/Frameworks/Matrx Engine.app/. Tauri's bundler",
+    "       auto-codesigns nested code in /Frameworks (PR #8259), so the helper is",
+    "       signed with the parent's identity and included in notarization automatically."
+  ],
   "bundle": {
-    "resources": {
-      "binaries/*.dylib": "binaries/"
+    "externalBin": ["sidecar/cloudflared", "binaries/llama-server"],
+    "macOS": {
+      "files": {
+        "Frameworks/Matrx Engine.app": "sidecar/Matrx Engine.app"
+      }
     }
   }
 }

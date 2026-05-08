@@ -1284,7 +1284,7 @@ async fn periodic_state_log(state: Arc<Mutex<ManagerState>>, _db_path: PathBuf) 
             .count();
 
         info!(
-            "[downloads] STATE | active={} queued={} completed={} failed={} cancelled={} \
+            "[downloads] STATE | active={} queued={} completed={} fails={} cancelled={} \
              bandwidth_bps={:.0} peak_bps={:.0} active_slots={} max_concurrent={} | \
              active={} queued={}",
             state_guard.active_ids.len(),

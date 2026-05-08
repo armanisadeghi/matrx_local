@@ -204,10 +204,10 @@ matrx_local/
 │   ├── launch.sh                   # Full dev launch (engine + frontend)
 │   └── ...                         # setup.sh, generate-icons.sh, check.sh, etc.
 ├── specs/                          # PyInstaller specs (4 platforms)
-│   ├── aimatrx-engine-aarch64-apple-darwin.spec
-│   ├── aimatrx-engine-x86_64-apple-darwin.spec
-│   ├── aimatrx-engine-x86_64-unknown-linux-gnu.spec
-│   └── aimatrx-engine-x86_64-pc-windows-msvc.spec
+│   ├── matrx-engine-aarch64-apple-darwin.spec   # macOS arm64  → Matrx Engine.app
+│   ├── matrx-engine-x86_64-apple-darwin.spec    # macOS x86_64 → Matrx Engine.app
+│   ├── matrx-engine-x86_64-unknown-linux-gnu.spec
+│   └── matrx-engine-x86_64-pc-windows-msvc.spec
 ├── migrations/                     # Supabase SQL migrations (001–008)
 ├── docs/                           # Feature-specific guides
 ├── run.py                          # Entry point (port discovery, tray, uvicorn)
@@ -604,12 +604,57 @@ Supabase acts as **OAuth 2.1 Server**:
 
 ## Desktop App (Tauri)
 
+### Process Identity (Activity Monitor / Task Manager)
+
+Two long-running processes ship with each install. They are intentionally
+distinct in name **and** icon so users can tell them apart:
+
+| Process | Activity Monitor name | Icon | Source |
+|---|---|---|---|
+| Tauri UI shell | **AI Matrx** | `desktop/src-tauri/icons/icon.icns` (red speech-bubble) | `Contents/MacOS/aimatrx-desktop` |
+| Python engine sidecar | **Matrx Engine** | `desktop/src-tauri/icons/engine-icon.icns` (server-rack) | `Contents/Frameworks/Matrx Engine.app/Contents/MacOS/Matrx Engine` |
+
+WebKit's auxiliary processes (`AI Matrx Web Content`, `AI Matrx Networking`,
+`AI Matrx Graphics and Media`) are spawned by macOS itself from the parent
+bundle's `CFBundleName`; we don't (and can't) override those.
+
+### Platform-Specific Engine Packaging
+
+The PyInstaller engine is packaged differently per OS so the user-visible
+identity matches the platform's conventions:
+
+- **macOS — Helper-app bundle.** PyInstaller's `BUNDLE()` directive produces a
+  full `Matrx Engine.app` (its own `Info.plist`, `CFBundleName`, icon, and
+  TCC usage strings). It is **not** listed in `tauri.conf.json` `externalBin`;
+  instead `tauri.macos.conf.json` (a platform overlay) uses `bundle.macOS.files`
+  to copy it into `Contents/Frameworks/Matrx Engine.app/`. Tauri v2's bundler
+  (PR #8259) auto-codesigns nested code under `Contents/Frameworks/`, so the
+  helper app inherits the main bundle's signature and notarization ticket
+  with zero extra build steps. `LSUIElement: True` + `LSBackgroundOnly: True`
+  in its plist keep it out of the Dock and app switcher.
+- **Windows / Linux — flat binary.** `matrx-engine-<target-triple>(.exe)`
+  drops into `Contents/MacOS/` (Linux: alongside the binary; Windows:
+  next to the `.exe`) via `tauri.conf.json` `bundle.externalBin`.
+
+The macOS overlay file is loaded automatically by Tauri because Tauri merges
+`tauri.<platform>.conf.json` into the base config. **Important**: array
+fields (like `externalBin`) are **replaced**, not merged — the macOS overlay
+re-declares the full array minus `matrx-engine`. See LESSONS.md for the
+gotcha that bit us when this rule wasn't obvious.
+
 ### Sidecar Lifecycle
 
-1. `start_sidecar` — Spawns PyInstaller binary, streams stdout/stderr to Tauri logs
-2. React UI polls `localhost:22140` until the engine responds
-3. On window close — Hides to system tray
-4. On quit (tray menu) — Kills the sidecar, then exits
+1. `start_sidecar` — Spawns the engine. On macOS production builds it
+   directly invokes `Contents/Frameworks/Matrx Engine.app/Contents/MacOS/Matrx Engine`
+   via `app.shell().command(path)` (computed by `macos_helper_engine_path()`
+   in `lib.rs`). Everywhere else it uses `app.shell().sidecar("matrx-engine")`.
+2. React UI polls `localhost:22140` until the engine responds.
+3. On window close — Hides to system tray.
+4. On quit (tray menu) — Kills the sidecar, then exits.
+5. On startup — `kill_orphaned_sidecars()` sweeps any leftover engine
+   processes from a prior crash. The sweep regex matches all current and
+   legacy names (`Matrx Engine|matrx-engine|aimatrx-engine`) so upgrades
+   from pre-rename installs stay clean.
 
 ### System Tray
 

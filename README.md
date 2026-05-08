@@ -252,7 +252,9 @@ uv sync              # make sure deps are up to date
 bash scripts/build-sidecar.sh
 ```
 
-This creates a single-file ~60 MB binary at `desktop/src-tauri/sidecar/aimatrx-engine-aarch64-apple-darwin` (name varies by platform).
+This produces a ~60 MB engine artifact under `desktop/src-tauri/sidecar/`:
+- **macOS:** `Matrx Engine.app/` — a Helper-app bundle (so the engine appears in Activity Monitor as **Matrx Engine** with its own icon, distinct from the **AI Matrx** UI). At packaging time Tauri copies this into the main app's `Contents/Frameworks/Matrx Engine.app/`.
+- **Windows / Linux:** a flat `matrx-engine-<target-triple>` binary (e.g. `matrx-engine-x86_64-pc-windows-msvc.exe`).
 
 **Step 2 — Build the desktop app:**
 

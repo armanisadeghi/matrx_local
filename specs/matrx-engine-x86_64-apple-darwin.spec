@@ -72,19 +72,21 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# See matrx-engine-aarch64-apple-darwin.spec for the full rationale behind
+# the EXE name + BUNDLE block. The two macOS specs are intentionally identical
+# in structure — only the architecture-specific build inputs differ (which
+# PyInstaller picks up automatically from the Python interpreter being used
+# by build-sidecar.sh under each arch's runner).
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
     a.datas,
     [],
-    name='aimatrx-engine-aarch64-apple-darwin',
+    name='Matrx Engine',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    # UPX is disabled on macOS: UPX cannot correctly process .dylib shared
-    # libraries on macOS, corrupting them before code signing runs. This would
-    # cause signed dylibs to be invalid at runtime. On Linux/Windows it is fine.
     upx=sys.platform != 'darwin',
     upx_exclude=[],
     runtime_tmpdir=None,
@@ -94,4 +96,48 @@ exe = EXE(
     target_arch=None,
     codesign_identity=os.environ.get('APPLE_SIGNING_IDENTITY', None),
     entitlements_file=os.environ.get('SIDECAR_ENTITLEMENTS', None),
+)
+
+
+app = BUNDLE(
+    exe,
+    name='Matrx Engine.app',
+    icon=os.path.join(_ROOT, 'desktop/src-tauri/icons/engine-icon.icns'),
+    bundle_identifier='com.aimatrx.desktop.engine',
+    info_plist={
+        'CFBundleName': 'Matrx Engine',
+        'CFBundleDisplayName': 'Matrx Engine',
+        'CFBundleExecutable': 'Matrx Engine',
+        'CFBundleIdentifier': 'com.aimatrx.desktop.engine',
+        'CFBundleIconFile': 'engine-icon.icns',
+        'CFBundleShortVersionString': os.environ.get('MATRX_ENGINE_VERSION', '1.0.0'),
+        'CFBundleVersion': os.environ.get('MATRX_ENGINE_VERSION', '1.0.0'),
+        'CFBundlePackageType': 'APPL',
+        'CFBundleSignature': '????',
+        'LSMinimumSystemVersion': '10.15',
+        'LSUIElement': True,
+        'LSBackgroundOnly': True,
+        'NSMicrophoneUsageDescription':
+            'AI Matrx needs microphone access for transcription, voice recording, '
+            'and wake-word detection.',
+        'NSCameraUsageDescription':
+            'AI Matrx needs camera access for image-capture tools and AI workflows.',
+        'NSScreenCaptureUsageDescription':
+            'AI Matrx needs screen-recording access for the screenshot tool and '
+            'AI automation workflows.',
+        'NSAppleEventsUsageDescription':
+            'AI Matrx needs Apple Events access for system automation tools '
+            '(window management, keyboard automation).',
+        'NSContactsUsageDescription':
+            'AI Matrx needs Contacts access for the address-book integration tool.',
+        'NSCalendarsUsageDescription':
+            'AI Matrx needs Calendar access for the calendar integration tool.',
+        'NSRemindersUsageDescription':
+            'AI Matrx needs Reminders access for the reminders integration tool.',
+        'NSPhotoLibraryUsageDescription':
+            'AI Matrx needs Photos access for image-based AI workflows.',
+        'NSBluetoothAlwaysUsageDescription':
+            'AI Matrx needs Bluetooth access to discover and interact with nearby '
+            'devices.',
+    },
 )

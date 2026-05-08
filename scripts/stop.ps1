@@ -7,7 +7,7 @@
 #
 # What this cleans up:
 #   - Python engine (run.py) — any/all instances
-#   - aimatrx-engine sidecar binary (PyInstaller)
+#   - Matrx Engine sidecar binary (PyInstaller — matrx-engine*.exe)
 #   - AI Matrx desktop (Tauri) process
 #   - Vite dev server (port 1420)
 #   - Any port in the engine range (22140-22159)
@@ -140,20 +140,24 @@ if ($pythonProcs) {
     Write-Host "  [OK] No run.py processes found" -ForegroundColor Green
 }
 
-# ── 3. aimatrx-engine sidecar processes ─────────────────────────────────
-Write-Host "`n━━ 3 / 8  Sidecar binary (aimatrx-engine)" -ForegroundColor Blue
-$sidecarNames = @("aimatrx-engine*")
+# ── 3. Matrx Engine sidecar processes ────────────────────────────────────
+# Image-name patterns:
+#   • matrx-engine*    — current build (post-rename).
+#   • aimatrx-engine*  — legacy installs from before the rename. Sweep so
+#                        upgrades on shared dev machines are clean.
+Write-Host "`n━━ 3 / 8  Sidecar binary (Matrx Engine)" -ForegroundColor Blue
+$sidecarNames = @("matrx-engine*", "aimatrx-engine*")
 $sidecarFound = $false
 foreach ($pattern in $sidecarNames) {
     $procs = Get-Process -Name $pattern -ErrorAction SilentlyContinue
     foreach ($p in $procs) {
         $sidecarFound = $true
         Write-Host "  Found: $($p.ProcessName) PID=$($p.Id) Memory=$([math]::Round($p.WorkingSet64/1MB, 1))MB Started=$($p.StartTime)"
-        Stop-ProcessSafe -Pid $p.Id -Label "aimatrx-engine sidecar"
+        Stop-ProcessSafe -Pid $p.Id -Label "Matrx Engine sidecar"
     }
 }
 if (-not $sidecarFound) {
-    Write-Host "  [OK] No aimatrx-engine sidecar processes found" -ForegroundColor Green
+    Write-Host "  [OK] No Matrx Engine sidecar processes found" -ForegroundColor Green
 }
 
 # ── 4. Tauri desktop process (AI Matrx) ─────────────────────────────────

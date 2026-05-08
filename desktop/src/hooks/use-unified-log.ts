@@ -195,16 +195,59 @@ function stripAnsi(text: string): string {
   return text.replace(_ANSI_RE, "");
 }
 
+// ---------------------------------------------------------------------------
+// Python logger format helpers (shared by tauri + syslog sources)
+// ---------------------------------------------------------------------------
+
+// Python standard logger format: "2026-05-08 12:17:51,635 - DEBUG - message"
+// Matches the timestamp + level + separator prefix so it can be stripped.
+const _PYTHON_LOG_PREFIX_RE =
+  /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+/;
+
+// Parse the log level from a raw Python logger line (timestamp+level+message).
+// Returns null when the line is not in that format.
+function parseSyslogLevel(msg: string): LogLevel | null {
+  const m = msg.match(_PYTHON_LOG_PREFIX_RE);
+  if (!m) return null;
+  switch (m[1]) {
+    case "ERROR":
+    case "CRITICAL":
+      return "error";
+    case "WARNING":
+      return "warn";
+    default:
+      return "info"; // INFO, DEBUG
+  }
+}
+
+// Strip the Python logger timestamp+level prefix, leaving only the message body.
+function cleanSyslogMessage(msg: string): string {
+  return msg.replace(_PYTHON_LOG_PREFIX_RE, "").trim();
+}
+
 // Parses the embedded Python log level from raw tauri sidecar output.
 // Lines look like: "[stdout] \x1b[33mWARNING\x1b[0m - message text"
 // Returns null when the pattern is absent (non-Python or crash output).
 function parseTauriLogLevel(rawText: string): LogLevel | null {
-  const stripped = stripAnsi(rawText);
-  const m = stripped.match(
-    /\[std(?:out|err)\]\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*-/,
-  );
-  if (!m) return null;
-  switch (m[1]) {
+  let msg = stripAnsi(rawText);
+  msg = msg.replace(/^\[std(?:out|err)\]\s*/, "");
+
+  const m1 = msg.match(_PYTHON_LOG_PREFIX_RE);
+  if (m1) {
+    switch (m1[1]) {
+      case "ERROR":
+      case "CRITICAL":
+        return "error";
+      case "WARNING":
+        return "warn";
+      default:
+        return "info";
+    }
+  }
+
+  const m2 = msg.match(/^(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*-/);
+  if (!m2) return null;
+  switch (m2[1]) {
     case "ERROR":
     case "CRITICAL":
       return "error";
@@ -222,6 +265,11 @@ function parseTauriLogLevel(rawText: string): LogLevel | null {
 function cleanTauriMessage(rawText: string): string {
   let msg = stripAnsi(rawText);
   msg = msg.replace(/^\[std(?:out|err)\]\s*/, "");
+
+  if (_PYTHON_LOG_PREFIX_RE.test(msg)) {
+    return cleanSyslogMessage(msg);
+  }
+
   msg = msg.replace(/^(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*-\s*/, "");
   return msg.trim();
 }
@@ -240,8 +288,11 @@ function inferServerLevel(text: string): LogLevel {
     t.includes("process exited")
   )
     return "error";
-  if (t.includes("error") || t.includes("failed")) return "error";
-  if (t.includes("warning") || t.includes("warn")) return "warn";
+
+  const tForMatch = t.replace(/failed=(?:0|\[\])/g, "");
+
+  if (tForMatch.includes("error") || tForMatch.includes("failed")) return "error";
+  if (tForMatch.includes("warning") || tForMatch.includes("warn")) return "warn";
   if (
     t.includes("ready") ||
     t.includes("✓") ||
@@ -438,8 +489,10 @@ async function startSyslogStream(
 
     es.onmessage = (evt) => {
       if (_state.paused) return;
-      const msg = stripAnsi(evt.data);
-      emitClientLog(inferServerLevel(msg), msg, "syslog");
+      const raw = stripAnsi(evt.data);
+      const level = parseSyslogLevel(raw) ?? inferServerLevel(raw);
+      const msg = cleanSyslogMessage(raw);
+      emitClientLog(level, msg, "syslog");
     };
 
     es.onerror = () => {

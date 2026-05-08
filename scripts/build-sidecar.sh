@@ -92,16 +92,31 @@ while [[ $# -gt 0 ]]; do
 done
 
 TARGET="${OVERRIDE_TARGET:-$(detect_target)}"
-BINARY_NAME="aimatrx-engine-$TARGET"
+BINARY_NAME="matrx-engine-$TARGET"
 
 # On Windows, add .exe extension
 case "$TARGET" in
     *windows*) BINARY_NAME="$BINARY_NAME.exe" ;;
 esac
 
+# On macOS, the spec files produce a Helper app bundle (Matrx Engine.app)
+# rather than a flat binary, so it can show in Activity Monitor with its own
+# name and icon. The flat binary `Matrx Engine` lives inside the bundle at
+# Contents/MacOS/Matrx Engine; tauri-bundler picks the whole .app up via
+# bundle.macOS.files and embeds it under Contents/Frameworks/.
+IS_MACOS=false
+case "$TARGET" in
+    *apple-darwin*) IS_MACOS=true ;;
+esac
+HELPER_APP_NAME="Matrx Engine.app"
+
 echo "=== Building AI Matrx Engine Sidecar ==="
 echo "Target: $TARGET"
-echo "Output: $SIDECAR_DIR/$BINARY_NAME"
+if $IS_MACOS; then
+    echo "Output: $SIDECAR_DIR/$HELPER_APP_NAME (Helper app bundle)"
+else
+    echo "Output: $SIDECAR_DIR/$BINARY_NAME"
+fi
 echo ""
 
 # Create output directory
@@ -211,12 +226,12 @@ echo "  → Playwright browsers will be auto-installed at runtime (not bundled)"
 
 # ── Choose build method: spec file (macOS) or inline flags (Linux/Windows) ──
 #
-# The spec file (aimatrx-engine-aarch64-apple-darwin.spec or *x86_64*) is the
+# The spec file (matrx-engine-aarch64-apple-darwin.spec or *x86_64*) is the
 # authoritative build config for macOS. It contains codesign_identity (for
 # signing all collected dylibs) and upx=False (UPX corrupts dylibs on macOS).
 # We MUST use the spec file on macOS — CLI flags alone can't express these.
 #
-SPEC_FILE="$PROJECT_ROOT/specs/aimatrx-engine-$TARGET.spec"
+SPEC_FILE="$PROJECT_ROOT/specs/matrx-engine-$TARGET.spec"
 
 build_with_spec() {
     echo "  → Using spec file: $SPEC_FILE"
@@ -227,7 +242,11 @@ build_with_spec() {
 }
 
 build_with_flags() {
-    # Write the PyInstaller command to a temp file to avoid arg-quoting issues
+    # Write the PyInstaller command to a temp file to avoid arg-quoting issues.
+    # Note: this fallback path is only used on Windows / Linux (the macOS spec
+    # files are required because they contain the BUNDLE() block that produces
+    # Matrx Engine.app). The fallback therefore always produces the flat
+    # `matrx-engine-<triple>[.exe]` binary that Tauri's externalBin expects.
     local CMD_FILE
     CMD_FILE="$(mktemp)"
 cat > "$CMD_FILE" << 'PYINSTALLER_EOF'
@@ -371,9 +390,27 @@ PYINSTALLER_EOF
 }
 
 # Set env vars for the Python script
-export BINARY_NAME="aimatrx-engine-$TARGET"
+export BINARY_NAME="matrx-engine-$TARGET"
 if [[ -n "${TESSDATA_PATH:-}" && -d "$TESSDATA_PATH" ]]; then
     export TESSDATA_PATH_ARG="$TESSDATA_PATH:tessdata"
+fi
+
+# Bake the engine version (for Matrx Engine.app's Info.plist on macOS). The
+# spec file reads MATRX_ENGINE_VERSION; we resolve it from pyproject.toml so
+# the helper bundle's CFBundleShortVersionString tracks the parent app
+# automatically. The fallback "1.0.0" is a defensive default — should never
+# be hit because pyproject.toml is committed to the repo.
+if [[ -f "$PROJECT_ROOT/pyproject.toml" ]]; then
+    MATRX_ENGINE_VERSION=$(
+        "$PYTHON_CMD" -c "
+import re, sys, pathlib
+text = pathlib.Path('$PROJECT_ROOT/pyproject.toml').read_text()
+m = re.search(r'^version\s*=\s*\"([^\"]+)\"', text, re.MULTILINE)
+print(m.group(1) if m else '1.0.0')
+" 2>/dev/null || echo "1.0.0"
+    )
+    export MATRX_ENGINE_VERSION
+    echo "  → Engine version (for Helper app Info.plist): $MATRX_ENGINE_VERSION"
 fi
 
 # ---------------------------------------------------------------------------
@@ -453,26 +490,60 @@ else
     build_with_flags
 fi
 
-# ── Post-build: verify the outer binary is signed (macOS only) ────────
-# Note: codesign --verify only checks the outer EXE signature, not the
-# embedded dylibs (which are compressed data). The real check happens
-# at runtime — if the pre-build step above worked, the engine will start.
-BUILT_BINARY="dist/aimatrx-engine-$TARGET"
-if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && "$(uname -s)" == "Darwin" && -f "$BUILT_BINARY" ]]; then
-    echo ""
-    echo "=== Post-Build: Verifying outer binary signature ==="
-    codesign --verify --verbose "$BUILT_BINARY"
-    echo "  ✅ Outer binary signature valid"
+# ── Post-build: verify signatures (macOS only) ─────────────────────────────
+#
+# On macOS, PyInstaller's BUNDLE() produces dist/Matrx Engine.app, with the
+# inner Mach-O at Contents/MacOS/Matrx Engine signed by PyInstaller's
+# codesign_identity step. We verify the inner binary here; the outer .app
+# bundle's CodeResources will be created by tauri-bundler when it copies the
+# helper into the parent app via bundle.macOS.files (Tauri's nested-code
+# auto-codesign feature, PR #8259).
+#
+# On Windows/Linux, codesign is a no-op — we rely on the OS-native signing
+# performed by tauri-bundler / signtool / Authenticode when the parent app is
+# bundled.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    HELPER_APP_PATH="dist/$HELPER_APP_NAME"
+    HELPER_INNER_BIN="$HELPER_APP_PATH/Contents/MacOS/Matrx Engine"
+    if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && -f "$HELPER_INNER_BIN" ]]; then
+        echo ""
+        echo "=== Post-Build: Verifying Helper app inner binary signature ==="
+        codesign --verify --verbose "$HELPER_INNER_BIN"
+        echo "  ✅ Inner binary signature valid"
+    fi
 fi
 
-# Copy to sidecar directory
-echo "Copying binary to sidecar directory..."
-cp "dist/aimatrx-engine-$TARGET"* "$SIDECAR_DIR/"
-
-echo ""
-echo "=== Build Complete ==="
-echo "Binary: $SIDECAR_DIR/$BINARY_NAME"
-ls -lh "$SIDECAR_DIR/$BINARY_NAME"
+# ── Copy build output into the Tauri sidecar/ directory ─────────────────────
+#
+# macOS  : copy the whole Matrx Engine.app — tauri-bundler picks it up via
+#          bundle.macOS.files and embeds it at Contents/Frameworks/.
+# Win/Lin: copy the flat matrx-engine-<triple>[.exe] — tauri-bundler picks
+#          it up via bundle.externalBin and embeds it at Contents/MacOS/
+#          (or the platform equivalent).
+echo "Copying build output to sidecar directory..."
+if $IS_MACOS; then
+    SRC_APP="dist/$HELPER_APP_NAME"
+    DEST_APP="$SIDECAR_DIR/$HELPER_APP_NAME"
+    if [[ ! -d "$SRC_APP" ]]; then
+        echo "ERROR: PyInstaller did not produce $SRC_APP — check the spec file."
+        exit 1
+    fi
+    rm -rf "$DEST_APP"
+    # ditto preserves Mach-O metadata, code-signing attributes, symlinks, and
+    # extended attributes (xattr). cp -R loses xattrs which can corrupt the
+    # signature on already-signed files inside the bundle.
+    /usr/bin/ditto "$SRC_APP" "$DEST_APP"
+    echo ""
+    echo "=== Build Complete ==="
+    echo "Helper app: $DEST_APP"
+    du -sh "$DEST_APP"
+else
+    cp "dist/matrx-engine-$TARGET"* "$SIDECAR_DIR/"
+    echo ""
+    echo "=== Build Complete ==="
+    echo "Binary: $SIDECAR_DIR/$BINARY_NAME"
+    ls -lh "$SIDECAR_DIR/$BINARY_NAME"
+fi
 
 DESKTOP_DIR="$(dirname "$SIDECAR_DIR")"
 TAURI_DEV_CMD="cd $PROJECT_ROOT/desktop && npm run tauri:dev"
@@ -484,7 +555,11 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "  Option 1 — Test the sidecar binary standalone:"
 echo ""
-echo "    $SIDECAR_DIR/$BINARY_NAME"
+if $IS_MACOS; then
+    echo "    \"$SIDECAR_DIR/$HELPER_APP_NAME/Contents/MacOS/Matrx Engine\""
+else
+    echo "    $SIDECAR_DIR/$BINARY_NAME"
+fi
 echo ""
 echo "    Then verify it's running:"
 echo "    curl http://localhost:22140/tools/list"

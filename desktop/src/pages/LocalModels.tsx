@@ -2901,7 +2901,12 @@ function ModelSwitcher() {
     listModels();
   }, [listModels]);
 
+  const matchedModel = downloadedModels.find((m) =>
+    serverStatus?.model_path?.includes(m.filename)
+  );
+
   const currentModel =
+    matchedModel?.name ??
     serverStatus?.model_name ??
     serverStatus?.model_path?.split("/").pop() ??
     "";
@@ -2937,15 +2942,16 @@ function ModelSwitcher() {
       <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse shrink-0" />
       <select
         className="text-xs bg-transparent border-0 outline-none cursor-pointer font-medium text-foreground max-w-[200px] truncate"
-        value={
-          downloadedModels.find((m) =>
-            serverStatus?.model_path?.includes(m.filename),
-          )?.filename ?? ""
-        }
+        value={matchedModel?.filename ?? ""}
         onChange={(e) => handleSwitch(e.target.value)}
         disabled={switching || isStarting}
         title="Switch model"
       >
+        {!matchedModel && (
+          <option value="" disabled className="bg-background">
+            {currentModel || "Select model"}
+          </option>
+        )}
         {downloadedModels.map((m) => (
           <option key={m.filename} value={m.filename} className="bg-background">
             {m.name} ({m.size_gb} GB)
@@ -4358,7 +4364,12 @@ function InferenceTab() {
   const allPrompts = [...BUILTIN_PROMPTS, ...inferenceUserPrompts];
   const activePromptName =
     allPrompts.find((p) => p.content === systemPrompt)?.name ?? null;
+
+  const matchedModel = downloadedModels.find((m) =>
+    serverStatus?.model_path?.includes(m.filename)
+  );
   const currentModelName =
+    matchedModel?.name ??
     serverStatus?.model_name ??
     serverStatus?.model_path?.split("/").pop() ??
     "Model";

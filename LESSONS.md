@@ -103,3 +103,99 @@ The installer lives in `app/services/image_gen/installer.py`. The UI is `ImageGe
 The CI step that signs llama.cpp binaries must sign **both** the dylib files and the `llama-server` executable. Signing only the dylibs leaves the executable with an ad-hoc signature, which macOS Gatekeeper rejects on end-user machines (process is killed immediately on launch with no output).
 
 Rule: after downloading any binary that will be bundled in the macOS app, sign it explicitly before `tauri-action` runs.
+
+---
+
+## macOS Process Identity — Helper-App Bundles
+
+### Sidecars in `Contents/MacOS/` inherit the parent's name in Activity Monitor
+
+A flat sidecar binary dropped into `<App>.app/Contents/MacOS/` shows up in
+Activity Monitor with the **parent bundle's `CFBundleName`** — there is no
+way to override this from the binary itself. Two binaries in the same
+`Contents/MacOS/` therefore appear as two identically-named processes with
+the same icon (we shipped this for months: both `aimatrx-desktop` and
+`aimatrx-engine` showed as "AI Matrx", confusing users who couldn't tell
+the UI from the engine).
+
+**Fix:** package the sidecar as a nested *Helper-app bundle* under
+`Contents/Frameworks/<Name>.app/`. macOS treats it as a separate application
+with its own `Info.plist`, `CFBundleName`, icon, and TCC permission strings.
+Set `LSUIElement: True` + `LSBackgroundOnly: True` in the helper's plist so
+it stays out of the Dock and app switcher.
+
+### Don't post-process the bundle after `tauri-action` — let Tauri build it
+
+Doing the helper-app restructure in an `afterBundleCommand` (or any custom
+script that runs after Tauri signs) **breaks notarization**: the notarization
+ticket is stapled to the bundle's exact byte layout at sign time, so any
+later modification — even just moving files — invalidates it.
+
+Two patterns work; pick one based on what your build tool supports:
+
+1. **Build the helper bundle in PyInstaller**, then ship it to Tauri as a
+   pre-built artifact. Add a `BUNDLE()` block to the macOS spec files so
+   PyInstaller emits `<Helper>.app` directly, then declare it in
+   `tauri.macos.conf.json` under `bundle.macOS.files`:
+   ```json
+   "macOS": { "files": { "Frameworks/Matrx Engine.app": "sidecar/Matrx Engine.app" } }
+   ```
+   Tauri v2's bundler (PR #8259) auto-codesigns nested code under
+   `Contents/Frameworks/`, and the helper inherits the main bundle's
+   notarization ticket. Zero post-build steps; CI stays simple.
+
+2. Use Tauri's first-party hooks **before** signing if your bundler supports
+   it. Avoid `afterBundleCommand` for anything that mutates the bundle.
+
+We use pattern 1 for the Matrx Engine. See
+`specs/matrx-engine-aarch64-apple-darwin.spec` and
+`desktop/src-tauri/tauri.macos.conf.json`.
+
+### Tauri platform-overlay arrays are *replaced*, not merged
+
+When you add `tauri.<platform>.conf.json`, Tauri merges it into
+`tauri.conf.json` — but **arrays are replaced wholesale**. If
+`tauri.conf.json` has `bundle.externalBin: ["a", "b", "c"]` and the macOS
+overlay only specifies `["c"]` (because you want to drop `a` and `b` on
+macOS), the resulting macOS config is `["c"]` exactly — *not* a union or
+diff. To keep platform-shared entries, you must re-list them in the overlay.
+
+We hit this when moving the engine into a Helper-app bundle on macOS while
+keeping `cloudflared` and `llama-server` shared across all platforms — the
+macOS overlay re-lists those two, omits `matrx-engine`, and uses
+`bundle.macOS.files` to inject the helper instead.
+
+### Spawning a Helper-app from Rust uses `command()`, not `sidecar()`
+
+Tauri's `app.shell().sidecar("name")` looks for `<name>(.exe)` in
+`Contents/MacOS/` (or alongside the binary on Linux/Windows). It will
+**not** find an executable inside `Contents/Frameworks/<Helper>.app/`.
+
+For a Helper-app sidecar, compute the absolute path with `current_exe()`
+and spawn via `app.shell().command(path)`:
+```rust
+fn macos_helper_engine_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let app_root = exe.parent()?.parent()?; // Contents/MacOS → Contents
+    let helper = app_root.join("Frameworks/Matrx Engine.app/Contents/MacOS/Matrx Engine");
+    helper.exists().then_some(helper)
+}
+```
+Fall back to `app.shell().sidecar()` for non-macOS targets and dev mode
+(where the helper bundle hasn't been built yet — the engine is launched
+manually via `uv run python run.py`).
+
+### Sweep legacy process names on every restart and uninstall
+
+Renaming the sidecar binary (`aimatrx-engine` → `matrx-engine`, plus the
+new "Matrx Engine" Helper-app process name) means upgrade installs from
+older versions can leave orphaned legacy processes bound to ports. The
+startup sweep in `lib.rs` and the `stop.sh` / `stop.ps1` / NSIS installer
+hooks must match **all** historical names — we use a regex like
+`Matrx Engine|matrx-engine|aimatrx-engine` for `pkill -f`, and explicit
+`taskkill /IM` calls for each known `.exe` name on Windows.
+
+Rule of thumb: any time you rename a long-running binary, audit every
+`pkill`, `pgrep`, `taskkill`, and `Get-Process` call in the repo and make
+the pattern accept both the old and new names for at least one major
+release cycle.

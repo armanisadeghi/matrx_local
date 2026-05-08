@@ -1586,7 +1586,8 @@ def _avfoundation_auth_status(media_type: str) -> PermissionStatus | None:
     MUST NOT be called from the Python sidecar process. TCC prompts must only
     originate from the main Tauri .app bundle process via tauri-plugin-macos-
     permissions, not from the background sidecar. Calling it from the sidecar
-    associates the prompt with "Terminal" or "aimatrx-engine" rather than
+    associates the prompt with "Terminal" or "Matrx Engine" (the helper-app
+    bundle name; legacy installs may show "aimatrx-engine") rather than
     "AI Matrx.app", confuses the user, and can cause repeated prompts.
 
     This function is intentionally disabled — it returns None unconditionally

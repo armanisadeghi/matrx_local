@@ -1,4 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
+#
+# Windows PyInstaller spec for matrx-engine (the Matrx Engine sidecar).
+#
+# Key Windows-specific differences from the macOS/Linux specs:
+#
+#   runtime_tmpdir: set to a FIXED path under %LOCALAPPDATA% instead of None.
+#
+#   Why: PyInstaller --onefile on Windows extracts all bundled files into a
+#   temp directory at launch (_MEIxxxxxx in %TEMP% when runtime_tmpdir=None).
+#   Windows Restart Manager tracks which installer-registered files are in use.
+#   Even after matrx-engine.exe exits, the extraction dir and its handles may
+#   linger in the Restart Manager registry, causing NSIS to report:
+#     "Error opening file for writing: matrx-engine.exe"
+#   even when no process is running.
+#
+#   By using a fixed, known path (AI Matrx\engine-runtime), we can:
+#     1. Delete that directory explicitly in the NSIS pre-install hook before
+#        copying any files, clearing all stale Restart Manager registrations.
+#     2. Reuse the extracted files across app restarts (faster cold start).
+#
+#   upx=True: UPX compression is safe on Windows (unlike macOS where it
+#   corrupts dylibs before code signing). Reduces binary size significantly.
+
 import os
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
@@ -82,13 +105,17 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='aimatrx-engine-x86_64-unknown-linux-gnu',
+    name='matrx-engine-x86_64-pc-windows-msvc',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
+    # Fixed extraction directory under %LOCALAPPDATA%\AI Matrx\engine-runtime.
+    # This replaces the random _MEIxxxxxx temp folder that Windows Restart Manager
+    # holds open even after the process exits, blocking installer file writes.
+    # The NSIS pre-install hook deletes this directory before copying new files.
+    runtime_tmpdir='%LOCALAPPDATA%\\AI Matrx\\engine-runtime',
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,

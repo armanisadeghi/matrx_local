@@ -274,28 +274,35 @@ def _extract_bearer_ws(websocket: WebSocket) -> Optional[str]:
 async def _verify_token(token: str) -> ExtensionPrincipal:
     """Verify ``token`` and return a populated principal.
 
-    Tries JWKS first, then HS256 secret. Raises a generic exception on
+    Tries JWKS first (if applicable), then HS256 secret. Raises a generic exception on
     every failure path; callers translate to HTTP 401 / WS 1008.
     """
     last_error: Optional[Exception] = None
 
+    # Peek at the token header to optimize the validation path
+    try:
+        import jwt as _jwt
+        header = _jwt.get_unverified_header(token)
+        alg = header.get("alg")
+    except Exception as exc:
+        header = {}
+        alg = None
+        last_error = exc
+
     jwks_url = _supabase_jwks_url()
-    if jwks_url:
+    # Only attempt JWKS if the token is NOT symmetrically signed. JWKS cannot verify HS256.
+    if jwks_url and alg != "HS256":
         try:
             payload = await asyncio.to_thread(
                 _decode_with_jwks_sync, token, jwks_url
             )
             return _principal_from_payload(payload, token)
         except Exception as exc:
-            # JWKS may legitimately reject a stale-but-valid HS256 token
-            # if Supabase has rotated to asymmetric keys but a client
-            # still holds an old HS-signed JWT. Fall through to the
-            # secret path before giving up.
             last_error = exc
             logger.debug("[extension_auth] JWKS validation failed: %s", exc)
 
     secret = _env_jwt_secret()
-    if secret:
+    if secret and alg == "HS256":
         try:
             payload = await asyncio.to_thread(
                 _decode_with_secret_sync, token, secret
@@ -306,26 +313,17 @@ async def _verify_token(token: str) -> ExtensionPrincipal:
             logger.debug("[extension_auth] HS256 validation failed: %s", exc)
 
     # Both paths failed (or weren't available). 
-    # If the token is HS256 but we don't have the shared secret, JWKS was guaranteed
-    # to fail. This is the standard state for the desktop app in production (no .env
+    # If the token is HS256 but we don't have the shared secret, JWKS is bypassed.
+    # This is the standard state for the desktop app in production (no .env
     # shipped, but OAuth tokens are HS256). Fallback gracefully as if validation
-    # was disabled entirely.
+    # was disabled entirely, without spamming the debug logs.
+    if alg == "HS256" and not secret:
+        _maybe_log_degraded_mode_once()
+        return _degraded_principal(token)
+
     if last_error is not None:
-        if not secret:
-            try:
-                import jwt as _jwt
-                header = _jwt.get_unverified_header(token)
-                if header.get("alg") == "HS256":
-                    logger.debug(
-                        "[extension_auth] HS256 token encountered but no secret available. "
-                        "Falling back to permissive degraded mode."
-                    )
-                    _maybe_log_degraded_mode_once()
-                    return _degraded_principal(token)
-            except Exception:
-                pass
         raise last_error
-    raise RuntimeError("No JWT verification path is configured")
+    raise RuntimeError("No JWT verification path is configured or token is invalid")
 
 
 def _principal_from_payload(

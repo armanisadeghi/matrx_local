@@ -29,7 +29,7 @@ bash scripts/stop.sh          # graceful (SIGTERM then SIGKILL if needed)
 bash scripts/stop.sh --force  # immediate SIGKILL
 ```
 
-This kills: Python engine, Vite server, Tauri window, aimatrx-engine sidecar, any process on ports 22140–22159 and 1420. Then prints port status to confirm they're free. You can run it any time — if nothing is running it just confirms everything is clean.
+This kills: Python engine, Vite server, Tauri window, Matrx Engine sidecar (and legacy aimatrx-engine processes from before the rename), any process on ports 22140–22159 and 1420. Then prints port status to confirm they're free. You can run it any time — if nothing is running it just confirms everything is clean.
 
 ---
 

@@ -40,7 +40,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "sidecar/aimatrx-engine",
+      "sidecar/matrx-engine",
       "sidecar/cloudflared",
       "binaries/llama-server"
     ],
@@ -72,9 +72,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": [
-          "aimatrx"
-        ]
+        "schemes": ["aimatrx"]
       }
     },
     "updater": {

@@ -42,8 +42,20 @@ struct FetchResponse {
 /// Kill any orphaned processes from a previous session.
 ///
 /// Called before spawning a new sidecar and during graceful shutdown.
-/// Targets: aimatrx-engine (Python sidecar), cloudflared (tunnel),
+/// Targets: matrx-engine (Python sidecar), cloudflared (tunnel),
 /// llama-server (LLM inference).
+///
+/// Process-name patterns by platform:
+///   macOS / Linux: pkill -f matches the full command line, so we use a
+///     regex alternation that catches both:
+///       • "Matrx Engine"          (macOS Helper-app binary, with space)
+///       • "matrx-engine"          (Linux flat binary; also legacy macOS
+///                                  builds where it lived in Contents/MacOS/)
+///       • "aimatrx-engine"        (legacy installs that pre-date the
+///                                  Helper-app rename — sweep them so
+///                                  upgrade paths don't leave orphans)
+///   Windows: taskkill /IM matches by exact image (process) name, so we
+///     have to issue one call per image variant.
 ///
 /// Discovery file safety: only deletes local.json if the PID it contains
 /// is no longer alive.  This prevents a race where Rust cleanup runs AFTER
@@ -52,15 +64,21 @@ struct FetchResponse {
 fn kill_orphaned_sidecars() {
     #[cfg(unix)]
     {
+        // Single regex covers the macOS Helper-app process name ("Matrx Engine"),
+        // the Linux flat binary ("matrx-engine"), and the legacy "aimatrx-engine"
+        // name from older installs. pkill -f matches against the full command
+        // line, so a substring of the executable path is enough.
+        const ENGINE_PATTERN: &str = "Matrx Engine|matrx-engine|aimatrx-engine";
+
         let _ = std::process::Command::new("pkill")
-            .args(["-TERM", "-f", "aimatrx-engine"])
+            .args(["-TERM", "-f", ENGINE_PATTERN])
             .output();
         let _ = std::process::Command::new("pkill")
             .args(["-TERM", "-f", "cloudflared tunnel"])
             .output();
         std::thread::sleep(std::time::Duration::from_millis(500));
         let _ = std::process::Command::new("pkill")
-            .args(["-KILL", "-f", "aimatrx-engine"])
+            .args(["-KILL", "-f", ENGINE_PATTERN])
             .output();
         let _ = std::process::Command::new("pkill")
             .args(["-KILL", "-f", "cloudflared tunnel"])
@@ -71,9 +89,22 @@ fn kill_orphaned_sidecars() {
         // /F = force, /T = kill entire process tree (children: uvicorn workers,
         // Playwright Chromium, etc.) — without /T those children survive and
         // continue to hold port 22140 and file system locks.
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/IM", "aimatrx-engine-x86_64-pc-windows-msvc.exe"])
-            .output();
+        //
+        // We issue one taskkill per known image name. The current build target
+        // is "matrx-engine-x86_64-pc-windows-msvc.exe"; "aimatrx-engine-*.exe"
+        // is the legacy name that may still be running on machines that just
+        // upgraded to a build that uses the new name — sweep both so the
+        // upgrade is clean.
+        for image in [
+            "matrx-engine-x86_64-pc-windows-msvc.exe",
+            "matrx-engine.exe",
+            "aimatrx-engine-x86_64-pc-windows-msvc.exe",
+            "aimatrx-engine.exe",
+        ] {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/IM", image])
+                .output();
+        }
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/T", "/IM", "cloudflared.exe"])
             .output();
@@ -158,6 +189,37 @@ struct SidecarStatus {
     port: u16,
 }
 
+/// Resolve the path to the Helper-app engine binary on macOS production builds.
+///
+/// On macOS we ship the engine as a Helper .app bundle inside the parent app
+/// (Contents/Frameworks/Matrx Engine.app) so Activity Monitor can display it
+/// as "Matrx Engine" with its own icon. Tauri's `app.shell().sidecar()` API
+/// resolves names relative to the resource directory, which doesn't match
+/// the /Frameworks layout — so we compute the absolute path from the running
+/// executable's location and spawn it as a regular shell command.
+///
+/// Returns Some(path) only if the Helper app is present at the expected
+/// location. In dev mode (`pnpm tauri:dev`) the bundle doesn't exist, so the
+/// caller falls back to the engine launched separately via `uv run python run.py`.
+#[cfg(target_os = "macos")]
+fn macos_helper_engine_path() -> Option<std::path::PathBuf> {
+    // current_exe() points at AI Matrx.app/Contents/MacOS/aimatrx-desktop.
+    // Walk up two levels to land on Contents/, then descend into Frameworks/.
+    let exe = std::env::current_exe().ok()?;
+    let contents = exe.parent()?.parent()?;
+    let helper = contents
+        .join("Frameworks")
+        .join("Matrx Engine.app")
+        .join("Contents")
+        .join("MacOS")
+        .join("Matrx Engine");
+    if helper.exists() {
+        Some(helper)
+    } else {
+        None
+    }
+}
+
 /// Start the Python/FastAPI engine sidecar.
 ///
 /// In production, this spawns the bundled PyInstaller binary.
@@ -165,9 +227,21 @@ struct SidecarStatus {
 /// We set TAURI_SIDECAR=1 so that run.py skips the pystray tray icon —
 /// Tauri already owns the single system-tray icon for the whole app.
 ///
-/// Before spawning, kills any orphaned aimatrx-engine processes left over
-/// from a previous crash or unclean shutdown.  This prevents the new
-/// sidecar from failing with "address already in use" on port 22140.
+/// Spawn path by platform:
+///   macOS production: absolute path to the Helper app's inner binary at
+///     Contents/Frameworks/Matrx Engine.app/Contents/MacOS/Matrx Engine
+///     (computed from current_exe()). The shell-plugin sidecar API can't
+///     reach into /Frameworks, so we use shell().command() directly.
+///   macOS dev:        the Helper app doesn't exist on disk, so we fall back
+///     to the standard sidecar API. In practice nobody calls start_sidecar
+///     in dev mode (the engine runs separately via `uv run python run.py`),
+///     but the fallback gives a clear error if they do.
+///   Windows / Linux:  Tauri's externalBin places the renamed `matrx-engine`
+///     binary at the expected location; sidecar() resolves it correctly.
+///
+/// Before spawning, kills any orphaned engine processes left over from a
+/// previous crash or unclean shutdown.  This prevents the new sidecar from
+/// failing with "address already in use" on port 22140.
 ///
 /// Self-healing: if we hold a child handle but the process has already
 /// exited (e.g. killed by macOS watchdog or SIGKILL), we clear the stale
@@ -212,10 +286,32 @@ async fn start_sidecar(
     // a zombie from a crash/force-quit, and the new sidecar will fail.
     kill_orphaned_sidecars();
 
-    let sidecar = app
-        .shell()
-        .sidecar("aimatrx-engine")
-        .map_err(|e| format!("Failed to create sidecar command: {}", e))?
+    // Build the engine command. On macOS production the engine lives inside
+    // a Helper .app sub-bundle; everywhere else Tauri's externalBin places
+    // it where the sidecar() API expects it.
+    let sidecar_command = {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(helper_path) = macos_helper_engine_path() {
+                app.shell().command(helper_path)
+            } else {
+                // Dev mode (no .app bundle) — fall through to sidecar() so the
+                // user sees a clear "binary not found" if they actually invoke
+                // start_sidecar from `pnpm tauri:dev`.
+                app.shell()
+                    .sidecar("matrx-engine")
+                    .map_err(|e| format!("Failed to create sidecar command: {}", e))?
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            app.shell()
+                .sidecar("matrx-engine")
+                .map_err(|e| format!("Failed to create sidecar command: {}", e))?
+        }
+    };
+
+    let sidecar = sidecar_command
         // Signal to run.py that it is running inside Tauri — suppress pystray tray icon.
         .env("TAURI_SIDECAR", "1")
         // Pass the Tauri app's own PID so the Python watchdog can watch the

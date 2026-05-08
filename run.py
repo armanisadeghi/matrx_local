@@ -555,7 +555,8 @@ def _start_parent_watchdog() -> None:
     When running as a Tauri sidecar, if the Tauri app crashes or is force-killed
     (SIGKILL, Activity Monitor, Task Manager), the sidecar is orphaned — adopted
     by PID 1 (launchd/init/System) and keeps running forever with ports bound.
-    This is the primary cause of orphaned `aimatrx-engine` processes.
+    This is the primary cause of orphaned `matrx-engine` processes
+    (also seen as legacy `aimatrx-engine` on installs from before the rename).
 
     On Windows, Tauri spawns the sidecar via an intermediate pipe/shim helper
     whose lifetime is shorter than the Tauri app itself.  os.getppid() therefore

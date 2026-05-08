@@ -86,7 +86,14 @@ const ALL_LEVELS: LogLevel[] = [
   "data",
   "cmd",
 ];
-const GROUPABLE_LEVELS = new Set<LogLevel>(["info", "success", "data", "cmd"]);
+const GROUPABLE_LEVELS = new Set<LogLevel>([
+  "info",
+  "warn",
+  "error",
+  "success",
+  "data",
+  "cmd",
+]);
 
 const SERVER_SOURCES = new Set(["server", "tauri", "syslog", "llm"]);
 const CLIENT_SOURCES = new Set([
@@ -95,6 +102,8 @@ const CLIENT_SOURCES = new Set([
   "voice",
   "setup",
   "bg-tasks",
+  "react",
+  "downloads",
 ]);
 const HTTP_SOURCE = "access";
 
@@ -209,17 +218,45 @@ interface GroupedRow {
 
 // Strip variable numeric parts before building a group key so that messages
 // which differ only in timing/timestamps/durations are treated as identical.
+/**
+ * Strip or canonicalize every "dynamic-but-not-meaningful" element from a log
+ * message so that semantically identical lines produce the same grouping key.
+ *
+ * Strategy: replace dynamic tokens with stable placeholders rather than
+ * deleting them outright — the message structure stays readable in the key
+ * and prevents false-positive merges between structurally different messages.
+ *
+ * Stripping order matters: longest/most-specific patterns first.
+ */
 function normalizeForGrouping(msg: string): string {
   return (
     msg
+      // Python logger full prefix: "2026-05-08 12:17:51,635 - DEBUG - "
+      .replace(
+        /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.\d]*\s+-\s+\w+\s+-\s+/,
+        "",
+      )
+      // Full ISO/syslog timestamps in body: 2026-05-08T18:00:16.886Z or "2026-05-08 18:00:16,886"
+      .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[,.\d]*Z?/g, "<ts>")
+      // Bare HH:MM:SS timestamps
+      .replace(/\b\d{2}:\d{2}:\d{2}(?:[,.\d]+)?\b/g, "<ts>")
       // Timing annotations in parens: (33ms), (1022ms), (1.5s)
       .replace(/\(\d+(?:\.\d+)?(?:ms|s)\)/g, "")
-      // Full ISO/syslog timestamps: 2026-05-08 10:50:07,606 or 2026-05-08T10:50:07.606
-      .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]\d*/g, "")
-      // Bare HH:MM:SS timestamps
-      .replace(/\b\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b/g, "")
-      // Trailing bare durations preceded by whitespace: " 239ms", " 1ms"
-      .replace(/\s\d+(?:\.\d+)?ms\b/g, "")
+      // Trailing bare durations: " 239ms", " 1030ms"
+      .replace(/\s+\d+(?:\.\d+)?ms\b/g, "")
+      // JWT / Bearer tokens: eyJhbGciOiJIUzI1NiIs… (base64url, 20+ chars)
+      .replace(/eyJ[A-Za-z0-9_-]{20,}/g, "<token>")
+      // Quoted alphanumeric IDs / key fingerprints: "4jRGaVmV53oT4QQD"
+      .replace(/"[A-Za-z0-9_-]{6,}"/g, '"<id>"')
+      // IP addresses with optional port: 127.0.0.1:22140, 10.0.0.1
+      .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b/g, "<ip>")
+      // Request / correlation IDs: req-62, req-1234
+      .replace(/\breq-\d+\b/g, "req-N")
+      // UUIDs: 550e8400-e29b-41d4-a716-446655440000
+      .replace(
+        /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+        "<uuid>",
+      )
       // Collapse leftover extra whitespace
       .replace(/\s{2,}/g, " ")
       .trim()
@@ -393,6 +430,7 @@ function TabBadge({ errors, warns }: { errors: number; warns: number }) {
 
 // LogFilterBar is shared by all log tabs (Server, Client, HTTP, All).
 // Level pills and group-similar are optional — omit them for the HTTP tab.
+// Source pills are shown automatically when multiple sources are present.
 function LogFilterBar({
   logs,
   activeFilters,
@@ -404,6 +442,10 @@ function LogFilterBar({
   textFilter,
   onTextFilter,
   searchPlaceholder = "Search messages…",
+  sourcesInLogs,
+  hiddenSources,
+  onToggleSource,
+  onClearSourceFilter,
 }: {
   logs?: ClientLogLine[];
   activeFilters?: Set<LogLevel>;
@@ -415,10 +457,19 @@ function LogFilterBar({
   textFilter: string;
   onTextFilter: (v: string) => void;
   searchPlaceholder?: string;
+  sourcesInLogs?: string[];
+  hiddenSources?: Set<string>;
+  onToggleSource?: (src: string) => void;
+  onClearSourceFilter?: () => void;
 }) {
   const showLevelPills =
     logs !== undefined && activeFilters !== undefined && onToggle !== undefined;
   const showGroupSimilar = grouped !== undefined && onToggleGroup !== undefined;
+  const showSourceFilter =
+    sourcesInLogs !== undefined &&
+    sourcesInLogs.length > 1 &&
+    hiddenSources !== undefined &&
+    onToggleSource !== undefined;
 
   return (
     <>
@@ -432,6 +483,41 @@ function LogFilterBar({
           className="flex-1 bg-transparent text-xs font-mono text-foreground placeholder-muted-foreground/50 outline-none"
         />
       </div>
+      {showSourceFilter && (
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b flex-wrap bg-muted/5">
+          <span className="text-[10px] text-muted-foreground/60 font-mono mr-1 select-none shrink-0">
+            source:
+          </span>
+          {sourcesInLogs!.map((src) => {
+            const isVisible = !hiddenSources!.has(src);
+            return (
+              <button
+                key={src}
+                onClick={() => onToggleSource!(src)}
+                title={`${isVisible ? "Hide" : "Show only"} ${SOURCE_LABELS[src] ?? src} logs`}
+                className={cn(
+                  "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
+                  isVisible ? LEVEL_PILL_ACTIVE["info"] : LEVEL_PILL_INACTIVE,
+                )}
+              >
+                {SOURCE_LABELS[src] ?? src}
+              </button>
+            );
+          })}
+          {hiddenSources!.size > 0 && onClearSourceFilter && (
+            <>
+              <div className="w-px h-3 bg-border/40 mx-0.5 shrink-0" />
+              <button
+                onClick={onClearSourceFilter}
+                title="Show all sources"
+                className="text-[10px] font-mono px-1.5 h-[18px] rounded border text-muted-foreground/60 border-border/30 hover:text-foreground hover:border-border transition-colors select-none"
+              >
+                reset
+              </button>
+            </>
+          )}
+        </div>
+      )}
       <div className="flex items-center gap-1 px-3 py-1.5 border-b flex-wrap bg-muted/10">
         {showLevelPills ? (
           <>
@@ -519,6 +605,7 @@ function LogTab({
   const [grouped, setGrouped] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [textFilter, setTextFilter] = useState("");
+  const [hiddenSources, setHiddenSources] = useState<Set<string>>(new Set());
   const [copiedAll, setCopiedAll] = useState(false);
   const [copiedView, setCopiedView] = useState(false);
   const [copiedReport, setCopiedReport] = useState(false);
@@ -529,6 +616,15 @@ function LogTab({
   // which prevents any scroll jank or layout shifts.
   const [frozenLogs, setFrozenLogs] = useState<ClientLogLine[] | null>(null);
   const activeLogs = frozenLogs ?? logs;
+
+  // Distinct sources present in the current tab's log set (for source filter pills)
+  const sourcesInLogs = useMemo(
+    () =>
+      [
+        ...new Set(activeLogs.map((l) => l.source ?? "").filter(Boolean)),
+      ].sort(),
+    [activeLogs],
+  );
 
   const toggleFilter = useCallback((level: LogLevel) => {
     setActiveFilters((prev) => {
@@ -543,6 +639,17 @@ function LogTab({
     });
   }, []);
 
+  const toggleSource = useCallback((src: string) => {
+    setHiddenSources((prev) => {
+      const next = new Set(prev);
+      if (next.has(src)) next.delete(src);
+      else next.add(src);
+      return next;
+    });
+  }, []);
+
+  const clearSourceFilter = useCallback(() => setHiddenSources(new Set()), []);
+
   const levelFiltered = useMemo(
     () =>
       activeFilters.size === ALL_LEVELS.length
@@ -551,11 +658,19 @@ function LogTab({
     [activeLogs, activeFilters],
   );
 
+  const sourceFiltered = useMemo(
+    () =>
+      hiddenSources.size === 0
+        ? levelFiltered
+        : levelFiltered.filter((l) => !hiddenSources.has(l.source ?? "")),
+    [levelFiltered, hiddenSources],
+  );
+
   const filtered = useMemo(() => {
-    if (!textFilter) return levelFiltered;
+    if (!textFilter) return sourceFiltered;
     const q = textFilter.toLowerCase();
-    return levelFiltered.filter((l) => l.message.toLowerCase().includes(q));
-  }, [levelFiltered, textFilter]);
+    return sourceFiltered.filter((l) => l.message.toLowerCase().includes(q));
+  }, [sourceFiltered, textFilter]);
 
   const groupedRows = useMemo(
     () => (grouped ? groupSimilarLogs(filtered) : null),
@@ -724,6 +839,10 @@ function LogTab({
         onToggleAutoScroll={handleToggleAutoScroll}
         textFilter={textFilter}
         onTextFilter={setTextFilter}
+        sourcesInLogs={sourcesInLogs}
+        hiddenSources={hiddenSources}
+        onToggleSource={toggleSource}
+        onClearSourceFilter={clearSourceFilter}
       />
 
       {/* Stats */}

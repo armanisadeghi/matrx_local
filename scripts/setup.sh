@@ -292,6 +292,13 @@ fi
 # because it's declared in tauri.conf.json externalBin. In production this is
 # replaced by the real PyInstaller binary (bash scripts/build-sidecar.sh).
 # In dev mode, the engine is started separately by launch.sh, so a stub is fine.
+#
+# macOS note: in production builds the engine is shipped as a Helper .app
+# bundle (Contents/Frameworks/Matrx Engine.app) rather than a flat binary —
+# the macOS overlay (tauri.macos.conf.json) removes matrx-engine from
+# externalBin so this stub is NOT required to satisfy the build on macOS.
+# We still create it so `bash scripts/build-sidecar.sh` is the only thing
+# the user needs to run to test a packaged build.
 step "8 / 8  Dev-mode sidecar stub"
 
 SIDECAR_DIR="$ROOT/desktop/src-tauri/sidecar"
@@ -307,7 +314,7 @@ _sidecar_triple() {
     esac
 }
 SIDECAR_TRIPLE=$(_sidecar_triple)
-SIDECAR_BIN="$SIDECAR_DIR/aimatrx-engine-$SIDECAR_TRIPLE"
+SIDECAR_BIN="$SIDECAR_DIR/matrx-engine-$SIDECAR_TRIPLE"
 
 if [[ -f "$SIDECAR_BIN" ]]; then
     # Check if it's the real binary (>1 MB) or just our stub
@@ -329,6 +336,14 @@ exit 1
 STUBEOF
     chmod +x "$SIDECAR_BIN"
     ok "Dev-mode sidecar stub created for $SIDECAR_TRIPLE"
+fi
+
+# Sweep any leftover legacy stub from before the rename so it does not get
+# accidentally bundled by Tauri (externalBin globs sidecar/* on some setups).
+LEGACY_STUB="$SIDECAR_DIR/aimatrx-engine-$SIDECAR_TRIPLE"
+if [[ -f "$LEGACY_STUB" ]]; then
+    rm -f "$LEGACY_STUB"
+    ok "Removed legacy aimatrx-engine stub for $SIDECAR_TRIPLE"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

@@ -37,9 +37,13 @@ def _notes_dir() -> Path:
     """Resolve the current notes directory — respects user overrides."""
     try:
         from app.services.paths.manager import safe_dir
+
         return safe_dir("notes")
     except Exception:
-        MATRX_NOTES_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            MATRX_NOTES_DIR.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            pass
         return MATRX_NOTES_DIR
 
 
@@ -47,6 +51,7 @@ def _ensure_dirs() -> None:
     """Create all required directory structures, respecting user path overrides."""
     try:
         from app.services.paths.manager import safe_dir
+
         safe_dir("notes")
         safe_dir("files")
         safe_dir("code")
@@ -54,14 +59,33 @@ def _ensure_dirs() -> None:
         safe_dir("agent_data")
     except Exception:
         # Path manager not yet initialised — use defaults
-        from app.config import MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR, MATRX_WORKSPACES_DIR, MATRX_DATA_DIR
-        for d in [MATRX_NOTES_DIR, MATRX_FILES_DIR, MATRX_CODE_DIR, MATRX_WORKSPACES_DIR, MATRX_DATA_DIR]:
-            d.mkdir(parents=True, exist_ok=True)
+        from app.config import (
+            MATRX_NOTES_DIR,
+            MATRX_FILES_DIR,
+            MATRX_CODE_DIR,
+            MATRX_WORKSPACES_DIR,
+            MATRX_DATA_DIR,
+        )
+
+        for d in [
+            MATRX_NOTES_DIR,
+            MATRX_FILES_DIR,
+            MATRX_CODE_DIR,
+            MATRX_WORKSPACES_DIR,
+            MATRX_DATA_DIR,
+        ]:
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                pass
 
     # Sync metadata always lives inside the resolved notes dir
     notes = _notes_dir()
-    (notes / ".sync").mkdir(parents=True, exist_ok=True)
-    (notes / ".sync" / "conflicts").mkdir(parents=True, exist_ok=True)
+    try:
+        (notes / ".sync").mkdir(parents=True, exist_ok=True)
+        (notes / ".sync" / "conflicts").mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        pass
 
 
 def _atomic_write(target: Path, content: str) -> None:
@@ -157,11 +181,17 @@ class DocumentFileManager:
     def list_folders(self) -> list[str]:
         if not self.base_dir.exists():
             return []
-        return sorted(
-            d.name
-            for d in self.base_dir.iterdir()
-            if d.is_dir() and not d.name.startswith(".")
-        )
+        try:
+            return sorted(
+                d.name
+                for d in self.base_dir.iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            )
+        except PermissionError as e:
+            logger.warning(
+                "Permission denied listing folders in %s: %s", self.base_dir, e
+            )
+            return []
 
     # ── Note file operations ─────────────────────────────────────────────────
 
@@ -228,6 +258,7 @@ class DocumentFileManager:
                     break
             else:
                 from datetime import datetime, timezone as _tz
+
                 ts = datetime.now(_tz.utc).strftime("%Y%m%d_%H%M%S")
                 new_target = folder_dir / f"{safe_label}_{ts}.md"
 
@@ -247,15 +278,20 @@ class DocumentFileManager:
         if not folder.is_dir():
             return []
         results = []
-        for f in sorted(folder.iterdir()):
-            if f.is_file() and f.suffix == ".md":
-                text = f.read_text(encoding="utf-8")
-                results.append({
-                    "label": f.stem,
-                    "file_path": self.relative_path(f),
-                    "content_hash": content_hash(text),
-                    "size": len(text),
-                })
+        try:
+            for f in sorted(folder.iterdir()):
+                if f.is_file() and f.suffix == ".md":
+                    text = f.read_text(encoding="utf-8")
+                    results.append(
+                        {
+                            "label": f.stem,
+                            "file_path": self.relative_path(f),
+                            "content_hash": content_hash(text),
+                            "size": len(text),
+                        }
+                    )
+        except PermissionError as e:
+            logger.warning("Permission denied listing notes in %s: %s", folder, e)
         return results
 
     def scan_all(self) -> list[dict[str, str]]:
@@ -270,12 +306,14 @@ class DocumentFileManager:
                 if f.endswith(".md"):
                     fp = Path(root) / f
                     text = fp.read_text(encoding="utf-8")
-                    results.append({
-                        "label": fp.stem,
-                        "file_path": self.relative_path(fp),
-                        "content_hash": content_hash(text),
-                        "folder": Path(root).relative_to(self.base_dir).as_posix(),
-                    })
+                    results.append(
+                        {
+                            "label": fp.stem,
+                            "file_path": self.relative_path(fp),
+                            "content_hash": content_hash(text),
+                            "folder": Path(root).relative_to(self.base_dir).as_posix(),
+                        }
+                    )
         return results
 
     # ── Conflict handling ────────────────────────────────────────────────────
@@ -305,7 +343,13 @@ class DocumentFileManager:
         """List note IDs that have unresolved conflicts."""
         if not self._conflicts_dir.exists():
             return []
-        return [d.name for d in self._conflicts_dir.iterdir() if d.is_dir()]
+        try:
+            return [d.name for d in self._conflicts_dir.iterdir() if d.is_dir()]
+        except PermissionError as e:
+            logger.warning(
+                "Permission denied listing conflicts in %s: %s", self._conflicts_dir, e
+            )
+            return []
 
     def resolve_conflict(self, note_id: str) -> bool:
         """Remove a conflict directory after resolution."""
@@ -341,7 +385,9 @@ class DocumentFileManager:
                 target.write_text(content, encoding="utf-8")
                 written.append(str(target))
             except Exception:
-                logger.warning("Failed to sync to mapped dir: %s", target, exc_info=True)
+                logger.warning(
+                    "Failed to sync to mapped dir: %s", target, exc_info=True
+                )
 
         return written
 

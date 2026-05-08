@@ -434,20 +434,32 @@ elif $IS_MAC; then
 fi
 $tauri_killed || ok "No Tauri desktop processes found"
 
-# ── 5. Sidecar binary (aimatrx-engine) ───────────────────────────────────────
-step "5 / 9  Sidecar binary (aimatrx-engine)"
+# ── 5. Sidecar binary (Matrx Engine) ─────────────────────────────────────────
+#
+# The engine ships under three different process names depending on platform
+# and build vintage:
+#   • "Matrx Engine"      — macOS Helper-app build (current).
+#   • "matrx-engine"      — Linux flat binary; also macOS dev mode if a flat
+#                           binary is hand-launched.
+#   • "aimatrx-engine"    — legacy installs from before the rename. We sweep
+#                           these so a shared dev machine that has cycled
+#                           through old + new builds still ends up clean.
+# A single regex covers all three; pgrep -f and grep both treat the alternation
+# as a substring match, which is exactly the matching semantics we want.
+step "5 / 9  Sidecar binary (Matrx Engine)"
 sidecar_killed=false
+ENGINE_PATTERN='Matrx Engine|matrx-engine|aimatrx-engine'
 if $IS_LINUX || $IS_WSL; then
   while IFS= read -r pid_dir; do
     pid="${pid_dir##*/}"
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
     [[ -r "$pid_dir/cmdline" ]] || continue
     cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null) || continue
-    if [[ "$cmdline" == *"aimatrx-engine"* ]]; then
-      echo -e "  ${YELLOW}aimatrx-engine sidecar found:${RESET}"
+    if echo "$cmdline" | grep -Eq "$ENGINE_PATTERN"; then
+      echo -e "  ${YELLOW}Matrx Engine sidecar found:${RESET}"
       proc_detail "$pid" "  "
       echo ""
-      do_kill "$pid" "aimatrx-engine sidecar"
+      do_kill "$pid" "Matrx Engine sidecar"
       sidecar_killed=true
       killed_any=true
     fi
@@ -457,15 +469,15 @@ elif $IS_MAC; then
     [[ -n "$pid" ]] || continue
     # Skip our own stop.sh process if pgrep matched it
     [[ "$pid" == "$$" ]] && continue
-    echo -e "  ${YELLOW}aimatrx-engine sidecar found:${RESET}"
+    echo -e "  ${YELLOW}Matrx Engine sidecar found:${RESET}"
     proc_detail "$pid" "  "
     echo ""
-    do_kill "$pid" "aimatrx-engine sidecar"
+    do_kill "$pid" "Matrx Engine sidecar"
     sidecar_killed=true
     killed_any=true
-  done < <(pgrep -f "aimatrx-engine" 2>/dev/null || true)
+  done < <(pgrep -f "$ENGINE_PATTERN" 2>/dev/null || true)
 fi
-$sidecar_killed || ok "No aimatrx-engine sidecar processes found"
+$sidecar_killed || ok "No Matrx Engine sidecar processes found"
 
 # ── 6. Orphaned llama-server processes ───────────────────────────────────────
 step "6 / 9  Orphaned llama-server (local LLM inference)"

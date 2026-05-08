@@ -765,9 +765,9 @@ class DownloadManager:
         ]
 
         logger.info(
-            "[downloads] STATE | active=%d queued=%d completed=%d failed=%d cancelled=%d "
+            "[downloads] STATE | active=%d queued=%d completed=%d fails=%d cancelled=%d "
             "bandwidth_bps=%.0f peak_bps=%.0f active_slots=%d max_concurrent=%d | "
-            "active=%s queued=%s failed=%s",
+            "active=%s queued=%s fails=%s",
             len(active_entries),
             len(queued_entries),
             len(completed_entries),
