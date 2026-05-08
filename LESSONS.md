@@ -96,6 +96,41 @@ The installer lives in `app/services/image_gen/installer.py`. The UI is `ImageGe
 
 ---
 
+## Tauri Cargo Features Must Match `tauri.conf.json`
+
+### `macos-private-api` cargo feature requires `app.macOSPrivateApi: true`
+
+Some Tauri APIs (notably `WebviewWindowBuilder::transparent` on macOS) are
+gated behind the `macos-private-api` cargo feature on the `tauri` crate.
+Just adding it to `Cargo.toml` is **not enough** — `tauri-build`'s
+`build.rs` validates that the feature has a matching opt-in in
+`tauri.conf.json`:
+
+```json
+"app": {
+  "macOSPrivateApi": true,
+  ...
+}
+```
+
+Without the config flag the build fails with:
+
+> The `tauri` dependency features on the `Cargo.toml` file does not match
+> the allowlist defined under `tauri.conf.json`. Please run `tauri dev`
+> or `tauri build` or remove the `macos-private-api` feature.
+
+In CI the failure mode shows up as a downstream compile error like
+`no method named 'transparent' found for struct WebviewWindowBuilder` —
+because the tauri-build hook quietly fails to enable the cfg flag, so
+the method is never compiled in. Don't chase that error in the source —
+look at `tauri.conf.json`.
+
+Rule: any time you add a feature to the `tauri` dependency in
+`Cargo.toml`, check whether it has a corresponding `tauri.conf.json`
+entry and add both in the same commit.
+
+---
+
 ## macOS Code Signing
 
 ### Sign every binary in the app bundle, not just the dylibs
