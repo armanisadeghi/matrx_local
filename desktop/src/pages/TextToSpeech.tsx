@@ -500,23 +500,97 @@ function WaveformBars({ paused }: { paused?: boolean }) {
 }
 
 function HistoryItem({ entry }: { entry: TtsHistoryEntry }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playError, setPlayError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Reset transient state if the entry's URL changes (e.g. parent re-renders
+  // a different entry into this slot — keys should prevent this, but be safe).
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.onended = null;
+        audioRef.current.onerror = null;
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  const hasAudio = Boolean(entry.audioUrl);
+
+  const handleClick = useCallback(() => {
+    if (!hasAudio) return;
+    setPlayError(null);
+
+    if (isPlaying && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setIsPlaying(false);
+      return;
+    }
+
+    const audio = new Audio(entry.audioUrl);
+    audioRef.current = audio;
+    audio.onended = () => {
+      setIsPlaying(false);
+      audioRef.current = null;
+    };
+    audio.onerror = () => {
+      setIsPlaying(false);
+      setPlayError("Audio failed to load");
+      audioRef.current = null;
+    };
+    audio
+      .play()
+      .then(() => setIsPlaying(true))
+      .catch((e) => {
+        setIsPlaying(false);
+        setPlayError(
+          e instanceof Error ? e.message : "Playback was blocked",
+        );
+        audioRef.current = null;
+      });
+  }, [hasAudio, isPlaying, entry.audioUrl]);
+
   return (
     <div className="flex items-center gap-3 rounded-lg border bg-card/50 px-4 py-2.5">
-      <audio src={entry.audioUrl} className="hidden" />
       <button
-        onClick={() => {
-          const a = new Audio(entry.audioUrl);
-          a.play();
-        }}
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20"
+        onClick={handleClick}
+        disabled={!hasAudio}
+        title={
+          !hasAudio
+            ? "Audio is no longer available"
+            : isPlaying
+              ? "Stop"
+              : "Play"
+        }
+        className={cn(
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors",
+          hasAudio
+            ? isPlaying
+              ? "bg-primary text-primary-foreground hover:bg-primary/90"
+              : "bg-primary/10 text-primary hover:bg-primary/20"
+            : "cursor-not-allowed bg-muted text-muted-foreground/50",
+        )}
       >
-        <Play className="h-3.5 w-3.5" />
+        {isPlaying ? (
+          <Square className="h-3 w-3 fill-current" />
+        ) : (
+          <Play className="h-3.5 w-3.5" />
+        )}
       </button>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">{entry.text}</p>
         <p className="text-xs text-muted-foreground">
-          {entry.voiceName} &middot; {entry.duration.toFixed(1)}s &middot;{" "}
-          {new Date(entry.createdAt).toLocaleTimeString()}
+          {entry.voiceName}
+          {entry.duration > 0 && (
+            <> &middot; {entry.duration.toFixed(1)}s</>
+          )}{" "}
+          &middot; {new Date(entry.createdAt).toLocaleTimeString()}
+          {playError && (
+            <span className="ml-2 text-red-400">· {playError}</span>
+          )}
         </p>
       </div>
     </div>
