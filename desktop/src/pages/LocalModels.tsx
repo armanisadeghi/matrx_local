@@ -4794,7 +4794,7 @@ function InferenceTab() {
                   {conv.title}
                 </span>
                 <button
-                  className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-destructive transition-opacity"
+                  className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-destructive transition-opacity shrink-0"
                   onClick={(e) => {
                     e.stopPropagation();
                     deleteConversation(conv.id);
@@ -4896,15 +4896,7 @@ function InferenceTab() {
             >
               <Settings className="h-3.5 w-3.5" />
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
-              onClick={stopServer}
-            >
-              <Square className="h-3 w-3" />
-              Stop
-            </Button>
+
           </div>
         </div>
 
