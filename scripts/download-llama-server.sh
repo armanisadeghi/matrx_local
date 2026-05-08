@@ -15,19 +15,62 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BINARIES_DIR="$SCRIPT_DIR/../desktop/src-tauri/binaries"
+VERSION_MARKER="$BINARIES_DIR/.llama-server-version"
 mkdir -p "$BINARIES_DIR"
 
 # llama.cpp release version — update when upgrading.
 # PIN to a known-good release whose assets are fully uploaded and verified.
 # Using "latest" is racy: llama.cpp publishes releases before asset uploads
 # complete, so CI can 404 if it resolves `latest` during that window.
-LLAMA_VERSION="b8519"
+#
+# 2026-05-08 — bumped b8519 → b9076 to enable Google Gemma 4 (E2B / E4B /
+# 26B-A4B / 31B). Gemma 4 architecture support landed in early April 2026
+# (PRs #21309 / #21326 / #21390 / #21418). b9076 also pulls in:
+#   • b8950 Gemma 4 PEG parser delimiter fix (multi-turn tool calls)
+#   • b8751 optional shared-KV tail attn_k tensors on load
+#   • Vulkan SPIR-V __has_include detection fixes (Windows GPU path)
+# Issue #21655 (M4 Metal regression) was confirmed a false alarm and CLOSED.
+LLAMA_VERSION="b9076"
 LLAMA_BASE=""
 LLAMA_REPO="ggml-org/llama.cpp"
 
 ensure_llama_version() {
     LLAMA_BASE="https://github.com/${LLAMA_REPO}/releases/download/${LLAMA_VERSION}"
     echo "  llama.cpp version: ${LLAMA_VERSION}" >&2
+}
+
+# Compare the version on disk against $LLAMA_VERSION. If they differ (i.e.
+# the script was upgraded since the last download), wipe the previous
+# llama.cpp artifacts so the new version's binary AND its matching dylibs/
+# DLLs are downloaded fresh. Without this, an existing binary file would
+# trip the "Already exists" short-circuit and the new version would never
+# actually land — and worse, an old binary could be paired with new dylibs
+# (or vice versa), producing cryptic "symbol not found" runtime failures.
+clean_stale_artifacts() {
+    local installed=""
+    [[ -f "$VERSION_MARKER" ]] && installed="$(cat "$VERSION_MARKER" 2>/dev/null | tr -d '[:space:]')"
+
+    if [[ -n "$installed" && "$installed" == "$LLAMA_VERSION" ]]; then
+        return  # already at the requested version
+    fi
+
+    if [[ -n "$installed" ]]; then
+        echo "  ↻ Upgrading llama.cpp ${installed} → ${LLAMA_VERSION}; clearing stale artifacts" >&2
+    fi
+
+    # Remove llama-server binaries (all targets) and the macOS dylibs.
+    # For windows-dlls/ we delete the .dll files but preserve the directory
+    # and its .gitkeep so the tracked path doesn't disappear from version
+    # control.
+    rm -f "$BINARIES_DIR"/llama-server-* 2>/dev/null || true
+    rm -f "$BINARIES_DIR"/libggml*.dylib "$BINARIES_DIR"/libllama*.dylib "$BINARIES_DIR"/libmtmd*.dylib 2>/dev/null || true
+    if [[ -d "$BINARIES_DIR/windows-dlls" ]]; then
+        find "$BINARIES_DIR/windows-dlls" -type f \( -name "*.dll" -o -name "*.exe" \) -delete 2>/dev/null || true
+    fi
+}
+
+write_version_marker() {
+    echo "$LLAMA_VERSION" > "$VERSION_MARKER"
 }
 
 # Returns the release asset filename for a given Tauri target triple.
@@ -199,9 +242,11 @@ case "$MODE" in
         triple="${2:-}"
         [[ -n "$triple" ]] || { echo "ERROR: --target requires a target triple."; exit 1; }
         ensure_llama_version
+        clean_stale_artifacts
         asset="$(llama_asset_for_triple "$triple")"
         [[ -n "$asset" ]] || { echo "ERROR: Unknown target triple: $triple"; exit 1; }
         download_target "$triple" "$asset"
+        write_version_marker
         ;;
     --current)
         OS="$(uname -s)"
@@ -214,11 +259,14 @@ case "$MODE" in
             *) echo "ERROR: Unknown platform $OS-$ARCH"; exit 1 ;;
         esac
         ensure_llama_version
+        clean_stale_artifacts
         asset="$(llama_asset_for_triple "$triple")"
         download_target "$triple" "$asset"
+        write_version_marker
         ;;
     all|"")
         ensure_llama_version
+        clean_stale_artifacts
         for triple in \
             aarch64-apple-darwin \
             x86_64-apple-darwin \
@@ -228,6 +276,7 @@ case "$MODE" in
             asset="$(llama_asset_for_triple "$triple")"
             download_target "$triple" "$asset"
         done
+        write_version_marker
         ;;
     *)
         echo "Usage: $0 [--current | --target <triple> | all]"

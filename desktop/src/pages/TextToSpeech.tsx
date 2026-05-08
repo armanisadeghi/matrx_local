@@ -1003,6 +1003,8 @@ function BlendTab({
     { voice_id: "af_bella", weight: 0.5 },
   ]);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isPlayingPreview, setIsPlayingPreview] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [saveName, setSaveName] = useState("");
@@ -1014,10 +1016,12 @@ function BlendTab({
 
   const addComponent = useCallback(() => {
     setComponents((prev) => [...prev, { voice_id: "af_heart", weight: 0.3 }]);
+    setPreviewUrl(null);
   }, []);
 
   const removeComponent = useCallback((idx: number) => {
     setComponents((prev) => prev.filter((_, i) => i !== idx));
+    setPreviewUrl(null);
   }, []);
 
   const updateComponent = useCallback(
@@ -1025,8 +1029,9 @@ function BlendTab({
       setComponents((prev) =>
         prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)),
       );
+      setPreviewUrl(null);
     },
-    [],
+    []
   );
 
   const totalWeight = components.reduce((s, c) => s + c.weight, 0);
@@ -1041,8 +1046,6 @@ function BlendTab({
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       const url = URL.createObjectURL(blob);
       setPreviewUrl(url);
-      const audio = new Audio(url);
-      audio.play().catch((e) => console.warn("[tts-page] preview play failed:", e));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1193,23 +1196,57 @@ function BlendTab({
       <section className="space-y-3 rounded-lg border p-4">
         <h3 className="text-sm font-medium">Preview</h3>
         <div className="flex items-center gap-3">
-          <Button
-            onClick={handlePreview}
-            disabled={isPreviewing || components.length === 0}
-            className="gap-2"
-          >
-            {isPreviewing ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Generating…
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4" /> Preview Blend
-              </>
-            )}
-          </Button>
+          {!previewUrl ? (
+            <Button
+              onClick={handlePreview}
+              disabled={isPreviewing || components.length === 0}
+              className="gap-2"
+            >
+              {isPreviewing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Generating…
+                </>
+              ) : (
+                <>
+                  <Blend className="h-4 w-4" /> Preview Blend
+                </>
+              )}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => {
+                if (audioRef.current) {
+                  if (isPlayingPreview) {
+                    audioRef.current.pause();
+                  } else {
+                    audioRef.current.play();
+                  }
+                }
+              }}
+              className="gap-2"
+              variant={isPlayingPreview ? "outline" : "default"}
+            >
+              {isPlayingPreview ? (
+                <>
+                  <Pause className="h-4 w-4" /> Pause Preview
+                </>
+              ) : (
+                <>
+                  <Play className="h-4 w-4" /> Play Preview
+                </>
+              )}
+            </Button>
+          )}
           {previewUrl && (
-            <audio src={previewUrl} controls className="h-9 flex-1" />
+            <audio
+              ref={audioRef}
+              src={previewUrl}
+              autoPlay
+              onPlay={() => setIsPlayingPreview(true)}
+              onPause={() => setIsPlayingPreview(false)}
+              onEnded={() => setIsPlayingPreview(false)}
+              className="hidden"
+            />
           )}
         </div>
       </section>

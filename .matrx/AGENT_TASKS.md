@@ -26,6 +26,7 @@ _(none)_
 
 ## Completed
 
+- [ENH] Gemma 4 unblocked: bumped llama.cpp b8519→b9076, refreshed all 4 catalog entries with HF-verified byte sizes (E2B/E4B/26B-A4B/31B). 2026-05-08
 - [ENH] Boot self-check: every engine startup verifies /extension/* routes registered + JWT posture + tunnel/metrics/discovery, logs summary, GET/POST /extension/boot-check endpoints + Bridge Test panel. 2026-05-07 (3f911668)
 - [ENH] /extension/tunnel/status: runtime introspection of Cloudflare tunnel state with preferred-mode logic (MATRX_PREFER_TUNNEL); Bridge Test sub-panel surfaces it with re-pair hint when engine prefers tunnel. 2026-05-07 (82fdce6a)
 - [ENH] /extension/* observability: in-memory metrics (count, errors, last-N latencies) per command via app/api/extension_metrics.py + GET /extension/metrics + Metrics panel in Bridge Test. 2026-05-07 (648a17e1)

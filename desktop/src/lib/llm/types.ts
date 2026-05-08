@@ -9,15 +9,15 @@ export type LlmTier =
   | "Low3" // Llama-3.1-8B 4.9 GB
   // Mid-range
   | "Default" // Qwen3-8B 5.1 GB (auto-selection anchor)
-  | "Gemma4E2B" // Gemma-4-E2B 2.9 GB (text+image+audio)
-  | "Gemma4E4B" // Gemma-4-E4B 4.6 GB (text+image+audio)
+  | "Gemma4E2B" // Gemma-4-E2B 3.1 GB (text+image; audio pending llama.cpp)
+  | "Gemma4E4B" // Gemma-4-E4B 5.0 GB (text+image; audio pending llama.cpp)
   | "Mid" // Gemma-3-12B 7.3 GB
   | "Mid2" // Phi-4-Reasoning 9 GB
   | "High" // GPT-OSS-20B 12.1 GB
   | "HighAlt" // Mistral-Small-3.1-24B 14.4 GB
-  | "Gemma4A4B" // Gemma-4-26B-A4B 15.7 GB (MoE, text+image)
+  | "Gemma4A4B" // Gemma-4-26B-A4B 17.0 GB (MoE, text+image)
   | "High2" // Qwen3.5-27B (multi-variant)
-  | "Gemma4_31B" // Gemma-4-31B 17.1 GB (dense, text+image)
+  | "Gemma4_31B" // Gemma-4-31B 18.3 GB (dense, text+image)
   | "High3" // DeepSeek-R1-Distill-32B 19.85 GB
   | "High4" // Gemma-3-27B 16.55 GB
   | "VHigh" // Qwen3.5-35B-A3B (multi-variant)

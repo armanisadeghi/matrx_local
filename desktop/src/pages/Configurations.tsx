@@ -411,6 +411,39 @@ function CompactSwitch({
   );
 }
 
+function CompactSelect({
+  label,
+  value,
+  onValueChange,
+  placeholder,
+  loading,
+  children,
+}: {
+  label: string;
+  value: string;
+  onValueChange: (v: string) => void;
+  placeholder?: string;
+  loading?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs font-medium">{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Select value={value} onValueChange={onValueChange}>
+          <SelectTrigger className="h-9 w-full">
+            <SelectValue placeholder={placeholder} />
+          </SelectTrigger>
+          <SelectContent>{children}</SelectContent>
+        </Select>
+        {loading && (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground flex-shrink-0" />
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Update check interval dropdown ──────────────────────────────────────────
 
 const UPDATE_INTERVAL_PRESETS: { label: string; value: number }[] = [
@@ -1414,281 +1447,6 @@ export function Configurations() {
               </CardContent>
             </Card>
 
-            {/* ── Text to Speech ──────────────────────────────── */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Volume2 className="h-4 w-4" />
-                  Text to Speech
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Defaults
-                </p>
-
-                <SettingRow
-                  label="Default voice"
-                  description="Voice used on the TTS page and as fallback for other systems"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <Select
-                      value={draft.ttsDefaultVoice || "af_heart"}
-                      onValueChange={(v) => set("ttsDefaultVoice", v)}
-                    >
-                      <SelectTrigger className="w-48">
-                        <SelectValue placeholder="Select voice..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {catalogs.ttsVoices.length === 0 ? (
-                          <div className="py-3 px-2 text-center text-xs text-muted-foreground">
-                            {catalogs.ttsVoicesLoading
-                              ? "Loading voices…"
-                              : "No voices — connect to engine"}
-                          </div>
-                        ) : (
-                          (() => {
-                            const groups: Record<
-                              string,
-                              typeof catalogs.ttsVoices
-                            > = {};
-                            for (const v of catalogs.ttsVoices) {
-                              const lang = v.language;
-                              if (!groups[lang]) groups[lang] = [];
-                              groups[lang].push(v);
-                            }
-                            return Object.entries(groups).map(
-                              ([lang, voices]) => (
-                                <SelectGroup key={lang}>
-                                  <SelectLabel>{lang}</SelectLabel>
-                                  {voices.map((v) => (
-                                    <SelectItem
-                                      key={v.voice_id}
-                                      value={v.voice_id}
-                                    >
-                                      <span className="flex items-center gap-1.5">
-                                        {v.name}
-                                        <span className="text-[10px] text-muted-foreground">
-                                          {v.gender} · {v.quality_grade}
-                                        </span>
-                                        {v.is_default && (
-                                          <span className="text-[10px] font-medium bg-primary/15 text-primary px-1.5 py-0.5 rounded">
-                                            Default
-                                          </span>
-                                        )}
-                                      </span>
-                                    </SelectItem>
-                                  ))}
-                                </SelectGroup>
-                              ),
-                            );
-                          })()
-                        )}
-                      </SelectContent>
-                    </Select>
-                    {catalogs.ttsVoicesLoading && (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                    )}
-                  </div>
-                </SettingRow>
-
-                <SliderRow
-                  label="Default speed"
-                  description="Playback speed (0.25–4.0)"
-                  value={draft.ttsDefaultSpeed}
-                  onChange={(v) => set("ttsDefaultSpeed", v)}
-                  min={0.25}
-                  max={4.0}
-                  step={0.05}
-                />
-
-                <SettingRow
-                  label="Auto-download model"
-                  description="Download TTS model on first visit"
-                >
-                  <Switch
-                    checked={draft.ttsAutoDownloadModel}
-                    onCheckedChange={(v) => set("ttsAutoDownloadModel", v)}
-                  />
-                </SettingRow>
-
-                <SettingRow
-                  label="Auto-clean markdown"
-                  description="Strip markdown before speaking on TTS page"
-                >
-                  <Switch
-                    checked={draft.ttsAutoCleanMarkdown}
-                    onCheckedChange={(v) => set("ttsAutoCleanMarkdown", v)}
-                  />
-                </SettingRow>
-
-                <SettingRow
-                  label="Streaming threshold"
-                  description="Use streaming for text longer than this (0 = always stream)"
-                >
-                  <NumberInput
-                    value={draft.ttsStreamingThreshold}
-                    onChange={(v) =>
-                      set("ttsStreamingThreshold", Math.max(0, v))
-                    }
-                    min={0}
-                    max={5000}
-                    step={50}
-                  />
-                </SettingRow>
-
-                <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Chat Read-Aloud
-                </p>
-
-                <SettingRow
-                  label="Show read-aloud button"
-                  description="Display speaker icon on assistant messages"
-                >
-                  <Switch
-                    checked={draft.ttsReadAloudEnabled}
-                    onCheckedChange={(v) => set("ttsReadAloudEnabled", v)}
-                  />
-                </SettingRow>
-
-                <SettingRow
-                  label="Auto-play responses"
-                  description="Automatically read new assistant messages"
-                >
-                  <Switch
-                    checked={draft.ttsReadAloudAutoPlay}
-                    onCheckedChange={(v) => set("ttsReadAloudAutoPlay", v)}
-                  />
-                </SettingRow>
-
-                <SettingRow
-                  label="Chat voice"
-                  description="Voice for chat read-aloud (empty = use default voice)"
-                >
-                  <Select
-                    value={draft.ttsChatVoice || "__default__"}
-                    onValueChange={(v) =>
-                      set("ttsChatVoice", v === "__default__" ? "" : v)
-                    }
-                  >
-                    <SelectTrigger className="w-48">
-                      <SelectValue placeholder="Same as default" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__default__">
-                        <span className="text-muted-foreground">
-                          Same as default voice
-                        </span>
-                      </SelectItem>
-                      {catalogs.ttsVoices.length > 0 && (
-                        <Separator className="my-1" />
-                      )}
-                      {(() => {
-                        const groups: Record<
-                          string,
-                          typeof catalogs.ttsVoices
-                        > = {};
-                        for (const v of catalogs.ttsVoices) {
-                          const lang = v.language;
-                          if (!groups[lang]) groups[lang] = [];
-                          groups[lang].push(v);
-                        }
-                        return Object.entries(groups).map(([lang, voices]) => (
-                          <SelectGroup key={lang}>
-                            <SelectLabel>{lang}</SelectLabel>
-                            {voices.map((v) => (
-                              <SelectItem key={v.voice_id} value={v.voice_id}>
-                                <span className="flex items-center gap-1.5">
-                                  {v.name}
-                                  <span className="text-[10px] text-muted-foreground">
-                                    {v.gender}
-                                  </span>
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        ));
-                      })()}
-                    </SelectContent>
-                  </Select>
-                </SettingRow>
-
-                <SliderRow
-                  label="Chat speed"
-                  description="Speed for chat read-aloud (0 = use default speed)"
-                  value={draft.ttsChatSpeed}
-                  onChange={(v) => set("ttsChatSpeed", v)}
-                  min={0}
-                  max={4.0}
-                  step={0.05}
-                />
-
-                <Separator className="my-2" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Notifications
-                </p>
-
-                <SettingRow
-                  label="Notification voice"
-                  description="Voice for spoken notifications (empty = use default voice)"
-                >
-                  <Select
-                    value={draft.ttsNotificationVoice || "__default__"}
-                    onValueChange={(v) =>
-                      set("ttsNotificationVoice", v === "__default__" ? "" : v)
-                    }
-                  >
-                    <SelectTrigger className="w-48">
-                      <SelectValue placeholder="Same as default" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__default__">
-                        <span className="text-muted-foreground">
-                          Same as default voice
-                        </span>
-                      </SelectItem>
-                      {catalogs.ttsVoices.length > 0 && (
-                        <Separator className="my-1" />
-                      )}
-                      {(() => {
-                        const groups: Record<
-                          string,
-                          typeof catalogs.ttsVoices
-                        > = {};
-                        for (const v of catalogs.ttsVoices) {
-                          const lang = v.language;
-                          if (!groups[lang]) groups[lang] = [];
-                          groups[lang].push(v);
-                        }
-                        return Object.entries(groups).map(([lang, voices]) => (
-                          <SelectGroup key={lang}>
-                            <SelectLabel>{lang}</SelectLabel>
-                            {voices.map((v) => (
-                              <SelectItem key={v.voice_id} value={v.voice_id}>
-                                <span className="flex items-center gap-1.5">
-                                  {v.name}
-                                  <span className="text-[10px] text-muted-foreground">
-                                    {v.gender}
-                                  </span>
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        ));
-                      })()}
-                    </SelectContent>
-                  </Select>
-                </SettingRow>
-
-                <SectionActions
-                  section="tts"
-                  dirty={sectionDirty.tts}
-                  {...sectionActionProps}
-                />
-              </CardContent>
-            </Card>
-
             {/* ── Scraping ──────────────────────────────────── */}
             <Card>
               <CardHeader className="pb-3">
@@ -1810,6 +1568,226 @@ export function Configurations() {
               </CardContent>
             </Card>
           </div>
+
+          {/* ── Text to Speech (full-width, horizontal) ─────────────── */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Volume2 className="h-4 w-4" />
+                Text to Speech
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                  Defaults
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                  <CompactSelect
+                    label="Default voice"
+                    value={draft.ttsDefaultVoice || "af_heart"}
+                    onValueChange={(v) => set("ttsDefaultVoice", v)}
+                    placeholder="Select voice..."
+                    loading={catalogs.ttsVoicesLoading}
+                  >
+                    {catalogs.ttsVoices.length === 0 ? (
+                      <div className="py-3 px-2 text-center text-xs text-muted-foreground">
+                        {catalogs.ttsVoicesLoading
+                          ? "Loading voices…"
+                          : "No voices — connect to engine"}
+                      </div>
+                    ) : (
+                      (() => {
+                        const groups: Record<
+                          string,
+                          typeof catalogs.ttsVoices
+                        > = {};
+                        for (const v of catalogs.ttsVoices) {
+                          const lang = v.language;
+                          if (!groups[lang]) groups[lang] = [];
+                          groups[lang].push(v);
+                        }
+                        return Object.entries(groups).map(([lang, voices]) => (
+                          <SelectGroup key={lang}>
+                            <SelectLabel>{lang}</SelectLabel>
+                            {voices.map((v) => (
+                              <SelectItem key={v.voice_id} value={v.voice_id}>
+                                <span className="flex items-center gap-1.5">
+                                  {v.name}
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {v.gender} · {v.quality_grade}
+                                  </span>
+                                  {v.is_default && (
+                                    <span className="text-[10px] font-medium bg-primary/15 text-primary px-1.5 py-0.5 rounded">
+                                      Default
+                                    </span>
+                                  )}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ));
+                      })()
+                    )}
+                  </CompactSelect>
+                  <CompactSlider
+                    label="Default speed"
+                    value={draft.ttsDefaultSpeed}
+                    onChange={(v) => set("ttsDefaultSpeed", v)}
+                    min={0.25}
+                    max={4.0}
+                    step={0.05}
+                  />
+                  <CompactNumber
+                    label="Streaming threshold"
+                    value={draft.ttsStreamingThreshold}
+                    onChange={(v) =>
+                      set("ttsStreamingThreshold", Math.max(0, v))
+                    }
+                    min={0}
+                    max={5000}
+                    step={50}
+                  />
+                  <CompactSwitch
+                    label="Auto-download model"
+                    checked={draft.ttsAutoDownloadModel}
+                    onCheckedChange={(v) => set("ttsAutoDownloadModel", v)}
+                  />
+                  <CompactSwitch
+                    label="Auto-clean markdown"
+                    checked={draft.ttsAutoCleanMarkdown}
+                    onCheckedChange={(v) => set("ttsAutoCleanMarkdown", v)}
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                  Chat Read-Aloud
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <CompactSwitch
+                    label="Show read-aloud button"
+                    checked={draft.ttsReadAloudEnabled}
+                    onCheckedChange={(v) => set("ttsReadAloudEnabled", v)}
+                  />
+                  <CompactSwitch
+                    label="Auto-play responses"
+                    checked={draft.ttsReadAloudAutoPlay}
+                    onCheckedChange={(v) => set("ttsReadAloudAutoPlay", v)}
+                  />
+                  <CompactSelect
+                    label="Chat voice"
+                    value={draft.ttsChatVoice || "__default__"}
+                    onValueChange={(v) =>
+                      set("ttsChatVoice", v === "__default__" ? "" : v)
+                    }
+                    placeholder="Same as default"
+                  >
+                    <SelectItem value="__default__">
+                      <span className="text-muted-foreground">
+                        Same as default voice
+                      </span>
+                    </SelectItem>
+                    {catalogs.ttsVoices.length > 0 && (
+                      <Separator className="my-1" />
+                    )}
+                    {(() => {
+                      const groups: Record<string, typeof catalogs.ttsVoices> =
+                        {};
+                      for (const v of catalogs.ttsVoices) {
+                        const lang = v.language;
+                        if (!groups[lang]) groups[lang] = [];
+                        groups[lang].push(v);
+                      }
+                      return Object.entries(groups).map(([lang, voices]) => (
+                        <SelectGroup key={lang}>
+                          <SelectLabel>{lang}</SelectLabel>
+                          {voices.map((v) => (
+                            <SelectItem key={v.voice_id} value={v.voice_id}>
+                              <span className="flex items-center gap-1.5">
+                                {v.name}
+                                <span className="text-[10px] text-muted-foreground">
+                                  {v.gender}
+                                </span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ));
+                    })()}
+                  </CompactSelect>
+                  <CompactSlider
+                    label="Chat speed"
+                    value={draft.ttsChatSpeed}
+                    onChange={(v) => set("ttsChatSpeed", v)}
+                    min={0}
+                    max={4.0}
+                    step={0.05}
+                  />
+                </div>
+              </div>
+
+              <Separator />
+
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+                  Notifications
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <CompactSelect
+                    label="Notification voice"
+                    value={draft.ttsNotificationVoice || "__default__"}
+                    onValueChange={(v) =>
+                      set("ttsNotificationVoice", v === "__default__" ? "" : v)
+                    }
+                    placeholder="Same as default"
+                  >
+                    <SelectItem value="__default__">
+                      <span className="text-muted-foreground">
+                        Same as default voice
+                      </span>
+                    </SelectItem>
+                    {catalogs.ttsVoices.length > 0 && (
+                      <Separator className="my-1" />
+                    )}
+                    {(() => {
+                      const groups: Record<string, typeof catalogs.ttsVoices> =
+                        {};
+                      for (const v of catalogs.ttsVoices) {
+                        const lang = v.language;
+                        if (!groups[lang]) groups[lang] = [];
+                        groups[lang].push(v);
+                      }
+                      return Object.entries(groups).map(([lang, voices]) => (
+                        <SelectGroup key={lang}>
+                          <SelectLabel>{lang}</SelectLabel>
+                          {voices.map((v) => (
+                            <SelectItem key={v.voice_id} value={v.voice_id}>
+                              <span className="flex items-center gap-1.5">
+                                {v.name}
+                                <span className="text-[10px] text-muted-foreground">
+                                  {v.gender}
+                                </span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ));
+                    })()}
+                  </CompactSelect>
+                </div>
+              </div>
+
+              <SectionActions
+                section="tts"
+                dirty={sectionDirty.tts}
+                {...sectionActionProps}
+              />
+            </CardContent>
+          </Card>
 
           {/* ── LLM Sampling (full-width, horizontal) ───────────────── */}
           <Card>

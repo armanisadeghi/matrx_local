@@ -186,3 +186,4 @@ miniconda.sh
 desktop/src-tauri/sidecar/cloudflared-*
 desktop/src-tauri/sidecar/aimatrx-engine-*
 desktop/src-tauri/binaries/llama-server-*
+desktop/src-tauri/binaries/.llama-server-version

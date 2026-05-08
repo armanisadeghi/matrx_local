@@ -15,15 +15,15 @@ pub enum LlmTier {
     Low3,              // Llama-3.1-8B 4.9 GB
     // ── Mid-range ─────────────────────────────────────────────────────────
     Default,           // Qwen3-8B 5.1 GB (auto-selection anchor)
-    Gemma4E2B,         // Gemma-4-E2B 2.9 GB (text+image+audio, 2B effective)
-    Gemma4E4B,         // Gemma-4-E4B 4.6 GB (text+image+audio, 4B effective)
+    Gemma4E2B,         // Gemma-4-E2B 3.1 GB (text+image, 2B effective; audio pending llama.cpp)
+    Gemma4E4B,         // Gemma-4-E4B 5.0 GB (text+image, 4B effective; audio pending llama.cpp)
     Mid,               // Gemma-3-12B QAT 7.3 GB
     Mid2,              // Phi-4-Reasoning 9 GB
     High,              // GPT-OSS-20B 12.1 GB
     HighAlt,           // Mistral-Small-3.1-24B 14.4 GB (existing)
-    Gemma4A4B,         // Gemma-4-26B-A4B 15.7 GB (MoE, 4B active, text+image)
+    Gemma4A4B,         // Gemma-4-26B-A4B 17.0 GB (MoE, 4B active, text+image)
     High2,             // Qwen3.5-27B (multi-variant: IQ3_XXS / Q4_K_M)
-    Gemma4_31B,        // Gemma-4-31B 17.1 GB (dense, text+image)
+    Gemma4_31B,        // Gemma-4-31B 18.3 GB (dense, text+image)
     High3,             // DeepSeek-R1-Distill-32B 19.85 GB
     High4,             // Gemma-3-27B 16.55 GB
     VHigh,             // Qwen3.5-35B-A3B (multi-variant: IQ2_M / IQ4_XS / Q4_K_M)
@@ -292,34 +292,40 @@ static UNCENSORED_35B_VARIANTS: &[LlmModelVariant] = &[
 
 // ── Gemma 4 variant slices ────────────────────────────────────────────────
 
+// Gemma 4 byte sizes verified via huggingface.co API (X-Linked-Size) on
+// 2026-05-08. mmproj F16 chosen over BF16 / Q8_0 because F16 has the widest
+// platform support — it works on Apple Silicon M1 (no native BF16), x86_64
+// Vulkan, and CUDA Hopper / Ampere / Ada / Blackwell. BF16 mmproj triggers
+// a known Metal "cooperative tensor types" error on some macOS versions; Q8_0
+// mmproj exists only in ggml-org repos.
 static GEMMA4_E2B_VARIANTS: &[LlmModelVariant] = &[
     LlmModelVariant {
         label: "Compact",
         quant: "Q4_K_M",
         filename: "gemma-4-E2B-it-Q4_K_M.gguf",
-        disk_size_gb: 2.9,
-        ram_required_gb: 5.0,
+        disk_size_gb: 3.1,
+        ram_required_gb: 5.5,
         hf_url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
         hf_parts: &[],
-        expected_size_bytes: 2_900_000_000,
+        expected_size_bytes: 3_106_736_256,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-E2B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 940_000_000,
+        mmproj_expected_size_bytes: 985_654_080,
     },
     LlmModelVariant {
         label: "Quality",
         quant: "Q8_0",
         filename: "gemma-4-E2B-it-Q8_0.gguf",
-        disk_size_gb: 4.7,
-        ram_required_gb: 7.0,
+        disk_size_gb: 5.0,
+        ram_required_gb: 7.5,
         hf_url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q8_0.gguf",
         hf_parts: &[],
-        expected_size_bytes: 4_700_000_000,
+        expected_size_bytes: 5_048_350_848,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-E2B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 940_000_000,
+        mmproj_expected_size_bytes: 985_654_080,
     },
 ];
 
@@ -328,29 +334,29 @@ static GEMMA4_E4B_VARIANTS: &[LlmModelVariant] = &[
         label: "Compact",
         quant: "Q4_K_M",
         filename: "gemma-4-E4B-it-Q4_K_M.gguf",
-        disk_size_gb: 4.6,
-        ram_required_gb: 7.0,
+        disk_size_gb: 5.0,
+        ram_required_gb: 7.5,
         hf_url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
         hf_parts: &[],
-        expected_size_bytes: 4_600_000_000,
+        expected_size_bytes: 4_977_169_568,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-E4B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 945_000_000,
+        mmproj_expected_size_bytes: 990_372_672,
     },
     LlmModelVariant {
         label: "Quality",
         quant: "Q8_0",
         filename: "gemma-4-E4B-it-Q8_0.gguf",
-        disk_size_gb: 7.6,
-        ram_required_gb: 10.0,
+        disk_size_gb: 8.2,
+        ram_required_gb: 10.5,
         hf_url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q8_0.gguf",
         hf_parts: &[],
-        expected_size_bytes: 7_600_000_000,
+        expected_size_bytes: 8_192_951_456,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-E4B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 945_000_000,
+        mmproj_expected_size_bytes: 990_372_672,
     },
 ];
 
@@ -359,29 +365,29 @@ static GEMMA4_A4B_VARIANTS: &[LlmModelVariant] = &[
         label: "Compact",
         quant: "UD-Q4_K_M",
         filename: "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
-        disk_size_gb: 15.7,
-        ram_required_gb: 18.0,
+        disk_size_gb: 17.0,
+        ram_required_gb: 20.0,
         hf_url: "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
         hf_parts: &[],
-        expected_size_bytes: 15_700_000_000,
+        expected_size_bytes: 16_947_539_744,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-26B-A4B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 1_110_000_000,
+        mmproj_expected_size_bytes: 1_193_058_784,
     },
     LlmModelVariant {
         label: "Quality",
         quant: "Q8_0",
         filename: "gemma-4-26B-A4B-it-Q8_0.gguf",
-        disk_size_gb: 25.0,
-        ram_required_gb: 28.0,
+        disk_size_gb: 26.9,
+        ram_required_gb: 30.0,
         hf_url: "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q8_0.gguf",
         hf_parts: &[],
-        expected_size_bytes: 25_000_000_000,
+        expected_size_bytes: 26_859_859_744,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-26B-A4B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 1_110_000_000,
+        mmproj_expected_size_bytes: 1_193_058_784,
     },
 ];
 
@@ -390,29 +396,29 @@ static GEMMA4_31B_VARIANTS: &[LlmModelVariant] = &[
         label: "Compact",
         quant: "Q4_K_M",
         filename: "gemma-4-31B-it-Q4_K_M.gguf",
-        disk_size_gb: 17.1,
-        ram_required_gb: 20.0,
+        disk_size_gb: 18.3,
+        ram_required_gb: 21.0,
         hf_url: "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/gemma-4-31B-it-Q4_K_M.gguf",
         hf_parts: &[],
-        expected_size_bytes: 17_100_000_000,
+        expected_size_bytes: 18_323_731_456,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-31B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 1_140_000_000,
+        mmproj_expected_size_bytes: 1_198_957_024,
     },
     LlmModelVariant {
         label: "Quality",
         quant: "Q8_0",
         filename: "gemma-4-31B-it-Q8_0.gguf",
-        disk_size_gb: 30.4,
-        ram_required_gb: 33.0,
+        disk_size_gb: 32.6,
+        ram_required_gb: 36.0,
         hf_url: "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/gemma-4-31B-it-Q8_0.gguf",
         hf_parts: &[],
-        expected_size_bytes: 30_400_000_000,
+        expected_size_bytes: 32_635_675_648,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-31B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 1_140_000_000,
+        mmproj_expected_size_bytes: 1_198_957_024,
     },
 ];
 
@@ -484,14 +490,14 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         name: "Gemma 4 E2B",
         provider: "Google",
         filename: "gemma-4-E2B-it-Q4_K_M.gguf",
-        disk_size_gb: 2.9,
-        ram_required_gb: 5.0,
+        disk_size_gb: 3.1,
+        ram_required_gb: 5.5,
         text_rating: 2,
         code_rating: 2,
         vision_rating: 3,
         tool_calling_rating: 2,
         speed: "Fast",
-        description: "Google's smallest Gemma 4. Multimodal: text + image + audio input. 2B effective params with PLE. Ideal for edge devices.",
+        description: "Google's smallest Gemma 4. Multimodal: text + image input via llama.cpp (audio support pending upstream). 2B effective params with PLE. Ideal for edge devices.",
         knowledge_cutoff: "Apr 2026",
         hf_model_card_url: "https://huggingface.co/google/gemma-4-E2B-it",
         is_uncensored: false,
@@ -499,11 +505,11 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf",
         hf_parts: &[],
         context_length: 131072,
-        expected_size_bytes: 2_900_000_000,
+        expected_size_bytes: 3_106_736_256,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-E2B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 940_000_000,
+        mmproj_expected_size_bytes: 985_654_080,
         variants: GEMMA4_E2B_VARIANTS,
     },
 
@@ -540,14 +546,14 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         name: "Gemma 4 E4B",
         provider: "Google",
         filename: "gemma-4-E4B-it-Q4_K_M.gguf",
-        disk_size_gb: 4.6,
-        ram_required_gb: 7.0,
+        disk_size_gb: 5.0,
+        ram_required_gb: 7.5,
         text_rating: 3,
         code_rating: 2,
         vision_rating: 4,
         tool_calling_rating: 2,
         speed: "Fast",
-        description: "Gemma 4 multimodal: text + image + audio input. 4B effective params. Excellent vision quality for its size. 128K context.",
+        description: "Gemma 4 multimodal: text + image input via llama.cpp (audio support pending upstream). 4B effective params. Excellent vision quality for its size. 128K context.",
         knowledge_cutoff: "Apr 2026",
         hf_model_card_url: "https://huggingface.co/google/gemma-4-E4B-it",
         is_uncensored: false,
@@ -555,11 +561,11 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
         hf_parts: &[],
         context_length: 131072,
-        expected_size_bytes: 4_600_000_000,
+        expected_size_bytes: 4_977_169_568,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-E4B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 945_000_000,
+        mmproj_expected_size_bytes: 990_372_672,
         variants: GEMMA4_E4B_VARIANTS,
     },
 
@@ -766,8 +772,8 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         name: "Gemma 4 26B A4B",
         provider: "Google",
         filename: "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
-        disk_size_gb: 15.7,
-        ram_required_gb: 18.0,
+        disk_size_gb: 17.0,
+        ram_required_gb: 20.0,
         text_rating: 4,
         code_rating: 3,
         vision_rating: 4,
@@ -781,11 +787,11 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_url: "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
         hf_parts: &[],
         context_length: 262144,
-        expected_size_bytes: 15_700_000_000,
+        expected_size_bytes: 16_947_539_744,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-26B-A4B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 1_110_000_000,
+        mmproj_expected_size_bytes: 1_193_058_784,
         variants: GEMMA4_A4B_VARIANTS,
     },
 
@@ -823,8 +829,8 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         name: "Gemma 4 31B",
         provider: "Google",
         filename: "gemma-4-31B-it-Q4_K_M.gguf",
-        disk_size_gb: 17.1,
-        ram_required_gb: 20.0,
+        disk_size_gb: 18.3,
+        ram_required_gb: 21.0,
         text_rating: 4,
         code_rating: 4,
         vision_rating: 5,
@@ -838,11 +844,11 @@ pub const LLM_MODELS: &[LlmModelInfo] = &[
         hf_url: "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/gemma-4-31B-it-Q4_K_M.gguf",
         hf_parts: &[],
         context_length: 262144,
-        expected_size_bytes: 17_100_000_000,
+        expected_size_bytes: 18_323_731_456,
         hf_part_sizes: &[],
         mmproj_filename: "mmproj-gemma-4-31B-it-F16.gguf",
         mmproj_url: "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/mmproj-F16.gguf",
-        mmproj_expected_size_bytes: 1_140_000_000,
+        mmproj_expected_size_bytes: 1_198_957_024,
         variants: GEMMA4_31B_VARIANTS,
     },
 
