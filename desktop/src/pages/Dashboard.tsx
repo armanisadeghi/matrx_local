@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
@@ -7,7 +7,6 @@ import {
   Cpu,
   Download,
   Globe,
-  HardDrive,
   Loader2,
   Mic,
   Monitor,
@@ -23,14 +22,11 @@ import {
   User,
   Mail,
   LogOut,
-  Battery,
-  MemoryStick,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SetupWizard } from "@/components/SetupWizard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { engine } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
@@ -50,19 +46,6 @@ interface DashboardProps {
   onSignOut?: () => void;
 }
 
-interface ResourceMetrics {
-  cpu_percent?: number;
-  memory_percent?: number;
-  memory_used_gb?: number;
-  memory_total_gb?: number;
-  disk_percent?: number;
-  disk_used_gb?: number;
-  disk_total_gb?: number;
-  battery_percent?: number;
-  battery_plugged?: boolean;
-  uptime_seconds?: number;
-}
-
 export function Dashboard({
   engineStatus,
   engineUrl,
@@ -74,14 +57,15 @@ export function Dashboard({
   onSignOut,
 }: DashboardProps) {
   const [permissions, setPermissions] = useState<PermissionInfo[]>([]);
-  const [resources, setResources] = useState<ResourceMetrics | null>(null);
-  const resourceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [installingBrowser, setInstallingBrowser] = useState(false);
-  const [browserInstallMessage, setBrowserInstallMessage] = useState<string | null>(null);
+  const [browserInstallMessage, setBrowserInstallMessage] = useState<
+    string | null
+  >(null);
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
 
   // Tauri-plugin-backed permission states (authoritative TCC identity for the .app bundle)
-  const { permissions: nativePermissions, isLoading: nativePermsLoading } = usePermissionsContext();
+  const { permissions: nativePermissions, isLoading: nativePermsLoading } =
+    usePermissionsContext();
 
   const loadPermissions = useCallback(async () => {
     if (engineStatus !== "connected") return;
@@ -93,34 +77,9 @@ export function Dashboard({
     }
   }, [engineStatus]);
 
-  const loadResources = useCallback(async () => {
-    if (engineStatus !== "connected") return;
-    try {
-      const result = await engine.invokeTool("SystemResources", {});
-      if (result.type !== "error" && result.metadata) {
-        setResources(result.metadata as ResourceMetrics);
-      }
-    } catch {
-      // non-critical
-    }
-  }, [engineStatus]);
-
   useEffect(() => {
     loadPermissions();
   }, [loadPermissions]);
-
-  useEffect(() => {
-    loadResources();
-    if (engineStatus === "connected") {
-      resourceIntervalRef.current = setInterval(loadResources, 10000);
-    }
-    return () => {
-      if (resourceIntervalRef.current) {
-        clearInterval(resourceIntervalRef.current);
-        resourceIntervalRef.current = null;
-      }
-    };
-  }, [loadResources, engineStatus]);
 
   const installBrowser = useCallback(async () => {
     setInstallingBrowser(true);
@@ -128,19 +87,24 @@ export function Dashboard({
     try {
       const result = await engine.installCapability("browser_automation");
       if (result.success) {
-        setBrowserInstallMessage("Installed successfully — restart the engine to activate.");
+        setBrowserInstallMessage(
+          "Installed successfully — restart the engine to activate.",
+        );
         onRefresh();
       } else {
         setBrowserInstallMessage(`Install failed: ${result.message}`);
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      const engineCrashed = errMsg.includes("fetch") || errMsg.includes("network") ||
-        errMsg.includes("Failed to fetch") || errMsg.includes("Load failed");
+      const engineCrashed =
+        errMsg.includes("fetch") ||
+        errMsg.includes("network") ||
+        errMsg.includes("Failed to fetch") ||
+        errMsg.includes("Load failed");
       setBrowserInstallMessage(
         engineCrashed
           ? "Engine became unreachable during install — the OS may have killed it. Restart the engine and try again."
-          : `Error: ${errMsg}`
+          : `Error: ${errMsg}`,
       );
     } finally {
       setInstallingBrowser(false);
@@ -155,8 +119,12 @@ export function Dashboard({
     (p) => p.status !== "unavailable" && p.status !== "loading",
   ).length;
   // Keep engine-checked counts as fallback when native check hasn't run yet
-  const grantedCount = nativeTotalCount > 0 ? nativeGrantedCount : permissions.filter((p) => p.status === "granted").length;
-  const totalCount = nativeTotalCount > 0 ? nativeTotalCount : permissions.length;
+  const grantedCount =
+    nativeTotalCount > 0
+      ? nativeGrantedCount
+      : permissions.filter((p) => p.status === "granted").length;
+  const totalCount =
+    nativeTotalCount > 0 ? nativeTotalCount : permissions.length;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -226,7 +194,10 @@ export function Dashboard({
           </Card>
 
           {/* Setup Wizard */}
-          <SetupWizard engineStatus={engineStatus} onSetupComplete={onRefresh} />
+          <SetupWizard
+            engineStatus={engineStatus}
+            onSetupComplete={onRefresh}
+          />
 
           {/* Status Cards Row */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -270,84 +241,6 @@ export function Dashboard({
             />
           </div>
 
-          {/* Live System Resources */}
-          {(resources || engineStatus === "connected") && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center justify-between text-base">
-                  <span className="flex items-center gap-2">
-                    <Activity className="h-4 w-4 text-primary" />
-                    System Resources
-                  </span>
-                  <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={loadResources}>
-                    <Activity className="h-3 w-3" />
-                    Refresh
-                  </Button>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {resources ? (
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    <ResourceGauge
-                      label="CPU"
-                      value={resources.cpu_percent}
-                      icon={<Cpu className="h-4 w-4" />}
-                      color="text-blue-400"
-                    />
-                    <ResourceGauge
-                      label="Memory"
-                      value={resources.memory_percent}
-                      detail={
-                        resources.memory_used_gb != null && resources.memory_total_gb != null
-                          ? `${resources.memory_used_gb.toFixed(1)} / ${resources.memory_total_gb.toFixed(1)} GB`
-                          : undefined
-                      }
-                      icon={<MemoryStick className="h-4 w-4" />}
-                      color="text-violet-400"
-                    />
-                    <ResourceGauge
-                      label="Disk"
-                      value={resources.disk_percent}
-                      detail={
-                        resources.disk_used_gb != null && resources.disk_total_gb != null
-                          ? `${resources.disk_used_gb.toFixed(0)} / ${resources.disk_total_gb.toFixed(0)} GB`
-                          : undefined
-                      }
-                      icon={<HardDrive className="h-4 w-4" />}
-                      color="text-amber-400"
-                    />
-                    {resources.battery_percent != null ? (
-                      <ResourceGauge
-                        label="Battery"
-                        value={resources.battery_percent}
-                        detail={resources.battery_plugged ? "Charging" : undefined}
-                        icon={<Battery className="h-4 w-4" />}
-                        color={
-                          resources.battery_percent > 50
-                            ? "text-emerald-400"
-                            : resources.battery_percent > 20
-                              ? "text-amber-400"
-                              : "text-red-400"
-                        }
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center gap-1">
-                        <Battery className="h-4 w-4 text-muted-foreground/30" />
-                        <span className="text-xs text-muted-foreground">AC Power</span>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {engineStatus === "connected"
-                      ? "Loading system resources..."
-                      : "Connect to engine to view live resources"}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
           <div className="grid gap-6 lg:grid-cols-2">
             {/* System Information */}
             <Card>
@@ -366,10 +259,7 @@ export function Dashboard({
                       label="Architecture"
                       value={systemInfo.architecture}
                     />
-                    <InfoRow
-                      label="Python"
-                      value={systemInfo.python_version}
-                    />
+                    <InfoRow label="Python" value={systemInfo.python_version} />
                     <InfoRow label="User" value={systemInfo.username} />
                     <InfoRow
                       label="Working Directory"
@@ -405,7 +295,11 @@ export function Dashboard({
                       Review & Grant
                     </Button>
                     <Link to="/devices">
-                      <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs gap-1"
+                      >
                         Manage
                         <ArrowRight className="h-3 w-3" />
                       </Button>
@@ -415,7 +309,9 @@ export function Dashboard({
               </CardHeader>
               <CardContent className="space-y-2">
                 {nativePermsLoading && nativeTotalCount === 0 ? (
-                  <p className="text-sm text-muted-foreground">Checking permissions…</p>
+                  <p className="text-sm text-muted-foreground">
+                    Checking permissions…
+                  </p>
                 ) : nativeTotalCount > 0 ? (
                   <>
                     {Array.from(nativePermissions.values())
@@ -502,7 +398,6 @@ export function Dashboard({
               </CardContent>
             </Card>
           </div>
-
         </div>
       </div>
     </div>
@@ -531,7 +426,9 @@ const PERMISSION_LABELS: Record<string, string> = {
 };
 
 function DeviceStatusRow({ perm }: { perm: PermissionInfo }) {
-  const icon = PERMISSION_ICONS[perm.permission] ?? <HelpCircle className="h-3.5 w-3.5" />;
+  const icon = PERMISSION_ICONS[perm.permission] ?? (
+    <HelpCircle className="h-3.5 w-3.5" />
+  );
   const label = PERMISSION_LABELS[perm.permission] ?? perm.permission;
 
   const statusIcon =
@@ -611,51 +508,6 @@ function InfoRow({
   );
 }
 
-function ResourceGauge({
-  label,
-  value,
-  detail,
-  icon,
-  color,
-}: {
-  label: string;
-  value?: number;
-  detail?: string;
-  icon: React.ReactNode;
-  color: string;
-}) {
-  const pct = value ?? 0;
-  const radius = 22;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (pct / 100) * circumference;
-
-  return (
-    <div className="flex flex-col items-center gap-1.5">
-      <div className="relative h-16 w-16">
-        <svg className="h-16 w-16 -rotate-90" viewBox="0 0 56 56">
-          <circle cx="28" cy="28" r={radius} fill="none" stroke="currentColor"
-            className="text-muted/30" strokeWidth="4" />
-          <circle cx="28" cy="28" r={radius} fill="none" stroke="currentColor"
-            className={color} strokeWidth="4"
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            strokeLinecap="round" />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className={`text-xs font-bold tabular-nums ${value == null ? "text-muted-foreground" : color}`}>
-            {value != null ? `${Math.round(value)}%` : "—"}
-          </span>
-        </div>
-      </div>
-      <div className="text-center">
-        <div className={`flex items-center justify-center gap-1 ${color}`}>{icon}</div>
-        <p className="text-[11px] font-medium mt-0.5">{label}</p>
-        {detail && <p className="text-[10px] text-muted-foreground">{detail}</p>}
-      </div>
-    </div>
-  );
-}
-
 function BrowserStatusCard({
   browserStatus,
   engineStatus,
@@ -685,8 +537,12 @@ function BrowserStatusCard({
     <Card>
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Browser (Playwright)</span>
-          <span className={indicatorColor}><Chrome className="h-4 w-4" /></span>
+          <span className="text-sm text-muted-foreground">
+            Browser (Playwright)
+          </span>
+          <span className={indicatorColor}>
+            <Chrome className="h-4 w-4" />
+          </span>
         </div>
         <div className="mt-2">
           <span className="text-2xl font-bold">
@@ -724,7 +580,9 @@ function BrowserStatusCard({
           </Button>
         )}
         {installMessage && (
-          <p className={`mt-1.5 text-[11px] leading-tight ${installMessage.startsWith("Install failed") || installMessage.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
+          <p
+            className={`mt-1.5 text-[11px] leading-tight ${installMessage.startsWith("Install failed") || installMessage.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}
+          >
             {installMessage}
           </p>
         )}
@@ -732,6 +590,3 @@ function BrowserStatusCard({
     </Card>
   );
 }
-
-// Re-export for use in App
-export { Progress, HardDrive };

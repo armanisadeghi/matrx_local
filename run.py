@@ -523,8 +523,10 @@ def start_server(port: int) -> None:
     )
     server = uvicorn.Server(config)
     _uvicorn_server = server
-    server.run()
-    _shutdown_event.set()
+    try:
+        server.run()
+    finally:
+        _shutdown_event.set()
 
 
 def on_quit(icon: Icon, item: MenuItem) -> None:

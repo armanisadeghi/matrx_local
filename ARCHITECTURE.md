@@ -543,7 +543,7 @@ Dual auth:
 1. **API Key** — `Authorization: Bearer <API_KEY>` (server-to-server)
 2. **Supabase JWT** — `Authorization: Bearer <jwt>` (end users, validated via JWKS)
 
-JWKS endpoint: `https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json` (ES256, Key ID `8a68756f-4254-41d7-9871-a7615685e38a`).
+JWKS endpoint: `https://db.matrxserver.com/auth/v1/.well-known/jwks.json` (ES256, Key ID `8a68756f-4254-41d7-9871-a7615685e38a`).
 
 ### Local vs Remote Scraping
 

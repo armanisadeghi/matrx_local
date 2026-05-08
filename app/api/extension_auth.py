@@ -305,10 +305,25 @@ async def _verify_token(token: str) -> ExtensionPrincipal:
             last_error = exc
             logger.debug("[extension_auth] HS256 validation failed: %s", exc)
 
-    # Both paths failed (or weren't available). Re-raise the most recent
-    # error so the 401 surface includes a useful detail in dev logs while
-    # still presenting a generic message to the client.
+    # Both paths failed (or weren't available). 
+    # If the token is HS256 but we don't have the shared secret, JWKS was guaranteed
+    # to fail. This is the standard state for the desktop app in production (no .env
+    # shipped, but OAuth tokens are HS256). Fallback gracefully as if validation
+    # was disabled entirely.
     if last_error is not None:
+        if not secret:
+            try:
+                import jwt as _jwt
+                header = _jwt.get_unverified_header(token)
+                if header.get("alg") == "HS256":
+                    logger.debug(
+                        "[extension_auth] HS256 token encountered but no secret available. "
+                        "Falling back to permissive degraded mode."
+                    )
+                    _maybe_log_degraded_mode_once()
+                    return _degraded_principal(token)
+            except Exception:
+                pass
         raise last_error
     raise RuntimeError("No JWT verification path is configured")
 

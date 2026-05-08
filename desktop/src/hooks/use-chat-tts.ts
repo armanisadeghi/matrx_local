@@ -3,21 +3,18 @@
  *
  * Watches an actively streaming assistant message, buffers text at sentence
  * boundaries, converts each sentence from markdown to speech-friendly text,
- * and sends it to the TTS streaming pipeline for near-realtime read-aloud.
+ * and forwards each chunk to ``ttsActions.speakText()`` which owns all
+ * playback (single source of truth).
  *
- * Usage:
- *   const chatTts = useChatTts(ttsActions, activeMessage, isStreaming);
- *   chatTts.readCompleteMessage(content);  // begin reading a complete message
- *   chatTts.stopReadAloud();              // immediately stop
- *   chatTts.pauseReadAloud();             // pause mid-playback
- *   chatTts.resumeReadAloud();            // resume from where we paused
+ * Critical design rule: this hook never plays audio itself. The Web Audio
+ * scheduler in ``use-tts.ts`` is the only playback path, so two simultaneous
+ * read-aloud attempts cannot collide.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseMarkdownToText } from "@/lib/parse-markdown-for-speech";
-import { synthesizeStream } from "@/lib/tts/api";
 import { loadSettings } from "@/lib/settings";
-import { catchAndLog } from "@/lib/error-reporting";
+import { logError } from "@/lib/error-reporting";
 import type { UseTtsActions } from "./use-tts";
 
 interface ChatMessage {
@@ -51,18 +48,14 @@ export function useChatTts(
   const readAloudActiveRef = useRef(false);
   const sentIndexRef = useRef(0);
   const pendingBufferRef = useRef("");
-  // Keep ttsActions in a ref so stopReadAloud always has the current reference
+
+  // Keep ttsActions in a ref so callbacks always see the current reference
   const ttsActionsRef = useRef(ttsActions);
   ttsActionsRef.current = ttsActions;
 
-  // ── Fallback queue player (when ttsActions.speakText is unavailable) ────
-  // Used for streaming-mode sentence-by-sentence playback.
-  // When readCompleteMessage uses speakText, the AudioContext in use-tts.ts
-  // handles everything — we just need to track state here.
-  const audioQueueRef = useRef<Blob[]>([]);
-  const isPlayingRef = useRef(false);
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
-  const prevUrlRef = useRef<string | null>(null);
+  // Read-aloud only runs when ttsActions is available and the AudioContext
+  // path is functional. We don't keep a fallback queue — callers see an error
+  // via ttsActions.lastError if synthesis fails.
   const chatVoiceRef = useRef<string>("");
   const chatSpeedRef = useRef<number>(0);
 
@@ -82,69 +75,37 @@ export function useChatTts(
       window.removeEventListener("matrx-settings-changed", onChanged);
   }, []);
 
-  const _playNextInQueue = useCallback(() => {
-    if (isPlayingRef.current) return;
-    const next = audioQueueRef.current.shift();
-    if (!next) {
-      if (!readAloudActiveRef.current) {
-        setIsReadingAloud(false);
-        setIsPaused(false);
-      }
-      return;
-    }
-
-    isPlayingRef.current = true;
-    if (prevUrlRef.current) URL.revokeObjectURL(prevUrlRef.current);
-    if (audioElRef.current) audioElRef.current.pause();
-
-    const url = URL.createObjectURL(next);
-    prevUrlRef.current = url;
-
-    const audio = new Audio(url);
-    audioElRef.current = audio;
-    audio.onended = () => {
-      isPlayingRef.current = false;
-      _playNextInQueue();
-    };
-    audio.onerror = () => {
-      isPlayingRef.current = false;
-      _playNextInQueue();
-    };
-    audio.play().catch(() => {
-      isPlayingRef.current = false;
-      _playNextInQueue();
-    });
-  }, []);
-
-  const _synthesizeChunk = useCallback(
+  /**
+   * Speak a single chunk via the shared TTS actions.
+   * Errors are logged but not propagated; the streaming UI continues to flow.
+   */
+  const _speakChunk = useCallback(
     async (text: string, signal: AbortSignal) => {
-      if (!text.trim()) return;
+      if (!text.trim() || signal.aborted) return;
       const speechText = parseMarkdownToText(text);
       if (!speechText.trim()) return;
 
+      const actions = ttsActionsRef.current;
+      if (!actions) return;
+
       try {
-        const gen = synthesizeStream(
-          {
-            text: speechText,
-            voice_id: chatVoiceRef.current || undefined,
-            speed: chatSpeedRef.current || undefined,
-          },
+        await actions.speakText(
+          speechText,
+          chatVoiceRef.current || undefined,
+          chatSpeedRef.current || undefined,
           signal,
         );
-        for await (const wavBlob of gen) {
-          if (signal.aborted) break;
-          audioQueueRef.current.push(wavBlob);
-          _playNextInQueue();
-        }
       } catch (e) {
         if ((e as Error).name !== "AbortError") {
-          console.warn("[chat-tts] Synthesis error:", e);
+          logError("chat-tts", "speak chunk", e);
         }
       }
     },
-    [_playNextInQueue],
+    [],
   );
 
+  // Watch the streaming message content; when a sentence terminator appears
+  // and the buffer is long enough, dispatch the chunk for synthesis.
   useEffect(() => {
     if (!readAloudActiveRef.current || !activeMessage?.isStreaming) return;
 
@@ -159,67 +120,46 @@ export function useChatTts(
       pendingBufferRef.current = "";
       const abort = abortRef.current;
       if (abort && !abort.signal.aborted) {
-        _synthesizeChunk(buf, abort.signal);
+        void _speakChunk(buf, abort.signal);
       }
     } else {
       pendingBufferRef.current = buf;
     }
-  }, [activeMessage?.content, activeMessage?.isStreaming, _synthesizeChunk]);
+  }, [activeMessage?.content, activeMessage?.isStreaming, _speakChunk]);
 
+  // When the LLM stream ends, flush whatever short tail remains so we never
+  // drop the last few words.
   useEffect(() => {
     if (!readAloudActiveRef.current) return;
     if (llmIsStreaming) return;
 
     const remaining = pendingBufferRef.current;
+    pendingBufferRef.current = "";
+
+    const finalize = () => {
+      readAloudActiveRef.current = false;
+      // ttsActions.playbackState will flip to "idle" when audio drains, but
+      // our local "currently dispatching chunks" flag is done now.
+    };
+
     if (remaining.trim()) {
-      pendingBufferRef.current = "";
       const abort = abortRef.current;
       if (abort && !abort.signal.aborted) {
-        _synthesizeChunk(remaining, abort.signal).then(() => {
-          readAloudActiveRef.current = false;
-        });
-      }
-    } else {
-      // Nothing remaining to synthesize — mark done and clear UI state.
-      readAloudActiveRef.current = false;
-      // Only clear isReadingAloud if the AudioContext queue is also drained.
-      // If the fallback queue has items still playing, _playNextInQueue will
-      // call setIsReadingAloud(false) when it empties. But if both queues are
-      // already empty (e.g. entire message was already spoken chunk-by-chunk),
-      // we must clear it here, otherwise it stays "reading" forever.
-      if (audioQueueRef.current.length === 0 && !isPlayingRef.current) {
-        setIsReadingAloud(false);
-        setIsPaused(false);
+        _speakChunk(remaining, abort.signal).finally(finalize);
+        return;
       }
     }
-  }, [llmIsStreaming, _synthesizeChunk]);
+    finalize();
+  }, [llmIsStreaming, _speakChunk]);
 
-  /**
-   * Hard stop — aborts fetch, stops the shared AudioContext (via ttsActions),
-   * clears the fallback queue, and resets all state.
-   */
+  /** Hard stop — abort outstanding fetches and tear down the audio. */
   const stopReadAloud = useCallback(() => {
     readAloudActiveRef.current = false;
 
-    // Abort the synthesis fetch stream
     abortRef.current?.abort();
     abortRef.current = null;
 
-    // Stop the AudioContext nodes that are already scheduled (the main path)
     ttsActionsRef.current?.stopAudio();
-
-    // Also stop the fallback queue player
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
-    if (audioElRef.current) {
-      audioElRef.current.pause();
-      audioElRef.current.src = "";
-      audioElRef.current = null;
-    }
-    if (prevUrlRef.current) {
-      URL.revokeObjectURL(prevUrlRef.current);
-      prevUrlRef.current = null;
-    }
 
     sentIndexRef.current = 0;
     pendingBufferRef.current = "";
@@ -227,31 +167,13 @@ export function useChatTts(
     setIsPaused(false);
   }, []);
 
-  /**
-   * Pause — suspends the AudioContext mid-playback. Position is preserved.
-   */
   const pauseReadAloud = useCallback(() => {
     ttsActionsRef.current?.pauseAudio();
-    // Also pause fallback <audio> element if active
-    if (audioElRef.current && !audioElRef.current.paused) {
-      audioElRef.current.pause();
-    }
     setIsPaused(true);
   }, []);
 
-  /**
-   * Resume — unsuspends the AudioContext. Playback continues from exact position.
-   */
   const resumeReadAloud = useCallback(() => {
     ttsActionsRef.current?.resumeAudio();
-    // Also resume fallback <audio> element if it was paused mid-play
-    if (
-      audioElRef.current &&
-      audioElRef.current.paused &&
-      audioElRef.current.currentTime > 0
-    ) {
-      audioElRef.current.play().catch(catchAndLog("chat-tts", "audio resume play"));
-    }
     setIsPaused(false);
   }, []);
 
@@ -267,7 +189,7 @@ export function useChatTts(
 
       if (messageContent) {
         sentIndexRef.current = messageContent.length;
-        _synthesizeChunk(messageContent, abort.signal).then(() => {
+        _speakChunk(messageContent, abort.signal).finally(() => {
           readAloudActiveRef.current = false;
         });
       } else {
@@ -275,7 +197,7 @@ export function useChatTts(
         pendingBufferRef.current = "";
       }
     },
-    [activeMessage, stopReadAloud, _synthesizeChunk],
+    [activeMessage, stopReadAloud, _speakChunk],
   );
 
   const readCompleteMessage = useCallback(
@@ -291,38 +213,41 @@ export function useChatTts(
 
       const speechText = parseMarkdownToText(content);
       if (!speechText.trim()) {
+        readAloudActiveRef.current = false;
         setIsReadingAloud(false);
         return;
       }
 
-      if (ttsActionsRef.current) {
-        ttsActionsRef.current
-          .speakText(
-            speechText,
-            chatVoiceRef.current || undefined,
-            chatSpeedRef.current || undefined,
-            abort.signal,
-          )
-          .finally(() => {
-            readAloudActiveRef.current = false;
-            // speakText is fire-and-forget — playbackState in use-tts will
-            // flip to idle once the AudioContext nodes finish playing.
-          });
-      } else {
-        _synthesizeChunk(content, abort.signal).then(() => {
+      const actions = ttsActionsRef.current;
+      if (!actions) {
+        readAloudActiveRef.current = false;
+        setIsReadingAloud(false);
+        return;
+      }
+
+      actions
+        .speakText(
+          speechText,
+          chatVoiceRef.current || undefined,
+          chatSpeedRef.current || undefined,
+          abort.signal,
+        )
+        .catch((e) => {
+          if ((e as Error).name !== "AbortError") {
+            logError("chat-tts", "readCompleteMessage", e);
+          }
+        })
+        .finally(() => {
           readAloudActiveRef.current = false;
         });
-      }
     },
-    [stopReadAloud, _synthesizeChunk],
+    [stopReadAloud],
   );
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
       ttsActionsRef.current?.stopAudio();
-      if (prevUrlRef.current) URL.revokeObjectURL(prevUrlRef.current);
-      if (audioElRef.current) audioElRef.current.pause();
     };
   }, []);
 

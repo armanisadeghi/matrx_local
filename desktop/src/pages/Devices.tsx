@@ -42,6 +42,20 @@ import { PLUGIN_KEYS } from "@/hooks/use-permissions";
 import { usePermissionsContext } from "@/contexts/PermissionsContext";
 import { useAudioDevices } from "@/contexts/AudioDevicesContext";
 import type { AudioDeviceInfo } from "@/lib/transcription/types";
+import { PLATFORM } from "@/lib/platformCtx";
+
+const TRIGGER_REQUIRED_KEYS = new Set<string>([
+  "screen_recording",
+  "automation",
+  "local_network",
+  "mail",
+  "contacts",
+  "calendar",
+  "reminders",
+  "photos",
+  "location",
+  "speech_recognition",
+]);
 
 interface DevicesProps {
   engineStatus: EngineStatus;
@@ -170,6 +184,8 @@ function PermissionAlert({ perm }: { perm: PermissionInfo | null }) {
       .catch(() => { window.open(url, "_blank"); });
   };
 
+  const isTriggerRequired = PLATFORM.is_mac && perm.status === "not_determined" && TRIGGER_REQUIRED_KEYS.has(perm.permission);
+
   return (
     <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
       <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
@@ -182,13 +198,20 @@ function PermissionAlert({ perm }: { perm: PermissionInfo | null }) {
           <p className="mt-1 font-mono text-[10px] text-muted-foreground/70">{perm.grant_instructions}</p>
         )}
       </div>
-      <button
-        onClick={openSettings}
-        className="shrink-0 flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-amber-500 border border-amber-500/30 hover:bg-amber-500/10 transition-colors"
-      >
-        <ExternalLink className="h-3 w-3" />
-        Open Settings
-      </button>
+      {isTriggerRequired ? (
+        <div className="shrink-0 flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-amber-600 dark:text-amber-400 border border-amber-500/30 bg-amber-500/10">
+          <AlertCircle className="h-3 w-3" />
+          Open Feature to Approve
+        </div>
+      ) : (
+        <button
+          onClick={openSettings}
+          className="shrink-0 flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-amber-500 border border-amber-500/30 hover:bg-amber-500/10 transition-colors"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Open Settings
+        </button>
+      )}
     </div>
   );
 }

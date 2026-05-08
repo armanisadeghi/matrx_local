@@ -9,7 +9,7 @@ Usage:
 
 Required environment variables (read from CI secrets / local .env):
     AIDREAM_SERVER_URL_LIVE      — e.g. https://server.app.matrxserver.com
-    SUPABASE_URL                 — e.g. https://txzxabzwovsujtloxrus.supabase.co
+    SUPABASE_URL                 — e.g. https://db.matrxserver.com
     SUPABASE_PUBLISHABLE_KEY     — the publishable (anon) key from Supabase
 
 Exit code 0 on success, 1 if any required var is missing.
@@ -27,17 +27,22 @@ TARGET = ROOT / "app" / "bundled_config.py"
 _env_file = ROOT / ".env"
 if _env_file.exists():
     from dotenv import load_dotenv
+
     load_dotenv(dotenv_path=_env_file)
 
 AIDREAM_SERVER_URL = os.environ.get("AIDREAM_SERVER_URL_LIVE", "").strip()
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_KEY = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
 
-missing = [k for k, v in [
-    ("AIDREAM_SERVER_URL_LIVE", AIDREAM_SERVER_URL),
-    ("SUPABASE_URL", SUPABASE_URL),
-    ("SUPABASE_PUBLISHABLE_KEY", SUPABASE_KEY),
-] if not v]
+missing = [
+    k
+    for k, v in [
+        ("AIDREAM_SERVER_URL_LIVE", AIDREAM_SERVER_URL),
+        ("SUPABASE_URL", SUPABASE_URL),
+        ("SUPABASE_PUBLISHABLE_KEY", SUPABASE_KEY),
+    ]
+    if not v
+]
 
 if missing:
     print(f"ERROR: Missing required env vars: {', '.join(missing)}", file=sys.stderr)

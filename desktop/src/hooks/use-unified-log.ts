@@ -195,21 +195,68 @@ function stripAnsi(text: string): string {
   return text.replace(_ANSI_RE, "");
 }
 
+// Parses the embedded Python log level from raw tauri sidecar output.
+// Lines look like: "[stdout] \x1b[33mWARNING\x1b[0m - message text"
+// Returns null when the pattern is absent (non-Python or crash output).
+function parseTauriLogLevel(rawText: string): LogLevel | null {
+  const stripped = stripAnsi(rawText);
+  const m = stripped.match(
+    /\[std(?:out|err)\]\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*-/,
+  );
+  if (!m) return null;
+  switch (m[1]) {
+    case "ERROR":
+    case "CRITICAL":
+      return "error";
+    case "WARNING":
+      return "warn";
+    default:
+      return "info"; // INFO, DEBUG
+  }
+}
+
+// Cleans up a raw tauri sidecar log line for display:
+//   1. Strips ANSI escape codes
+//   2. Removes "[stdout] " / "[stderr] " prefix
+//   3. Removes the redundant Python log-level prefix "WARNING - " etc.
+function cleanTauriMessage(rawText: string): string {
+  let msg = stripAnsi(rawText);
+  msg = msg.replace(/^\[std(?:out|err)\]\s*/, "");
+  msg = msg.replace(/^(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*-\s*/, "");
+  return msg.trim();
+}
+
 function inferServerLevel(text: string): LogLevel {
   const t = stripAnsi(text).toLowerCase();
   // Hard error signals — always show
   if (
-    t.includes("traceback") || t.includes("exception") || t.includes("critical") ||
-    t.includes("fatal") || t.includes("sigkill") || t.includes("signal: some(9)") ||
-    t.includes("terminated") || t.includes("process exited")
-  ) return "error";
+    t.includes("traceback") ||
+    t.includes("exception") ||
+    t.includes("critical") ||
+    t.includes("fatal") ||
+    t.includes("sigkill") ||
+    t.includes("signal: some(9)") ||
+    t.includes("terminated") ||
+    t.includes("process exited")
+  )
+    return "error";
   if (t.includes("error") || t.includes("failed")) return "error";
   if (t.includes("warning") || t.includes("warn")) return "warn";
-  if (t.includes("ready") || t.includes("✓") || t.includes("started") || t.includes("success")) return "success";
+  if (
+    t.includes("ready") ||
+    t.includes("✓") ||
+    t.includes("started") ||
+    t.includes("success")
+  )
+    return "success";
   // Suppress DEBUG lines from the Python logger — they are high-volume and
   // contain internal timing details not useful for end-user troubleshooting.
   // They still go into the buffer (full history), just tagged as lowest priority.
-  if (t.includes("debug") || (t.includes("→") && !t.includes("error")) || (t.includes("←") && !t.includes("error"))) {
+  if (
+    t.includes("debug") ||
+    (t.includes("→") && !t.includes("error")) ||
+    (t.includes("←") && !t.includes("error"))
+  ) {
     // HTTP access lines from the request logger (→ GET, ← 200) — keep as "data"
     // level so the access tab can show them but the Server tab's "warn+" filter hides them.
     return "info";
@@ -299,13 +346,27 @@ function startSetupLogsStream(engineUrl: string): () => void {
                 const data = JSON.parse(raw.slice(6));
                 if (eventType === "log") {
                   const d = data as { line: string; level: string };
-                  emitClientLog(SETUP_LOG_LEVEL_MAP[d.level] ?? "info", d.line, "server");
+                  emitClientLog(
+                    SETUP_LOG_LEVEL_MAP[d.level] ?? "info",
+                    d.line,
+                    "server",
+                  );
                 } else if (eventType === "history_end") {
-                  emitClientLog("info", `── History (${data.lines_sent ?? 0} lines) ──────────────────────────`, "server");
+                  emitClientLog(
+                    "info",
+                    `── History (${data.lines_sent ?? 0} lines) ──────────────────────────`,
+                    "server",
+                  );
                 } else if (eventType === "connected") {
-                  emitClientLog("info", `Connected — streaming from ${data.log_path ?? ""}`, "server");
+                  emitClientLog(
+                    "info",
+                    `Connected — streaming from ${data.log_path ?? ""}`,
+                    "server",
+                  );
                 }
-              } catch { /* skip malformed */ }
+              } catch {
+                /* skip malformed */
+              }
               eventType = "";
             }
           }
@@ -316,7 +377,11 @@ function startSetupLogsStream(engineUrl: string): () => void {
         // Suppress intentional aborts (from stop()) and network interruptions
         // that are expected when the engine restarts.
         if (!msg.includes("abort") && !msg.includes("AbortError")) {
-          emitClientLog("warn", `Server log stream reconnecting: ${msg}`, "server");
+          emitClientLog(
+            "warn",
+            `Server log stream reconnecting: ${msg}`,
+            "server",
+          );
         }
       }
       currentAbort = null;
@@ -338,7 +403,10 @@ function startSetupLogsStream(engineUrl: string): () => void {
 // /logs/stream stream (raw system.log tail via SSE)
 // ---------------------------------------------------------------------------
 
-async function startSyslogStream(engineUrl: string, getToken: () => Promise<string | null>): Promise<() => void> {
+async function startSyslogStream(
+  engineUrl: string,
+  getToken: () => Promise<string | null>,
+): Promise<() => void> {
   let active = true;
   let esRef: EventSource | null = null;
   const backoff = makeBackoff();
@@ -370,7 +438,8 @@ async function startSyslogStream(engineUrl: string, getToken: () => Promise<stri
 
     es.onmessage = (evt) => {
       if (_state.paused) return;
-      emitClientLog(inferServerLevel(evt.data), evt.data, "syslog");
+      const msg = stripAnsi(evt.data);
+      emitClientLog(inferServerLevel(msg), msg, "syslog");
     };
 
     es.onerror = () => {
@@ -381,7 +450,9 @@ async function startSyslogStream(engineUrl: string, getToken: () => Promise<stri
       setTimeout(connect, delay);
     };
 
-    es.onopen = () => { backoff.reset(); };
+    es.onopen = () => {
+      backoff.reset();
+    };
   };
 
   connect();
@@ -412,16 +483,23 @@ async function startLlmStream(): Promise<() => void> {
       },
     );
     unlistenFn = unlisten;
-  } catch { /* not in Tauri — browser dev mode */ }
+  } catch {
+    /* not in Tauri — browser dev mode */
+  }
 
-  return () => { unlistenFn?.(); };
+  return () => {
+    unlistenFn?.();
+  };
 }
 
 // ---------------------------------------------------------------------------
 // /logs/access snapshot + /logs/access/stream SSE
 // ---------------------------------------------------------------------------
 
-async function startAccessStream(engineUrl: string, getToken: () => Promise<string | null>): Promise<() => void> {
+async function startAccessStream(
+  engineUrl: string,
+  getToken: () => Promise<string | null>,
+): Promise<() => void> {
   let active = true;
   let esRef: EventSource | null = null;
   const backoff = makeBackoff();
@@ -434,7 +512,7 @@ async function startAccessStream(engineUrl: string, getToken: () => Promise<stri
         headers: { Authorization: `Bearer ${token}` },
       });
       if (resp.ok) {
-        const data = await resp.json() as { entries?: AccessEntry[] };
+        const data = (await resp.json()) as { entries?: AccessEntry[] };
         if (Array.isArray(data?.entries)) {
           const entries = data.entries.slice(-200);
           entries.forEach((entry) => {
@@ -447,7 +525,9 @@ async function startAccessStream(engineUrl: string, getToken: () => Promise<stri
           }
         }
       }
-    } catch { /* silent */ }
+    } catch {
+      /* silent */
+    }
   }
 
   const connect = async () => {
@@ -467,7 +547,9 @@ async function startAccessStream(engineUrl: string, getToken: () => Promise<stri
         }
         const msg = `${entry.method} ${entry.path}${entry.query ? `?${entry.query}` : ""} → ${entry.status} (${entry.duration_ms.toFixed(0)}ms)`;
         emitClientLog(accessLevel(entry.status), msg, "access", entry);
-      } catch { /* skip malformed */ }
+      } catch {
+        /* skip malformed */
+      }
     };
 
     es.onerror = () => {
@@ -477,7 +559,9 @@ async function startAccessStream(engineUrl: string, getToken: () => Promise<stri
       setTimeout(connect, backoff.next());
     };
 
-    es.onopen = () => { backoff.reset(); };
+    es.onopen = () => {
+      backoff.reset();
+    };
   };
 
   connect();
@@ -521,36 +605,127 @@ async function startTauriStream(): Promise<() => void> {
 
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    const historical = await invoke<string[]>("get_sidecar_logs").catch(() => [] as string[]);
+    const historical = await invoke<string[]>("get_sidecar_logs").catch(
+      () => [] as string[],
+    );
     historical.forEach((text) => {
       _trackRecentLine(text);
-      emitClientLog(inferServerLevel(text), text, "tauri");
+      emitClientLog(
+        parseTauriLogLevel(text) ?? inferServerLevel(text),
+        cleanTauriMessage(text),
+        "tauri",
+      );
     });
-  } catch { /* not in Tauri */ }
+  } catch {
+    /* not in Tauri */
+  }
 
   try {
     const { listen } = await import("@tauri-apps/api/event");
     const unlisten = await listen<string>("sidecar-log", (event) => {
       if (_state.paused) return;
-      const text = typeof event.payload === "string" ? event.payload : String(event.payload);
+      const text =
+        typeof event.payload === "string"
+          ? event.payload
+          : String(event.payload);
       _trackRecentLine(text);
 
       // If this line is a crash signal, immediately dump recent context
       if (_isCrashSignal(text)) {
-        emitClientLog("error", `[CRASH DETECTED] ${stripAnsi(text)}`, "tauri");
-        emitClientLog("error", `━━━ Last ${_recentTauriLines.length} engine lines before crash ━━━`, "tauri");
+        emitClientLog(
+          "error",
+          `[CRASH DETECTED] ${cleanTauriMessage(text)}`,
+          "tauri",
+        );
+        emitClientLog(
+          "error",
+          `━━━ Last ${_recentTauriLines.length} engine lines before crash ━━━`,
+          "tauri",
+        );
         [..._recentTauriLines].forEach((line) => {
-          emitClientLog("error", `  ${stripAnsi(line)}`, "tauri");
+          emitClientLog("error", `  ${cleanTauriMessage(line)}`, "tauri");
         });
-        emitClientLog("error", `━━━ End of crash context ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`, "tauri");
+        emitClientLog(
+          "error",
+          `━━━ End of crash context ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+          "tauri",
+        );
       } else {
-        emitClientLog(inferServerLevel(text), text, "tauri");
+        emitClientLog(
+          parseTauriLogLevel(text) ?? inferServerLevel(text),
+          cleanTauriMessage(text),
+          "tauri",
+        );
       }
     });
     unlistenFn = unlisten;
-  } catch { /* not in Tauri */ }
+  } catch {
+    /* not in Tauri */
+  }
 
-  return () => { unlistenFn?.(); };
+  return () => {
+    unlistenFn?.();
+  };
+}
+
+// ---------------------------------------------------------------------------
+// React console capture
+// ---------------------------------------------------------------------------
+
+let _consoleRestoreFn: (() => void) | null = null;
+
+/**
+ * Override browser console methods to forward output into the unified log bus
+ * as source="react" entries. Call once at app startup (idempotent).
+ *
+ * console.warn / console.error  → level "warn" / "error"
+ * console.log / console.info / console.debug → level "info"
+ *
+ * Returns a restore function that uninstalls the overrides.
+ */
+export function initConsoleCapture(): () => void {
+  if (_consoleRestoreFn) return _consoleRestoreFn;
+
+  const origLog = console.log.bind(console);
+  const origInfo = console.info.bind(console);
+  const origDebug = console.debug.bind(console);
+  const origWarn = console.warn.bind(console);
+  const origError = console.error.bind(console);
+
+  const toMsg = (...args: unknown[]): string =>
+    args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+
+  console.log = (...a: unknown[]) => {
+    origLog(...a);
+    emitClientLog("info", toMsg(...a), "react");
+  };
+  console.info = (...a: unknown[]) => {
+    origInfo(...a);
+    emitClientLog("info", toMsg(...a), "react");
+  };
+  console.debug = (...a: unknown[]) => {
+    origDebug(...a);
+    emitClientLog("info", toMsg(...a), "react");
+  };
+  console.warn = (...a: unknown[]) => {
+    origWarn(...a);
+    emitClientLog("warn", toMsg(...a), "react");
+  };
+  console.error = (...a: unknown[]) => {
+    origError(...a);
+    emitClientLog("error", toMsg(...a), "react");
+  };
+
+  _consoleRestoreFn = () => {
+    console.log = origLog;
+    console.info = origInfo;
+    console.debug = origDebug;
+    console.warn = origWarn;
+    console.error = origError;
+    _consoleRestoreFn = null;
+  };
+
+  return _consoleRestoreFn;
 }
 
 // ---------------------------------------------------------------------------
@@ -655,7 +830,9 @@ export function getLogsPaused(): boolean {
  * Subscribe to all log lines. Initialises with the full historical buffer.
  */
 export function useClientLogSubscriber(): ClientLogLine[] {
-  const [lines, setLines] = useState<ClientLogLine[]>(() => getClientLogBuffer());
+  const [lines, setLines] = useState<ClientLogLine[]>(() =>
+    getClientLogBuffer(),
+  );
   const setLinesRef = useRef(setLines);
   setLinesRef.current = setLines;
 
@@ -664,7 +841,9 @@ export function useClientLogSubscriber(): ClientLogLine[] {
       const line = (e as CustomEvent<ClientLogLine>).detail;
       setLinesRef.current((prev) => {
         const next = [...prev, line];
-        return next.length > MAX_TEXT_BUFFERED ? next.slice(next.length - MAX_TEXT_BUFFERED) : next;
+        return next.length > MAX_TEXT_BUFFERED
+          ? next.slice(next.length - MAX_TEXT_BUFFERED)
+          : next;
       });
     };
 

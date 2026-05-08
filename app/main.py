@@ -427,6 +427,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             restored,
         )
 
+    # Read the actual port Uvicorn is going to bind (written by run.py)
+    # We need this to ensure the proxy doesn't collide with it, and to point the tunnel at it.
+    try:
+        import json
+        from app.config import MATRX_HOME_DIR
+        disc_data = json.loads((MATRX_HOME_DIR / "local.json").read_text())
+        main_server_port = disc_data.get("port", 22140)
+    except Exception:
+        main_server_port = 22140
+
     # Phase 4: Start HTTP proxy if enabled in settings
     settings_sync = get_settings_sync()
     proxy_enabled = settings_sync.get("proxy_enabled", True)
@@ -436,6 +446,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             proxy = get_proxy_server()
             proxy_port = settings_sync.get("proxy_port", 22180)
+            # Guard against port collision with the main server
+            if proxy_port == main_server_port:
+                fallback_port = main_server_port + 40
+                logger.warning(
+                    "[app/main.py] Phase 4: Proxy port %d collides with main server port! "
+                    "Falling back to %d.", proxy_port, fallback_port
+                )
+                proxy_port = fallback_port
+
             logger.info(
                 "[app/main.py] Phase 4: Starting proxy on 127.0.0.1:%d...", proxy_port
             )
@@ -471,7 +490,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         try:
             from app.services.tunnel.manager import get_tunnel_manager as _get_tm
             _tm = _get_tm()
-            _tunnel_url = await _tm.start(port=22140)
+            _tunnel_url = await _tm.start(port=main_server_port)
             if _tunnel_url:
                 logger.info("[app/main.py] Phase 5: Tunnel active ✓ → %s", _tunnel_url)
                 print(f"[phase:tunnel] Tunnel active: {_tunnel_url}", flush=True)

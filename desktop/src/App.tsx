@@ -60,6 +60,7 @@ import { isTauri } from "@/lib/sidecar";
 import {
   initUnifiedLog,
   initTauriLogStream,
+  initConsoleCapture,
   stopEngineStreams,
   stopTauriStream,
 } from "@/hooks/use-unified-log";
@@ -235,8 +236,10 @@ export default function App() {
   // Unified log streams
   // ---------------------------------------------------------------------------
   useEffect(() => {
+    const restoreConsole = initConsoleCapture();
     initTauriLogStream();
     return () => {
+      restoreConsole();
       stopTauriStream();
     };
   }, []);
@@ -365,11 +368,7 @@ export default function App() {
       {
         path: "/bridge-test",
         element: (
-          <BridgeTest
-            engineStatus={status}
-            engineUrl={url}
-            user={auth.user}
-          />
+          <BridgeTest engineStatus={status} engineUrl={url} user={auth.user} />
         ),
       },
       {

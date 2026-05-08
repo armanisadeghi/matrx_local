@@ -146,7 +146,11 @@ VOICE_MAP: dict[str, TtsVoice] = {v.voice_id: v for v in BUILTIN_VOICES}
 
 DEFAULT_VOICE_ID = "af_heart"
 
-# Model file metadata
+# ── Model file metadata ───────────────────────────────────────────────────────
+# URLs, exact byte sizes, and SHA-256 hashes for the kokoro-onnx v1.0 release.
+# Both files are byte-for-byte stable on the GitHub releases page; we verify
+# both size AND hash after download to catch silent corruption.
+
 ONNX_MODEL_FILENAME = "kokoro-v1.0.onnx"
 VOICES_BIN_FILENAME = "voices-v1.0.bin"
 
@@ -162,4 +166,37 @@ VOICES_BIN_URL = (
 ONNX_MODEL_SIZE_BYTES = 325_532_387  # ~310 MB
 VOICES_BIN_SIZE_BYTES = 28_214_398   # ~27 MB
 
+# SHA-256 of the published release artifacts. Verified locally against the
+# upstream files. If kokoro-onnx ever ships a v1.0 patch we'll need to update.
+ONNX_MODEL_SHA256 = "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5"
+VOICES_BIN_SHA256 = "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+
 SAMPLE_RATE = 24_000
+
+# ── Streaming protocol v2 ─────────────────────────────────────────────────────
+# Wire format: each frame is `1 byte tag · 4 bytes BE uint32 length · N payload`.
+# Type tags:
+#   0x01  CHUNK  — payload is a complete self-contained WAV blob (one phrase)
+#   0x02  END    — payload is empty (length=0); marks clean stream completion
+#   0xFF  ERROR  — payload is UTF-8 JSON {"code": "...", "message": "..."}
+# The protocol version is advertised via the X-TTS-Stream-Protocol response
+# header so older clients can detect a mismatch and fail loudly.
+STREAM_PROTOCOL_VERSION = 2
+STREAM_TAG_CHUNK = 0x01
+STREAM_TAG_END = 0x02
+STREAM_TAG_ERROR = 0xFF
+
+# Hybrid chunker threshold: text shorter than this goes through a single
+# kokoro.create() call; longer text uses kokoro.create_stream() for early
+# playback. ~280 chars is roughly two short sentences.
+STREAM_THRESHOLD_CHARS = 280
+
+# Per-chunk watchdog inside the streaming wrapper. If a phoneme batch takes
+# longer than this we abort the stream with an error frame.
+STREAM_CHUNK_TIMEOUT_SECONDS = 15.0
+
+# Cap on a single uploaded voice embedding (5 MB; real embeddings are ~520 KB).
+MAX_VOICE_IMPORT_BYTES = 5 * 1024 * 1024
+
+# Exact embedding shape Kokoro expects. Validated on import.
+EMBEDDING_SHAPE = (510, 1, 256)

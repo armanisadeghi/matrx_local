@@ -14,10 +14,10 @@ We added Supabase JWT validation as an alternative to API key directly in the sc
 - **`app/api/auth.py`** -- Now accepts both API key (`Bearer <API_KEY>`) and Supabase JWT (`Bearer <supabase_jwt>`). The API key check is the fast path; JWT validation runs only if the token doesn't match the API key.
 - **`app/config.py`** -- Added `SUPABASE_JWKS_URL` setting (optional, empty by default).
 - **`pyproject.toml`** -- Added `PyJWT[crypto]>=2.10.0` dependency for ES256 key validation.
-- **JWKS endpoint:** `https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json`
+- **JWKS endpoint:** `https://db.matrxserver.com/auth/v1/.well-known/jwks.json`
 - **Signing key:** ECC P-256 (ES256), Key ID `8a68756f-4254-41d7-9871-a7615685e38a`
 
-**Coolify action needed:** Add `SUPABASE_JWKS_URL=https://txzxabzwovsujtloxrus.supabase.co/auth/v1/.well-known/jwks.json` to production env vars after pushing to main.
+**Coolify action needed:** Add `SUPABASE_JWKS_URL=https://db.matrxserver.com/auth/v1/.well-known/jwks.json` to production env vars after pushing to main.
 
 ---
 

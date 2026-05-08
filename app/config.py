@@ -23,46 +23,50 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
 # To allow a new subdomain pattern: extend ALLOWED_ORIGIN_REGEX in main.py.
 # ---------------------------------------------------------------------------
 
-_DEFAULT_ORIGINS = ",".join([
-    # Production domains (exact)
-    "https://aimatrx.com",
-    "https://www.aimatrx.com",
-    "https://appmatrx.com",
-    "https://www.appmatrx.com",
-    "https://mymatrx.com",
-    "https://www.mymatrx.com",
-    "https://codematrx.com",
-    "https://www.codematrx.com",
-    "https://matrxserver.com",
-    "https://www.matrxserver.com",
-    # Known Vercel deployment
-    "https://ai-matrx-admin.vercel.app",
-    # Chrome extension OAuth callback
-    "https://ccmjgggbdngllppncmidllcjablcdepl.chromiumapp.org",
-    # Local development
-    "http://localhost:1420",
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:3002",
-    "http://localhost:5173",
-    "http://127.0.0.1:1420",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-    "http://127.0.0.1:3002",
-    "http://127.0.0.1:5173",
-    # Tauri desktop app
-    "tauri://localhost",       # macOS WebKit
-    "http://tauri.localhost",  # Windows WebView2 / Linux WebKitGTK
-])
+_DEFAULT_ORIGINS = ",".join(
+    [
+        # Production domains (exact)
+        "https://aimatrx.com",
+        "https://www.aimatrx.com",
+        "https://appmatrx.com",
+        "https://www.appmatrx.com",
+        "https://mymatrx.com",
+        "https://www.mymatrx.com",
+        "https://codematrx.com",
+        "https://www.codematrx.com",
+        "https://matrxserver.com",
+        "https://www.matrxserver.com",
+        # Known Vercel deployment
+        "https://ai-matrx-admin.vercel.app",
+        # Chrome extension OAuth callback
+        "https://ccmjgggbdngllppncmidllcjablcdepl.chromiumapp.org",
+        # Local development
+        "http://localhost:1420",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:5173",
+        "http://127.0.0.1:1420",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:3002",
+        "http://127.0.0.1:5173",
+        # Tauri desktop app
+        "tauri://localhost",  # macOS WebKit
+        "http://tauri.localhost",  # Windows WebView2 / Linux WebKitGTK
+    ]
+)
 # Tauri origins are always required — they cannot be removed via env var because
 # the desktop app (WebView2 on Windows, WebKit on macOS) needs them to reach the
 # local engine. Any additional origins from the env var are appended.
 _TAURI_ORIGINS = {
-    "tauri://localhost",       # macOS WebKit
+    "tauri://localhost",  # macOS WebKit
     "http://tauri.localhost",  # Windows WebView2 / Linux WebKitGTK
 }
 _env_origins = os.getenv("ALLOWED_ORIGINS", "")
-_extra = [o.strip() for o in _env_origins.split(",") if o.strip()] if _env_origins else []
+_extra = (
+    [o.strip() for o in _env_origins.split(",") if o.strip()] if _env_origins else []
+)
 ALLOWED_ORIGINS: list[str] = list(
     dict.fromkeys(  # preserve order, deduplicate
         _DEFAULT_ORIGINS.split(",") + _extra + list(_TAURI_ORIGINS)
@@ -100,7 +104,9 @@ TUNNEL_ENABLED = os.getenv("TUNNEL_ENABLED", "False").lower() in ("true", "1")
 # Authenticated users' Supabase JWTs are accepted by the server — no API key needed for users.
 # SCRAPER_API_KEY is for server-to-server calls only (your own .env, never shipped to users).
 SCRAPER_API_KEY = os.getenv("SCRAPER_API_KEY", "")
-SCRAPER_SERVER_URL = os.getenv("SCRAPER_SERVER_URL", "https://scraper.app.matrxserver.com")
+SCRAPER_SERVER_URL = os.getenv(
+    "SCRAPER_SERVER_URL", "https://scraper.app.matrxserver.com"
+)
 
 # ---------------------------------------------------------------------------
 # AIDream Server — REST API for shared data (models, prompts, tools, cx data)
@@ -112,10 +118,18 @@ SCRAPER_SERVER_URL = os.getenv("SCRAPER_SERVER_URL", "https://scraper.app.matrxs
 # simply disabled (logged as a warning).  This prevents stale hardcoded URLs
 # from shipping in production builds.
 # ---------------------------------------------------------------------------
-AIDREAM_SERVER_URL_LIVE       = os.getenv("AIDREAM_SERVER_URL_LIVE", "")
-AIDREAM_SERVER_URL_PRODUCTION = os.getenv("AIDREAM_SERVER_URL_PRODUCTION", "")
-AIDREAM_SERVER_URL_DEV        = os.getenv("AIDREAM_SERVER_URL_DEV", "")
-AIDREAM_SERVER_URL_LOCAL      = os.getenv("AIDREAM_SERVER_URL_LOCAL", "")
+AIDREAM_SERVER_URL_LIVE = os.getenv(
+    "AIDREAM_SERVER_URL_LIVE", "https://server.app.matrxserver.com"
+)
+AIDREAM_SERVER_URL_PRODUCTION = os.getenv(
+    "AIDREAM_SERVER_URL_PRODUCTION", "https://server.app.matrxserver.com"
+)
+AIDREAM_SERVER_URL_DEV = os.getenv(
+    "AIDREAM_SERVER_URL_DEV", "https://dev.server.app.matrxserver.com"
+)
+AIDREAM_SERVER_URL_LOCAL = os.getenv(
+    "AIDREAM_SERVER_URL_LOCAL", "http://localhost:8000"
+)
 
 # Active URL — everything in the codebase that needs the AIDream server reads this.
 AIDREAM_SERVER_URL = AIDREAM_SERVER_URL_LIVE
@@ -123,7 +137,7 @@ AIDREAM_SERVER_URL = AIDREAM_SERVER_URL_LIVE
 # Supabase (for document sync — uses PostgREST API with user JWTs)
 # These are publishable values — safe to embed in the binary (RLS enforces security).
 # The env var overrides are for local dev; shipped users get the baked-in defaults.
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://txzxabzwovsujtloxrus.supabase.co")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://db.matrxserver.com")
 SUPABASE_PUBLISHABLE_KEY = os.getenv(
     "SUPABASE_PUBLISHABLE_KEY",
     "sb_publishable_4pvkRT-9-_dB0PWqF1sp1w_W9leRIoW",
@@ -194,19 +208,19 @@ def _platform_log_dir() -> Path:
 _dev_system = BASE_DIR / "system"
 
 if _is_frozen:
-    _data_root  = _platform_data_dir()
+    _data_root = _platform_data_dir()
     _cache_root = _platform_cache_dir()
-    _log_root   = _platform_log_dir()
+    _log_root = _platform_log_dir()
 else:
-    _data_root  = _dev_system / "data"
+    _data_root = _dev_system / "data"
     _cache_root = _dev_system / "temp"
-    _log_root   = _dev_system / "logs"
+    _log_root = _dev_system / "logs"
 
 # Env-var overrides (always respected regardless of frozen/dev)
-TEMP_DIR       = Path(os.getenv("MATRX_TEMP_DIR",   str(_cache_root)))
-DATA_DIR       = Path(os.getenv("MATRX_DATA_DIR",   str(_data_root)))
-CONFIG_DIR     = Path(os.getenv("MATRX_CONFIG_DIR", str(_data_root / "config")))
-LOCAL_LOG_DIR  = Path(os.getenv("MATRX_LOG_DIR",    str(_log_root)))
+TEMP_DIR = Path(os.getenv("MATRX_TEMP_DIR", str(_cache_root)))
+DATA_DIR = Path(os.getenv("MATRX_DATA_DIR", str(_data_root)))
+CONFIG_DIR = Path(os.getenv("MATRX_CONFIG_DIR", str(_data_root / "config")))
+LOCAL_LOG_DIR = Path(os.getenv("MATRX_LOG_DIR", str(_log_root)))
 CODE_SAVES_DIR = TEMP_DIR / "code_saves"
 
 # ---------------------------------------------------------------------------
@@ -230,6 +244,7 @@ MATRX_HOME_DIR = Path(os.getenv("MATRX_HOME_DIR", str(Path.home() / ".matrx")))
 #
 # Every path can be overridden via environment variable for power users / CI.
 # ---------------------------------------------------------------------------
+
 
 def _os_documents_dir() -> Path:
     """Return the OS-native Documents folder."""
@@ -258,7 +273,9 @@ MATRX_FILES_DIR = Path(os.getenv("MATRX_FILES_DIR", str(MATRX_USER_DIR / "Files"
 MATRX_CODE_DIR = Path(os.getenv("MATRX_CODE_DIR", str(MATRX_USER_DIR / "Code")))
 
 # Workspaces: agent working copies of repos — hidden from user, under ~/.matrx
-MATRX_WORKSPACES_DIR = Path(os.getenv("MATRX_WORKSPACES_DIR", str(MATRX_HOME_DIR / "workspaces")))
+MATRX_WORKSPACES_DIR = Path(
+    os.getenv("MATRX_WORKSPACES_DIR", str(MATRX_HOME_DIR / "workspaces"))
+)
 
 # Internal structured data: prompts, agent defs, tool configs (hidden from user)
 MATRX_DATA_DIR = Path(os.getenv("MATRX_AGENT_DATA_DIR", str(MATRX_HOME_DIR / "data")))

@@ -27,19 +27,25 @@ export interface SynthesizeRequest {
   lang?: string;
 }
 
-export interface SynthesizeResponse {
-  success: boolean;
-  duration_seconds: number;
-  voice_id: string;
-  elapsed_seconds: number;
-  sample_rate: number;
-  error: string | null;
-}
-
 export interface DownloadResponse {
   success: boolean;
   already_downloaded?: boolean;
   error?: string;
+  error_code?: string;
+}
+
+/**
+ * v2 streaming protocol — matches app/services/tts/models.py constants.
+ * Each frame on the wire is: 1B tag · 4B BE uint32 length · N bytes payload.
+ */
+export const STREAM_PROTOCOL_VERSION = 2;
+export const STREAM_TAG_CHUNK = 0x01;
+export const STREAM_TAG_END = 0x02;
+export const STREAM_TAG_ERROR = 0xff;
+
+export interface TtsStreamErrorPayload {
+  code: string;
+  message: string;
 }
 
 export type TtsLanguageGroup = {

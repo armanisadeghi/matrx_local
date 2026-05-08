@@ -1,15 +1,36 @@
-"""Text-to-speech API routes (Kokoro-82M via ONNX Runtime)."""
+"""Text-to-speech API routes (Kokoro-82M via ONNX Runtime).
+
+Error contract
+--------------
+Non-streaming routes raise ``HTTPException`` with the following codes:
+  * 400 — bad input (empty text, etc.)
+  * 404 — voice not found
+  * 409 — download already in progress
+  * 422 — synthesis-time validation (e.g. unknown lang/voice)
+  * 500 — internal/Kokoro failure
+  * 503 — model not yet downloaded
+
+The streaming endpoint (``/synthesize-stream``) does **not** use HTTP status
+codes for mid-stream errors — it always returns 200 and sends an in-stream
+``error`` frame followed by the terminating ``end`` frame. See
+``services/tts/models.py`` for the v2 wire format.
+"""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from app.services.tts.service import get_tts_service
 from app.common.route_errors import safe_route
+from app.services.tts.models import (
+    MAX_VOICE_IMPORT_BYTES,
+    SAMPLE_RATE,
+    STREAM_PROTOCOL_VERSION,
+)
+from app.services.tts.service import TtsError, get_tts_service
 
 router = APIRouter(prefix="/tts", tags=["tts"])
 
@@ -44,14 +65,13 @@ class SynthesizeRequest(BaseModel):
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     lang: str | None = Field(default=None, description="Override espeak language code (e.g. 'en-us')")
 
-
-class SynthesizeResponse(BaseModel):
-    success: bool
-    duration_seconds: float = 0.0
-    voice_id: str = ""
-    elapsed_seconds: float = 0.0
-    sample_rate: int = 24000
-    error: str | None = None
+    @field_validator("text")
+    @classmethod
+    def _strip_text(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("text is empty after stripping whitespace")
+        return stripped
 
 
 class PreviewVoiceRequest(BaseModel):
@@ -62,6 +82,7 @@ class DownloadResponse(BaseModel):
     success: bool
     already_downloaded: bool = False
     error: str | None = None
+    error_code: str | None = None
 
 
 # ── Voice blending schemas ─────────────────────────────────────────────────────
@@ -94,6 +115,28 @@ class ActionResponse(BaseModel):
     success: bool
     voice_id: str = ""
     error: str | None = None
+    error_code: str | None = None
+
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+def _raise_for_result(result, default_status: int = 500) -> None:
+    """Translate a service ``error_code`` to an HTTP status code."""
+    code = (result.error_code if hasattr(result, "error_code") else result.get("error_code")) or ""
+    msg = (result.error if hasattr(result, "error") else result.get("error")) or "Unknown error"
+    status_map = {
+        "empty_text": 400,
+        "invalid_id": 400,
+        "bad_format": 400,
+        "bad_shape": 400,
+        "voice_not_found": 404,
+        "in_progress": 409,
+        "invalid_blend": 422,
+        "model_missing": 503,
+    }
+    status = status_map.get(code, default_status)
+    raise HTTPException(status_code=status, detail={"detail": msg, "code": code})
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -115,27 +158,25 @@ async def list_voices() -> list[TtsVoiceInfo]:
 async def download_model() -> DownloadResponse:
     svc = get_tts_service()
     result = await svc.download_model()
+    if not result.get("success") and result.get("error_code") == "in_progress":
+        raise HTTPException(
+            status_code=409,
+            detail={"detail": result.get("error", "Download in progress"),
+                    "code": "in_progress"},
+        )
     return DownloadResponse(**result)
 
 
 @router.post("/synthesize")
 @safe_route("tts_synthesize")
 async def synthesize(req: SynthesizeRequest) -> Response:
-    """Generate speech from text.
-
-    Returns audio/wav bytes directly (not JSON).  The Content-Type is
-    ``audio/wav`` so the browser / frontend can play it with <audio> or
-    the Web Audio API.
-    """
+    """Generate speech and return audio/wav bytes."""
     svc = get_tts_service()
     result = await svc.synthesize(
-        text=req.text,
-        voice_id=req.voice_id,
-        speed=req.speed,
-        lang=req.lang,
+        text=req.text, voice_id=req.voice_id, speed=req.speed, lang=req.lang,
     )
     if not result.success or result.audio_bytes is None:
-        raise HTTPException(status_code=500, detail=result.error or "Synthesis failed")
+        _raise_for_result(result)
 
     return Response(
         content=result.audio_bytes,
@@ -149,72 +190,42 @@ async def synthesize(req: SynthesizeRequest) -> Response:
     )
 
 
-@router.post("/synthesize-json", response_model=SynthesizeResponse)
-async def synthesize_json(req: SynthesizeRequest) -> SynthesizeResponse:
-    """Generate speech — returns metadata only (no audio bytes).
-
-    Use /synthesize for actual audio.  This endpoint is for checking
-    synthesis feasibility or getting timing data.
-    """
-    svc = get_tts_service()
-    result = await svc.synthesize(
-        text=req.text,
-        voice_id=req.voice_id,
-        speed=req.speed,
-        lang=req.lang,
-    )
-    return SynthesizeResponse(
-        success=result.success,
-        duration_seconds=result.duration_seconds,
-        voice_id=result.voice_id,
-        elapsed_seconds=result.elapsed_seconds,
-        sample_rate=result.sample_rate,
-        error=result.error,
-    )
-
-
 @router.post("/synthesize-stream")
-@safe_route("tts_synthesize_stream")
-async def synthesize_stream(req: SynthesizeRequest) -> StreamingResponse:
-    """Stream speech as a sequence of WAV chunks separated by a 4-byte length prefix.
+async def synthesize_stream(req: SynthesizeRequest, request: Request) -> StreamingResponse:
+    """Stream speech as v2 framed bytes.
 
-    Uses the kokoro-onnx native create_stream() which chunks at the phoneme-batch
-    level (~510 phonemes, roughly 2-4 words per chunk).  This yields the first audio
-    chunk in ~200-400ms instead of waiting for a complete sentence, giving near
-    real-time playback start even for long texts.
+    Wire format (each frame):
+        1 byte tag  ·  4 bytes BE uint32 length  ·  N bytes payload
 
-    Wire format (repeated until EOF):
-      4 bytes big-endian uint32  — byte length of the following WAV blob
-      N bytes                    — complete self-contained WAV file for that chunk
+    Tags: 0x01 chunk (WAV) · 0x02 end · 0xFF error (UTF-8 JSON).
 
-    The client reads length + blob in a loop and enqueues each WAV for gapless
-    sequential playback.
+    Errors are surfaced as in-stream error frames (HTTP 200 with the response
+    body containing the error frame). The client must rely on receiving an
+    explicit ``end`` frame to detect a clean finish — anything else is a
+    truncation error.
+
+    The server polls ``request.is_disconnected()`` between chunks and stops
+    yielding promptly when the client aborts.
     """
-    import struct as _struct
-
     svc = get_tts_service()
 
-    load_result = await svc.ensure_loaded()
-    if not load_result.get("success"):
-        raise HTTPException(status_code=500, detail=load_result.get("error", "Failed to load model"))
-
-    async def _generate() -> AsyncIterator[bytes]:
-        async for wav_bytes in svc.synthesize_stream(
+    async def _gen() -> AsyncIterator[bytes]:
+        async for frame in svc.synthesize_stream(
             text=req.text,
             voice_id=req.voice_id,
             speed=req.speed,
             lang=req.lang,
+            is_disconnected=request.is_disconnected,
         ):
-            yield _struct.pack(">I", len(wav_bytes))
-            yield wav_bytes
+            yield frame
 
     return StreamingResponse(
-        _generate(),
+        _gen(),
         media_type="application/octet-stream",
         headers={
             "X-TTS-Voice": req.voice_id,
-            "X-TTS-Format": "chunked-wav",
-            "X-TTS-Chunk-Granularity": "phoneme-batch",
+            "X-TTS-Stream-Protocol": str(STREAM_PROTOCOL_VERSION),
+            "X-TTS-Sample-Rate": str(SAMPLE_RATE),
             "Cache-Control": "no-cache",
         },
     )
@@ -227,7 +238,7 @@ async def preview_voice(req: PreviewVoiceRequest) -> Response:
     svc = get_tts_service()
     result = await svc.preview_voice(req.voice_id)
     if not result.success or result.audio_bytes is None:
-        raise HTTPException(status_code=500, detail=result.error or "Preview failed")
+        _raise_for_result(result)
 
     return Response(
         content=result.audio_bytes,
@@ -255,7 +266,7 @@ async def blend_preview(req: BlendPreviewRequest) -> Response:
     components = [c.model_dump() for c in req.components]
     result = await svc.blend_and_preview(components, speed=req.speed, lang=req.lang)
     if not result.success or result.audio_bytes is None:
-        raise HTTPException(status_code=500, detail=result.error or "Blend preview failed")
+        _raise_for_result(result)
     return Response(
         content=result.audio_bytes,
         media_type="audio/wav",
@@ -268,7 +279,6 @@ async def blend_preview(req: BlendPreviewRequest) -> Response:
 
 @router.post("/blend/save", response_model=ActionResponse)
 async def blend_save(req: SaveBlendRequest) -> ActionResponse:
-    """Blend voices and persist the result as a custom voice."""
     svc = get_tts_service()
     components = [c.model_dump() for c in req.components]
     result = await svc.save_blended_voice(
@@ -278,6 +288,8 @@ async def blend_save(req: SaveBlendRequest) -> ActionResponse:
         gender=req.gender,
         lang_code=req.lang_code,
     )
+    if not result.get("success"):
+        _raise_for_result(result)
     return ActionResponse(**result)
 
 
@@ -286,41 +298,68 @@ async def blend_save(req: SaveBlendRequest) -> ActionResponse:
 
 @router.get("/custom-voices", response_model=list[TtsVoiceInfo])
 async def list_custom_voices() -> list[TtsVoiceInfo]:
-    """List all custom (blended / imported) voices."""
     svc = get_tts_service()
-    raw = svc._load_custom_voices()
-    return [TtsVoiceInfo(**v) for v in raw]
+    return [TtsVoiceInfo(**v) for v in svc._load_custom_voices()]
 
 
 @router.patch("/custom-voices/{voice_id}", response_model=ActionResponse)
 async def rename_custom_voice(voice_id: str, req: RenameVoiceRequest) -> ActionResponse:
-    """Rename a custom voice."""
     svc = get_tts_service()
     result = await svc.rename_custom_voice(voice_id, req.name)
+    if not result.get("success"):
+        _raise_for_result(result)
     return ActionResponse(**result)
 
 
 @router.delete("/custom-voices/{voice_id}", response_model=ActionResponse)
 async def delete_custom_voice(voice_id: str) -> ActionResponse:
-    """Delete a custom voice and its metadata."""
     svc = get_tts_service()
     result = await svc.delete_custom_voice(voice_id)
+    if not result.get("success"):
+        _raise_for_result(result)
     return ActionResponse(**result)
 
 
 @router.post("/custom-voices/import", response_model=ActionResponse)
 async def import_voice_file(
+    request: Request,
     file: UploadFile = File(...),
     voice_id: str = Form(...),
     name: str = Form(...),
     gender: str = Form(default="female"),
     lang_code: str = Form(default="a"),
 ) -> ActionResponse:
-    """Import a custom voice from an uploaded .npy or .bin file."""
-    svc = get_tts_service()
-    content = await file.read()
+    """Import a custom voice from an uploaded .npy or .bin file.
+
+    Bounded by ``MAX_VOICE_IMPORT_BYTES`` (5 MB). Real Kokoro embeddings are
+    ~520 KB; anything beyond a few MB is suspicious.
+    """
+    # Cheap content-length check so we don't even start reading huge bodies.
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > MAX_VOICE_IMPORT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"detail": f"Upload exceeds {MAX_VOICE_IMPORT_BYTES} bytes",
+                            "code": "too_large"},
+                )
+        except ValueError:
+            pass
+
+    # Read with a hard cap; if we hit the limit we abort.
+    content = await file.read(MAX_VOICE_IMPORT_BYTES + 1)
+    if len(content) > MAX_VOICE_IMPORT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail={"detail": f"Upload exceeds {MAX_VOICE_IMPORT_BYTES} bytes",
+                    "code": "too_large"},
+        )
+
     filename = file.filename or ""
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    svc = get_tts_service()
     result = await svc.import_voice_file(
         voice_id=voice_id,
         name=name,
@@ -329,4 +368,6 @@ async def import_voice_file(
         gender=gender,
         lang_code=lang_code,
     )
+    if not result.get("success"):
+        _raise_for_result(result)
     return ActionResponse(**result)

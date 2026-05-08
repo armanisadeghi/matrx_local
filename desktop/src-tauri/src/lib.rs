@@ -58,9 +58,6 @@ fn kill_orphaned_sidecars() {
         let _ = std::process::Command::new("pkill")
             .args(["-TERM", "-f", "cloudflared tunnel"])
             .output();
-        let _ = std::process::Command::new("pkill")
-            .args(["-9", "-f", "llama-server"])
-            .output();
         std::thread::sleep(std::time::Duration::from_millis(500));
         let _ = std::process::Command::new("pkill")
             .args(["-KILL", "-f", "aimatrx-engine"])
@@ -79,9 +76,6 @@ fn kill_orphaned_sidecars() {
             .output();
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/T", "/IM", "cloudflared.exe"])
-            .output();
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/IM", "llama-server.exe"])
             .output();
     }
 
@@ -118,6 +112,24 @@ fn kill_orphaned_sidecars() {
                 let _ = std::fs::remove_file(&path);
             }
         }
+    }
+}
+
+/// Kills any orphaned llama-server processes left over from a previous crashed session.
+/// Called ONLY once at app startup (.setup) to avoid race conditions where the UI
+/// starts the LLM server concurrently with the Python sidecar.
+fn kill_orphaned_llama_server() {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("pkill")
+            .args(["-9", "-f", "llama-server"])
+            .output();
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/IM", "llama-server.exe"])
+            .output();
     }
 }
 
@@ -1093,6 +1105,12 @@ pub fn run() {
             dm_get,
         ])
         .setup(|app| {
+            // Kill orphaned LLM server immediately before the JS frontend has
+            // a chance to issue commands to start it. This prevents the race condition
+            // where `start_sidecar` used to blindly kill `llama-server` *while* it
+            // was booting up.
+            kill_orphaned_llama_server();
+
             // ── Universal download manager ─────────────────────────────────
             // Must be initialized here (after AppHandle is available) so the
             // worker tokio task has a live AppHandle for event emission.

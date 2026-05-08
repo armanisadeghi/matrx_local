@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import subprocess
+from typing import Any
 
 from app.common.platform_ctx import PLATFORM
 from app.tools.session import ToolSession
@@ -55,6 +56,101 @@ def _disk_usage_macos(path: str = "/") -> tuple[float, float, float, float] | No
         return None
 
 
+def _memory_usage_macos() -> dict[str, float] | None:
+    """Get memory stats matching macOS Activity Monitor's display.
+
+    Activity Monitor's "Memory Used" = (active + wired_down + compressor)
+    * page_size. psutil.virtual_memory() on Darwin reports `used = active +
+    wired`, missing the compressor pool — which on Apple Silicon machines is
+    typically 1-4 GB and grows under memory pressure. That gap is why values
+    look "wrong" compared to Activity Monitor.
+
+    This implementation uses `sysctl hw.memsize` for total physical RAM and
+    `vm_stat` for page-level counters, applying the same formula Activity
+    Monitor uses.
+
+    Returns a dict with total_gb, used_gb, available_gb, percent, wired_gb,
+    active_gb, compressed_gb, or None on failure. macOS only.
+    """
+    try:
+        # Total physical memory — sysctl is the authoritative source on macOS.
+        total_result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if total_result.returncode != 0 or not total_result.stdout.strip():
+            return None
+        total_bytes = int(total_result.stdout.strip())
+
+        # Page-level breakdown via vm_stat.
+        vm_result = subprocess.run(
+            ["vm_stat"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if vm_result.returncode != 0 or not vm_result.stdout.strip():
+            return None
+
+        lines = vm_result.stdout.splitlines()
+        # First line carries the page size: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+        page_size = 4096
+        if lines and "page size of" in lines[0]:
+            try:
+                page_size = int(
+                    lines[0].split("page size of", 1)[1].split("bytes", 1)[0].strip()
+                )
+            except (ValueError, IndexError):
+                pass
+
+        counters: dict[str, int] = {}
+        for line in lines[1:]:
+            if ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip().strip('"')
+            value = value.strip().rstrip(".")
+            try:
+                counters[key] = int(value)
+            except ValueError:
+                continue
+
+        active = counters.get("Pages active", 0)
+        wired = counters.get("Pages wired down", 0)
+        compressed = counters.get("Pages occupied by compressor", 0)
+        free = counters.get("Pages free", 0)
+        inactive = counters.get("Pages inactive", 0)
+        speculative = counters.get("Pages speculative", 0)
+
+        used_bytes = (active + wired + compressed) * page_size
+        # Activity Monitor's "available" = pages the kernel can hand back
+        # immediately (free + inactive + speculative).
+        available_bytes = (free + inactive + speculative) * page_size
+
+        if total_bytes <= 0:
+            return None
+
+        return {
+            "total_gb": total_bytes / (1024**3),
+            "used_gb": used_bytes / (1024**3),
+            "available_gb": available_bytes / (1024**3),
+            "percent": used_bytes / total_bytes * 100,
+            "wired_gb": wired * page_size / (1024**3),
+            "active_gb": active * page_size / (1024**3),
+            "compressed_gb": compressed * page_size / (1024**3),
+        }
+    except (
+        subprocess.TimeoutExpired,
+        FileNotFoundError,
+        ValueError,
+        IndexError,
+    ) as e:
+        logger.debug("macOS vm_stat memory query failed: %s", e)
+        return None
+
+
 async def tool_system_resources(
     session: ToolSession,
 ) -> ToolResult:
@@ -69,9 +165,26 @@ async def tool_system_resources(
         cpu_freq = psutil.cpu_freq()
         freq_str = f"{cpu_freq.current:.0f}MHz" if cpu_freq else "N/A"
 
-        # Memory
-        mem = psutil.virtual_memory()
+        # Memory — on macOS use vm_stat to match Activity Monitor (psutil
+        # under-reports because it omits the compressor pool). Fall back to
+        # psutil on every other platform and if the vm_stat probe fails.
         swap = psutil.swap_memory()
+        mac_mem = _memory_usage_macos() if PLATFORM["is_mac"] else None
+        if mac_mem is not None:
+            ram_total_gb = round(mac_mem["total_gb"], 1)
+            ram_used_gb = round(mac_mem["used_gb"], 1)
+            ram_available_gb = round(mac_mem["available_gb"], 1)
+            ram_percent = round(mac_mem["percent"], 1)
+            ram_wired_gb: float | None = round(mac_mem["wired_gb"], 1)
+            ram_compressed_gb: float | None = round(mac_mem["compressed_gb"], 1)
+        else:
+            mem = psutil.virtual_memory()
+            ram_total_gb = round(mem.total / (1024**3), 1)
+            ram_used_gb = round(mem.used / (1024**3), 1)
+            ram_available_gb = round(mem.available / (1024**3), 1)
+            ram_percent = round(mem.percent, 1)
+            ram_wired_gb = None
+            ram_compressed_gb = None
 
         # Disk (root / or system drive on Windows)
         # On macOS, psutil uses statvfs which overreports free space on APFS
@@ -86,13 +199,13 @@ async def tool_system_resources(
             disk_total_gb = round(total_gb, 1)
             disk_used_gb = round(used_gb, 1)
             disk_free_gb = round(free_gb, 1)
-            disk_percent = percent
+            disk_percent = round(percent, 1)
         else:
             disk = psutil.disk_usage(disk_path)
             disk_total_gb = round(disk.total / (1024**3), 1)
             disk_used_gb = round(disk.used / (1024**3), 1)
             disk_free_gb = round(disk.free / (1024**3), 1)
-            disk_percent = disk.percent
+            disk_percent = round(disk.percent, 1)
 
         # Network I/O
         net = psutil.net_io_counters()
@@ -104,15 +217,22 @@ async def tool_system_resources(
         uptime_seconds = time.time() - boot_time
         uptime_hours = uptime_seconds / 3600
 
-        info = {
+        info: dict[str, Any] = {
             "cpu_percent": cpu_percent,
             "cpu_cores": cpu_count,
             "cpu_logical": cpu_count_logical,
             "cpu_freq": freq_str,
-            "ram_total_gb": round(mem.total / (1024**3), 1),
-            "ram_used_gb": round(mem.used / (1024**3), 1),
-            "ram_available_gb": round(mem.available / (1024**3), 1),
-            "ram_percent": mem.percent,
+            # Memory — both `ram_*` (canonical) and `memory_*` (alias) keys are
+            # emitted so frontend code using either name works.
+            "ram_total_gb": ram_total_gb,
+            "ram_used_gb": ram_used_gb,
+            "ram_available_gb": ram_available_gb,
+            "ram_percent": ram_percent,
+            "memory_total_gb": ram_total_gb,
+            "memory_used_gb": ram_used_gb,
+            "memory_available_gb": ram_available_gb,
+            "memory_percent": ram_percent,
+            "memory_source": "vm_stat" if mac_mem is not None else "psutil",
             "swap_total_gb": round(swap.total / (1024**3), 1),
             "swap_used_gb": round(swap.used / (1024**3), 1),
             "disk_total_gb": disk_total_gb,
@@ -122,14 +242,25 @@ async def tool_system_resources(
             "net_sent_gb": round(net.bytes_sent / (1024**3), 2),
             "net_recv_gb": round(net.bytes_recv / (1024**3), 2),
             "uptime_hours": round(uptime_hours, 1),
+            "uptime_seconds": round(uptime_seconds, 0),
         }
+        if ram_wired_gb is not None:
+            info["ram_wired_gb"] = ram_wired_gb
+        if ram_compressed_gb is not None:
+            info["ram_compressed_gb"] = ram_compressed_gb
+
+        ram_breakdown = ""
+        if ram_wired_gb is not None and ram_compressed_gb is not None:
+            ram_breakdown = (
+                f" [wired {ram_wired_gb:.1f} GB · compressed {ram_compressed_gb:.1f} GB]"
+            )
 
         lines = [
             "System Resources:",
             f"  CPU:  {cpu_percent}% ({cpu_count} cores / {cpu_count_logical} threads @ {freq_str})",
-            f"  RAM:  {info['ram_used_gb']:.1f} / {info['ram_total_gb']:.1f} GB ({mem.percent}%)",
+            f"  RAM:  {ram_used_gb:.1f} / {ram_total_gb:.1f} GB ({ram_percent:.0f}%){ram_breakdown}",
             f"  Swap: {info['swap_used_gb']:.1f} / {info['swap_total_gb']:.1f} GB",
-            f"  Disk: {info['disk_used_gb']:.1f} / {info['disk_total_gb']:.1f} GB ({disk_percent:.0f}%)",
+            f"  Disk: {disk_used_gb:.1f} / {disk_total_gb:.1f} GB ({disk_percent:.0f}%)",
             f"  Net:  Sent {info['net_sent_gb']:.2f} GB / Recv {info['net_recv_gb']:.2f} GB",
             f"  Uptime: {info['uptime_hours']:.1f} hours",
         ]

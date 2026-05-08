@@ -102,6 +102,20 @@ const PERMISSION_ORDER: PermissionKey[] = [
   "network",
 ];
 
+// macOS permissions that must be triggered by app usage before they appear in Settings
+const TRIGGER_REQUIRED_KEYS = new Set<PermissionKey>([
+  "screen_recording",
+  "automation",
+  "local_network",
+  "mail",
+  "contacts",
+  "calendar",
+  "reminders",
+  "photos",
+  "location",
+  "speech_recognition",
+]);
+
 // ---------------------------------------------------------------------------
 // Status badge helpers
 // ---------------------------------------------------------------------------
@@ -243,6 +257,17 @@ function PermissionRow({
                 <ChevronRight className="h-3 w-3" />
               </>
             )}
+          </Button>
+        ) : PLATFORM.is_mac && state.status === "not_determined" && TRIGGER_REQUIRED_KEYS.has(state.key) ? (
+          // MacOS requires these to be triggered by app usage first
+          <Button
+            size="sm"
+            variant="outline"
+            disabled
+            className="h-8 gap-1.5 text-xs text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10 opacity-100"
+          >
+            <AlertTriangle className="h-3 w-3" />
+            Open Feature to Approve
           </Button>
         ) : (
           // All others: open the specific System Settings pane

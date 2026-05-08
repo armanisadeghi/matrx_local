@@ -1,11 +1,33 @@
 import { engine } from "@/lib/api";
 import supabase from "@/lib/supabase";
-import type {
-  TtsStatus,
-  TtsVoice,
-  SynthesizeRequest,
-  DownloadResponse,
+import {
+  STREAM_TAG_CHUNK,
+  STREAM_TAG_END,
+  STREAM_TAG_ERROR,
+  type TtsStatus,
+  type TtsVoice,
+  type SynthesizeRequest,
+  type DownloadResponse,
+  type TtsStreamErrorPayload,
 } from "./types";
+
+/** Typed error thrown by synthesizeStream when the server emits an error frame
+ *  or the stream is truncated before an end frame arrives. */
+export class TtsStreamError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "TtsStreamError";
+    this.code = code;
+  }
+}
+
+/** Sanity ceiling on a single WAV chunk (50 MB). Real chunks are <500 KB. */
+const MAX_FRAME_BYTES = 50 * 1024 * 1024;
+
+/** Per-frame read timeout (ms). If no bytes arrive for this long the stream
+ *  is considered dead and we abort. Synthesis chunks usually arrive < 2s. */
+const FRAME_READ_TIMEOUT_MS = 30_000;
 
 function ttsUrl(base: string, path: string): string {
   return `${base}/tts${path}`;
@@ -120,9 +142,22 @@ export async function previewVoice(
 }
 
 /**
- * Stream synthesis — returns an async iterator of WAV Blobs, one per sentence.
- * The server sends length-prefixed WAV chunks so playback can start after the
- * first sentence is ready instead of waiting for the entire text.
+ * Stream synthesis — async iterator of WAV Blobs.
+ *
+ * Wire protocol v2 (matches ``app/services/tts/models.py``):
+ *   Each frame: 1 byte tag · 4 bytes BE uint32 length · N bytes payload
+ *   Tags:
+ *     0x01 CHUNK — payload is a complete WAV blob (yielded as Blob)
+ *     0x02 END   — clean end-of-stream (returns from the generator)
+ *     0xFF ERROR — payload is UTF-8 JSON {code, message} (throws TtsStreamError)
+ *
+ * The generator only resolves successfully when an END frame is received.
+ * If the response body ends before END the generator throws
+ * ``TtsStreamError("truncated", ...)`` so the caller can surface a real error
+ * instead of treating partial audio as success.
+ *
+ * Per-frame read timeout (30s) + 50 MB frame ceiling guard against hung
+ * connections and runaway allocations.
  */
 export async function* synthesizeStream(
   req: SynthesizeRequest,
@@ -141,61 +176,150 @@ export async function* synthesizeStream(
 
   if (!resp.ok) {
     const detail = await resp.text().catch(() => resp.statusText);
-    throw new Error(`TTS stream failed (${resp.status}): ${detail}`);
+    throw new TtsStreamError(
+      "http_" + resp.status,
+      `TTS stream failed (${resp.status}): ${detail}`,
+    );
   }
-
-  if (!resp.body) throw new Error("No response body for TTS stream");
+  if (!resp.body) {
+    throw new TtsStreamError("no_body", "No response body for TTS stream");
+  }
 
   const reader = resp.body.getReader();
-  let buf = new ArrayBuffer(0);
-  let bufLen = 0;
 
-  function append(chunk: Uint8Array<ArrayBuffer>) {
-    const next = new ArrayBuffer(bufLen + chunk.byteLength);
-    const dst = new Uint8Array(next);
-    dst.set(new Uint8Array(buf, 0, bufLen), 0);
-    dst.set(chunk, bufLen);
-    buf = next;
-    bufLen += chunk.byteLength;
+  // Rolling byte buffer with O(1) consume by maintaining a head pointer.
+  let chunks: Uint8Array[] = [];
+  let chunksLen = 0;
+
+  function append(chunk: Uint8Array) {
+    chunks.push(chunk);
+    chunksLen += chunk.byteLength;
   }
 
-  function consume(n: number): ArrayBuffer {
-    const slice = buf.slice(0, n);
-    const remaining = bufLen - n;
-    if (remaining > 0) {
-      const rest = new ArrayBuffer(remaining);
-      new Uint8Array(rest).set(new Uint8Array(buf, n, remaining));
-      buf = rest;
-    } else {
-      buf = new ArrayBuffer(0);
+  function consume(n: number): Uint8Array {
+    if (n > chunksLen) throw new Error("internal: consume past buffer");
+    const out = new Uint8Array(n);
+    let pos = 0;
+    while (pos < n) {
+      const head = chunks[0];
+      const need = n - pos;
+      if (head.byteLength <= need) {
+        out.set(head, pos);
+        pos += head.byteLength;
+        chunks.shift();
+      } else {
+        out.set(head.subarray(0, need), pos);
+        chunks[0] = head.subarray(need);
+        pos = n;
+      }
     }
-    bufLen = remaining;
-    return slice;
+    chunksLen -= n;
+    return out;
+  }
+
+  async function readMore(): Promise<boolean> {
+    // True on bytes received, false on clean EOF.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
+      timer = setTimeout(() => resolve({ timedOut: true }), FRAME_READ_TIMEOUT_MS);
+    });
+    try {
+      const result = await Promise.race([
+        reader.read().then((r) => ({ ...r, timedOut: false as const })),
+        timeoutPromise,
+      ]);
+      if ("timedOut" in result && result.timedOut) {
+        throw new TtsStreamError(
+          "frame_timeout",
+          `No data received from TTS server for ${FRAME_READ_TIMEOUT_MS / 1000}s`,
+        );
+      }
+      const r = result as ReadableStreamReadResult<Uint8Array>;
+      if (r.done) return false;
+      if (r.value) append(r.value);
+      return true;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async function ensureBytes(n: number): Promise<boolean> {
+    while (chunksLen < n) {
+      if (signal?.aborted) return false;
+      const got = await readMore();
+      if (!got) return false; // EOF
+    }
+    return true;
   }
 
   try {
     while (true) {
-      if (signal?.aborted) break;
-
-      while (bufLen < 4) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        if (value) append(value);
+      if (signal?.aborted) {
+        throw new TtsStreamError("aborted", "Stream aborted by client");
       }
 
-      const hdr = new Uint8Array(consume(4));
-      const wavLen = (hdr[0] << 24) | (hdr[1] << 16) | (hdr[2] << 8) | hdr[3];
+      // Read 5-byte header (1 tag + 4 length)
+      const ok = await ensureBytes(5);
+      if (!ok) {
+        throw new TtsStreamError("truncated", "stream ended before END frame");
+      }
+      const hdr = consume(5);
+      const tag = hdr[0];
+      const len =
+        ((hdr[1] << 24) >>> 0) +
+        ((hdr[2] << 16) >>> 0) +
+        ((hdr[3] << 8) >>> 0) +
+        (hdr[4] >>> 0);
 
-      while (bufLen < wavLen) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        if (value) append(value);
+      if (len > MAX_FRAME_BYTES) {
+        throw new TtsStreamError(
+          "frame_too_large",
+          `Frame size ${len} exceeds limit ${MAX_FRAME_BYTES}`,
+        );
       }
 
-      yield new Blob([consume(wavLen)], { type: "audio/wav" });
+      const payload = len === 0 ? new Uint8Array(0) : (await ensureBytes(len)) ? consume(len) : null;
+      if (payload === null) {
+        throw new TtsStreamError(
+          "truncated",
+          `stream ended mid-frame (tag=0x${tag.toString(16)}, expected ${len} bytes)`,
+        );
+      }
+
+      if (tag === STREAM_TAG_CHUNK) {
+        // payload is a fresh Uint8Array backed by a fresh ArrayBuffer (allocated
+        // by consume()). Cast to Uint8Array<ArrayBuffer> so Blob accepts it
+        // under TS's stricter Uint8Array generic.
+        yield new Blob([payload as Uint8Array<ArrayBuffer>], { type: "audio/wav" });
+      } else if (tag === STREAM_TAG_END) {
+        return;
+      } else if (tag === STREAM_TAG_ERROR) {
+        let parsed: TtsStreamErrorPayload | null = null;
+        try {
+          parsed = JSON.parse(new TextDecoder().decode(payload)) as TtsStreamErrorPayload;
+        } catch {
+          // fall through with raw text
+        }
+        throw new TtsStreamError(
+          parsed?.code ?? "stream_error",
+          parsed?.message ?? new TextDecoder().decode(payload),
+        );
+      } else {
+        throw new TtsStreamError("unknown_tag", `Unknown frame tag 0x${tag.toString(16)}`);
+      }
     }
   } finally {
-    reader.releaseLock();
+    try {
+      reader.releaseLock();
+    } catch {
+      // already released
+    }
+    // Drain the underlying stream so the connection can close promptly.
+    try {
+      await resp.body?.cancel?.();
+    } catch {
+      // ignore
+    }
   }
 }
 

@@ -48,7 +48,7 @@ Replace the entire file with this implementation:
 // Supabase Authentication for Chrome Extension using chrome.identity
 
 // HARDCODED -- this extension only works with the AI Matrx Supabase project
-const SUPABASE_URL = 'https://txzxabzwovsujtloxrus.supabase.co';
+const SUPABASE_URL = 'https://db.matrxserver.com';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_4pvkRT-9-_dB0PWqF1sp1w_W9leRIoW';
 
 // Fallback to legacy key if publishable key doesn't work yet

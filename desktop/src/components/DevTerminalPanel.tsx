@@ -26,6 +26,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -34,6 +35,7 @@ import {
   Terminal,
   X,
   Copy,
+  ClipboardList,
   Check,
   Trash2,
   LayoutDashboard,
@@ -59,7 +61,11 @@ import {
   setLogsPaused,
   useLogsPaused,
 } from "@/hooks/use-unified-log";
-import type { LogLevel, ClientLogLine, AccessEntry } from "@/hooks/use-unified-log";
+import type {
+  LogLevel,
+  ClientLogLine,
+  AccessEntry,
+} from "@/hooks/use-unified-log";
 
 // ---------------------------------------------------------------------------
 // Context — broadcasts panel height so AppLayout can compensate
@@ -69,7 +75,9 @@ interface DevTerminalContextValue {
   panelHeight: number;
 }
 
-const DevTerminalContext = createContext<DevTerminalContextValue>({ panelHeight: 0 });
+const DevTerminalContext = createContext<DevTerminalContextValue>({
+  panelHeight: 0,
+});
 
 export function useDevTerminalHeight(): number {
   return useContext(DevTerminalContext).panelHeight;
@@ -117,45 +125,59 @@ const MIN_HEIGHT = 160;
 const DEFAULT_HEIGHT = 320;
 const MAX_HEIGHT = 750;
 
-const ALL_LEVELS: LogLevel[] = ["info", "success", "warn", "error", "data", "cmd"];
+const ALL_LEVELS: LogLevel[] = [
+  "info",
+  "success",
+  "warn",
+  "error",
+  "data",
+  "cmd",
+];
 
 // Sources that live in the "Server" tab (includes syslog now)
 const SERVER_SOURCES = new Set(["server", "tauri", "syslog"]);
 
 // Sources that live in the "Client" tab
-const CLIENT_SOURCES = new Set(["engine", "auth", "voice", "setup", "bg-tasks"]);
+const CLIENT_SOURCES = new Set([
+  "engine",
+  "auth",
+  "voice",
+  "setup",
+  "bg-tasks",
+]);
 
 // Source for the HTTP tab
 const HTTP_SOURCE = "access";
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
-  info:    "text-zinc-400",
+  info: "text-zinc-400",
   success: "text-emerald-400",
-  warn:    "text-amber-400",
-  error:   "text-red-400",
-  data:    "text-sky-400",
-  cmd:     "text-cyan-400",
+  warn: "text-amber-400",
+  error: "text-red-400",
+  data: "text-sky-400",
+  cmd: "text-cyan-400",
 };
 
 const LEVEL_LABEL: Record<LogLevel, string> = {
-  info:    "INFO",
+  info: "INFO",
   success: "OK  ",
-  warn:    "WARN",
-  error:   "ERR ",
-  data:    "DATA",
-  cmd:     "CMD ",
+  warn: "WARN",
+  error: "ERR ",
+  data: "DATA",
+  cmd: "CMD ",
 };
 
 const LEVEL_PILL_ACTIVE: Record<LogLevel, string> = {
-  info:    "bg-zinc-700 text-zinc-200 border-zinc-500",
+  info: "bg-zinc-700 text-zinc-200 border-zinc-500",
   success: "bg-emerald-900/50 text-emerald-300 border-emerald-700",
-  warn:    "bg-amber-900/50 text-amber-300 border-amber-700",
-  error:   "bg-red-900/50 text-red-300 border-red-700",
-  data:    "bg-sky-900/50 text-sky-300 border-sky-700",
-  cmd:     "bg-cyan-900/50 text-cyan-300 border-cyan-700",
+  warn: "bg-amber-900/50 text-amber-300 border-amber-700",
+  error: "bg-red-900/50 text-red-300 border-red-700",
+  data: "bg-sky-900/50 text-sky-300 border-sky-700",
+  cmd: "bg-cyan-900/50 text-cyan-300 border-cyan-700",
 };
 
-const LEVEL_PILL_INACTIVE = "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700";
+const LEVEL_PILL_INACTIVE =
+  "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700";
 
 // ---------------------------------------------------------------------------
 // Group-similar logic
@@ -170,6 +192,25 @@ interface GroupedLogRow {
   key: string;
 }
 
+// Strip variable numeric parts before building a group key so that messages
+// which differ only in timing/timestamps/durations are treated as identical.
+function normalizeForGrouping(msg: string): string {
+  return (
+    msg
+      // Timing annotations in parens: (33ms), (1022ms), (1.5s)
+      .replace(/\(\d+(?:\.\d+)?(?:ms|s)\)/g, "")
+      // Full ISO/syslog timestamps: 2026-05-08 10:50:07,606 or 2026-05-08T10:50:07.606
+      .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]\d*/g, "")
+      // Bare HH:MM:SS timestamps
+      .replace(/\b\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\b/g, "")
+      // Trailing bare durations preceded by whitespace: " 239ms", " 1ms"
+      .replace(/\s\d+(?:\.\d+)?ms\b/g, "")
+      // Collapse leftover extra whitespace
+      .replace(/\s{2,}/g, " ")
+      .trim()
+  );
+}
+
 function groupSimilarLogs(logs: ClientLogLine[]): GroupedLogRow[] {
   const rows: GroupedLogRow[] = [];
   const groupMap = new Map<string, GroupedLogRow>();
@@ -178,7 +219,7 @@ function groupSimilarLogs(logs: ClientLogLine[]): GroupedLogRow[] {
     if (!GROUPABLE_LEVELS.has(line.level)) {
       rows.push({ representative: line, count: 1, key: String(line.id) });
     } else {
-      const key = `${line.level}|${line.source ?? ""}|${line.message}`;
+      const key = `${line.level}|${line.source ?? ""}|${normalizeForGrouping(line.message)}`;
       const existing = groupMap.get(key);
       if (existing) {
         existing.count++;
@@ -207,27 +248,40 @@ function statusColor(code: number): string {
 
 function methodColor(method: string): string {
   switch (method.toUpperCase()) {
-    case "GET":    return "text-sky-400";
-    case "POST":   return "text-violet-400";
-    case "PUT":    return "text-amber-400";
-    case "DELETE": return "text-red-400";
-    case "PATCH":  return "text-orange-400";
-    default:       return "text-zinc-400";
+    case "GET":
+      return "text-sky-400";
+    case "POST":
+      return "text-violet-400";
+    case "PUT":
+      return "text-amber-400";
+    case "DELETE":
+      return "text-red-400";
+    case "PATCH":
+      return "text-orange-400";
+    default:
+      return "text-zinc-400";
   }
 }
 
 function formatAccessTime(iso: string): string {
   try {
     return new Date(iso).toLocaleTimeString("en-US", {
-      hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
     });
-  } catch { return "—"; }
+  } catch {
+    return "—";
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Filter pill row sub-component
 // ---------------------------------------------------------------------------
 
+// Shared filter toolbar for all panes (Log and HTTP).
+// Level pills and group-similar are optional — omit them for the HTTP pane.
 function LevelFilters({
   logs,
   activeFilters,
@@ -236,63 +290,105 @@ function LevelFilters({
   onToggleGroup,
   autoScroll,
   onToggleAutoScroll,
+  textFilter,
+  onTextFilter,
+  searchPlaceholder = "Search messages…",
 }: {
-  logs: ClientLogLine[];
-  activeFilters: Set<LogLevel>;
-  onToggle: (level: LogLevel) => void;
-  groupSimilar: boolean;
-  onToggleGroup: () => void;
+  logs?: ClientLogLine[];
+  activeFilters?: Set<LogLevel>;
+  onToggle?: (level: LogLevel) => void;
+  groupSimilar?: boolean;
+  onToggleGroup?: () => void;
   autoScroll: boolean;
   onToggleAutoScroll: () => void;
+  textFilter: string;
+  onTextFilter: (v: string) => void;
+  searchPlaceholder?: string;
 }) {
+  const showLevelPills =
+    logs !== undefined && activeFilters !== undefined && onToggle !== undefined;
+  const showGroupSimilar =
+    groupSimilar !== undefined && onToggleGroup !== undefined;
+
   return (
-    <div className="flex items-center gap-1 px-3 py-1.5 border-b border-zinc-800/60 flex-wrap">
-      <span className="text-[10px] text-zinc-600 font-mono mr-1 select-none shrink-0">filter:</span>
-      {ALL_LEVELS.map((level) => {
-        const count = logs.filter((l) => l.level === level).length;
-        const isActive = activeFilters.has(level);
-        return (
-          <button
-            key={level}
-            onClick={() => onToggle(level)}
-            title={`${isActive ? "Hide" : "Show"} ${level} (${count})`}
-            className={cn(
-              "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
-              isActive ? LEVEL_PILL_ACTIVE[level] : LEVEL_PILL_INACTIVE,
+    <>
+      {/* Search row */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800/60">
+        <Filter className="h-3 w-3 text-zinc-600 shrink-0" />
+        <input
+          type="text"
+          placeholder={searchPlaceholder}
+          value={textFilter}
+          onChange={(e) => onTextFilter(e.target.value)}
+          className="flex-1 bg-transparent text-[11px] font-mono text-zinc-300 placeholder-zinc-700 outline-none"
+        />
+      </div>
+      {/* Pills row */}
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-zinc-800/60 flex-wrap">
+        {showLevelPills ? (
+          <>
+            <span className="text-[10px] text-zinc-600 font-mono mr-1 select-none shrink-0">
+              filter:
+            </span>
+            {ALL_LEVELS.map((level) => {
+              const count = logs!.filter((l) => l.level === level).length;
+              const isActive = activeFilters!.has(level);
+              return (
+                <button
+                  key={level}
+                  onClick={() => onToggle!(level)}
+                  title={`${isActive ? "Hide" : "Show"} ${level} (${count})`}
+                  className={cn(
+                    "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
+                    isActive ? LEVEL_PILL_ACTIVE[level] : LEVEL_PILL_INACTIVE,
+                  )}
+                >
+                  {LEVEL_LABEL[level].trim()}
+                  {count > 0 && <span className="opacity-60">{count}</span>}
+                </button>
+              );
+            })}
+            {showGroupSimilar && (
+              <>
+                <div className="w-px h-3 bg-zinc-800 mx-0.5 shrink-0" />
+                <button
+                  onClick={onToggleGroup!}
+                  title="Group identical INFO/OK/DATA/CMD messages — WARN and ERR always shown individually"
+                  className={cn(
+                    "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
+                    groupSimilar
+                      ? "bg-violet-900/50 text-violet-300 border-violet-700"
+                      : "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700",
+                  )}
+                >
+                  Group similar
+                </button>
+              </>
             )}
-          >
-            {LEVEL_LABEL[level].trim()}
-            {count > 0 && <span className="opacity-60">{count}</span>}
-          </button>
-        );
-      })}
-      <div className="w-px h-3 bg-zinc-800 mx-0.5 shrink-0" />
-      <button
-        onClick={onToggleGroup}
-        title="Group identical INFO/OK/DATA/CMD messages — WARN and ERR always shown individually"
-        className={cn(
-          "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
-          groupSimilar
-            ? "bg-violet-900/50 text-violet-300 border-violet-700"
-            : "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700",
+            <div className="w-px h-3 bg-zinc-800 mx-0.5 shrink-0" />
+          </>
+        ) : (
+          <div className="flex-1" />
         )}
-      >
-        Group similar
-      </button>
-      <button
-        onClick={onToggleAutoScroll}
-        title={autoScroll ? "Auto-scroll ON — click to disable" : "Auto-scroll OFF — click to enable"}
-        className={cn(
-          "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
-          autoScroll
-            ? "bg-zinc-700 text-zinc-200 border-zinc-500"
-            : "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700",
-        )}
-      >
-        <ArrowDown className="h-2.5 w-2.5" />
-        Scroll
-      </button>
-    </div>
+        <button
+          onClick={onToggleAutoScroll}
+          title={
+            autoScroll
+              ? "Auto-scroll ON — click to disable"
+              : "Auto-scroll OFF — click to enable"
+          }
+          className={cn(
+            "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
+            autoScroll
+              ? "bg-zinc-700 text-zinc-200 border-zinc-500"
+              : "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700",
+          )}
+        >
+          <ArrowDown className="h-2.5 w-2.5" />
+          Scroll
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -300,17 +396,37 @@ function LevelFilters({
 // Log row
 // ---------------------------------------------------------------------------
 
-function LogRow({ line, repeatCount }: { line: ClientLogLine; repeatCount?: number }) {
+function LogRow({
+  line,
+  repeatCount,
+}: {
+  line: ClientLogLine;
+  repeatCount?: number;
+}) {
   return (
     <div className="flex gap-2 min-w-0 hover:bg-zinc-900 px-1 rounded items-start">
-      <span className="text-zinc-700 shrink-0 tabular-nums select-none text-[10px] pt-px">{line.time}</span>
-      <span className={cn("shrink-0 select-none tabular-nums font-semibold text-[10px] pt-px w-8", LEVEL_COLOR[line.level])}>
+      <span className="text-zinc-700 shrink-0 tabular-nums select-none text-[10px] pt-px">
+        {line.time}
+      </span>
+      <span
+        className={cn(
+          "shrink-0 select-none tabular-nums font-semibold text-[10px] pt-px w-8",
+          LEVEL_COLOR[line.level],
+        )}
+      >
         {LEVEL_LABEL[line.level]}
       </span>
       {line.source && (
-        <span className="text-zinc-600 shrink-0 select-none text-[10px] pt-px">[{line.source}]</span>
+        <span className="text-zinc-600 shrink-0 select-none text-[10px] pt-px">
+          [{line.source}]
+        </span>
       )}
-      <span className={cn("break-all whitespace-pre-wrap text-[11px] flex-1", LEVEL_COLOR[line.level])}>
+      <span
+        className={cn(
+          "break-all whitespace-pre-wrap text-[11px] flex-1",
+          LEVEL_COLOR[line.level],
+        )}
+      >
         {line.message}
       </span>
       {repeatCount !== undefined && repeatCount > 1 && (
@@ -332,14 +448,24 @@ function HttpRow({ entry }: { entry: AccessEntry }) {
       className="grid gap-2 rounded px-2 py-1 text-[11px] font-mono hover:bg-zinc-900 transition-colors"
       style={{ gridTemplateColumns: "5rem 3.5rem 1fr auto auto" }}
     >
-      <span className="text-zinc-600 tabular-nums select-none">{formatAccessTime(entry.timestamp)}</span>
-      <span className={cn("font-bold", methodColor(entry.method))}>{entry.method}</span>
+      <span className="text-zinc-600 tabular-nums select-none">
+        {formatAccessTime(entry.timestamp)}
+      </span>
+      <span className={cn("font-bold", methodColor(entry.method))}>
+        {entry.method}
+      </span>
       <span className="text-zinc-300 truncate">
         {entry.path}
-        {entry.query ? <span className="text-zinc-600">?{entry.query}</span> : null}
+        {entry.query ? (
+          <span className="text-zinc-600">?{entry.query}</span>
+        ) : null}
       </span>
-      <span className="text-zinc-600 tabular-nums text-right">{entry.duration_ms.toFixed(0)}ms</span>
-      <span className={cn("font-bold tabular-nums", statusColor(entry.status))}>{entry.status}</span>
+      <span className="text-zinc-600 tabular-nums text-right">
+        {entry.duration_ms.toFixed(0)}ms
+      </span>
+      <span className={cn("font-bold tabular-nums", statusColor(entry.status))}>
+        {entry.status}
+      </span>
     </div>
   );
 }
@@ -355,74 +481,86 @@ function HttpPane({
   logs: ClientLogLine[];
   onCopyTextChange: (text: string) => void;
 }) {
-  const [filter, setFilter] = useState("");
+  const [textFilter, setTextFilter] = useState("");
   const [autoScroll, setAutoScroll] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Freeze the logs array when paused so the rendered list never shifts
+  const [frozenLogs, setFrozenLogs] = useState<ClientLogLine[] | null>(null);
+  const activeLogs = frozenLogs ?? logs;
+
   const entries = useMemo(
-    () => logs.map((l) => l.accessEntry).filter((e): e is AccessEntry => e != null),
-    [logs],
+    () =>
+      activeLogs
+        .map((l) => l.accessEntry)
+        .filter((e): e is AccessEntry => e != null),
+    [activeLogs],
   );
 
   const filtered = useMemo(() => {
-    if (!filter) return entries;
-    const q = filter.toLowerCase();
+    if (!textFilter) return entries;
+    const q = textFilter.toLowerCase();
     return entries.filter(
       (e) =>
         e.path.toLowerCase().includes(q) ||
         e.method.toLowerCase().includes(q) ||
         e.origin.toLowerCase().includes(q),
     );
-  }, [entries, filter]);
+  }, [entries, textFilter]);
 
-  // Auto-scroll
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [filtered, autoScroll]);
+
+  const newLogCount = frozenLogs
+    ? Math.max(0, logs.length - frozenLogs.length)
+    : 0;
+
+  const handleToggleAutoScroll = useCallback(() => {
+    setAutoScroll((prev) => {
+      if (prev) {
+        setFrozenLogs(logs);
+      } else {
+        setFrozenLogs(null);
+      }
+      return !prev;
+    });
+  }, [logs]);
 
   // Notify parent with copy text
   const onCopyTextChangeRef = useRef(onCopyTextChange);
   onCopyTextChangeRef.current = onCopyTextChange;
   useEffect(() => {
     const text = filtered
-      .map((e) => `${formatAccessTime(e.timestamp)} ${e.method.padEnd(7)} ${e.path}${e.query ? `?${e.query}` : ""} ${e.status} ${e.duration_ms.toFixed(0)}ms`)
+      .map(
+        (e) =>
+          `${formatAccessTime(e.timestamp)} ${e.method.padEnd(7)} ${e.path}${e.query ? `?${e.query}` : ""} ${e.status} ${e.duration_ms.toFixed(0)}ms`,
+      )
       .join("\n");
     onCopyTextChangeRef.current(text);
   }, [filtered]);
 
   const successCount = filtered.filter((e) => e.status < 400).length;
   const errorCount = filtered.filter((e) => e.status >= 400).length;
-  const avgMs = filtered.length > 0
-    ? Math.round(filtered.reduce((s, e) => s + e.duration_ms, 0) / filtered.length)
-    : 0;
+  const avgMs =
+    filtered.length > 0
+      ? Math.round(
+          filtered.reduce((s, e) => s + e.duration_ms, 0) / filtered.length,
+        )
+      : 0;
 
   return (
     <>
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-800/60">
-        <Filter className="h-3 w-3 text-zinc-600 shrink-0" />
-        <input
-          type="text"
-          placeholder="Filter by path, method, origin…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="flex-1 bg-transparent text-[11px] font-mono text-zinc-300 placeholder-zinc-700 outline-none"
-        />
-        <button
-          onClick={() => setAutoScroll((v) => !v)}
-          title={autoScroll ? "Auto-scroll ON" : "Auto-scroll OFF"}
-          className={cn(
-            "inline-flex items-center gap-1 text-[10px] font-mono px-1.5 h-[18px] rounded border transition-colors select-none",
-            autoScroll
-              ? "bg-zinc-700 text-zinc-200 border-zinc-500"
-              : "text-zinc-600 border-zinc-800 hover:text-zinc-400 hover:border-zinc-700",
-          )}
-        >
-          <ArrowDown className="h-2.5 w-2.5" />
-        </button>
-      </div>
+      {/* Filter bar — same component as LogPane, without level pills */}
+      <LevelFilters
+        autoScroll={autoScroll}
+        onToggleAutoScroll={handleToggleAutoScroll}
+        textFilter={textFilter}
+        onTextFilter={setTextFilter}
+        searchPlaceholder="Filter by path, method, origin…"
+      />
       {/* Stats bar */}
       <div className="flex items-center gap-4 px-3 py-1 border-b border-zinc-800/60 text-[10px] font-mono text-zinc-600">
         <span className="flex items-center gap-1">
@@ -433,7 +571,12 @@ function HttpPane({
           <CheckCircle className="h-2.5 w-2.5" />
           {successCount} ok
         </span>
-        <span className={cn("flex items-center gap-1", errorCount > 0 ? "text-red-400" : "text-zinc-600")}>
+        <span
+          className={cn(
+            "flex items-center gap-1",
+            errorCount > 0 ? "text-red-400" : "text-zinc-600",
+          )}
+        >
           <AlertCircle className="h-2.5 w-2.5" />
           {errorCount} err
         </span>
@@ -448,10 +591,23 @@ function HttpPane({
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-1">
         {filtered.length === 0 ? (
           <div className="flex h-full min-h-[80px] items-center justify-center text-zinc-700 text-[11px]">
-            {entries.length === 0 ? "No HTTP requests yet" : "No requests match the filter"}
+            {entries.length === 0
+              ? "No HTTP requests yet"
+              : "No requests match the filter"}
           </div>
         ) : (
           filtered.map((entry, i) => <HttpRow key={i} entry={entry} />)
+        )}
+        {!autoScroll && newLogCount > 0 && (
+          <div className="sticky bottom-0 flex items-center justify-center px-3 py-1.5 border-t border-zinc-800/80 bg-zinc-950/95 backdrop-blur-sm">
+            <button
+              onClick={handleToggleAutoScroll}
+              className="text-[10px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              ↓ {newLogCount} new request{newLogCount !== 1 ? "s" : ""} — click
+              to resume
+            </button>
+          </div>
         )}
       </div>
     </>
@@ -479,11 +635,17 @@ function LogPane({
   );
   const [grouped, setGrouped] = useState(false);
   const [autoScroll, setAutoScroll] = useState(false);
+  const [textFilter, setTextFilter] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Freeze the logs array when paused so the rendered list never shifts
+  const [frozenLogs, setFrozenLogs] = useState<ClientLogLine[] | null>(null);
+  const activeLogs = frozenLogs ?? logs;
 
   // Reset filters when the tab source set changes
   useEffect(() => {
     setActiveFilters(new Set(ALL_LEVELS));
+    setTextFilter("");
   }, [filterKey]);
 
   const toggleFilter = useCallback((level: LogLevel) => {
@@ -499,25 +661,45 @@ function LogPane({
     });
   }, []);
 
-  const filtered = useMemo(
+  const levelFiltered = useMemo(
     () =>
       activeFilters.size === ALL_LEVELS.length
-        ? logs
-        : logs.filter((l) => activeFilters.has(l.level)),
-    [logs, activeFilters],
+        ? activeLogs
+        : activeLogs.filter((l) => activeFilters.has(l.level)),
+    [activeLogs, activeFilters],
   );
+
+  const filtered = useMemo(() => {
+    if (!textFilter) return levelFiltered;
+    const q = textFilter.toLowerCase();
+    return levelFiltered.filter((l) => l.message.toLowerCase().includes(q));
+  }, [levelFiltered, textFilter]);
 
   const groupedRows = useMemo(
     () => (grouped ? groupSimilarLogs(filtered) : null),
     [filtered, grouped],
   );
 
-  // Auto-scroll
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [filtered, groupedRows, autoScroll]);
+
+  const newLogCount = frozenLogs
+    ? Math.max(0, logs.length - frozenLogs.length)
+    : 0;
+
+  const handleToggleAutoScroll = useCallback(() => {
+    setAutoScroll((prev) => {
+      if (prev) {
+        setFrozenLogs(logs);
+      } else {
+        setFrozenLogs(null);
+      }
+      return !prev;
+    });
+  }, [logs]);
 
   // Build copy text and notify parent
   const onVisibleChangeRef = useRef(onVisibleChange);
@@ -533,7 +715,10 @@ function LogPane({
         .join("\n");
     } else {
       text = filtered
-        .map((l) => `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? "app"}] ${l.message}`)
+        .map(
+          (l) =>
+            `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? "app"}] ${l.message}`,
+        )
         .join("\n");
     }
     onVisibleChangeRef.current(text);
@@ -542,18 +727,25 @@ function LogPane({
   return (
     <>
       <LevelFilters
-        logs={logs}
+        logs={activeLogs}
         activeFilters={activeFilters}
         onToggle={toggleFilter}
         groupSimilar={grouped}
         onToggleGroup={() => setGrouped((v) => !v)}
         autoScroll={autoScroll}
-        onToggleAutoScroll={() => setAutoScroll((v) => !v)}
+        onToggleAutoScroll={handleToggleAutoScroll}
+        textFilter={textFilter}
+        onTextFilter={setTextFilter}
       />
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-2 space-y-px font-mono">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto p-2 space-y-px font-mono"
+      >
         {filtered.length === 0 ? (
           <div className="flex h-full min-h-[80px] items-center justify-center text-zinc-700 text-[11px]">
-            {logs.length === 0 ? emptyMessage : "No logs match the active filters"}
+            {activeLogs.length === 0
+              ? emptyMessage
+              : "No logs match the active filters"}
           </div>
         ) : groupedRows ? (
           groupedRows.map(({ representative, count, key }) => (
@@ -561,6 +753,17 @@ function LogPane({
           ))
         ) : (
           filtered.map((line) => <LogRow key={line.id} line={line} />)
+        )}
+        {!autoScroll && newLogCount > 0 && (
+          <div className="sticky bottom-0 flex items-center justify-center px-3 py-1.5 border-t border-zinc-800/80 bg-zinc-950/95 backdrop-blur-sm">
+            <button
+              onClick={handleToggleAutoScroll}
+              className="text-[10px] font-mono text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              ↓ {newLogCount} new log{newLogCount !== 1 ? "s" : ""} — click to
+              resume
+            </button>
+          </div>
         )}
       </div>
     </>
@@ -571,21 +774,35 @@ function LogPane({
 // Overview tab
 // ---------------------------------------------------------------------------
 
-const SOURCE_ORDER = ["server", "tauri", "syslog", "engine", "auth", "voice", "setup", "access"];
+const SOURCE_ORDER = [
+  "server",
+  "tauri",
+  "syslog",
+  "engine",
+  "auth",
+  "voice",
+  "setup",
+  "access",
+];
 const SOURCE_LABELS: Record<string, string> = {
-  server:  "Engine (SSE)",
-  tauri:   "Sidecar IPC",
-  syslog:  "System Log",
-  engine:  "Engine Client",
-  auth:    "Auth",
-  voice:   "Voice",
-  setup:   "Setup Wizard",
-  access:  "HTTP Requests",
+  server: "Engine (SSE)",
+  tauri: "Sidecar IPC",
+  syslog: "System Log",
+  engine: "Engine Client",
+  auth: "Auth",
+  voice: "Voice",
+  setup: "Setup Wizard",
+  access: "HTTP Requests",
+  react: "React / Console",
 };
 
 interface SourceStats {
-  info: number; success: number; warn: number;
-  error: number; data: number; cmd: number;
+  info: number;
+  success: number;
+  warn: number;
+  error: number;
+  data: number;
+  cmd: number;
   errors: string[];
   warns: string[];
 }
@@ -598,15 +815,34 @@ function buildSourceMap(logs: ClientLogLine[]): Map<string, SourceStats> {
     if (!knownSources.includes(s)) knownSources.push(s);
   });
   knownSources.forEach((s) => {
-    map.set(s, { info: 0, success: 0, warn: 0, error: 0, data: 0, cmd: 0, errors: [], warns: [] });
+    map.set(s, {
+      info: 0,
+      success: 0,
+      warn: 0,
+      error: 0,
+      data: 0,
+      cmd: 0,
+      errors: [],
+      warns: [],
+    });
   });
   logs.forEach((l) => {
     const s = l.source ?? "unknown";
-    if (!map.has(s)) map.set(s, { info: 0, success: 0, warn: 0, error: 0, data: 0, cmd: 0, errors: [], warns: [] });
+    if (!map.has(s))
+      map.set(s, {
+        info: 0,
+        success: 0,
+        warn: 0,
+        error: 0,
+        data: 0,
+        cmd: 0,
+        errors: [],
+        warns: [],
+      });
     const e = map.get(s)!;
     e[l.level]++;
     if (l.level === "error") e.errors.push(`  ${l.time} ${l.message}`);
-    if (l.level === "warn")  e.warns.push(`  ${l.time} ${l.message}`);
+    if (l.level === "warn") e.warns.push(`  ${l.time} ${l.message}`);
   });
   return map;
 }
@@ -614,12 +850,17 @@ function buildSourceMap(logs: ClientLogLine[]): Map<string, SourceStats> {
 function buildIssueReport(logs: ClientLogLine[]): string {
   const map = buildSourceMap(logs);
   const now = new Date().toLocaleString("en-US", {
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
   });
 
   const totalErrors = logs.filter((l) => l.level === "error").length;
-  const totalWarns  = logs.filter((l) => l.level === "warn").length;
+  const totalWarns = logs.filter((l) => l.level === "warn").length;
 
   const lines: string[] = [
     `=== Matrx Issue Report — ${now} ===`,
@@ -653,17 +894,20 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
 
   const sourceMap = useMemo(() => buildSourceMap(logs), [logs]);
   const sources = useMemo(
-    () => [...sourceMap.entries()].filter(([, v]) =>
-      (v.info + v.success + v.warn + v.error + v.data + v.cmd) > 0
-    ),
+    () =>
+      [...sourceMap.entries()].filter(
+        ([, v]) => v.info + v.success + v.warn + v.error + v.data + v.cmd > 0,
+      ),
     [sourceMap],
   );
 
   const totalErrors = logs.filter((l) => l.level === "error").length;
-  const totalWarns  = logs.filter((l) => l.level === "warn").length;
+  const totalWarns = logs.filter((l) => l.level === "warn").length;
   const httpEntries = logs.filter((l) => l.source === "access");
-  const httpErrors  = httpEntries.filter((l) => l.level === "error" || l.level === "warn").length;
-  const hasIssues   = totalErrors > 0 || totalWarns > 0;
+  const httpErrors = httpEntries.filter(
+    (l) => l.level === "error" || l.level === "warn",
+  ).length;
+  const hasIssues = totalErrors > 0 || totalWarns > 0;
 
   const copyIssueReport = useCallback(async () => {
     const report = buildIssueReport(logs);
@@ -687,36 +931,66 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
       <div className="flex items-stretch gap-2">
         <div className="flex gap-2 flex-1 flex-wrap">
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex flex-col gap-0.5 min-w-[80px]">
-            <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider">Lines</span>
-            <span className="text-lg font-mono text-zinc-300">{logs.length.toLocaleString()}</span>
-          </div>
-          <div className={cn(
-            "rounded-lg border px-3 py-2 flex flex-col gap-0.5 min-w-[72px]",
-            totalErrors > 0 ? "border-red-900 bg-red-950" : "border-zinc-800 bg-zinc-900"
-          )}>
-            <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider flex items-center gap-1">
-              <AlertCircle className="h-2.5 w-2.5" />Errors
+            <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider">
+              Lines
             </span>
-            <span className={cn("text-lg font-mono", totalErrors > 0 ? "text-red-400" : "text-zinc-600")}>
+            <span className="text-lg font-mono text-zinc-300">
+              {logs.length.toLocaleString()}
+            </span>
+          </div>
+          <div
+            className={cn(
+              "rounded-lg border px-3 py-2 flex flex-col gap-0.5 min-w-[72px]",
+              totalErrors > 0
+                ? "border-red-900 bg-red-950"
+                : "border-zinc-800 bg-zinc-900",
+            )}
+          >
+            <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider flex items-center gap-1">
+              <AlertCircle className="h-2.5 w-2.5" />
+              Errors
+            </span>
+            <span
+              className={cn(
+                "text-lg font-mono",
+                totalErrors > 0 ? "text-red-400" : "text-zinc-600",
+              )}
+            >
               {totalErrors}
             </span>
           </div>
-          <div className={cn(
-            "rounded-lg border px-3 py-2 flex flex-col gap-0.5 min-w-[72px]",
-            totalWarns > 0 ? "border-amber-900 bg-amber-950" : "border-zinc-800 bg-zinc-900"
-          )}>
+          <div
+            className={cn(
+              "rounded-lg border px-3 py-2 flex flex-col gap-0.5 min-w-[72px]",
+              totalWarns > 0
+                ? "border-amber-900 bg-amber-950"
+                : "border-zinc-800 bg-zinc-900",
+            )}
+          >
             <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider flex items-center gap-1">
-              <AlertTriangle className="h-2.5 w-2.5" />Warns
+              <AlertTriangle className="h-2.5 w-2.5" />
+              Warns
             </span>
-            <span className={cn("text-lg font-mono", totalWarns > 0 ? "text-amber-400" : "text-zinc-600")}>
+            <span
+              className={cn(
+                "text-lg font-mono",
+                totalWarns > 0 ? "text-amber-400" : "text-zinc-600",
+              )}
+            >
               {totalWarns}
             </span>
           </div>
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 flex flex-col gap-0.5 min-w-[72px]">
             <span className="text-[9px] text-zinc-600 font-mono uppercase tracking-wider flex items-center gap-1">
-              <Globe className="h-2.5 w-2.5" />HTTP
+              <Globe className="h-2.5 w-2.5" />
+              HTTP
             </span>
-            <span className={cn("text-lg font-mono", httpErrors > 0 ? "text-amber-400" : "text-zinc-300")}>
+            <span
+              className={cn(
+                "text-lg font-mono",
+                httpErrors > 0 ? "text-amber-400" : "text-zinc-300",
+              )}
+            >
               {httpEntries.length.toLocaleString()}
             </span>
           </div>
@@ -733,39 +1007,79 @@ function OverviewTab({ logs }: { logs: ClientLogLine[] }) {
               : "border-zinc-800 bg-zinc-900 text-zinc-600",
           )}
         >
-          {copiedReport
-            ? <><Check className="h-4 w-4 text-emerald-400" /><span className="text-emerald-400">Copied!</span></>
-            : <><Copy className="h-4 w-4" /><span>Copy Issue<br />Report</span></>
-          }
+          {copiedReport ? (
+            <>
+              <Check className="h-4 w-4 text-emerald-400" />
+              <span className="text-emerald-400">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-4 w-4" />
+              <span>
+                Copy Issue
+                <br />
+                Report
+              </span>
+            </>
+          )}
         </button>
       </div>
 
       {/* Per-source breakdown */}
       <div className="space-y-1.5">
-        <p className="text-[10px] text-zinc-600 font-mono uppercase tracking-wider px-0.5">By Source</p>
+        <p className="text-[10px] text-zinc-600 font-mono uppercase tracking-wider px-0.5">
+          By Source
+        </p>
         {sources.map(([source, counts]) => {
-          const total = counts.info + counts.success + counts.warn + counts.error + counts.data + counts.cmd;
+          const total =
+            counts.info +
+            counts.success +
+            counts.warn +
+            counts.error +
+            counts.data +
+            counts.cmd;
           const label = SOURCE_LABELS[source] ?? source;
           return (
             <div
               key={source}
               className={cn(
                 "rounded-lg border bg-zinc-900 p-2.5",
-                counts.error > 0 ? "border-red-900" :
-                counts.warn  > 0 ? "border-amber-900" :
-                "border-zinc-800",
+                counts.error > 0
+                  ? "border-red-900"
+                  : counts.warn > 0
+                    ? "border-amber-900"
+                    : "border-zinc-800",
               )}
             >
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[11px] font-mono text-zinc-300">{label}</span>
-                <span className="text-[10px] font-mono text-zinc-600">{total.toLocaleString()} lines</span>
+                <span className="text-[11px] font-mono text-zinc-300">
+                  {label}
+                </span>
+                <span className="text-[10px] font-mono text-zinc-600">
+                  {total.toLocaleString()} lines
+                </span>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap">
-                {(["error", "warn", "success", "info", "data", "cmd"] as LogLevel[]).map((level) => {
+                {(
+                  [
+                    "error",
+                    "warn",
+                    "success",
+                    "info",
+                    "data",
+                    "cmd",
+                  ] as LogLevel[]
+                ).map((level) => {
                   const n = counts[level];
                   if (n === 0) return null;
                   return (
-                    <span key={level} className={cn("text-[10px] font-mono px-1.5 py-0 rounded border", LEVEL_PILL_ACTIVE[level])}>
+                    <span
+                      key={level}
+                      className={cn(
+                        "text-[10px] font-mono px-1.5 py-0 rounded border",
+                        LEVEL_PILL_ACTIVE[level],
+                      )}
+                    >
                       {LEVEL_LABEL[level].trim()} {n}
                     </span>
                   );
@@ -827,10 +1141,14 @@ const TABS: TabDef[] = [
     icon: <Monitor className="h-3 w-3" />,
     filter: (l) => {
       const s = l.source ?? "";
-      return CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && s !== HTTP_SOURCE && !CLIENT_SOURCES.has(s));
+      return (
+        CLIENT_SOURCES.has(s) ||
+        (!SERVER_SOURCES.has(s) && s !== HTTP_SOURCE && !CLIENT_SOURCES.has(s))
+      );
     },
     clearSources: ["engine", "auth", "voice", "setup", "bg-tasks"],
-    emptyMessage: "No client logs yet — engine, auth, voice, and setup events appear here",
+    emptyMessage:
+      "No client logs yet — engine, auth, voice, and setup events appear here",
   },
   {
     id: "http",
@@ -868,11 +1186,14 @@ export function DevTerminalPanel() {
   const isDragging = useRef(false);
 
   const [copied, setCopied] = useState(false);
+  const [copiedAll, setCopiedAll] = useState(false);
 
   // Broadcast panel height
   const broadcastHeight = useCallback((isOpen: boolean, h: number) => {
     window.dispatchEvent(
-      new CustomEvent<number>(DEV_TERMINAL_HEIGHT_EVENT, { detail: isOpen ? h : 0 }),
+      new CustomEvent<number>(DEV_TERMINAL_HEIGHT_EVENT, {
+        detail: isOpen ? h : 0,
+      }),
     );
   }, []);
 
@@ -887,7 +1208,9 @@ export function DevTerminalPanel() {
     window.addEventListener(DEV_TERMINAL_TOGGLE_EVENT, handler);
     return () => {
       window.removeEventListener(DEV_TERMINAL_TOGGLE_EVENT, handler);
-      window.dispatchEvent(new CustomEvent<number>(DEV_TERMINAL_HEIGHT_EVENT, { detail: 0 }));
+      window.dispatchEvent(
+        new CustomEvent<number>(DEV_TERMINAL_HEIGHT_EVENT, { detail: 0 }),
+      );
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [height]);
@@ -904,7 +1227,10 @@ export function DevTerminalPanel() {
         if (!isDragging.current) return;
         const next = Math.min(
           MAX_HEIGHT,
-          Math.max(MIN_HEIGHT, dragStartH.current + (dragStartY.current - ev.clientY)),
+          Math.max(
+            MIN_HEIGHT,
+            dragStartH.current + (dragStartY.current - ev.clientY),
+          ),
         );
         setHeight(next);
         broadcastHeight(true, next);
@@ -936,15 +1262,54 @@ export function DevTerminalPanel() {
     const body = visibleCopyTextRef.current;
     if (!body) return;
     const now = new Date().toLocaleString("en-US", {
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
       hour12: false,
     });
-    const header = `=== Matrx Log [${activeTabDef.label}] — ${now} ===`;
+    const header = `=== Matrx Log [${activeTabDef.label}] (View) — ${now} ===`;
     await navigator.clipboard.writeText(`${header}\n${body}\n=== END ===`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [activeTabDef]);
+
+  const handleCopyAll = useCallback(async () => {
+    let body: string;
+    if (activeTab === "http") {
+      body = tabLogs
+        .map((l) => l.accessEntry)
+        .filter((e): e is AccessEntry => e != null)
+        .map(
+          (e) =>
+            `${formatAccessTime(e.timestamp)} ${e.method.padEnd(7)} ${e.path}${e.query ? `?${e.query}` : ""} ${e.status} ${e.duration_ms.toFixed(0)}ms`,
+        )
+        .join("\n");
+    } else {
+      body = tabLogs
+        .map(
+          (l) =>
+            `${l.time} ${LEVEL_LABEL[l.level]} [${l.source ?? ""}] ${l.message}`,
+        )
+        .join("\n");
+    }
+    if (!body) return;
+    const now = new Date().toLocaleString("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const header = `=== Matrx Log [${activeTabDef.label}] (All) — ${now} ===`;
+    await navigator.clipboard.writeText(`${header}\n${body}\n=== END ===`);
+    setCopiedAll(true);
+    setTimeout(() => setCopiedAll(false), 2000);
+  }, [activeTab, activeTabDef, tabLogs]);
 
   const handleClear = useCallback(() => {
     if (activeTabDef.clearSources === null) {
@@ -955,20 +1320,40 @@ export function DevTerminalPanel() {
   }, [activeTabDef]);
 
   // Tab badge counts — errors/warns scoped to each tab's sources
-  const serverErrors = allLogs.filter((l) => SERVER_SOURCES.has(l.source ?? "") && l.level === "error").length;
-  const serverWarns  = allLogs.filter((l) => SERVER_SOURCES.has(l.source ?? "") && l.level === "warn").length;
+  const serverErrors = allLogs.filter(
+    (l) => SERVER_SOURCES.has(l.source ?? "") && l.level === "error",
+  ).length;
+  const serverWarns = allLogs.filter(
+    (l) => SERVER_SOURCES.has(l.source ?? "") && l.level === "warn",
+  ).length;
   const clientErrors = allLogs.filter((l) => {
     const s = l.source ?? "";
-    return (CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && s !== HTTP_SOURCE && !CLIENT_SOURCES.has(s))) && l.level === "error";
+    return (
+      (CLIENT_SOURCES.has(s) ||
+        (!SERVER_SOURCES.has(s) &&
+          s !== HTTP_SOURCE &&
+          !CLIENT_SOURCES.has(s))) &&
+      l.level === "error"
+    );
   }).length;
   const clientWarns = allLogs.filter((l) => {
     const s = l.source ?? "";
-    return (CLIENT_SOURCES.has(s) || (!SERVER_SOURCES.has(s) && s !== HTTP_SOURCE && !CLIENT_SOURCES.has(s))) && l.level === "warn";
+    return (
+      (CLIENT_SOURCES.has(s) ||
+        (!SERVER_SOURCES.has(s) &&
+          s !== HTTP_SOURCE &&
+          !CLIENT_SOURCES.has(s))) &&
+      l.level === "warn"
+    );
   }).length;
-  const httpErrors = allLogs.filter((l) => l.source === HTTP_SOURCE && l.level === "error").length;
-  const httpWarns  = allLogs.filter((l) => l.source === HTTP_SOURCE && l.level === "warn").length;
+  const httpErrors = allLogs.filter(
+    (l) => l.source === HTTP_SOURCE && l.level === "error",
+  ).length;
+  const httpWarns = allLogs.filter(
+    (l) => l.source === HTTP_SOURCE && l.level === "warn",
+  ).length;
   const totalErrors = allLogs.filter((l) => l.level === "error").length;
-  const totalWarns  = allLogs.filter((l) => l.level === "warn").length;
+  const totalWarns = allLogs.filter((l) => l.level === "warn").length;
 
   if (!open) return null;
 
@@ -991,7 +1376,10 @@ export function DevTerminalPanel() {
       </div>
 
       {/* Header */}
-      <div className="flex items-center gap-0 border-b border-zinc-800/60 px-2 flex-shrink-0" style={{ height: HEADER_H }}>
+      <div
+        className="flex items-center gap-0 border-b border-zinc-800/60 px-2 flex-shrink-0"
+        style={{ height: HEADER_H }}
+      >
         <span className="flex items-center gap-1.5 pr-3 text-zinc-600 select-none">
           <Terminal className="h-3.5 w-3.5" />
         </span>
@@ -1005,20 +1393,55 @@ export function DevTerminalPanel() {
           let badgeSuffix = "";
 
           if (tab.id === "server") {
-            if (serverErrors > 0) { badgeCount = serverErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
-            else if (serverWarns > 0) { badgeCount = serverWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+            if (serverErrors > 0) {
+              badgeCount = serverErrors;
+              badgeStyle = "bg-red-900/50 text-red-400";
+              badgeSuffix = "e";
+            } else if (serverWarns > 0) {
+              badgeCount = serverWarns;
+              badgeStyle = "bg-amber-900/50 text-amber-400";
+              badgeSuffix = "w";
+            }
           } else if (tab.id === "client") {
-            if (clientErrors > 0) { badgeCount = clientErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
-            else if (clientWarns > 0) { badgeCount = clientWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+            if (clientErrors > 0) {
+              badgeCount = clientErrors;
+              badgeStyle = "bg-red-900/50 text-red-400";
+              badgeSuffix = "e";
+            } else if (clientWarns > 0) {
+              badgeCount = clientWarns;
+              badgeStyle = "bg-amber-900/50 text-amber-400";
+              badgeSuffix = "w";
+            }
           } else if (tab.id === "http") {
-            if (httpErrors > 0) { badgeCount = httpErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
-            else if (httpWarns > 0) { badgeCount = httpWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+            if (httpErrors > 0) {
+              badgeCount = httpErrors;
+              badgeStyle = "bg-red-900/50 text-red-400";
+              badgeSuffix = "e";
+            } else if (httpWarns > 0) {
+              badgeCount = httpWarns;
+              badgeStyle = "bg-amber-900/50 text-amber-400";
+              badgeSuffix = "w";
+            }
           } else if (tab.id === "all") {
-            if (totalErrors > 0) { badgeCount = totalErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
-            else if (totalWarns > 0) { badgeCount = totalWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+            if (totalErrors > 0) {
+              badgeCount = totalErrors;
+              badgeStyle = "bg-red-900/50 text-red-400";
+              badgeSuffix = "e";
+            } else if (totalWarns > 0) {
+              badgeCount = totalWarns;
+              badgeStyle = "bg-amber-900/50 text-amber-400";
+              badgeSuffix = "w";
+            }
           } else if (tab.id === "overview") {
-            if (totalErrors > 0) { badgeCount = totalErrors; badgeStyle = "bg-red-900/50 text-red-400"; badgeSuffix = "e"; }
-            else if (totalWarns > 0) { badgeCount = totalWarns; badgeStyle = "bg-amber-900/50 text-amber-400"; badgeSuffix = "w"; }
+            if (totalErrors > 0) {
+              badgeCount = totalErrors;
+              badgeStyle = "bg-red-900/50 text-red-400";
+              badgeSuffix = "e";
+            } else if (totalWarns > 0) {
+              badgeCount = totalWarns;
+              badgeStyle = "bg-amber-900/50 text-amber-400";
+              badgeSuffix = "w";
+            }
           }
 
           return (
@@ -1035,8 +1458,14 @@ export function DevTerminalPanel() {
               {tab.icon}
               {tab.label}
               {badgeCount !== null && badgeCount > 0 && (
-                <span className={cn("text-[9px] font-mono rounded px-1 py-px", badgeStyle)}>
-                  {badgeCount}{badgeSuffix}
+                <span
+                  className={cn(
+                    "text-[9px] font-mono rounded px-1 py-px",
+                    badgeStyle,
+                  )}
+                >
+                  {badgeCount}
+                  {badgeSuffix}
                 </span>
               )}
             </button>
@@ -1051,24 +1480,51 @@ export function DevTerminalPanel() {
           title={paused ? "Resume live log stream" : "Pause live log stream"}
           className={cn(
             "flex items-center gap-1 px-2 py-1 text-[11px] font-mono transition-colors",
-            paused ? "text-amber-400 hover:text-amber-300" : "text-zinc-500 hover:text-zinc-200",
+            paused
+              ? "text-amber-400 hover:text-amber-300"
+              : "text-zinc-500 hover:text-zinc-200",
           )}
         >
-          {paused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-          {paused && <span className="text-[9px] bg-amber-900/50 text-amber-400 rounded px-1 py-px font-mono">PAUSED</span>}
+          {paused ? (
+            <Play className="h-3.5 w-3.5" />
+          ) : (
+            <Pause className="h-3.5 w-3.5" />
+          )}
+          {paused && (
+            <span className="text-[9px] bg-amber-900/50 text-amber-400 rounded px-1 py-px font-mono">
+              PAUSED
+            </span>
+          )}
         </button>
 
         {/* Actions — only shown for non-overview tabs */}
         {activeTab !== "overview" && (
           <>
             <button
-              onClick={handleCopy}
+              onClick={handleCopyAll}
               disabled={tabLogs.length === 0}
-              title="Copy currently visible (filtered) logs to clipboard"
+              title="Copy all — full buffer, no filters applied"
               className="flex items-center gap-1 px-2 py-1 text-[11px] font-mono text-zinc-500 hover:text-zinc-200 transition-colors disabled:opacity-30"
             >
-              {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? "Copied!" : "Copy filtered"}
+              {copiedAll ? (
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" />
+              )}
+              {copiedAll ? "Copied!" : "Copy all"}
+            </button>
+            <button
+              onClick={handleCopy}
+              disabled={tabLogs.length === 0}
+              title="Copy view — respects active filters and grouping"
+              className="flex items-center gap-1 px-2 py-1 text-[11px] font-mono text-zinc-500 hover:text-zinc-200 transition-colors disabled:opacity-30"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+              ) : (
+                <ClipboardList className="h-3.5 w-3.5" />
+              )}
+              {copied ? "Copied!" : "Copy view"}
             </button>
             <button
               onClick={handleClear}
@@ -1089,7 +1545,10 @@ export function DevTerminalPanel() {
 
         {/* Close */}
         <button
-          onClick={() => { setOpen(false); broadcastHeight(false, height); }}
+          onClick={() => {
+            setOpen(false);
+            broadcastHeight(false, height);
+          }}
           className="flex h-6 w-6 items-center justify-center rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-800/60 transition-colors ml-1"
           title="Close terminal"
         >
@@ -1098,7 +1557,10 @@ export function DevTerminalPanel() {
       </div>
 
       {/* Content */}
-      <div className="flex flex-col overflow-hidden" style={{ height: contentH + FILTER_H }}>
+      <div
+        className="flex flex-col overflow-hidden"
+        style={{ height: contentH + FILTER_H }}
+      >
         {activeTab === "overview" ? (
           <OverviewTab logs={allLogs} />
         ) : activeTab === "http" ? (
