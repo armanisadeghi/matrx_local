@@ -642,19 +642,216 @@ fields (like `externalBin`) are **replaced**, not merged — the macOS overlay
 re-declares the full array minus `matrx-engine`. See LESSONS.md for the
 gotcha that bit us when this rule wasn't obvious.
 
-### Sidecar Lifecycle
+### Lifecycle & Ownership (NON-NEGOTIABLE CONTRACT)
 
-1. `start_sidecar` — Spawns the engine. On macOS production builds it
-   directly invokes `Contents/Frameworks/Matrx Engine.app/Contents/MacOS/Matrx Engine`
-   via `app.shell().command(path)` (computed by `macos_helper_engine_path()`
-   in `lib.rs`). Everywhere else it uses `app.shell().sidecar("matrx-engine")`.
-2. React UI polls `localhost:22140` until the engine responds.
-3. On window close — Hides to system tray.
-4. On quit (tray menu) — Kills the sidecar, then exits.
-5. On startup — `kill_orphaned_sidecars()` sweeps any leftover engine
-   processes from a prior crash. The sweep regex matches all current and
-   legacy names (`Matrx Engine|matrx-engine|aimatrx-engine`) so upgrades
-   from pre-rename installs stay clean.
+> **Read this section before touching any startup or shutdown code in
+> `lib.rs`, `run.py`, `app/main.py`, `app/launcher.py`, or any service's
+> `start()` / `stop()` method. Every "ended unexpectedly" crash report we
+> have ever shipped came from violating one of the rules below.**
+
+#### The Principle
+
+> **Each level only touches its own children. When the parent triggers a
+> start or stop, that level must cascade the same to its children before
+> reporting done.**
+
+Ownership flows down. Signals flow down. Confirmation flows up. No level
+ever reaches across to manage another level's children — that races against
+the owning level's own teardown and produces orphans, half-stopped state,
+and OS-level "process ended unexpectedly" crash reports.
+
+#### The Ownership Tree
+
+```
+Tauri Rust process            (owned by: the OS)
+├── owns: TranscriptionManager (in-process, whisper-rs + GGML)
+├── owns: WakeWordState        (in-process thread + WhisperContext)
+├── owns: LlmServer            (Rust subprocess: llama-server)
+└── owns: Engine sidecar       (Python subprocess: Matrx Engine)
+        │
+        └── owns: every long-running task or subprocess inside the engine
+                  · cloudflared tunnel    (subprocess via TunnelManager)
+                  · HTTP proxy            (asyncio task)
+                  · Scraper engine        (Playwright browsers)
+                  · Sync engine           (background asyncio loop)
+                  · Scheduler             (tasks restored from DB)
+                  · File watchers         (watchdog observers)
+                  · Download manager      (background asyncio task)
+                  · matrx-ai sub-app      (sub-FastAPI mount)
+                  · …any future child
+```
+
+#### Concrete rules
+
+1. **Rust never pkills cloudflared.** Cloudflared is the engine's child.
+   Rust signals the engine; the engine stops cloudflared during its lifespan
+   teardown via `TunnelManager.stop()`. The `kill_orphaned_sidecars()`
+   function in `lib.rs` only targets engine binaries — see the comment
+   header there for the explicit list of what it does and does not touch.
+
+2. **Rust never pkills llama-server from outside `LlmServer`.** Llama-server
+   is owned by the Rust `LlmServer` struct. Drop the `LlmServer` and its
+   own destructors handle the subprocess. Step 1 of `graceful_shutdown_sync`
+   does the right thing; do not add additional kills.
+
+3. **The engine never expects Rust to clean up its children.** When Rust
+   sends shutdown (POST `/admin/shutdown` or SIGTERM), the engine cascades
+   to every child it owns in reverse-startup order, with per-child timeouts.
+   See the lifespan teardown in `app/main.py`.
+
+4. **The engine's `app/preflight.py` reclaims the engine's children on
+   startup.** When the engine boots, it sweeps any cloudflared, scraper, or
+   other engine-spawned process left behind by a previous crashed engine.
+   That is the engine reclaiming its own previous-life children, not Rust
+   reaching across.
+
+5. **Every state transition flows through `app/launcher.py`.** Every service
+   the engine owns calls `registry.starting(name)` / `ready(name)` /
+   `degraded(name, reason)` / `failed(name, error)` / `stopping(name)` /
+   `stopped(name)`. The structured `[launcher] <service> → <state>` log
+   lines are the source of truth — do not duplicate them in feature
+   modules. On any FAILED transition the registry automatically writes a
+   diagnostic snapshot to `~/.matrx/diagnostics/`.
+
+#### The Shutdown Sequence (normal path)
+
+```
+User clicks Quit (tray menu, ⌘Q, window close, Apple menu, etc.)
+  │
+  ▼
+[Rust] graceful_shutdown_sync()
+  │
+  │ 0. Spawn detached safety-net subprocess (5s SIGTERM-then-SIGKILL ladder)
+  │    — only fires if everything below crashes mid-shutdown
+  │
+  │ 1. Drop wake-word state    (joins thread → drops WhisperContext)
+  │ 2. Drop transcription state (drops WhisperContext → GGML cleanup)
+  │ 3. Stop llama-server        (LlmServer.stop_blocking → child.kill)
+  │ 4. Drop main WhisperContext (final GGML cleanup)
+  │
+  ▼ HTTP signal-and-wait (preferred path)
+[Rust] POST http://127.0.0.1:{port}/admin/shutdown
+  │
+  ▼
+[Engine] /admin/shutdown handler accepts → schedules self-signal SIGTERM
+  │
+  ▼
+[Engine] run.py _handle_exit() fires
+  │  · sets uvicorn.should_exit
+  │  · schedules force-exit watchdog (25s)
+  │
+  ▼
+[Engine] FastAPI lifespan teardown (reverse startup order)
+  │  · sync engine .stop()
+  │  · wake-word service .stop()       (engine-side, separate from Rust's)
+  │  · scheduler .shutdown()
+  │  · file watches .shutdown()
+  │  · document watcher .stop()
+  │  · HTTP proxy .stop()                ← 5s timeout
+  │  · cloudflared tunnel .stop()        ← 7s timeout, owns the cloudflared subprocess
+  │  · scraper engine .stop()            ← 8s timeout, owns Playwright
+  │  · browser automation contexts close
+  │  · download manager .stop()
+  │  · SQLite database .close()
+  │
+  ▼
+[Engine] uvicorn run loop exits → main thread joins server thread → os._exit(0)
+  │
+  ▼
+[Rust] sigterm_then_kill() observes engine process exit
+  │
+  ▼
+[Rust] kill_orphaned_sidecars() (only engine binaries, no children)
+  │
+  ▼
+[Rust] process exits → OS records clean shutdown, no crash report
+```
+
+If the HTTP path fails (engine wedged, port unbound), Rust falls back to
+SIGTERM directly — same `_handle_exit` fires, same teardown runs.
+
+If the engine SIGABRTs mid-teardown (GGML, sigsegv, etc.), the detached
+safety-net subprocess from step 0 fires and pkills any orphan it finds
+after a 5-second SIGTERM-then-SIGKILL ladder. This is the parachute, not
+the primary chute.
+
+#### The Startup Sequence (normal path)
+
+```
+User launches app
+  │
+  ▼
+[Rust] tauri::Builder::setup
+  │  · kill_orphaned_llama_server() — clears stale llama-server from prior crash
+  │  · spawn engine sidecar (TAURI_SIDECAR=1, TAURI_APP_PID=parent-pid)
+  │
+  ▼
+[Engine] run.py main()
+  │  · install signal handlers (SIGTERM, SIGINT)
+  │  · start parent watchdog (self-terminate if Tauri dies)
+  │
+  ▼
+[Engine] app/preflight.py clean_orphans()    ← reclaims engine's previous-life children
+  │  · scan psutil for engine, llama_server, cloudflared
+  │  · skip any process whose ancestor is the current Tauri shell
+  │  · SIGTERM matched orphans → wait 5s → SIGKILL survivors
+  │
+  ▼
+[Engine] preflight.assign_engine_port()      ← writes ~/.matrx/local.json
+  │
+  ▼
+[Engine] uvicorn.run(app)
+  │
+  ▼
+[Engine] FastAPI lifespan startup phases (each calls registry.starting/ready/failed)
+  │  · database         ← SQLite open
+  │  · downloads        ← download manager
+  │  · ai_engine        ← matrx-ai initialization
+  │  · tools            ← tool registry
+  │  · sync_engine      ← cloud-to-local sync
+  │  · scraper          ← Playwright start
+  │  · proxy            ← HTTP proxy bind
+  │  · tunnel           ← cloudflared subprocess
+  │  · …
+  │
+  ▼ uvicorn ready, port 22140 bound
+[Rust] React UI polls localhost:22140 → engine responds
+```
+
+Throughout startup the registry emits structured `[launcher] <service> →
+<state>` lines. `GET /admin/status` returns the same data as JSON so the
+parent process (or any operator) can introspect engine state at any time.
+
+#### Diagnostic Dumps
+
+Every FAILED transition automatically writes a JSON snapshot to
+`~/.matrx/diagnostics/{timestamp}_{service}.json` containing:
+
+  · The full service registry state at the moment of failure
+  · Engine process info (PID, RSS, CPU, threads, open files)
+  · Every matrx-related process visible to psutil (catches orphans)
+  · Listening TCP ports with PIDs
+  · Environment variables (MATRX_*, TAURI_*, etc. — secrets redacted)
+  · Stack frames for every live Python thread
+  · Free disk on `~/.matrx` and tmp
+
+Operators can also trigger an on-demand dump via
+`POST /admin/diagnose?reason=...`. The latest 50 dumps are kept; older
+ones are pruned automatically.
+
+#### Files implementing this contract
+
+| File | Role |
+|------|------|
+| `app/launcher.py` | `ServiceRegistry`, `dump_diagnostics`, log-line conventions |
+| `app/api/admin_routes.py` | `GET /admin/status`, `POST /admin/shutdown`, `POST /admin/diagnose` |
+| `app/api/auth.py` | `_PUBLIC_PATHS` includes `/admin/*` (localhost-only trust boundary) |
+| `app/main.py` | Lifespan startup/shutdown phases call into the registry |
+| `app/preflight.py` | Engine reclaims its previous-life children at boot |
+| `app/services/tunnel/manager.py` | Owns the cloudflared subprocess; surfaces exit code + recent output |
+| `desktop/src-tauri/src/lib.rs` | `graceful_shutdown_sync` — Rust shutdown chain; does NOT touch engine children |
+| `desktop/src-tauri/src/llm/server.rs` | `LlmServer` — owns llama-server, captures crash output |
+| `desktop/src/hooks/use-unified-log.ts` | Crash-detector skips `[launcher]`/`[preflight]`/`[cloudflared]` |
 
 ### System Tray
 

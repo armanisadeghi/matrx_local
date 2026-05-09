@@ -8,6 +8,7 @@ from fastapi import FastAPI, WebSocket, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.api.admin_routes import router as admin_router
 from app.api.routes import router as api_router
 from app.api.tool_routes import router as tool_router
 from app.api.remote_scraper_routes import router as remote_scraper_router
@@ -20,6 +21,7 @@ from app.api.data_routes import router as data_router
 from app.api.permissions_routes import router as permissions_router
 from app.api.capabilities_routes import router as capabilities_router
 from app.api.auth import AuthMiddleware, auth_router
+from app.launcher import get_registry as _get_launcher_registry
 from app.api.token_routes import router as token_router
 from app.api.fetch_proxy_routes import router as fetch_proxy_router
 from app.api.tunnel_routes import router as tunnel_router
@@ -209,6 +211,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import time as _startup_time
 
     _t0 = _startup_time.monotonic()
+    # Service registry: every managed service reports its lifecycle here so
+    # GET /admin/status and the diagnostic dump have a single source of truth.
+    # See app/launcher.py for the full ownership/propagation contract.
+    _registry = _get_launcher_registry()
     logger.info(
         "[app/main.py] ── Matrx Local startup ─────────────────────────────────────"
     )
@@ -235,28 +241,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # survives reinstalls and updates.
     print("[phase:database] Opening local database...", flush=True)
     logger.info("[app/main.py] Phase 0a: Opening local database...")
+    _registry.starting("database")
     try:
         local_db = get_db()
         await local_db.connect()
         logger.info("[app/main.py] Phase 0a: Local database ready ✓ (%s)", local_db.path)
         print("[phase:database] Local database ready", flush=True)
-    except Exception:
+        _registry.ready("database", path=str(local_db.path))
+    except Exception as exc:
         logger.error(
             "[app/main.py] Phase 0a: Local database FAILED — data endpoints will use fallbacks",
             exc_info=True,
         )
         print("[phase:database] Local database FAILED (fallbacks active)", flush=True)
+        _registry.failed("database", exc)
 
     # Phase 0a (post0): Start the universal download manager.
     # Must run after the database is connected (Phase 0a) because it reads
     # any incomplete downloads from SQLite on startup for crash recovery.
+    _registry.starting("downloads")
     try:
         from app.services.downloads.manager import get_download_manager
         dl_manager = get_download_manager()
         await dl_manager.start()
         logger.info("[app/main.py] Phase 0a: Download manager started ✓")
-    except Exception:
+        _registry.ready("downloads")
+    except Exception as exc:
         logger.warning("[app/main.py] Phase 0a: Download manager failed to start (non-fatal)", exc_info=True)
+        _registry.degraded("downloads", reason=f"start failed: {exc}")
 
     # Phase 0a (post): Warm the in-memory JWT cache from SQLite so matrx-ai has
     # the user's token available immediately on first authenticated API call.
@@ -350,17 +362,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # inside that function try to access the DB config registered here.
     print("[phase:ai] Initializing AI engine...", flush=True)
     logger.info("[app/main.py] Phase 1: Initializing matrx-ai engine...")
+    _registry.starting("ai_engine")
     try:
         initialize_matrx_ai()
         logger.info("[app/main.py] Phase 1: matrx-ai initialized ✓")
         print("[phase:ai] AI engine initialized", flush=True)
-    except Exception:
+        _registry.ready("ai_engine")
+    except Exception as exc:
         logger.error(
             "[app/main.py] Phase 1: matrx-ai initialization FAILED — AI endpoints will not work. "
             "Check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in .env",
             exc_info=True,
         )
         print("[phase:ai] AI engine init FAILED", flush=True)
+        _registry.failed("ai_engine", exc)
 
     # Phase 1b: Mount the matrx-ai sub-app now that the DB config is registered.
     # This must happen after initialize_matrx_ai() because the matrx_ai module-level
@@ -380,45 +395,54 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Phase 2: Load tool registry from DB and register all local OS tools.
     print("[phase:tools] Loading tool registry...", flush=True)
     logger.info("[app/main.py] Phase 2: Loading tool registry...")
+    _registry.starting("tools")
     try:
         await load_tools_and_register()
         logger.info("[app/main.py] Phase 2: Tool registry loaded ✓")
         print("[phase:tools] Tool registry loaded", flush=True)
-    except Exception:
+        _registry.ready("tools")
+    except Exception as exc:
         logger.error(
             "[app/main.py] Phase 2: Tool registration FAILED — AI may not have tool access",
             exc_info=True,
         )
         print("[phase:tools] Tool registry FAILED", flush=True)
+        _registry.failed("tools", exc)
 
     # Phase 2b: Start background sync engine (cloud → local SQLite).
     # This pulls models, agents, and tools from Supabase into the local DB
     # so all /data/* endpoints respond instantly from SQLite.
     logger.info("[app/main.py] Phase 2b: Starting background data sync...")
+    _registry.starting("sync_engine")
     try:
         sync_engine = get_sync_engine()
         sync_engine.start()
         logger.info("[app/main.py] Phase 2b: Background sync started ✓")
-    except Exception:
+        _registry.ready("sync_engine")
+    except Exception as exc:
         logger.error(
             "[app/main.py] Phase 2b: Background sync FAILED to start — local data may be stale",
             exc_info=True,
         )
+        _registry.failed("sync_engine", exc)
 
     # Phase 3: Start scraper engine
     print("[phase:scraper] Starting scraper engine...", flush=True)
     logger.info("[app/main.py] Phase 3: Starting scraper engine...")
+    _registry.starting("scraper")
     engine = get_scraper_engine()
     try:
         await engine.start()
         logger.info("[app/main.py] Phase 3: Scraper engine started ✓")
         print("[phase:scraper] Scraper engine ready", flush=True)
-    except Exception:
+        _registry.ready("scraper")
+    except Exception as exc:
         logger.error(
             "[app/main.py] Phase 3: Scraper engine FAILED to start — scraping tools will be unavailable",
             exc_info=True,
         )
         print("[phase:scraper] Scraper engine FAILED (scraping unavailable)", flush=True)
+        _registry.failed("scraper", exc)
 
     restored = await restore_scheduled_tasks()
     if restored:
@@ -443,6 +467,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("[app/main.py] Phase 4: HTTP proxy enabled=%s", proxy_enabled)
     if proxy_enabled:
         print("[phase:proxy] Starting local HTTP proxy...", flush=True)
+        _registry.starting("proxy")
         try:
             proxy = get_proxy_server()
             proxy_port = settings_sync.get("proxy_port", 22180)
@@ -463,6 +488,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 "[app/main.py] Phase 4: HTTP proxy started ✓ on port %d", proxy_port
             )
             print(f"[phase:proxy] HTTP proxy ready on port {proxy_port}", flush=True)
+            _registry.ready("proxy", port=proxy_port)
         except OSError as exc:
             logger.error(
                 "[app/main.py] Phase 4: HTTP proxy FAILED to start — port %d is already in use. "
@@ -473,11 +499,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 exc,
             )
             print("[phase:proxy] HTTP proxy FAILED (port in use)", flush=True)
-        except Exception:
+            _registry.failed("proxy", f"port {settings_sync.get('proxy_port', 22180)} in use: {exc}")
+        except Exception as exc:
             logger.error(
                 "[app/main.py] Phase 4: HTTP proxy FAILED to start", exc_info=True
             )
             print("[phase:proxy] HTTP proxy FAILED", flush=True)
+            _registry.failed("proxy", exc)
 
     # Phase 5: Start Cloudflare tunnel (quick tunnel for all users — no account needed).
     # Each instance gets a unique random URL from Cloudflare's trycloudflare.com pool.
@@ -487,6 +515,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("[app/main.py] Phase 5: Tunnel enabled=%s", tunnel_enabled)
     if tunnel_enabled:
         print("[phase:tunnel] Starting Cloudflare tunnel...", flush=True)
+        _registry.starting("tunnel", upstream_port=main_server_port)
         try:
             from app.services.tunnel.manager import get_tunnel_manager as _get_tm
             _tm = _get_tm()
@@ -494,6 +523,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if _tunnel_url:
                 logger.info("[app/main.py] Phase 5: Tunnel active ✓ → %s", _tunnel_url)
                 print(f"[phase:tunnel] Tunnel active: {_tunnel_url}", flush=True)
+                _registry.ready(
+                    "tunnel",
+                    url=_tunnel_url,
+                    mode="named" if _tm._token else "quick",
+                )
                 try:
                     from app.services.cloud_sync.instance_manager import get_instance_manager as _get_im
                     await _get_im().update_tunnel_url(_tunnel_url, active=True)
@@ -517,9 +551,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             else:
                 logger.warning("[app/main.py] Phase 5: Tunnel started but no URL captured within timeout")
                 print("[phase:tunnel] Tunnel started but no URL captured", flush=True)
-        except Exception:
+                _registry.degraded("tunnel", reason="started but no URL captured within timeout")
+        except Exception as exc:
             logger.error("[app/main.py] Phase 5: Tunnel FAILED to start", exc_info=True)
             print("[phase:tunnel] Tunnel FAILED to start", flush=True)
+            _registry.failed("tunnel", exc)
 
     # Background heartbeat: updates last_seen and retries failed syncs
     async def _heartbeat_loop() -> None:
@@ -575,8 +611,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(
         "[app/main.py] ── Matrx Local shutdown ────────────────────────────────────"
     )
+    # Cascade shutdown: this is where the engine fulfills its half of the
+    # ownership contract — Rust signaled us to stop, now we stop every child
+    # we own in reverse-startup order. Rust must NOT pkill any of these
+    # children behind our back; doing so races with these stops and produces
+    # the "ended unexpectedly" crash reports we're trying to eliminate.
+    # See app/launcher.py for the full ownership rules.
 
     # ── Phase S1: Cancel background asyncio tasks (fast, non-blocking) ────
+    _registry.stopping("sync_engine")
     try:
         sync_eng = get_sync_engine()
         sync_eng.stop()
@@ -585,8 +628,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 await asyncio.wait_for(sync_eng._task, timeout=2.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
+        _registry.stopped("sync_engine")
     except Exception:
-        pass
+        _registry.stopped("sync_engine")
 
     retry_queue.stop()
     scrape_store.stop_sync()
@@ -636,15 +680,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # process) from blocking the entire teardown sequence.  Without these
     # timeouts, a single hung stop can exhaust the entire 25-second force-exit
     # budget and cause Python to be SIGKILL'd with ports still bound.
+    _registry.stopping("proxy")
     try:
         proxy = get_proxy_server()
         await asyncio.wait_for(proxy.stop(), timeout=5.0)
         logger.info("[app/main.py] HTTP proxy stopped ✓")
+        _registry.stopped("proxy")
     except asyncio.TimeoutError:
         logger.warning("[app/main.py] HTTP proxy stop timed out after 5s — forcing teardown")
-    except Exception:
+        _registry.failed("proxy", "stop timed out after 5s")
+    except Exception as exc:
         logger.error("[app/main.py] HTTP proxy failed to stop cleanly", exc_info=True)
+        _registry.failed("proxy", exc)
 
+    _registry.stopping("tunnel")
     try:
         tm = get_tunnel_manager()
         if tm.running:
@@ -661,20 +710,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 mark_tunnel_inactive()
             except Exception:
                 pass
+        # Surface cloudflared's exit code + last lines into the registry so
+        # diagnostic dumps reveal "exit code 1" reasons instead of swallowing them.
+        _registry.stopped(
+            "tunnel",
+            cloudflared_exit_code=tm.last_exit_code,
+            cloudflared_recent_output=tm.recent_output[-30:],
+        )
     except asyncio.TimeoutError:
         logger.warning("[app/main.py] Tunnel stop timed out after 7s — forcing teardown")
-    except Exception:
+        _registry.failed(
+            "tunnel",
+            "stop timed out after 7s — cloudflared subprocess may be wedged",
+            cloudflared_recent_output=get_tunnel_manager().recent_output[-30:],
+        )
+    except Exception as exc:
         logger.error("[app/main.py] Tunnel failed to stop cleanly", exc_info=True)
+        try:
+            tail = get_tunnel_manager().recent_output[-30:]
+        except Exception:
+            tail = []
+        _registry.failed("tunnel", exc, cloudflared_recent_output=tail)
 
+    _registry.stopping("scraper")
     try:
         await asyncio.wait_for(engine.stop(), timeout=8.0)
         logger.info("[app/main.py] Scraper engine stopped ✓")
+        _registry.stopped("scraper")
     except asyncio.TimeoutError:
         logger.warning("[app/main.py] Scraper engine stop timed out after 8s — forcing teardown")
-    except Exception:
+        _registry.failed("scraper", "stop timed out after 8s — Playwright may be wedged")
+    except Exception as exc:
         logger.error(
             "[app/main.py] Scraper engine failed to stop cleanly", exc_info=True
         )
+        _registry.failed("scraper", exc)
 
     # ── Phase S6: Close Playwright browser instances from tool usage ──────
     try:
@@ -728,6 +798,11 @@ app = FastAPI(
 
 app.include_router(auth_router)  # OAuth callback — must be before AuthMiddleware
 app.include_router(token_router)  # Token sync — React pushes JWT to Python
+# Admin endpoints (/admin/status, /admin/shutdown, /admin/diagnose) — used by
+# the Tauri shell to coordinate engine lifecycle without reaching across to
+# kill engine-owned children. Listed in _PUBLIC_PATHS in app/api/auth.py.
+# See app/launcher.py for the ownership/propagation contract.
+app.include_router(admin_router)
 app.include_router(api_router)
 app.include_router(tool_router, prefix="/tools", tags=["tools"])
 app.include_router(remote_scraper_router)

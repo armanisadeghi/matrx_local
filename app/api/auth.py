@@ -69,6 +69,14 @@ _PUBLIC_PATHS = frozenset(
         # Token sync — the JWT is the credential being *given* to Python.
         # Must be public for the same reason as /cloud/configure.
         "/auth/token",
+        # Admin lifecycle endpoints — called by the Tauri shell (Rust) to
+        # coordinate engine startup/shutdown without reaching across to kill
+        # engine-owned children. See app/launcher.py and app/api/admin_routes.py
+        # for the full ownership contract. The engine binds 127.0.0.1 only,
+        # so localhost is the trust boundary; Rust has no JWT to send.
+        "/admin/status",
+        "/admin/shutdown",
+        "/admin/diagnose",
     }
 )
 

@@ -26,6 +26,7 @@ import re
 import stat
 import sys
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 from urllib.request import urlretrieve
@@ -230,6 +231,14 @@ class TunnelManager:
         self._url_ready: asyncio.Event = asyncio.Event()
         self._token: str = os.getenv("CLOUDFLARE_TUNNEL_TOKEN", "")
         self._port: int = 0
+        # Ring buffer of the most recent cloudflared output lines. We keep
+        # this regardless of URL capture so when the process dies with a
+        # non-zero exit code we can dump the last few seconds of output and
+        # actually see WHY (DNS timeout? auth failure? port collision?).
+        # 200 lines covers the typical "headline + boilerplate + error
+        # block" cloudflared emits on failure.
+        self._recent_output: deque[str] = deque(maxlen=200)
+        self._last_exit_code: Optional[int] = None
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -250,6 +259,21 @@ class TunnelManager:
         if self._started_at is None:
             return 0.0
         return round(time.time() - self._started_at, 1)
+
+    @property
+    def recent_output(self) -> list[str]:
+        """Return a copy of the most recent cloudflared output lines.
+
+        Used by the launcher's diagnostic dump to capture the actual reason
+        cloudflared exited (e.g. exit code 1 with no obvious error in the
+        engine's log). Safe to call at any time, including after stop().
+        """
+        return list(self._recent_output)
+
+    @property
+    def last_exit_code(self) -> Optional[int]:
+        """Return cloudflared's exit code from the most recent run, or None."""
+        return self._last_exit_code
 
     async def start(self, port: int) -> Optional[str]:
         """Start the tunnel subprocess. Returns the public URL when ready."""
@@ -309,12 +333,22 @@ class TunnelManager:
                 pass  # URL captured
             elif exit_task in done:
                 rc = exit_task.result()
+                self._last_exit_code = rc
+                # Dump the last lines of cloudflared output so the operator
+                # can see the actual reason (DNS, auth, port, etc.) instead
+                # of "exit code 1" with no context.
+                tail = list(self._recent_output)[-30:]
                 logger.error(
-                    "cloudflared exited with code %s before emitting a tunnel URL",
+                    "cloudflared exited with code %s before emitting a tunnel URL — last %d lines:\n%s",
                     rc,
+                    len(tail),
+                    "\n".join(f"  | {line}" for line in tail) or "  | <no output captured>",
                 )
             else:
-                logger.warning("cloudflared did not emit a tunnel URL within 30s")
+                logger.warning(
+                    "cloudflared did not emit a tunnel URL within 30s — last 10 lines:\n%s",
+                    "\n".join(f"  | {line}" for line in list(self._recent_output)[-10:]) or "  | <no output captured>",
+                )
         except Exception as exc:
             logger.error("Error waiting for cloudflared URL: %s", exc)
 
@@ -335,16 +369,32 @@ class TunnelManager:
             try:
                 self._process.terminate()
                 await asyncio.wait_for(self._process.wait(), timeout=5.0)
+                self._last_exit_code = self._process.returncode
             except asyncio.TimeoutError:
+                logger.warning(
+                    "cloudflared did not exit within 5s of SIGTERM — escalating to SIGKILL"
+                )
                 self._process.kill()
+                try:
+                    await asyncio.wait_for(self._process.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.error("cloudflared survived SIGKILL — process is wedged")
+                self._last_exit_code = self._process.returncode
             except Exception as exc:
                 logger.debug("cloudflared stop error: %s", exc)
+        elif self._process:
+            # Process already dead before we got here. Capture whatever exit
+            # code we have so the registry can report it.
+            self._last_exit_code = self._process.returncode
 
         self._process = None
         self._url = None
         self._ws_url = None
         self._started_at = None
-        logger.info("Tunnel stopped")
+        logger.info(
+            "Tunnel stopped (cloudflared exit code: %s)",
+            self._last_exit_code if self._last_exit_code is not None else "n/a",
+        )
 
     def get_status(self) -> dict:
         return {
@@ -382,6 +432,11 @@ class TunnelManager:
                     continue
 
                 line_count += 1
+                # Always retain in the ring buffer regardless of log level —
+                # diagnostic dumps need the full tail of recent output even
+                # when log level is INFO+ and DEBUG lines are dropped.
+                self._recent_output.append(line)
+
                 if line_count <= 30 or not self._url:
                     logger.info("[cloudflared] %s", line)
                 else:

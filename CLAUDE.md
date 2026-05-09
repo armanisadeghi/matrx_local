@@ -31,6 +31,38 @@ cd desktop && pnpm tauri:dev
 
 ## Hard Rules
 
+0. **Lifecycle ownership is non-negotiable.** Each level of the process tree
+   only touches its own children. When the parent triggers a start or stop,
+   that level must cascade the same to its children before reporting done.
+   See **ARCHITECTURE.md → Lifecycle & Ownership** for the full contract.
+
+   - **Rust never pkills cloudflared, the scraper, the proxy, or any other
+     engine-spawned process.** Cloudflared and friends are children of the
+     Python engine, not of Rust. Rust signals the engine via
+     `POST /admin/shutdown` (or SIGTERM as fallback); the engine cascades to
+     its own children during its lifespan teardown. Adding a `pkill` to
+     `lib.rs` for an engine-owned process re-introduces the race that
+     produces "ended unexpectedly" crash reports.
+   - **The engine never expects Rust to clean up its children.** When the
+     engine receives a shutdown signal, it stops every child it owns — and
+     reports done only after the last one is stopped.
+   - **Every state change goes through `app/launcher.py`.** Call
+     `registry.starting/ready/degraded/failed/stopping/stopped`. The
+     `[launcher] <service> → <state>` lines are the source of truth — do
+     not duplicate them in feature modules. Adding a new managed service is
+     two lines (call `starting()` before, `ready()` or `failed()` after).
+   - **Failures auto-emit a diagnostic snapshot** to
+     `~/.matrx/diagnostics/`. If you find yourself wanting to add an
+     ad-hoc `print(state)` in a stop/start path, you instead want to attach
+     metadata to the registry record (`registry.annotate(name, ...)` or
+     pass kwargs to `failed()`). The snapshot will pick it up automatically.
+   - **The detached safety-net subprocess in `lib.rs` is the parachute, not
+     the primary chute.** It only fires after `graceful_shutdown_sync` has
+     had a chance to complete (5s SIGTERM-then-SIGKILL ladder). If the
+     normal shutdown chain ran to completion, every pkill in the safety net
+     is a no-op. Do not extend it as a substitute for fixing a real
+     ownership bug.
+
 1. **scraper-service/ is read-only** — Git subtree from `aidream` repo. Never edit directly. Use `./scripts/update-scraper.sh`. Source repo: `/Users/armanisadeghi/Code/aidream-current/scraper-service` (editable there).
 
 2. **Module isolation** — Scraper's `app/` aliased as `scraper_app/` via `sys.modules` in `app/services/scraper/engine.py`. No naming conflicts.

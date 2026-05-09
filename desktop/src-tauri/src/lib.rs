@@ -39,15 +39,25 @@ struct FetchResponse {
     final_url: String,
 }
 
-/// Kill any orphaned processes from a previous session.
+/// Kill orphaned engine sidecar processes from a previous session.
 ///
-/// Called before spawning a new sidecar and during graceful shutdown.
-/// Targets: matrx-engine (Python sidecar), cloudflared (tunnel),
-/// llama-server (LLM inference).
+/// **Ownership note (see ARCHITECTURE.md → Lifecycle):**
+/// This function ONLY targets the engine sidecar binaries. It does NOT
+/// touch cloudflared, llama-server, or any other service the engine owns.
+/// Each level of the ownership tree only kills its own children:
 ///
-/// Process-name patterns by platform:
-///   macOS / Linux: pkill -f matches the full command line, so we use a
-///     regex alternation that catches both:
+///   Rust (this file) → engine sidecar
+///   Engine sidecar    → cloudflared, scraper, scheduler, etc.
+///   LlmServer (Rust)  → llama-server
+///
+/// When the engine starts, its own preflight (`app/preflight.py
+/// clean_orphans`) sweeps any cloudflared/llama-server processes left
+/// behind by a previous crashed engine — that's the engine reclaiming its
+/// own children, not Rust reaching across.
+///
+/// Targets here are only the engine sidecar binaries:
+///   macOS / Linux: pkill -f matches the full command line; one regex
+///     covers all known engine names (current and legacy).
 ///       • "Matrx Engine"          (macOS Helper-app binary, with space)
 ///       • "matrx-engine"          (Linux flat binary; also legacy macOS
 ///                                  builds where it lived in Contents/MacOS/)
@@ -58,7 +68,7 @@ struct FetchResponse {
 ///     have to issue one call per image variant.
 ///
 /// Discovery file safety: only deletes local.json if the PID it contains
-/// is no longer alive.  This prevents a race where Rust cleanup runs AFTER
+/// is no longer alive. This prevents a race where Rust cleanup runs AFTER
 /// the new engine has already written its own PID — we would otherwise
 /// delete the new engine's discovery record on startup.
 fn kill_orphaned_sidecars() {
@@ -73,16 +83,14 @@ fn kill_orphaned_sidecars() {
         let _ = std::process::Command::new("pkill")
             .args(["-TERM", "-f", ENGINE_PATTERN])
             .output();
-        let _ = std::process::Command::new("pkill")
-            .args(["-TERM", "-f", "cloudflared tunnel"])
-            .output();
         std::thread::sleep(std::time::Duration::from_millis(500));
         let _ = std::process::Command::new("pkill")
             .args(["-KILL", "-f", ENGINE_PATTERN])
             .output();
-        let _ = std::process::Command::new("pkill")
-            .args(["-KILL", "-f", "cloudflared tunnel"])
-            .output();
+        // NOTE: cloudflared is intentionally NOT killed here. It is the
+        // engine's child, and the engine's preflight reclaims it on startup.
+        // Killing it from Rust during a normal shutdown races against the
+        // engine's tunnel.stop() and produces "ended unexpectedly" errors.
     }
     #[cfg(windows)]
     {
@@ -94,7 +102,10 @@ fn kill_orphaned_sidecars() {
         // is "matrx-engine-x86_64-pc-windows-msvc.exe"; "aimatrx-engine-*.exe"
         // is the legacy name that may still be running on machines that just
         // upgraded to a build that uses the new name — sweep both so the
-        // upgrade is clean.
+        // upgrade is clean. /T cascades to the engine's process tree
+        // (cloudflared, etc.) without us having to name them explicitly —
+        // that is the engine signaling its children via process-tree
+        // termination, not Rust reaching across.
         for image in [
             "matrx-engine-x86_64-pc-windows-msvc.exe",
             "matrx-engine.exe",
@@ -105,9 +116,10 @@ fn kill_orphaned_sidecars() {
                 .args(["/F", "/T", "/IM", image])
                 .output();
         }
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/IM", "cloudflared.exe"])
-            .output();
+        // NOTE: cloudflared.exe is intentionally NOT killed here. /T above
+        // already cascades to it as a child of the engine process tree. A
+        // standalone taskkill /IM cloudflared.exe would also kill cloudflared
+        // instances spawned by other applications on the same machine.
     }
 
     // Remove the discovery file only if its recorded PID is no longer alive.
@@ -486,6 +498,16 @@ fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
 /// cloudflared and llama-server. They do NOT match "AI Matrx" (the parent
 /// app's process name), so this subprocess can never accidentally kill us
 /// or any other parent app instance.
+///
+/// **Ownership note (see ARCHITECTURE.md → Lifecycle):**
+/// In normal operation, the engine kills cloudflared during its own lifespan
+/// teardown — Rust does NOT reach across to kill the engine's children.
+/// This safety net is the ONE legitimate exception: it only fires AFTER
+/// `graceful_shutdown_sync` has had a chance to complete (we sleep 5s before
+/// SIGKILL), and only catches strays the engine couldn't clean up because
+/// it was killed mid-teardown by GGML's SIGABRT. If the engine's own teardown
+/// runs to completion, every pkill below is a no-op (nothing left to match).
+/// It is the parachute, not the primary chute.
 fn spawn_detached_shutdown_safety_net() {
     #[cfg(unix)]
     {
@@ -709,38 +731,128 @@ fn graceful_shutdown_sync(
         *guard = None; // Drops TranscriptionManager → WhisperContext → GGML
     }
 
-    // 3. Send SIGTERM to the Python sidecar so its signal handler can run
-    //    the FastAPI lifespan teardown (proxy, tunnel, scraper, SQLite).
-    //    Falls back to SIGKILL after 20 s if Python doesn't exit on its own.
+    // 3. Ask the Python sidecar to shut down its own children gracefully.
+    //
+    //    Ownership contract: cloudflared, the HTTP proxy, the scraper engine,
+    //    Playwright, the file watchers, and every other long-running task in
+    //    the engine are CHILDREN OF THE ENGINE — not of Rust. Rust must not
+    //    pkill them directly; that races against the engine's own teardown
+    //    and produces "ended unexpectedly" crash reports.
+    //
+    //    Preferred path: POST http://127.0.0.1:{port}/admin/shutdown. The
+    //    engine self-signals SIGTERM after the HTTP response flushes, which
+    //    triggers run.py's _handle_exit → uvicorn lifespan teardown →
+    //    every child stops in reverse-startup order with per-child timeouts.
+    //
+    //    Fallback path: if the HTTP call fails (engine wedged, port not
+    //    bound yet, etc.) we fall back to SIGTERM, which fires the same
+    //    handler. sigterm_then_kill below escalates to SIGKILL after 20s
+    //    as the last resort. After that point, the detached safety net
+    //    spawned at the top of this function takes over.
+    let admin_shutdown_ok = request_admin_shutdown();
     if let Some(child) = sidecar_state.child.lock().unwrap().take() {
+        if admin_shutdown_ok {
+            // Give the engine a head start on its lifespan teardown before
+            // we send SIGTERM. The /admin/shutdown handler also sends
+            // SIGTERM internally, so this is largely redundant — but keeps
+            // the existing 20s wait→SIGKILL ladder as a safety belt for
+            // engines that ignore the HTTP-driven self-signal.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
         sigterm_then_kill(child);
     }
 
-    // 4. Kill orphaned cloudflared tunnel processes.
-    //    cloudflared is spawned by the Python sidecar (TunnelManager), not by Rust.
-    //    If the sidecar was SIGKILL'd before its lifespan teardown ran tm.stop(),
-    //    cloudflared survives as an orphan (PPID 1). We kill it here as a safety net.
-    //    The -f flag matches the full command line so "cloudflared tunnel" is targeted.
-    #[cfg(unix)]
-    {
-        let _ = std::process::Command::new("pkill")
-            .args(["-TERM", "-f", "cloudflared tunnel"])
-            .output();
-        // Brief wait for graceful exit, then force kill any survivors
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let _ = std::process::Command::new("pkill")
-            .args(["-KILL", "-f", "cloudflared tunnel"])
-            .output();
-    }
-    #[cfg(windows)]
-    {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/T", "/IM", "cloudflared.exe"])
-            .output();
+    // 4. Kill any remaining orphan ENGINE sidecars + clean up discovery file.
+    //    Note: this only kills engine binaries, NOT cloudflared. The engine
+    //    owns cloudflared (and reclaims/kills any cloudflared orphans during
+    //    its own preflight). See kill_orphaned_sidecars() for ownership rules.
+    kill_orphaned_sidecars();
+}
+
+/// POST http://127.0.0.1:{port}/admin/shutdown to ask the engine to
+/// gracefully tear down its children before exiting.
+///
+/// Returns true when the engine accepts the request (so the caller can
+/// give it a small head start before sending SIGTERM as a belt-and-suspenders
+/// signal). Returns false if anything fails — port discovery, connection,
+/// timeout — so the caller can fall back to SIGTERM immediately.
+///
+/// Why a hand-rolled HTTP request instead of pulling in `reqwest`:
+///   - We block on this from the synchronous shutdown handler. reqwest's
+///     blocking client opens its own tokio runtime which conflicts with
+///     the runtime Tauri already has alive at this point.
+///   - The payload is empty and the response is small. A dependency on
+///     reqwest would add ~600 KB to the binary for one POST.
+///   - We need a tight timeout (1.5s) so a wedged engine doesn't delay
+///     the shutdown sequence past the detached safety net's window.
+fn request_admin_shutdown() -> bool {
+    let Some(port) = read_engine_port_from_discovery() else {
+        return false;
+    };
+
+    let addr = format!("127.0.0.1:{port}");
+    let stream = match std::net::TcpStream::connect_timeout(
+        &match addr.parse() {
+            Ok(a) => a,
+            Err(_) => return false,
+        },
+        std::time::Duration::from_millis(500),
+    ) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(1500)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_millis(500)));
+
+    let request = format!(
+        "POST /admin/shutdown HTTP/1.1\r\n\
+         Host: 127.0.0.1:{port}\r\n\
+         User-Agent: matrx-tauri/shutdown\r\n\
+         Content-Length: 0\r\n\
+         Connection: close\r\n\r\n"
+    );
+
+    use std::io::{Read, Write};
+    let mut s = stream;
+    if s.write_all(request.as_bytes()).is_err() {
+        return false;
     }
 
-    // 5. Kill any remaining orphaned sidecars + clean up discovery file.
-    kill_orphaned_sidecars();
+    // Read just enough to confirm a 2xx status line; we don't need the body.
+    let mut buf = [0u8; 64];
+    match s.read(&mut buf) {
+        Ok(n) if n > 0 => {
+            let head = std::str::from_utf8(&buf[..n]).unwrap_or("");
+            head.starts_with("HTTP/1.1 2") || head.starts_with("HTTP/1.0 2")
+        }
+        _ => false,
+    }
+}
+
+/// Read the engine port from ~/.matrx/local.json without pulling in serde_json.
+///
+/// Mirrors the parsing logic in kill_orphaned_sidecars() — find the "port":N
+/// key in the JSON without a real parser. Returns None on any failure;
+/// callers should treat that as "engine isn't reachable, fall back to SIGTERM".
+fn read_engine_port_from_discovery() -> Option<u16> {
+    let path = {
+        #[cfg(unix)]
+        { std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".matrx").join("local.json")) }
+        #[cfg(windows)]
+        { std::env::var("USERPROFILE").ok().map(|h| std::path::PathBuf::from(h).join(".matrx").join("local.json")) }
+    }?;
+    let text = std::fs::read_to_string(path).ok()?;
+    text.split('"')
+        .skip_while(|tok| *tok != "port")
+        .nth(2)
+        .and_then(|tok| {
+            let digits: String = tok
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            digits.parse().ok()
+        })
 }
 
 /// Restart the app after an update with a clean shutdown sequence.

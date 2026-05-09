@@ -291,8 +291,10 @@ function inferServerLevel(text: string): LogLevel {
 
   const tForMatch = t.replace(/failed=(?:0|\[\])/g, "");
 
-  if (tForMatch.includes("error") || tForMatch.includes("failed")) return "error";
-  if (tForMatch.includes("warning") || tForMatch.includes("warn")) return "warn";
+  if (tForMatch.includes("error") || tForMatch.includes("failed"))
+    return "error";
+  if (tForMatch.includes("warning") || tForMatch.includes("warn"))
+    return "warn";
   if (
     t.includes("ready") ||
     t.includes("✓") ||
@@ -642,7 +644,33 @@ function _trackRecentLine(text: string): void {
 }
 
 function _isCrashSignal(text: string): boolean {
-  const t = stripAnsi(text).toLowerCase();
+  const stripped = stripAnsi(text);
+
+  // Lines from the preflight and launcher subsystems are by-design
+  // informational — those modules exist specifically to TERMINATE / SIGKILL
+  // stale processes (preflight) and STOP children during shutdown
+  // (launcher), and they log the actions they take. Without this guard,
+  // normal output ("✓ pid X terminated", "tunnel → stopping",
+  // "scraper → ✓ stopped", "cloudflared exit code: 1") tripped
+  // multiple crash-keyword matches on every clean startup AND every clean
+  // shutdown, dumping spurious "[CRASH DETECTED]" + 50-line context bursts
+  // to the log even though the engine was perfectly healthy. The detector
+  // below is meant to catch a SIDECAR dying unexpectedly, not its lifecycle
+  // modules doing their job.
+  //
+  // [cloudflared] is also excluded — when the tunnel exits with code 1 we
+  // log the recent output prefixed with [cloudflared] so the operator can
+  // see why; those lines often include "error", "failed", "abort" from
+  // cloudflared's own logging and are NOT a sidecar crash.
+  if (
+    stripped.includes("[preflight]") ||
+    stripped.includes("[launcher]") ||
+    stripped.includes("[cloudflared]")
+  ) {
+    return false;
+  }
+
+  const t = stripped.toLowerCase();
   return (
     t.includes("process exited") ||
     t.includes("terminated") ||

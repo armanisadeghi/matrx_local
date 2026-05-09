@@ -491,12 +491,37 @@ fn infer_phase(log: &str) -> &'static str {
 
 /// Extract the most useful output from the crash log buffer.
 ///
-/// Prefers lines with error keywords. Falls back to the last 20 lines of raw output
-/// so there is always something actionable to show the user, even when the process
-/// was killed silently (e.g. macOS dylib resolution failure, Gatekeeper, OOM).
+/// Strategy: combine three windows so the operator always has enough context
+/// to figure out WHY llama-server died, no matter where the failure happened
+/// in the load sequence:
+///
+///   1. Error-keyword matches  (the smoking gun — if there is one)
+///   2. Tail from the last load_tensors line onward
+///                              (the "we got past tensor loading and then…"
+///                              window — most failures happen during or after
+///                              tensor offload, e.g. OOM, Metal device error,
+///                              GGML assertion failure)
+///   3. Last 30 lines           (always — even when no keywords matched and
+///                              no load_tensors was emitted, e.g. process
+///                              killed during binary startup)
+///
+/// The previous implementation took only the first 8 keyword matches OR the
+/// last 20 lines, which routinely missed the actual crash reason because the
+/// failure line right after load_tensors (e.g. "ggml_metal_init: failed",
+/// "out of memory") doesn't always contain those keywords.
 fn extract_crash_output(captured: &str) -> String {
-    let error_lines: Vec<&str> = captured
-        .lines()
+    if captured.trim().is_empty() {
+        return "(no output captured — process may have been killed by macOS before writing anything)\n\
+                Possible causes: code signature issue, dylib not found, or Gatekeeper block.\n\
+                Try: xattr -d com.apple.quarantine <binary path>".to_string();
+    }
+
+    let lines: Vec<&str> = captured.lines().collect();
+
+    // Window 1: error-keyword matches.
+    let error_lines: Vec<&str> = lines
+        .iter()
+        .copied()
         .filter(|l| {
             let ll = l.to_lowercase();
             ll.contains("error")
@@ -507,26 +532,63 @@ fn extract_crash_output(captured: &str) -> String {
                 || ll.contains("abort")
                 || ll.contains("killed")
                 || ll.contains("signal")
+                || ll.contains("oom")
+                || ll.contains("out of memory")
+                || ll.contains("assertion")
+                || ll.contains("ggml_")
+                || ll.contains("metal")
         })
-        .take(8)
+        .take(15)
         .collect();
 
+    // Window 2: everything from the last load_tensors line onward, capped
+    // at 50 lines so we don't dump the entire model-load progress dump.
+    let load_tensors_idx = lines
+        .iter()
+        .rposition(|l| l.to_lowercase().contains("load_tensors"));
+    let after_load_tensors: Vec<&str> = match load_tensors_idx {
+        Some(i) => {
+            let end = (i + 50).min(lines.len());
+            lines[i..end].to_vec()
+        }
+        None => Vec::new(),
+    };
+
+    // Window 3: last 30 lines — guaranteed to include whatever was being
+    // emitted at the moment of the crash.
+    let tail_start = lines.len().saturating_sub(30);
+    let tail: Vec<&str> = lines[tail_start..].to_vec();
+
+    // Stitch the three windows together with section headers so the operator
+    // can see at a glance which lines came from which heuristic. We dedupe
+    // by line index (not content) so identical-content lines emitted at
+    // different times are preserved (relevant for repeated GGML asserts).
+    let mut sections: Vec<String> = Vec::new();
+
     if !error_lines.is_empty() {
-        return error_lines.join("\n");
+        sections.push(format!(
+            "── error/keyword matches ─────────────────────\n{}",
+            error_lines.join("\n")
+        ));
+    }
+    if !after_load_tensors.is_empty() {
+        sections.push(format!(
+            "── after last `load_tensors` ─────────────────\n{}",
+            after_load_tensors.join("\n")
+        ));
+    }
+    if !tail.is_empty() {
+        sections.push(format!(
+            "── last {} lines of output ──────────────────\n{}",
+            tail.len(),
+            tail.join("\n")
+        ));
     }
 
-    // No error keywords — return the last 20 lines of whatever was captured
-    let last_lines: Vec<&str> = captured.lines().collect();
-    let start = last_lines.len().saturating_sub(20);
-    let tail = last_lines[start..].join("\n");
-
-    if tail.trim().is_empty() {
-        "(no output captured — process may have been killed by macOS before writing anything)\n\
-         Possible causes: code signature issue, dylib not found, or Gatekeeper block.\n\
-         Try: xattr -d com.apple.quarantine <binary path>"
-            .to_string()
+    if sections.is_empty() {
+        "(no diagnostic content extractable from captured output)".to_string()
     } else {
-        tail
+        sections.join("\n\n")
     }
 }
 
