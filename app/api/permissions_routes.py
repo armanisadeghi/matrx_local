@@ -10,6 +10,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -142,11 +143,99 @@ async def _run(cmd: list[str], timeout: int = 15) -> tuple[str, str, int]:
     return stdout.decode(errors="replace"), stderr.decode(errors="replace"), proc.returncode or 0
 
 
+# ---------------------------------------------------------------------------
+# /devices/permissions cache
+#
+# ``check_all_permissions`` enumerates 15 OS surfaces (microphone, camera,
+# bluetooth, wifi, location, contacts, calendar, photos, …). On macOS that
+# means several ``system_profiler`` invocations, AVFoundation introspection,
+# CoreLocation queries, and a TCC.db read — typical first-call wall time is
+# 15–25 s on a cold machine because ``system_profiler`` serialises on the
+# private ``cfprefsd`` IPC and warm-cache propagation is per-daemon.
+#
+# The TCC posture itself is stable: a user toggling a permission requires
+# them to leave the app and edit System Settings, so a 30-second freshness
+# window is invisible to a real workflow but eliminates the 20-second tax
+# on every Devices/Permissions page revisit. The Devices page also calls
+# us during initial mount, route changes, and a few other UI events — each
+# hit was a fresh 20-second blocker without this cache.
+#
+# ``force_refresh=True`` bypasses the cache for the rare case where the
+# user just toggled a permission and wants to verify. The grant action
+# itself ALSO clears the cache so the next read shows the new state.
+# ---------------------------------------------------------------------------
+
+_PERM_CACHE_TTL_SECONDS = 30.0
+_perm_cache_lock = asyncio.Lock()
+_perm_cache: dict[str, Any] = {
+    "fetched_at": 0.0,
+    "payload": None,  # type: dict[str, Any] | None
+}
+
+
+async def _get_permissions_cached(force_refresh: bool) -> dict[str, Any]:
+    """Return the /devices/permissions payload, refreshing if stale.
+
+    A single asyncio lock guards the refresh so a thundering herd of UI
+    fetches (the Devices page hits this from multiple panels on mount)
+    collapses into one underlying probe. Concurrent callers that arrive
+    while a refresh is in-flight will see the new value as soon as it
+    lands.
+    """
+    now = time.monotonic()
+    cached = _perm_cache["payload"]
+    age = now - _perm_cache["fetched_at"]
+
+    if not force_refresh and cached is not None and age < _PERM_CACHE_TTL_SECONDS:
+        return {**cached, "cached": True, "age_seconds": round(age, 2)}
+
+    async with _perm_cache_lock:
+        # Re-check inside the lock — another coroutine may have refreshed
+        # while we waited.
+        now = time.monotonic()
+        cached = _perm_cache["payload"]
+        age = now - _perm_cache["fetched_at"]
+        if not force_refresh and cached is not None and age < _PERM_CACHE_TTL_SECONDS:
+            return {**cached, "cached": True, "age_seconds": round(age, 2)}
+
+        results = await check_all_permissions()
+        payload = {
+            "permissions": results,
+            "platform": PLATFORM["system"],
+        }
+        _perm_cache["fetched_at"] = time.monotonic()
+        _perm_cache["payload"] = payload
+        return {**payload, "cached": False, "age_seconds": 0.0}
+
+
+def _invalidate_permissions_cache() -> None:
+    """Drop the cached permissions snapshot so the next read goes fresh.
+
+    Called whenever the engine actively changes the OS permission posture
+    (e.g. ``grant_windows_permissions``). Without this, the Devices page
+    would still show stale ``denied`` rows for up to ``_PERM_CACHE_TTL_SECONDS``
+    after the grant succeeds.
+    """
+    _perm_cache["fetched_at"] = 0.0
+    _perm_cache["payload"] = None
+
+
 @router.get("/permissions")
-async def get_permissions():
-    """Get all device/OS permission statuses."""
-    results = await check_all_permissions()
-    return {"permissions": results, "platform": PLATFORM["system"]}
+async def get_permissions(force_refresh: bool = False):
+    """Get all device/OS permission statuses.
+
+    Args:
+        force_refresh: bypass the in-process cache and re-probe the OS.
+            The cache TTL is short (30 s) but the desktop UI exposes a
+            "Refresh" affordance that should always show fresh data — set
+            this from there.
+
+    Returns:
+        ``{permissions, platform, cached, age_seconds}``. ``cached`` /
+        ``age_seconds`` let the UI render a subtle "last checked Ns ago"
+        hint without a separate timing endpoint.
+    """
+    return await _get_permissions_cached(force_refresh=force_refresh)
 
 
 @router.post("/permissions/grant")
@@ -165,6 +254,10 @@ async def grant_permissions():
         results = await grant_windows_permissions()
         granted = sum(1 for ok in results.values() if ok)
         failed = [k for k, ok in results.items() if not ok]
+        # Granting flips the actual OS state — drop the cached snapshot so
+        # the next ``GET /devices/permissions`` reflects reality instead
+        # of replaying the pre-grant ``denied`` rows for ~30s.
+        _invalidate_permissions_cache()
         return {
             "platform": "windows",
             "granted": granted,

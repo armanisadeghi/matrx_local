@@ -186,6 +186,42 @@ We use pattern 1 for the Matrx Engine. See
 `specs/matrx-engine-aarch64-apple-darwin.spec` and
 `desktop/src-tauri/tauri.macos.conf.json`.
 
+### Sidecars with companion dylibs/DLLs need both `externalBin` *and* `bundle.resources`
+
+`bundle.externalBin` only places the named binary into `Contents/MacOS/` (or alongside the app on Linux/Windows). It does **not** look at sibling files in the source folder. If the binary dynamically links against shared libraries (`libllama-common.0.dylib`, `libggml.0.dylib`, etc. on macOS; `*.dll` on Windows), each library must be declared as a bundle resource — otherwise the binary loads on the dev machine (where the dylibs live next to it on disk) and crashes on the end-user's installed app with `dyld: Library not loaded: @rpath/...`.
+
+The crash is silent in the Tauri build log: signing succeeds, notarization succeeds, the `.app` ships, and only when the user launches `llama-server` does dyld fail.
+
+**Pattern (mirror what Windows already does):**
+
+```json
+// desktop/src-tauri/tauri.macos.conf.json
+"bundle": {
+  "externalBin": ["sidecar/cloudflared", "binaries/llama-server"],
+  "resources": {
+    "binaries/*.dylib": "binaries/"   // → Contents/Resources/binaries/
+  }
+}
+```
+
+```json
+// desktop/src-tauri/tauri.windows.conf.json
+"bundle": {
+  "resources": {
+    "binaries/windows-dlls/*.dll": "binaries/windows-dlls/"
+  }
+}
+```
+
+The destination directory must match what the binary's runtime loader actually searches:
+- macOS: `install_name_tool -add_rpath @executable_path/../Resources/binaries` (done in `scripts/download-llama-server.sh`) → resources go to `Resources/binaries/`.
+- Linux: `LD_LIBRARY_PATH` injection in `llm/server.rs` joins `resource_dir + binaries/` → resources must land at `Resources/binaries/`.
+- Windows: PATH injection in `llm/server.rs` joins `resource_dir + binaries/windows-dlls/` → resources must land at `binaries/windows-dlls/`.
+
+Rule: every time you add a sidecar binary that links against shared libraries, add three things in the same commit — the `externalBin` entry, the `resources` glob into the matching subdir, and the `LD_LIBRARY_PATH` / `DYLD_LIBRARY_PATH` / `PATH` injection in the spawn site. Verify by `ls -la /Applications/<App>.app/Contents/Resources/binaries/` on a freshly-installed bundle.
+
+---
+
 ### Tauri platform-overlay arrays are *replaced*, not merged
 
 When you add `tauri.<platform>.conf.json`, Tauri merges it into

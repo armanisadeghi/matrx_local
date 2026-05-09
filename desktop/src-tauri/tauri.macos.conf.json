@@ -3,6 +3,9 @@
 
   "bundle": {
     "externalBin": ["sidecar/cloudflared", "binaries/llama-server"],
+    "resources": {
+      "binaries/*.dylib": "binaries/"
+    },
     "macOS": {
       "files": {
         "Frameworks/Matrx Engine.app": "sidecar/Matrx Engine.app"

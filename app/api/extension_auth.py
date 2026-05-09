@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -103,28 +104,198 @@ def _validation_enabled() -> bool:
     return bool(_env_jwt_secret()) or bool(_supabase_jwks_url())
 
 
-_DEGRADED_WARNING_LOGGED = False
+# Each reason fires its WARNING at most once per process, regardless of how
+# many requests trigger it. The set is keyed by a short stable identifier so
+# the same condition doesn't relog on every /extension/sessions poll.
+_DEGRADED_WARNINGS_LOGGED: set[str] = set()
 
 
-def _maybe_log_degraded_mode_once() -> None:
-    """Emit a single loud WARNING when no verification path is configured.
+def _log_degraded_mode_once(reason: str) -> None:
+    """Emit a single loud WARNING describing the actual degraded state.
 
-    Idempotent — only fires the first time the engine actually serves a
-    request that *would* have been verified. Logging at startup is too
-    noisy (the engine may never see an extension request); logging on
-    every request would spam the log. Once-per-process is the right
-    middle ground.
+    ``reason`` selects the exact failure mode the request fell into so the
+    log is accurate. We deliberately do NOT log at startup — at startup we
+    only know what's *configured*, not what tokens will actually arrive,
+    and a JWKS-only setup can still validate tokens fine if the issuer
+    starts emitting RS256/ES256. The first request that exercises a
+    degraded path is the right moment to surface it.
+
+    Recognised reasons (each fires at most once per process):
+      * ``"no_paths"``       — neither SUPABASE_URL nor SUPABASE_JWT_SECRET
+        is configured. This is the loopback-only happy path.
+      * ``"hs256_no_secret"`` — incoming token is HS256-signed but only
+        JWKS is configured. The HS256 key needed to verify it is not
+        available to the engine. Common when a Supabase project has been
+        partially migrated to asymmetric keys but auth still issues
+        symmetric tokens.
     """
-    global _DEGRADED_WARNING_LOGGED
-    if _DEGRADED_WARNING_LOGGED:
+    if reason in _DEGRADED_WARNINGS_LOGGED:
         return
-    _DEGRADED_WARNING_LOGGED = True
-    logger.warning(
-        "[extension_auth] JWT signature validation DISABLED — "
-        "neither SUPABASE_JWT_SECRET nor SUPABASE_URL is configured. "
-        "Falling back to permissive Bearer-presence check on /extension/* "
-        "routes. This is fine for loopback-only deployments; set "
-        "SUPABASE_JWT_SECRET in .env to enable cryptographic validation."
+    _DEGRADED_WARNINGS_LOGGED.add(reason)
+
+    if reason == "no_paths":
+        logger.warning(
+            "[extension_auth] JWT signature validation DISABLED — "
+            "neither SUPABASE_JWT_SECRET nor SUPABASE_URL is configured. "
+            "Falling back to permissive Bearer-presence check on "
+            "/extension/* routes. This is fine for loopback-only "
+            "deployments; set SUPABASE_JWT_SECRET in .env to enable "
+            "cryptographic validation."
+        )
+    elif reason == "hs256_no_secret":
+        logger.warning(
+            "[extension_auth] Incoming token is HS256-signed but the "
+            "engine has no SUPABASE_JWT_SECRET configured (only JWKS is "
+            "set up — JWKS cannot verify HS256 tokens). Falling back to "
+            "permissive Bearer-presence check on /extension/* routes for "
+            "this and similar tokens. Set SUPABASE_JWT_SECRET in .env to "
+            "enable cryptographic validation, or migrate the Supabase "
+            "project to asymmetric (RS256/ES256) JWT signing so the JWKS "
+            "path applies."
+        )
+    else:  # defensive — keep the log informative if a new reason ships
+        logger.warning(
+            "[extension_auth] JWT signature validation degraded "
+            "(reason=%s) — falling back to permissive Bearer-presence "
+            "check on /extension/* routes.",
+            reason,
+        )
+
+
+# Per-kid suppression for the per-request DEBUG noise. Without this, a
+# steady stream of /extension/sessions polls (every 2s) emits one DEBUG
+# line per call for the same offending key id, drowning the log.
+_DEBUG_FAILED_KIDS: set[str] = set()
+
+
+# ---------------------------------------------------------------------------
+# Rate-limited rejection logging
+#
+# The extension and other clients commonly poll /extension/rpc on a 2s
+# interval. When the user is signed out (or the popup hasn't yet fetched a
+# token), every poll fails with "missing Bearer token" — without rate
+# limiting that's 30 WARNING lines per minute per polling client, which
+# completely drowns the engine log and makes real warnings impossible to
+# spot.
+#
+# Strategy: log the FIRST rejection of a given (path, reason) tuple as
+# WARNING so the operator sees the issue immediately. Subsequent identical
+# rejections within ``_REJECT_LOG_WINDOW_SECONDS`` are demoted to DEBUG and
+# coalesced into a single "still rejecting" summary every
+# ``_REJECT_SUMMARY_INTERVAL_SECONDS``. The summary tells you the
+# rejection rate without restoring the per-request flood.
+# ---------------------------------------------------------------------------
+
+_REJECT_LOG_WINDOW_SECONDS = 60.0
+_REJECT_SUMMARY_INTERVAL_SECONDS = 60.0
+
+# Per-rejection-key state: { key: (first_seen, last_warned, last_summary, count) }
+_RejectStateKey = tuple[str, str, str]  # (kind, path, reason)
+_reject_log_state: dict[_RejectStateKey, dict[str, float]] = {}
+
+
+def _log_rejection(kind: str, path: str, reason: str, *, method: str = "") -> None:
+    """Log an auth-rejected request with rate-limit suppression.
+
+    Args:
+        kind: ``"http"`` or ``"ws"`` — purely cosmetic, distinguishes
+            the two surfaces in the log line.
+        path: the rejected request path. Used as part of the suppression
+            key so the same path's repeated rejects coalesce, but a
+            different path still surfaces immediately.
+        reason: short stable identifier for *why* it was rejected
+            (e.g. ``"missing_bearer"``, ``"invalid_signature"``).
+        method: HTTP method (HTTP rejections only); blank for WS.
+
+    Behaviour:
+        * First reject for a (kind, path, reason) tuple → WARNING.
+        * Subsequent rejects within the suppression window → DEBUG
+          (silent in normal operation).
+        * Every ``_REJECT_SUMMARY_INTERVAL_SECONDS`` of continuous
+          rejections → INFO summary with the cumulative count.
+    """
+    now = time.monotonic()
+    key: _RejectStateKey = (kind, path, reason)
+    state = _reject_log_state.get(key)
+
+    method_str = f"{method} " if method else ""
+    label = "rejected" if kind == "http" else "WS rejected"
+
+    if state is None:
+        _reject_log_state[key] = {
+            "first_seen": now,
+            "last_warned": now,
+            "last_summary": now,
+            "count": 1.0,
+        }
+        logger.warning(
+            "[extension_auth] %s %s%s — %s",
+            label,
+            method_str,
+            path,
+            reason.replace("_", " "),
+        )
+        return
+
+    state["count"] += 1
+    state["last_warned"] = now
+
+    # Continued rejection beyond the suppression window — emit a periodic
+    # summary so the operator knows the situation hasn't resolved.
+    if now - state["last_summary"] >= _REJECT_SUMMARY_INTERVAL_SECONDS:
+        elapsed = now - state["first_seen"]
+        rate = state["count"] / elapsed if elapsed > 0 else 0.0
+        logger.info(
+            "[extension_auth] still %s %s%s (%s) — %.0f rejections in last %.0fs (%.1f/s)",
+            label,
+            method_str,
+            path,
+            reason.replace("_", " "),
+            state["count"],
+            elapsed,
+            rate,
+        )
+        state["last_summary"] = now
+        # Reset count so the next summary covers the next window without
+        # double-counting historic data.
+        state["first_seen"] = now
+        state["count"] = 0.0
+        return
+
+    # Within suppression window after the initial WARNING — DEBUG only.
+    logger.debug(
+        "[extension_auth] %s %s%s — %s (suppressed; count=%.0f)",
+        label,
+        method_str,
+        path,
+        reason.replace("_", " "),
+        state["count"],
+    )
+
+
+def _debug_log_jwks_failure(token: str, exc: Exception) -> None:
+    """DEBUG-log a JWKS validation failure once per (kid, error-type).
+
+    Per-request DEBUG output is too noisy when the same token (or family
+    of tokens with the same ``kid``) keeps arriving. We hash the
+    combination of ``kid`` and exception class so a genuinely new failure
+    still surfaces while the steady-state poll-loop noise is muted.
+    """
+    try:
+        import jwt as _jwt
+
+        kid = _jwt.get_unverified_header(token).get("kid") or "<no-kid>"
+    except Exception:
+        kid = "<unparseable>"
+    cache_key = f"{kid}:{type(exc).__name__}"
+    if cache_key in _DEBUG_FAILED_KIDS:
+        return
+    _DEBUG_FAILED_KIDS.add(cache_key)
+    logger.debug(
+        "[extension_auth] JWKS validation failed for kid=%s: %s "
+        "(further failures with this kid are suppressed)",
+        kid,
+        exc,
     )
 
 
@@ -299,7 +470,7 @@ async def _verify_token(token: str) -> ExtensionPrincipal:
             return _principal_from_payload(payload, token)
         except Exception as exc:
             last_error = exc
-            logger.debug("[extension_auth] JWKS validation failed: %s", exc)
+            _debug_log_jwks_failure(token, exc)
 
     secret = _env_jwt_secret()
     if secret and alg == "HS256":
@@ -312,13 +483,16 @@ async def _verify_token(token: str) -> ExtensionPrincipal:
             last_error = exc
             logger.debug("[extension_auth] HS256 validation failed: %s", exc)
 
-    # Both paths failed (or weren't available). 
-    # If the token is HS256 but we don't have the shared secret, JWKS is bypassed.
-    # This is the standard state for the desktop app in production (no .env
-    # shipped, but OAuth tokens are HS256). Fallback gracefully as if validation
-    # was disabled entirely, without spamming the debug logs.
+    # Both paths failed (or weren't available).
+    # If the token is HS256 but we don't have the shared secret, JWKS is
+    # bypassed by design (line 294 above). The engine cannot verify the
+    # signature, but the token is presumably still a real Supabase token —
+    # just one whose key hasn't been provisioned to this binary. Fall back
+    # gracefully and emit a single descriptive WARNING (not the generic
+    # "no paths configured" one — that's misleading when SUPABASE_URL is
+    # set).
     if alg == "HS256" and not secret:
-        _maybe_log_degraded_mode_once()
+        _log_degraded_mode_once("hs256_no_secret")
         return _degraded_principal(token)
 
     if last_error is not None:
@@ -387,10 +561,11 @@ async def validate_extension_principal(request: Request) -> ExtensionPrincipal:
     """
     token = _extract_bearer(request)
     if not token:
-        logger.warning(
-            "[extension_auth] rejected %s %s — missing Bearer token",
-            request.method,
+        _log_rejection(
+            "http",
             request.url.path,
+            "missing_bearer_token",
+            method=request.method,
         )
         raise HTTPException(
             status_code=401,
@@ -398,7 +573,7 @@ async def validate_extension_principal(request: Request) -> ExtensionPrincipal:
         )
 
     if not _validation_enabled():
-        _maybe_log_degraded_mode_once()
+        _log_degraded_mode_once("no_paths")
         principal = _degraded_principal(token)
         # Stash on request.state for symmetry with the verified path —
         # downstream code can read ``request.state.principal`` regardless
@@ -410,11 +585,18 @@ async def validate_extension_principal(request: Request) -> ExtensionPrincipal:
     try:
         principal = await _verify_token(token)
     except Exception as exc:
-        logger.warning(
-            "[extension_auth] rejected %s %s — JWT validation failed (%s: %s)",
+        _log_rejection(
+            "http",
+            request.url.path,
+            f"jwt_validation_failed_{type(exc).__name__}",
+            method=request.method,
+        )
+        # Detailed exception goes at DEBUG to keep the WARNING line stable
+        # while still preserving the full error in the dev log.
+        logger.debug(
+            "[extension_auth] %s %s validation exc detail: %s",
             request.method,
             request.url.path,
-            type(exc).__name__,
             exc,
         )
         raise HTTPException(
@@ -453,10 +635,7 @@ async def validate_extension_principal_ws(
     """
     token = _extract_bearer_ws(websocket)
     if not token:
-        logger.warning(
-            "[extension_auth] WS rejected %s — missing Bearer token",
-            websocket.url.path,
-        )
+        _log_rejection("ws", websocket.url.path, "missing_bearer_token")
         await websocket.close(
             code=WS_CLOSE_POLICY_VIOLATION,
             reason="Missing auth token",
@@ -464,16 +643,20 @@ async def validate_extension_principal_ws(
         return None
 
     if not _validation_enabled():
-        _maybe_log_degraded_mode_once()
+        _log_degraded_mode_once("no_paths")
         return _degraded_principal(token)
 
     try:
         return await _verify_token(token)
     except Exception as exc:
-        logger.warning(
-            "[extension_auth] WS rejected %s — JWT validation failed (%s: %s)",
+        _log_rejection(
+            "ws",
             websocket.url.path,
-            type(exc).__name__,
+            f"jwt_validation_failed_{type(exc).__name__}",
+        )
+        logger.debug(
+            "[extension_auth] WS %s validation exc detail: %s",
+            websocket.url.path,
             exc,
         )
         await websocket.close(

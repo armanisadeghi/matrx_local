@@ -43,6 +43,7 @@ import { usePermissionsContext } from "@/contexts/PermissionsContext";
 import { useAudioDevices } from "@/contexts/AudioDevicesContext";
 import type { AudioDeviceInfo } from "@/lib/transcription/types";
 import { PLATFORM } from "@/lib/platformCtx";
+import { logWarn } from "@/lib/error-reporting";
 
 const TRIGGER_REQUIRED_KEYS = new Set<string>([
   "screen_recording",
@@ -141,8 +142,8 @@ function SectionCard({
         status === "denied"
           ? "border-red-500/20"
           : status === "granted"
-          ? "border-emerald-500/10"
-          : ""
+            ? "border-emerald-500/10"
+            : ""
       }`}
     >
       <CardContent className="p-0">
@@ -160,10 +161,16 @@ function SectionCard({
               <h3 className="text-sm font-medium">{title}</h3>
               <StatusBadge status={status} />
             </div>
-            <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {description}
+            </p>
           </div>
           <span className="flex-shrink-0 text-muted-foreground">
-            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            {open ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
           </span>
         </button>
         {open && (
@@ -178,24 +185,37 @@ function PermissionAlert({ perm }: { perm: PermissionInfo | null }) {
   if (!perm || perm.status === "granted") return null;
 
   const openSettings = () => {
-    const url = perm.deep_link || "x-apple.systempreferences:com.apple.preference.security?Privacy";
+    const url =
+      perm.deep_link ||
+      "x-apple.systempreferences:com.apple.preference.security?Privacy";
     import("@tauri-apps/plugin-shell")
       .then(({ open }) => open(url))
-      .catch(() => { window.open(url, "_blank"); });
+      .catch(() => {
+        window.open(url, "_blank");
+      });
   };
 
-  const isTriggerRequired = PLATFORM.is_mac && perm.status === "not_determined" && TRIGGER_REQUIRED_KEYS.has(perm.permission);
+  const isTriggerRequired =
+    PLATFORM.is_mac &&
+    perm.status === "not_determined" &&
+    TRIGGER_REQUIRED_KEYS.has(perm.permission);
 
   return (
     <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
       <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-amber-500">Permission Required</p>
+        <p className="text-xs font-medium text-amber-500">
+          Permission Required
+        </p>
         {perm.user_instructions && (
-          <p className="mt-0.5 text-xs text-muted-foreground">{perm.user_instructions}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {perm.user_instructions}
+          </p>
         )}
         {perm.grant_instructions && (
-          <p className="mt-1 font-mono text-[10px] text-muted-foreground/70">{perm.grant_instructions}</p>
+          <p className="mt-1 font-mono text-[10px] text-muted-foreground/70">
+            {perm.grant_instructions}
+          </p>
         )}
       </div>
       {isTriggerRequired ? (
@@ -262,17 +282,24 @@ function MicrophoneCard({ perm }: { perm: PermissionInfo | null }) {
     }
   };
 
-  const audioSrc = audioB64
-    ? `data:${audioMime};base64,${audioB64}`
-    : null;
+  const audioSrc = audioB64 ? `data:${audioMime};base64,${audioB64}` : null;
 
   return (
     <div className="space-y-4">
       <PermissionAlert perm={perm} />
 
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={listAudioDevices} disabled={loadingDevices}>
-          {loadingDevices ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={listAudioDevices}
+          disabled={loadingDevices}
+        >
+          {loadingDevices ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
           Scan Devices
         </Button>
         {selectedDevice && (
@@ -291,19 +318,27 @@ function MicrophoneCard({ perm }: { perm: PermissionInfo | null }) {
               return (
                 <button
                   key={dev.name}
-                  onClick={() => setSelectedDevice(isSelected ? null : dev.name)}
+                  onClick={() =>
+                    setSelectedDevice(isSelected ? null : dev.name)
+                  }
                   className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all hover:border-primary/40 ${
                     isSelected || isDefault
                       ? "border-primary bg-primary/5"
                       : "border-border bg-background"
                   }`}
                 >
-                  <Mic className={`h-4 w-4 flex-shrink-0 ${isSelected || isDefault ? "text-primary" : "text-muted-foreground"}`} />
+                  <Mic
+                    className={`h-4 w-4 flex-shrink-0 ${isSelected || isDefault ? "text-primary" : "text-muted-foreground"}`}
+                  />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium">{dev.name}</p>
                     <p className="text-[10px] text-muted-foreground">
-                      {dev.channels.length > 0 ? `${Math.max(...dev.channels)}ch` : ""}
-                      {dev.sample_rates.length > 0 ? ` · ${Math.round(Math.max(...dev.sample_rates) / 1000)}kHz` : ""}
+                      {dev.channels.length > 0
+                        ? `${Math.max(...dev.channels)}ch`
+                        : ""}
+                      {dev.sample_rates.length > 0
+                        ? ` · ${Math.round(Math.max(...dev.sample_rates) / 1000)}kHz`
+                        : ""}
                       {dev.is_default ? " · default" : ""}
                     </p>
                   </div>
@@ -356,16 +391,23 @@ function MicrophoneCard({ perm }: { perm: PermissionInfo | null }) {
       )}
 
       {audioDevices.length === 0 && !loadingDevices && (
-        <p className="text-xs text-muted-foreground">No microphones detected. Grant microphone permission and click Scan Devices.</p>
+        <p className="text-xs text-muted-foreground">
+          No microphones detected. Grant microphone permission and click Scan
+          Devices.
+        </p>
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">{error}</div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">
+          {error}
+        </div>
       )}
 
       {audioSrc && (
         <div className="rounded-lg border bg-background p-3">
-          <p className="mb-2 text-xs font-medium text-emerald-500">Recording Complete — Play it back:</p>
+          <p className="mb-2 text-xs font-medium text-emerald-500">
+            Recording Complete — Play it back:
+          </p>
           <audio controls src={audioSrc} className="w-full" />
           <a
             href={audioSrc}
@@ -410,8 +452,17 @@ function SpeakersCard({ perm }: { perm: PermissionInfo | null }) {
     <div className="space-y-4">
       <PermissionAlert perm={perm} />
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={loadDevices} disabled={loading}>
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={loadDevices}
+          disabled={loading}
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
           Scan Devices
         </Button>
       </div>
@@ -424,17 +475,23 @@ function SpeakersCard({ perm }: { perm: PermissionInfo | null }) {
             >
               <Volume2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium">{String(dev.name)}</p>
+                <p className="truncate text-xs font-medium">
+                  {String(dev.name)}
+                </p>
                 <p className="text-[10px] text-muted-foreground">
                   {dev.channels ? `${dev.channels}ch` : ""}{" "}
-                  {dev.sample_rate ? `${Math.round(Number(dev.sample_rate) / 1000)}kHz` : ""}
+                  {dev.sample_rate
+                    ? `${Math.round(Number(dev.sample_rate) / 1000)}kHz`
+                    : ""}
                 </p>
               </div>
             </div>
           ))}
         </div>
       ) : !loading ? (
-        <p className="text-xs text-muted-foreground">No output devices detected.</p>
+        <p className="text-xs text-muted-foreground">
+          No output devices detected.
+        </p>
       ) : null}
     </div>
   );
@@ -480,7 +537,9 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
     setLoading(true);
     try {
       if (mode === "photo") {
-        const result = await engine.capturePhoto({ device_index: selectedCamera ?? 0 });
+        const result = await engine.capturePhoto({
+          device_index: selectedCamera ?? 0,
+        });
         const meta = result.metadata as Record<string, unknown> | null;
         if (meta?.base64) {
           setMediaB64(String(meta.base64));
@@ -515,8 +574,17 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
       <PermissionAlert perm={perm} />
 
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={loadCameras} disabled={scanning}>
-          {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Scan className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={loadCameras}
+          disabled={scanning}
+        >
+          {scanning ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Scan className="h-3.5 w-3.5" />
+          )}
           Scan Cameras
         </Button>
       </div>
@@ -544,7 +612,9 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
             <button
               onClick={() => setMode("photo")}
               className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-all ${
-                mode === "photo" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                mode === "photo"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <ImageIcon className="h-3.5 w-3.5" />
@@ -553,7 +623,9 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
             <button
               onClick={() => setMode("video")}
               className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-all ${
-                mode === "video" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                mode === "video"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <Video className="h-3.5 w-3.5" />
@@ -569,7 +641,9 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
                   key={d}
                   onClick={() => setDuration(d)}
                   className={`rounded-md px-2.5 py-1 text-xs transition-all ${
-                    duration === d ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    duration === d
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
                   }`}
                 >
                   {d}s
@@ -578,7 +652,11 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
             </div>
           )}
 
-          <Button onClick={handleCapture} disabled={loading || selectedCamera === null} size="sm">
+          <Button
+            onClick={handleCapture}
+            disabled={loading || selectedCamera === null}
+            size="sm"
+          >
             {loading ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -586,7 +664,11 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
               </>
             ) : (
               <>
-                {mode === "photo" ? <Camera className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
+                {mode === "photo" ? (
+                  <Camera className="h-3.5 w-3.5" />
+                ) : (
+                  <Video className="h-3.5 w-3.5" />
+                )}
                 {mode === "photo" ? "Take Photo" : `Record ${duration}s`}
               </>
             )}
@@ -601,7 +683,9 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">{error}</div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">
+          {error}
+        </div>
       )}
 
       {mediaSrc && (
@@ -610,9 +694,17 @@ function CameraCard({ perm }: { perm: PermissionInfo | null }) {
             {mode === "photo" ? "Photo Captured" : "Video Recorded"}
           </p>
           {mediaMime.startsWith("image/") ? (
-            <img src={mediaSrc} alt="Captured" className="max-h-64 w-full rounded-md object-contain" />
+            <img
+              src={mediaSrc}
+              alt="Captured"
+              className="max-h-64 w-full rounded-md object-contain"
+            />
           ) : (
-            <video controls src={mediaSrc} className="max-h-64 w-full rounded-md" />
+            <video
+              controls
+              src={mediaSrc}
+              className="max-h-64 w-full rounded-md"
+            />
           )}
           <a
             href={mediaSrc}
@@ -676,9 +768,12 @@ function ScreenRecordingCard({ perm }: { perm: PermissionInfo | null }) {
           setError(result.output || "Screenshot failed");
         }
       } else {
-        const screenIdx = selectedMonitor === "all" ? undefined : parseInt(selectedMonitor);
+        const screenIdx =
+          selectedMonitor === "all" ? undefined : parseInt(selectedMonitor);
         const result = await engine.recordScreen({
-          screen_index: isNaN(screenIdx as number) ? undefined : (screenIdx as number),
+          screen_index: isNaN(screenIdx as number)
+            ? undefined
+            : (screenIdx as number),
           duration_seconds: duration,
         });
         const meta = result.metadata as Record<string, unknown> | null;
@@ -697,15 +792,29 @@ function ScreenRecordingCard({ perm }: { perm: PermissionInfo | null }) {
   };
 
   const mediaSrc = mediaB64 ? `data:${mediaMime};base64,${mediaB64}` : null;
-  const ext = mediaMime === "image/gif" ? "gif" : mediaMime.startsWith("video") ? "mp4" : "png";
+  const ext =
+    mediaMime === "image/gif"
+      ? "gif"
+      : mediaMime.startsWith("video")
+        ? "mp4"
+        : "png";
 
   return (
     <div className="space-y-4">
       <PermissionAlert perm={perm} />
 
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={loadScreens} disabled={scanning}>
-          {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Monitor className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={loadScreens}
+          disabled={scanning}
+        >
+          {scanning ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Monitor className="h-3.5 w-3.5" />
+          )}
           Detect Screens
         </Button>
       </div>
@@ -748,7 +857,9 @@ function ScreenRecordingCard({ perm }: { perm: PermissionInfo | null }) {
         <button
           onClick={() => setMode("screenshot")}
           className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-all ${
-            mode === "screenshot" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            mode === "screenshot"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground"
           }`}
         >
           <ImageIcon className="h-3.5 w-3.5" />
@@ -757,7 +868,9 @@ function ScreenRecordingCard({ perm }: { perm: PermissionInfo | null }) {
         <button
           onClick={() => setMode("video")}
           className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-all ${
-            mode === "video" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            mode === "video"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground"
           }`}
         >
           <Video className="h-3.5 w-3.5" />
@@ -773,7 +886,9 @@ function ScreenRecordingCard({ perm }: { perm: PermissionInfo | null }) {
               key={d}
               onClick={() => setDuration(d)}
               className={`rounded-md px-2.5 py-1 text-xs transition-all ${
-                duration === d ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
+                duration === d
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
               }`}
             >
               {d}s
@@ -790,25 +905,41 @@ function ScreenRecordingCard({ perm }: { perm: PermissionInfo | null }) {
           </>
         ) : (
           <>
-            {mode === "screenshot" ? <Eye className="h-3.5 w-3.5" /> : <Video className="h-3.5 w-3.5" />}
+            {mode === "screenshot" ? (
+              <Eye className="h-3.5 w-3.5" />
+            ) : (
+              <Video className="h-3.5 w-3.5" />
+            )}
             {mode === "screenshot" ? "Take Screenshot" : `Record ${duration}s`}
           </>
         )}
       </Button>
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">{error}</div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">
+          {error}
+        </div>
       )}
 
       {mediaSrc && (
         <div className="rounded-lg border bg-background p-3">
           <p className="mb-2 text-xs font-medium text-emerald-500">
-            {mode === "screenshot" ? "Screenshot Captured" : "Recording Complete"}
+            {mode === "screenshot"
+              ? "Screenshot Captured"
+              : "Recording Complete"}
           </p>
           {mediaMime.startsWith("image/") ? (
-            <img src={mediaSrc} alt="Screenshot" className="max-h-72 w-full rounded-md object-contain border" />
+            <img
+              src={mediaSrc}
+              alt="Screenshot"
+              className="max-h-72 w-full rounded-md object-contain border"
+            />
           ) : (
-            <video controls src={mediaSrc} className="max-h-72 w-full rounded-md" />
+            <video
+              controls
+              src={mediaSrc}
+              className="max-h-72 w-full rounded-md"
+            />
           )}
           <a
             href={mediaSrc}
@@ -859,20 +990,37 @@ function BluetoothCard({ perm }: { perm: PermissionInfo | null }) {
       <PermissionAlert perm={perm} />
 
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={loadDevices} disabled={loading}>
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={loadDevices}
+          disabled={loading}
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
           Refresh
         </Button>
-        <span className="text-xs text-muted-foreground">{devices.length} device(s) found</span>
+        <span className="text-xs text-muted-foreground">
+          {devices.length} device(s) found
+        </span>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">{error}</div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">
+          {error}
+        </div>
       )}
 
       {[
         { label: "Connected", devs: connected, color: "text-emerald-500" },
-        { label: "Paired / Available", devs: paired, color: "text-muted-foreground" },
+        {
+          label: "Paired / Available",
+          devs: paired,
+          color: "text-muted-foreground",
+        },
       ].map(({ label, devs, color }) =>
         devs.length > 0 ? (
           <div key={label}>
@@ -881,18 +1029,35 @@ function BluetoothCard({ perm }: { perm: PermissionInfo | null }) {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b bg-muted/40">
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Name</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Address</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Battery</th>
+                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                      Name
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                      Type
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                      Address
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                      Battery
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {devs.map((dev, i) => (
-                    <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
-                      <td className="px-3 py-2 font-medium">{String(dev.name ?? "Unknown")}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{String(dev.type ?? dev.device_type ?? "—")}</td>
-                      <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{String(dev.address ?? "—")}</td>
+                    <tr
+                      key={i}
+                      className="border-b last:border-0 hover:bg-muted/20"
+                    >
+                      <td className="px-3 py-2 font-medium">
+                        {String(dev.name ?? "Unknown")}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {String(dev.type ?? dev.device_type ?? "—")}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
+                        {String(dev.address ?? "—")}
+                      </td>
                       <td className="px-3 py-2">
                         {dev.battery ? (
                           <span className="flex items-center gap-1">
@@ -909,11 +1074,13 @@ function BluetoothCard({ perm }: { perm: PermissionInfo | null }) {
               </table>
             </div>
           </div>
-        ) : null
+        ) : null,
       )}
 
       {devices.length === 0 && !loading && (
-        <p className="text-xs text-muted-foreground">No Bluetooth devices found. Enable Bluetooth and click Refresh.</p>
+        <p className="text-xs text-muted-foreground">
+          No Bluetooth devices found. Enable Bluetooth and click Refresh.
+        </p>
       )}
     </div>
   );
@@ -970,32 +1137,60 @@ function WifiCard({ perm }: { perm: PermissionInfo | null }) {
       <PermissionAlert perm={perm} />
 
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={loadNetworks} disabled={loading}>
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={loadNetworks}
+          disabled={loading}
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Wifi className="h-3.5 w-3.5" />
+          )}
           Scan Networks
         </Button>
         {lastScan && (
           <span className="text-[10px] text-muted-foreground">
-            Last scan: {lastScan.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            Last scan:{" "}
+            {lastScan.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })}
           </span>
         )}
-        <span className="text-xs text-muted-foreground">{networks.length} network(s)</span>
+        <span className="text-xs text-muted-foreground">
+          {networks.length} network(s)
+        </span>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">{error}</div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">
+          {error}
+        </div>
       )}
 
       {connectedNet && (
         <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
-          <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-emerald-500">Connected</p>
+          <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-emerald-500">
+            Connected
+          </p>
           <div className="flex items-center gap-3">
             <Wifi className="h-5 w-5 text-emerald-500" />
             <div>
-              <p className="text-sm font-semibold">{String(connectedNet.ssid ?? "Unknown")}</p>
+              <p className="text-sm font-semibold">
+                {String(connectedNet.ssid ?? "Unknown")}
+              </p>
               <p className="text-[10px] text-muted-foreground">
-                {connectedNet.rssi ? `${connectedNet.rssi} dBm` : connectedNet.signal_percent ? `${connectedNet.signal_percent}%` : ""}
-                {connectedNet.channel ? ` · Channel ${connectedNet.channel}` : ""}
+                {connectedNet.rssi
+                  ? `${connectedNet.rssi} dBm`
+                  : connectedNet.signal_percent
+                    ? `${connectedNet.signal_percent}%`
+                    : ""}
+                {connectedNet.channel
+                  ? ` · Channel ${connectedNet.channel}`
+                  : ""}
                 {connectedNet.security ? ` · ${connectedNet.security}` : ""}
               </p>
             </div>
@@ -1008,27 +1203,55 @@ function WifiCard({ perm }: { perm: PermissionInfo | null }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b bg-muted/40">
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">SSID</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Signal</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Channel</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Security</th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  SSID
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  Signal
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  Channel
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  Security
+                </th>
               </tr>
             </thead>
             <tbody>
               {otherNets.map((net, i) => {
                 const rssi = Number(net.rssi ?? 0);
-                const sigPct = net.signal_percent ? Number(net.signal_percent) : null;
+                const sigPct = net.signal_percent
+                  ? Number(net.signal_percent)
+                  : null;
                 return (
-                  <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
-                    <td className="px-3 py-2 font-medium">{String(net.ssid ?? "(hidden)")}</td>
+                  <tr
+                    key={i}
+                    className="border-b last:border-0 hover:bg-muted/20"
+                  >
+                    <td className="px-3 py-2 font-medium">
+                      {String(net.ssid ?? "(hidden)")}
+                    </td>
                     <td className="px-3 py-2 font-mono text-emerald-500">
                       {rssi ? rssiToBars(rssi) : sigPct ? `${sigPct}%` : "—"}
-                      {rssi ? <span className="ml-1 text-[10px] text-muted-foreground">{rssi} dBm</span> : null}
+                      {rssi ? (
+                        <span className="ml-1 text-[10px] text-muted-foreground">
+                          {rssi} dBm
+                        </span>
+                      ) : null}
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">{String(net.channel ?? "—")}</td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {String(net.channel ?? "—")}
+                    </td>
                     <td className="px-3 py-2">
-                      <span className={`flex items-center gap-1 ${net.security && String(net.security).toLowerCase() !== "open" && String(net.security) ? "text-amber-500" : "text-zinc-500"}`}>
-                        {net.security && String(net.security).toLowerCase() !== "open" ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                      <span
+                        className={`flex items-center gap-1 ${net.security && String(net.security).toLowerCase() !== "open" && String(net.security) ? "text-amber-500" : "text-zinc-500"}`}
+                      >
+                        {net.security &&
+                        String(net.security).toLowerCase() !== "open" ? (
+                          <Lock className="h-3 w-3" />
+                        ) : (
+                          <Unlock className="h-3 w-3" />
+                        )}
                         {String(net.security || "Open")}
                       </span>
                     </td>
@@ -1041,7 +1264,9 @@ function WifiCard({ perm }: { perm: PermissionInfo | null }) {
       )}
 
       {networks.length === 0 && !loading && (
-        <p className="text-xs text-muted-foreground">No networks found. Enable WiFi and click Scan Networks.</p>
+        <p className="text-xs text-muted-foreground">
+          No networks found. Enable WiFi and click Scan Networks.
+        </p>
       )}
     </div>
   );
@@ -1052,7 +1277,9 @@ function WifiCard({ perm }: { perm: PermissionInfo | null }) {
 // ---------------------------------------------------------------------------
 
 function NetworkCard({ perm }: { perm: PermissionInfo | null }) {
-  const [interfaces, setInterfaces] = useState<Array<Record<string, unknown>>>([]);
+  const [interfaces, setInterfaces] = useState<Array<Record<string, unknown>>>(
+    [],
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [internetOk, setInternetOk] = useState<boolean | null>(null);
@@ -1090,23 +1317,42 @@ function NetworkCard({ perm }: { perm: PermissionInfo | null }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={loadInterfaces} disabled={loading}>
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={loadInterfaces}
+          disabled={loading}
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
           Refresh
         </Button>
         {internetOk !== null && (
           <Badge
             variant="outline"
-            className={internetOk ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500" : "border-red-500/30 bg-red-500/10 text-red-500"}
+            className={
+              internetOk
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500"
+                : "border-red-500/30 bg-red-500/10 text-red-500"
+            }
           >
-            {internetOk ? <CheckCircle2 className="h-3 w-3 mr-1" /> : <XCircle className="h-3 w-3 mr-1" />}
+            {internetOk ? (
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+            ) : (
+              <XCircle className="h-3 w-3 mr-1" />
+            )}
             Internet {internetOk ? "reachable" : "unreachable"}
           </Badge>
         )}
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">{error}</div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">
+          {error}
+        </div>
       )}
 
       {allIfaces.length > 0 && (
@@ -1114,20 +1360,41 @@ function NetworkCard({ perm }: { perm: PermissionInfo | null }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b bg-muted/40">
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Interface</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">IPv4</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">MAC</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Status</th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  Interface
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  Type
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  IPv4
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  MAC
+                </th>
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                  Status
+                </th>
               </tr>
             </thead>
             <tbody>
               {allIfaces.map((iface, i) => (
-                <tr key={i} className="border-b last:border-0 hover:bg-muted/20">
-                  <td className="px-3 py-2 font-mono font-medium">{String(iface.name)}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{String(iface.type ?? "—")}</td>
-                  <td className="px-3 py-2 font-mono">{String(iface.ipv4 ?? "—")}</td>
-                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{String(iface.mac ?? "—")}</td>
+                <tr
+                  key={i}
+                  className="border-b last:border-0 hover:bg-muted/20"
+                >
+                  <td className="px-3 py-2 font-mono font-medium">
+                    {String(iface.name)}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {String(iface.type ?? "—")}
+                  </td>
+                  <td className="px-3 py-2 font-mono">
+                    {String(iface.ipv4 ?? "—")}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
+                    {String(iface.mac ?? "—")}
+                  </td>
                   <td className="px-3 py-2">
                     <Badge
                       variant="outline"
@@ -1148,7 +1415,9 @@ function NetworkCard({ perm }: { perm: PermissionInfo | null }) {
       )}
 
       {allIfaces.length === 0 && !loading && (
-        <p className="text-xs text-muted-foreground">No network interfaces detected.</p>
+        <p className="text-xs text-muted-foreground">
+          No network interfaces detected.
+        </p>
       )}
     </div>
   );
@@ -1174,7 +1443,9 @@ function ConnectedDevicesCard() {
   const [devices, setDevices] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set(["display"]));
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(
+    new Set(["display"]),
+  );
 
   const loadDevices = useCallback(async () => {
     setLoading(true);
@@ -1213,15 +1484,28 @@ function ConnectedDevicesCard() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={loadDevices} disabled={loading}>
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={loadDevices}
+          disabled={loading}
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
           Refresh
         </Button>
-        <span className="text-xs text-muted-foreground">{devices.length} device(s) found</span>
+        <span className="text-xs text-muted-foreground">
+          {devices.length} device(s) found
+        </span>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">{error}</div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">
+          {error}
+        </div>
       )}
 
       {Object.entries(categories).map(([cat, devs]) => (
@@ -1230,36 +1514,60 @@ function ConnectedDevicesCard() {
             className="flex w-full items-center gap-3 bg-muted/30 px-3 py-2.5 text-left hover:bg-muted/50 transition-colors"
             onClick={() => toggleCat(cat)}
           >
-            <span className="text-muted-foreground">{CATEGORY_ICONS[cat] ?? CATEGORY_ICONS.other}</span>
+            <span className="text-muted-foreground">
+              {CATEGORY_ICONS[cat] ?? CATEGORY_ICONS.other}
+            </span>
             <span className="text-xs font-medium capitalize">{cat}</span>
-            <Badge variant="outline" className="ml-auto text-[10px] px-1.5 py-0">{devs.length}</Badge>
-            {expandedCats.has(cat) ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+            <Badge
+              variant="outline"
+              className="ml-auto text-[10px] px-1.5 py-0"
+            >
+              {devs.length}
+            </Badge>
+            {expandedCats.has(cat) ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
           </button>
           {expandedCats.has(cat) && (
             <div className="divide-y">
               {devs.map((dev, i) => (
                 <div key={i} className="flex items-start gap-3 px-4 py-3">
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium">{String(dev.name ?? "Unknown")}</p>
+                    <p className="text-xs font-medium">
+                      {String(dev.name ?? "Unknown")}
+                    </p>
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
                       {!!dev.resolution && (
-                        <span className="text-[10px] text-muted-foreground">{String(dev.resolution)}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {String(dev.resolution)}
+                        </span>
                       )}
                       {!!dev.connection && (
-                        <span className="text-[10px] text-muted-foreground">{String(dev.connection)}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {String(dev.connection)}
+                        </span>
                       )}
                       {!!dev.vendor && (
-                        <span className="text-[10px] text-muted-foreground">{String(dev.vendor)}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {String(dev.vendor)}
+                        </span>
                       )}
                       {!!dev.serial && (
-                        <span className="font-mono text-[10px] text-muted-foreground">S/N: {String(dev.serial)}</span>
+                        <span className="font-mono text-[10px] text-muted-foreground">
+                          S/N: {String(dev.serial)}
+                        </span>
                       )}
                       {!!dev.speed && (
-                        <span className="text-[10px] text-muted-foreground">{String(dev.speed)}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {String(dev.speed)}
+                        </span>
                       )}
                       {!!dev.battery && (
                         <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                          <Battery className="h-2.5 w-2.5" />{String(dev.battery)}%
+                          <Battery className="h-2.5 w-2.5" />
+                          {String(dev.battery)}%
                         </span>
                       )}
                     </div>
@@ -1284,7 +1592,9 @@ function ConnectedDevicesCard() {
       ))}
 
       {devices.length === 0 && !loading && (
-        <p className="text-xs text-muted-foreground">No connected devices found.</p>
+        <p className="text-xs text-muted-foreground">
+          No connected devices found.
+        </p>
       )}
     </div>
   );
@@ -1295,7 +1605,9 @@ function ConnectedDevicesCard() {
 // ---------------------------------------------------------------------------
 
 function LocationCard({ perm }: { perm: PermissionInfo | null }) {
-  const [location, setLocation] = useState<Record<string, unknown> | null>(null);
+  const [location, setLocation] = useState<Record<string, unknown> | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1328,13 +1640,24 @@ function LocationCard({ perm }: { perm: PermissionInfo | null }) {
     <div className="space-y-4">
       <PermissionAlert perm={perm} />
 
-      <Button variant="outline" size="sm" onClick={loadLocation} disabled={loading}>
-        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={loadLocation}
+        disabled={loading}
+      >
+        {loading ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <MapPin className="h-3.5 w-3.5" />
+        )}
         Get Location
       </Button>
 
       {error && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">{error}</div>
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-xs text-red-400">
+          {error}
+        </div>
       )}
 
       {location?.available === true && lat !== null && lon !== null ? (
@@ -1346,10 +1669,14 @@ function LocationCard({ perm }: { perm: PermissionInfo | null }) {
                 {lat.toFixed(6)}, {lon.toFixed(6)}
               </p>
               {accuracy !== null && (
-                <p className="text-xs text-muted-foreground">Accuracy: ±{Math.round(accuracy)}m</p>
+                <p className="text-xs text-muted-foreground">
+                  Accuracy: ±{Math.round(accuracy)}m
+                </p>
               )}
               {source && (
-                <p className="text-[10px] text-muted-foreground">Source: {source}</p>
+                <p className="text-[10px] text-muted-foreground">
+                  Source: {source}
+                </p>
               )}
               {mapsUrl && (
                 <a
@@ -1365,10 +1692,13 @@ function LocationCard({ perm }: { perm: PermissionInfo | null }) {
             </div>
           </div>
         </div>
-      ) : location !== null && !loading && (
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-500">
-          Location unavailable — {source ?? "permission may be required"}
-        </div>
+      ) : (
+        location !== null &&
+        !loading && (
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-500">
+            Location unavailable — {source ?? "permission may be required"}
+          </div>
+        )
       )}
     </div>
   );
@@ -1386,9 +1716,12 @@ function AccessibilityCard({ perm }: { perm: PermissionInfo | null }) {
         <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
           <CheckCircle2 className="h-4 w-4 text-emerald-500" />
           <div>
-            <p className="text-xs font-medium text-emerald-500">Accessibility access granted</p>
+            <p className="text-xs font-medium text-emerald-500">
+              Accessibility access granted
+            </p>
             <p className="text-[10px] text-muted-foreground mt-0.5">
-              Window management, keyboard/mouse automation, and screen control are all available.
+              Window management, keyboard/mouse automation, and screen control
+              are all available.
             </p>
           </div>
         </div>
@@ -1405,7 +1738,9 @@ function AccessibilityCard({ perm }: { perm: PermissionInfo | null }) {
 // ---------------------------------------------------------------------------
 
 function SystemResourcesCard({ engineStatus }: { engineStatus: EngineStatus }) {
-  const [resources, setResources] = useState<Record<string, unknown> | null>(null);
+  const [resources, setResources] = useState<Record<string, unknown> | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
@@ -1434,9 +1769,15 @@ function SystemResourcesCard({ engineStatus }: { engineStatus: EngineStatus }) {
   const cpuLogical = resources.cpu_logical as number | undefined;
   const cpuFreq = resources.cpu_freq as string | undefined;
   // Backend returns ram_* fields; support both names for forward compatibility
-  const ramPercent = Number(resources.ram_percent ?? resources.memory_percent ?? 0);
-  const ramUsed = Number(resources.ram_used_gb ?? resources.memory_used_gb ?? 0);
-  const ramTotal = Number(resources.ram_total_gb ?? resources.memory_total_gb ?? 0);
+  const ramPercent = Number(
+    resources.ram_percent ?? resources.memory_percent ?? 0,
+  );
+  const ramUsed = Number(
+    resources.ram_used_gb ?? resources.memory_used_gb ?? 0,
+  );
+  const ramTotal = Number(
+    resources.ram_total_gb ?? resources.memory_total_gb ?? 0,
+  );
   const diskPercent = Number(resources.disk_percent ?? 0);
   const diskUsed = Number(resources.disk_used_gb ?? 0);
   const diskTotal = Number(resources.disk_total_gb ?? 0);
@@ -1455,25 +1796,55 @@ function SystemResourcesCard({ engineStatus }: { engineStatus: EngineStatus }) {
         <CardTitle className="flex items-center gap-2 text-base">
           <Cpu className="h-4 w-4 text-primary" />
           System Resources
-          <Button variant="ghost" size="sm" className="ml-auto h-6 text-xs" onClick={load} disabled={loading}>
-            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-6 text-xs"
+            onClick={load}
+            disabled={loading}
+          >
+            {loading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3 w-3" />
+            )}
           </Button>
         </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-3 gap-4">
           <ResourceBar label="CPU" percent={cpuPercent} detail={cpuDetail} />
-          <ResourceBar label="RAM" percent={ramPercent} detail={`${ramUsed.toFixed(1)} / ${fmtStorage(ramTotal)}`} />
-          <ResourceBar label="Disk" percent={diskPercent} detail={`${fmtStorage(diskUsed)} / ${fmtStorage(diskTotal)}`} />
+          <ResourceBar
+            label="RAM"
+            percent={ramPercent}
+            detail={`${ramUsed.toFixed(1)} / ${fmtStorage(ramTotal)}`}
+          />
+          <ResourceBar
+            label="Disk"
+            percent={diskPercent}
+            detail={`${fmtStorage(diskUsed)} / ${fmtStorage(diskTotal)}`}
+          />
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function ResourceBar({ label, percent, detail }: { label: string; percent: number; detail: string }) {
+function ResourceBar({
+  label,
+  percent,
+  detail,
+}: {
+  label: string;
+  percent: number;
+  detail: string;
+}) {
   const barColor =
-    percent > 90 ? "bg-red-500" : percent > 70 ? "bg-amber-500" : "bg-emerald-500";
+    percent > 90
+      ? "bg-red-500"
+      : percent > 70
+        ? "bg-amber-500"
+        : "bg-emerald-500";
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
@@ -1496,33 +1867,46 @@ function ResourceBar({ label, percent, detail }: { label: string; percent: numbe
 
 export function Devices({ engineStatus }: DevicesProps) {
   // Engine REST: provides device listings and rich instruction text per permission.
-  const [enginePermissions, setEnginePermissions] = useState<Record<string, PermissionInfo>>({});
+  const [enginePermissions, setEnginePermissions] = useState<
+    Record<string, PermissionInfo>
+  >({});
   const [loading, setLoading] = useState(false);
   const [platform, setPlatform] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   // Tauri plugin: authoritative TCC status for microphone, camera, screen_recording,
   // accessibility, full_disk_access, and input_monitoring on macOS.
-  const { permissions: pluginPermissions, checkAll: recheckPlugin, isLoading: pluginLoading } = usePermissionsContext();
+  const {
+    permissions: pluginPermissions,
+    checkAll: recheckPlugin,
+    isLoading: pluginLoading,
+  } = usePermissionsContext();
 
-  const loadPermissions = useCallback(async () => {
-    if (engineStatus !== "connected") return;
-    setLoading(true);
-    try {
-      const result = await engine.getDevicePermissions();
-      setPlatform(result.platform);
-      const map: Record<string, PermissionInfo> = {};
-      for (const ep of result.permissions) {
-        map[ep.permission] = ep;
+  const loadPermissions = useCallback(
+    async (forceRefresh = false) => {
+      if (engineStatus !== "connected") return;
+      setLoading(true);
+      try {
+        const result = await engine.getDevicePermissions(forceRefresh);
+        setPlatform(result.platform);
+        const map: Record<string, PermissionInfo> = {};
+        for (const ep of result.permissions) {
+          map[ep.permission] = ep;
+        }
+        setEnginePermissions(map);
+        setLastRefresh(new Date());
+      } catch (err) {
+        // Was previously ``console.error("...", err)`` which serialised an
+        // ``Error`` instance to ``{}`` in the captured log file (Error
+        // properties are non-enumerable, so JSON.stringify drops them).
+        // Route through the unified logger so we get message + stack.
+        logWarn("devices", "load permissions", err);
+      } finally {
+        setLoading(false);
       }
-      setEnginePermissions(map);
-      setLastRefresh(new Date());
-    } catch (err) {
-      console.error("Failed to load permissions:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [engineStatus]);
+    },
+    [engineStatus],
+  );
 
   useEffect(() => {
     loadPermissions();
@@ -1542,17 +1926,23 @@ export function Devices({ engineStatus }: DevicesProps) {
       if (PLUGIN_KEYS.has(key)) {
         const engineEntry = enginePermissions[key];
         if (engineEntry) {
-          merged[key] = { ...engineEntry, status: pluginState.status as PermissionStatusValue };
+          merged[key] = {
+            ...engineEntry,
+            status: pluginState.status as PermissionStatusValue,
+          };
         } else {
           merged[key] = {
             permission: key,
             status: pluginState.status as PermissionStatusValue,
             details: pluginState.detail ?? "",
             user_details: pluginState.description,
-            user_instructions: pluginState.status !== "granted"
-              ? `Open ${pluginState.label} settings to grant access.`
+            user_instructions:
+              pluginState.status !== "granted"
+                ? `Open ${pluginState.label} settings to grant access.`
+                : "",
+            grant_instructions: pluginState.settingsUrl
+              ? `Open: ${pluginState.settingsUrl}`
               : "",
-            grant_instructions: pluginState.settingsUrl ? `Open: ${pluginState.settingsUrl}` : "",
             deep_link: pluginState.settingsUrl,
           } as PermissionInfo;
         }
@@ -1563,20 +1953,51 @@ export function Devices({ engineStatus }: DevicesProps) {
 
   const p = (key: string): PermissionInfo | null => permissions[key] ?? null;
 
-  const grantedCount = Object.values(permissions).filter((x) => x.status === "granted").length;
+  const grantedCount = Object.values(permissions).filter(
+    (x) => x.status === "granted",
+  ).length;
   const totalCount = Object.keys(permissions).length;
 
   const sections = [
-    { key: "microphone", status: (p("microphone")?.status ?? "unknown") as PermissionStatusValue },
-    { key: "speakers", status: (p("microphone")?.status ?? "unknown") as PermissionStatusValue },
-    { key: "camera", status: (p("camera")?.status ?? "unknown") as PermissionStatusValue },
-    { key: "screen_recording", status: (p("screen_recording")?.status ?? "unknown") as PermissionStatusValue },
-    { key: "bluetooth", status: (p("bluetooth")?.status ?? "unknown") as PermissionStatusValue },
-    { key: "wifi", status: (p("wifi")?.status ?? "unknown") as PermissionStatusValue },
-    { key: "network", status: (p("network")?.status ?? "unknown") as PermissionStatusValue },
+    {
+      key: "microphone",
+      status: (p("microphone")?.status ?? "unknown") as PermissionStatusValue,
+    },
+    {
+      key: "speakers",
+      status: (p("microphone")?.status ?? "unknown") as PermissionStatusValue,
+    },
+    {
+      key: "camera",
+      status: (p("camera")?.status ?? "unknown") as PermissionStatusValue,
+    },
+    {
+      key: "screen_recording",
+      status: (p("screen_recording")?.status ??
+        "unknown") as PermissionStatusValue,
+    },
+    {
+      key: "bluetooth",
+      status: (p("bluetooth")?.status ?? "unknown") as PermissionStatusValue,
+    },
+    {
+      key: "wifi",
+      status: (p("wifi")?.status ?? "unknown") as PermissionStatusValue,
+    },
+    {
+      key: "network",
+      status: (p("network")?.status ?? "unknown") as PermissionStatusValue,
+    },
     { key: "connected", status: "granted" as PermissionStatusValue },
-    { key: "location", status: (p("location")?.status ?? "unknown") as PermissionStatusValue },
-    { key: "accessibility", status: (p("accessibility")?.status ?? "unknown") as PermissionStatusValue },
+    {
+      key: "location",
+      status: (p("location")?.status ?? "unknown") as PermissionStatusValue,
+    },
+    {
+      key: "accessibility",
+      status: (p("accessibility")?.status ??
+        "unknown") as PermissionStatusValue,
+    },
   ];
 
   return (
@@ -1592,10 +2013,17 @@ export function Devices({ engineStatus }: DevicesProps) {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => { loadPermissions(); recheckPlugin(); }}
-          disabled={(loading || pluginLoading) || engineStatus !== "connected"}
+          onClick={() => {
+            loadPermissions(true);
+            recheckPlugin();
+          }}
+          disabled={loading || pluginLoading || engineStatus !== "connected"}
         >
-          {(loading || pluginLoading) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {loading || pluginLoading ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
           Refresh All
         </Button>
       </PageHeader>
@@ -1607,7 +2035,8 @@ export function Devices({ engineStatus }: DevicesProps) {
               <CardContent className="py-12 text-center">
                 <Monitor className="mx-auto mb-3 h-10 w-10 text-muted-foreground/50" />
                 <p className="text-sm text-muted-foreground">
-                  Connect to the engine to check device permissions and capabilities
+                  Connect to the engine to check device permissions and
+                  capabilities
                 </p>
               </CardContent>
             </Card>
@@ -1619,7 +2048,11 @@ export function Devices({ engineStatus }: DevicesProps) {
                   {sections.map(({ key, status }) => {
                     const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.unknown;
                     return (
-                      <Badge key={key} variant="outline" className={`gap-1.5 ${cfg.bgColor} ${cfg.color} border`}>
+                      <Badge
+                        key={key}
+                        variant="outline"
+                        className={`gap-1.5 ${cfg.bgColor} ${cfg.color} border`}
+                      >
                         <span className={cfg.color}>{cfg.icon}</span>
                         {key.replace("_", " ")}
                       </Badge>
@@ -1628,7 +2061,10 @@ export function Devices({ engineStatus }: DevicesProps) {
                   {lastRefresh && (
                     <span className="ml-auto self-center text-xs text-muted-foreground">
                       Last checked:{" "}
-                      {lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {lastRefresh.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </span>
                   )}
                 </div>
@@ -1638,8 +2074,14 @@ export function Devices({ engineStatus }: DevicesProps) {
               <SectionCard
                 icon={<Mic className="h-5 w-5" />}
                 title="Microphone"
-                status={(p("microphone")?.status ?? "unknown") as PermissionStatusValue}
-                description={p("microphone")?.user_details || "Audio input for voice commands, recording, and transcription"}
+                status={
+                  (p("microphone")?.status ??
+                    "unknown") as PermissionStatusValue
+                }
+                description={
+                  p("microphone")?.user_details ||
+                  "Audio input for voice commands, recording, and transcription"
+                }
                 defaultOpen={true}
               >
                 <MicrophoneCard perm={p("microphone")} />
@@ -1659,8 +2101,13 @@ export function Devices({ engineStatus }: DevicesProps) {
               <SectionCard
                 icon={<Camera className="h-5 w-5" />}
                 title="Camera"
-                status={(p("camera")?.status ?? "unknown") as PermissionStatusValue}
-                description={p("camera")?.user_details || "Video input for capture and video calls"}
+                status={
+                  (p("camera")?.status ?? "unknown") as PermissionStatusValue
+                }
+                description={
+                  p("camera")?.user_details ||
+                  "Video input for capture and video calls"
+                }
               >
                 <CameraCard perm={p("camera")} />
               </SectionCard>
@@ -1669,8 +2116,14 @@ export function Devices({ engineStatus }: DevicesProps) {
               <SectionCard
                 icon={<Eye className="h-5 w-5" />}
                 title="Screen Recording"
-                status={(p("screen_recording")?.status ?? "unknown") as PermissionStatusValue}
-                description={p("screen_recording")?.user_details || "Screen capture for screenshots and video recording"}
+                status={
+                  (p("screen_recording")?.status ??
+                    "unknown") as PermissionStatusValue
+                }
+                description={
+                  p("screen_recording")?.user_details ||
+                  "Screen capture for screenshots and video recording"
+                }
               >
                 <ScreenRecordingCard perm={p("screen_recording")} />
               </SectionCard>
@@ -1679,8 +2132,13 @@ export function Devices({ engineStatus }: DevicesProps) {
               <SectionCard
                 icon={<Bluetooth className="h-5 w-5" />}
                 title="Bluetooth"
-                status={(p("bluetooth")?.status ?? "unknown") as PermissionStatusValue}
-                description={p("bluetooth")?.user_details || "Bluetooth peripherals and smart devices"}
+                status={
+                  (p("bluetooth")?.status ?? "unknown") as PermissionStatusValue
+                }
+                description={
+                  p("bluetooth")?.user_details ||
+                  "Bluetooth peripherals and smart devices"
+                }
               >
                 <BluetoothCard perm={p("bluetooth")} />
               </SectionCard>
@@ -1689,8 +2147,13 @@ export function Devices({ engineStatus }: DevicesProps) {
               <SectionCard
                 icon={<Wifi className="h-5 w-5" />}
                 title="WiFi Networks"
-                status={(p("wifi")?.status ?? "unknown") as PermissionStatusValue}
-                description={p("wifi")?.user_details || "Scan and discover WiFi networks in range"}
+                status={
+                  (p("wifi")?.status ?? "unknown") as PermissionStatusValue
+                }
+                description={
+                  p("wifi")?.user_details ||
+                  "Scan and discover WiFi networks in range"
+                }
               >
                 <WifiCard perm={p("wifi")} />
               </SectionCard>
@@ -1699,8 +2162,13 @@ export function Devices({ engineStatus }: DevicesProps) {
               <SectionCard
                 icon={<Network className="h-5 w-5" />}
                 title="Network Interfaces"
-                status={(p("network")?.status ?? "unknown") as PermissionStatusValue}
-                description={p("network")?.user_details || "Network adapters, IP addresses, and connectivity status"}
+                status={
+                  (p("network")?.status ?? "unknown") as PermissionStatusValue
+                }
+                description={
+                  p("network")?.user_details ||
+                  "Network adapters, IP addresses, and connectivity status"
+                }
               >
                 <NetworkCard perm={p("network")} />
               </SectionCard>
@@ -1719,8 +2187,13 @@ export function Devices({ engineStatus }: DevicesProps) {
               <SectionCard
                 icon={<MapPin className="h-5 w-5" />}
                 title="Location"
-                status={(p("location")?.status ?? "unknown") as PermissionStatusValue}
-                description={p("location")?.user_details || "Device location via GPS or network"}
+                status={
+                  (p("location")?.status ?? "unknown") as PermissionStatusValue
+                }
+                description={
+                  p("location")?.user_details ||
+                  "Device location via GPS or network"
+                }
               >
                 <LocationCard perm={p("location")} />
               </SectionCard>
@@ -1729,8 +2202,14 @@ export function Devices({ engineStatus }: DevicesProps) {
               <SectionCard
                 icon={<Shield className="h-5 w-5" />}
                 title="Accessibility"
-                status={(p("accessibility")?.status ?? "unknown") as PermissionStatusValue}
-                description={p("accessibility")?.user_details || "Keyboard/mouse automation, window management, and screen control"}
+                status={
+                  (p("accessibility")?.status ??
+                    "unknown") as PermissionStatusValue
+                }
+                description={
+                  p("accessibility")?.user_details ||
+                  "Keyboard/mouse automation, window management, and screen control"
+                }
               >
                 <AccessibilityCard perm={p("accessibility")} />
               </SectionCard>

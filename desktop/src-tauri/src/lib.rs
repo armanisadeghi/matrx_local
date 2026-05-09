@@ -459,6 +459,98 @@ fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
     let _ = child.kill();
 }
 
+/// Spawn a detached shell subprocess that will reliably terminate every
+/// managed sidecar process on a SIGTERM-then-SIGKILL ladder — even if our
+/// own process SIGABRTs partway through the GGML cleanup below.
+///
+/// Why this exists: `graceful_shutdown_sync` races with GGML's C atexit
+/// handlers — if the wake-word thread, llama-server, or main WhisperContext
+/// aren't fully torn down in time, GGML calls `abort()` → SIGABRT on the
+/// Tauri main process → "AI Matrx quit unexpectedly" crash report. When
+/// that happens, every step BELOW the SIGABRT in `graceful_shutdown_sync`
+/// is skipped, including the steps that kill the Python sidecar (steps
+/// 3-5). The user is left with (a) a crash dialog and (b) live sidecar
+/// processes holding ports — exactly the bug we observed in production
+/// with sidecar PIDs surviving for 10+ minutes after Quit.
+///
+/// The detached subprocess is created in its own session via `setsid`
+/// (Unix) or `DETACHED_PROCESS` (Windows), so it survives our SIGABRT
+/// and runs to completion regardless of what happens to us.
+///
+/// Sequence (executed inside the detached subprocess):
+///   T+0.2s:  pkill -TERM   ← graceful; Python's lifespan teardown gets to run
+///   T+5.2s:  pkill -KILL   ← force; anything still alive dies
+///
+/// Patterns match the bundled macOS Helper-app ("Matrx Engine"), the Linux
+/// flat binary ("matrx-engine"), the legacy "aimatrx-engine" name, plus
+/// cloudflared and llama-server. They do NOT match "AI Matrx" (the parent
+/// app's process name), so this subprocess can never accidentally kill us
+/// or any other parent app instance.
+fn spawn_detached_shutdown_safety_net() {
+    #[cfg(unix)]
+    {
+        let script = "\
+            sleep 0.2; \
+            pkill -TERM -f 'Matrx Engine|matrx-engine|aimatrx-engine' 2>/dev/null; \
+            pkill -TERM -f 'cloudflared tunnel' 2>/dev/null; \
+            sleep 5; \
+            pkill -KILL -f 'Matrx Engine|matrx-engine|aimatrx-engine' 2>/dev/null; \
+            pkill -KILL -f 'cloudflared tunnel' 2>/dev/null; \
+            pkill -KILL -f 'llama-server' 2>/dev/null; \
+            true";
+
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        // setsid creates a new session and process group, detaching this
+        // child entirely from our process group. If we receive SIGABRT, the
+        // OS does not propagate it to processes outside our group, so the
+        // killer keeps running.
+        //
+        // SAFETY: setsid(2) has no preconditions and only fails if we're
+        // already a process-group leader, which is fine to ignore.
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+
+        let _ = cmd.spawn();
+    }
+
+    #[cfg(windows)]
+    {
+        // /T = kill process tree, /F = force. The leading `timeout` gives
+        // anything mid-shutdown ~1s to exit on its own before /F lands.
+        let script = "\
+            timeout /t 1 /nobreak >nul & \
+            taskkill /F /T /IM \"matrx-engine.exe\" >nul 2>&1 & \
+            taskkill /F /T /IM \"matrx-engine-x86_64-pc-windows-msvc.exe\" >nul 2>&1 & \
+            taskkill /F /T /IM \"aimatrx-engine.exe\" >nul 2>&1 & \
+            taskkill /F /T /IM \"aimatrx-engine-x86_64-pc-windows-msvc.exe\" >nul 2>&1 & \
+            taskkill /F /T /IM \"cloudflared.exe\" >nul 2>&1 & \
+            taskkill /F /T /IM \"llama-server.exe\" >nul 2>&1 & \
+            exit /b 0";
+
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+            .spawn();
+    }
+}
+
 /// Shared graceful-shutdown sequence used by both Quit and Restart.
 ///
 /// SIGABRT root cause: whisper.cpp and llama.cpp embed the GGML C library
@@ -476,6 +568,13 @@ fn sigterm_then_kill(child: tauri_plugin_shell::process::CommandChild) {
 /// so this synchronous function can lock it reliably. tokio::sync::Mutex
 /// try_lock() returns TryLockError whenever any async command holds it,
 /// which caused GGML cleanup to be silently skipped → SIGABRT on every quit.
+///
+/// Even with the GGML fix, we ALSO spawn a detached safety-net subprocess at
+/// the very top of this function (see `spawn_detached_shutdown_safety_net`).
+/// That subprocess kills the sidecars on a SIGTERM-then-SIGKILL ladder
+/// regardless of whether the GGML cleanup below succeeds, completes, or
+/// crashes. It is the load-bearing guarantee that quit always shuts down
+/// the sidecars; the per-step kills below are belt-and-suspenders.
 fn graceful_shutdown_sync(
     sidecar_state: &SidecarState,
     transcription_state: &TranscriptionState,
@@ -489,6 +588,17 @@ fn graceful_shutdown_sync(
     if SHUTDOWN_DONE.swap(true, Ordering::SeqCst) {
         return;
     }
+
+    // STEP 0 (LOAD-BEARING): Spawn a detached subprocess that will pkill all
+    // managed sidecar processes on a 5-second SIGTERM-then-SIGKILL ladder.
+    //
+    // This is the safety net that guarantees quit shuts down the sidecars
+    // even if the GGML cleanup steps below SIGABRT us before reaching the
+    // existing per-step kills (steps 3-5). See spawn_detached_shutdown_safety_net
+    // for the full rationale; in short, every step below this one is
+    // best-effort, and this one always finishes because it lives in a
+    // detached subprocess in its own session.
+    spawn_detached_shutdown_safety_net();
 
     // 0. Signal the wake-word thread to stop, then join it with a timeout.
     //

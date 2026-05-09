@@ -56,11 +56,13 @@ import logging
 import os
 import re
 import signal
-import socket
-import subprocess
 import sys
 import threading
 from pathlib import Path
+
+# Preflight is imported lazily inside main() so that any import-time error
+# from psutil / process iteration cannot prevent us from at least logging
+# what went wrong before crashing.
 
 # ── Windows asyncio pipe transport noise suppressor ──────────────────────────
 #
@@ -169,257 +171,35 @@ else:
 
 STATIC_DIR = BUNDLE_DIR / "static"
 
+# Default port + scan range — these constants stay here so external imports
+# (notably app/api/tunnel_routes.py imports DISCOVERY_FILE from this module)
+# keep working. The actual port-finding and stale-process-killing logic now
+# lives in app/preflight.py — single source of truth for managed services.
 DEFAULT_PORT = 22140
 MAX_PORT_SCAN = 20
 DISCOVERY_DIR = MATRX_HOME_DIR
 DISCOVERY_FILE = DISCOVERY_DIR / "local.json"
 
 
-def _is_port_available(port: int) -> bool:
-    """Check if a port is available for binding.
-
-    Uses SO_REUSEADDR so that TIME_WAIT sockets (left by a recently-stopped
-    server) do not falsely report the port as busy.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.settimeout(0.1)
-        try:
-            s.bind(("127.0.0.1", port))
-            return True
-        except OSError:
-            return False
-
-
-def _pid_is_alive(pid: int) -> bool:
-    """Return True if a process with the given PID exists and is running."""
-    try:
-        os.kill(pid, 0)  # signal 0 = just check existence
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
-
-
-def _pids_on_port(port: int) -> list[int]:
-    """Return PIDs of all processes currently listening on *port* (localhost).
-
-    Uses ``lsof`` on macOS/BSD and ``ss`` on Linux.  Falls back to the other
-    tool if the primary one is not found.
-    """
-    pids: list[int] = []
-
-    def _try_lsof(p: int) -> list[int]:
-        result: list[int] = []
-        try:
-            out = subprocess.check_output(
-                ["lsof", "-ti", f"tcp:{p}"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            for line in out.splitlines():
-                line = line.strip()
-                if line.isdigit():
-                    result.append(int(line))
-        except Exception:
-            pass
-        return result
-
-    def _try_ss(p: int) -> list[int]:
-        result: list[int] = []
-        try:
-            out = subprocess.check_output(
-                ["ss", "-tlnp", f"sport = :{p}"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            for line in out.splitlines():
-                for chunk in line.split("pid=")[1:]:
-                    pid_str = chunk.split(",")[0]
-                    if pid_str.isdigit():
-                        result.append(int(pid_str))
-        except Exception:
-            pass
-        return result
-
-    if PLATFORM["is_mac"]:
-        pids = _try_lsof(port) or _try_ss(port)
-    else:
-        pids = _try_ss(port) or _try_lsof(port)
-
-    return pids
-
-
-def _is_matrx_pid(pid: int, stale_pid: int | None) -> bool:
-    """Return True if *pid* looks like a previous Matrx engine instance."""
-    if pid == stale_pid:
-        return True
-    # Check /proc cmdline (Linux) or ps (macOS/BSD)
-    try:
-        if not PLATFORM["is_mac"] and Path(f"/proc/{pid}/cmdline").exists():
-            cmdline = Path(f"/proc/{pid}/cmdline").read_text().replace("\x00", " ")
-            return "run.py" in cmdline or "matrx" in cmdline.lower()
-        out = subprocess.check_output(
-            ["ps", "-p", str(pid), "-o", "command="],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-        return "run.py" in out or "matrx" in out.lower()
-    except Exception:
-        return False
-
-
-def _kill_stale_instances() -> None:
-    """Kill ALL stale Matrx engine processes across the full port scan range.
-
-    Called once at startup before we try to bind a port.  This ensures that
-    if the user has accumulated 2-3 dead instances (e.g. from multiple dev
-    restarts without clean shutdown), they are all swept away and we always
-    reclaim the default port rather than drifting to +1, +2, ...
-    """
-    stale_pid: int | None = None
-    try:
-        data = json.loads(DISCOVERY_FILE.read_text())
-        stale_pid = int(data.get("pid", 0)) or None
-    except Exception:
-        pass
-
-    killed: list[int] = []
-    seen: set[int] = set()
-
-    for offset in range(MAX_PORT_SCAN):
-        port = DEFAULT_PORT + offset
-        if _is_port_available(port):
-            continue
-        for pid in _pids_on_port(port):
-            if pid == os.getpid() or pid in seen:
-                continue
-            seen.add(pid)
-            if _is_matrx_pid(pid, stale_pid):
-                logger.warning(
-                    "Stale Matrx instance (pid=%d) holds port %d — terminating it",
-                    pid,
-                    port,
-                )
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except Exception as exc:
-                    logger.debug("SIGTERM pid=%d failed: %s", pid, exc)
-                killed.append(pid)
-
-    if killed:
-        import time
-        time.sleep(0.6)
-        for pid in killed:
-            if _pid_is_alive(pid):
-                logger.warning("pid=%d did not exit after SIGTERM — sending SIGKILL", pid)
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except Exception:
-                    pass
-        time.sleep(0.2)
-        logger.info("Swept %d stale Matrx instance(s): %s", len(killed), killed)
-
-
-def _kill_stale_owner(port: int) -> bool:
-    """If the port is still held after the global sweep, try one more time.
-
-    Returns True if the port is now available.
-    """
-    if _is_port_available(port):
-        return True
-
-    stale_pid: int | None = None
-    try:
-        data = json.loads(DISCOVERY_FILE.read_text())
-        stale_pid = int(data.get("pid", 0)) or None
-    except Exception:
-        pass
-
-    for pid in _pids_on_port(port):
-        if pid == os.getpid():
-            continue
-        if _is_matrx_pid(pid, stale_pid):
-            logger.warning(
-                "Residual Matrx instance (pid=%d) still holds port %d — killing",
-                pid,
-                port,
-            )
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except Exception as exc:
-                logger.debug("Could not kill pid %d: %s", pid, exc)
-
-    import time
-    time.sleep(0.2)
-    return _is_port_available(port)
-
-
-def find_available_port() -> int:
-    """Find an available port for the server.
-
-    If MATRX_PORT is set, uses that exact port (no fallback — user chose it).
-    Otherwise:
-      1. Sweeps the full scan range and kills ALL stale Matrx instances.
-      2. Tries to bind DEFAULT_PORT (should now be free in the common case).
-      3. Falls back to scanning consecutive ports if something else (not us)
-         is holding the default port.
-    """
-    env_port = os.environ.get("MATRX_PORT")
-    if env_port:
-        port = int(env_port)
-        if _is_port_available(port):
-            return port
-        logger.error("MATRX_PORT=%d is already in use", port)
-        raise SystemExit(f"Port {port} (from MATRX_PORT) is already in use")
-
-    # Sweep all stale Matrx instances across the entire port range first.
-    _kill_stale_instances()
-
-    # After the sweep, the default port should be free in the common case.
-    if _is_port_available(DEFAULT_PORT):
-        return DEFAULT_PORT
-
-    # If it's still taken, try one targeted kill then fall back to scanning.
-    if _kill_stale_owner(DEFAULT_PORT):
-        return DEFAULT_PORT
-
-    for offset in range(1, MAX_PORT_SCAN):
-        candidate = DEFAULT_PORT + offset
-        if _is_port_available(candidate):
-            logger.warning(
-                "Default port %d is held by a non-Matrx process — using %d instead",
-                DEFAULT_PORT,
-                candidate,
-            )
-            return candidate
-
-    raise SystemExit(
-        f"No available port found in range {DEFAULT_PORT}-{DEFAULT_PORT + MAX_PORT_SCAN - 1}. "
-        f"Set MATRX_PORT to a specific open port."
-    )
-
-
 def write_discovery_file(port: int, tunnel_url: str | None = None) -> None:
-    """Write the active port (and optional tunnel URL) to ~/.matrx/local.json."""
+    """Write the active port (and optional tunnel URL) to ~/.matrx/local.json.
+
+    Delegates the file write to app.preflight.write_discovery_file so the
+    schema (top-level legacy fields + nested `services` map + atomic rename)
+    is owned in one place. We still own the runtime-singleton sync into
+    app.api.tunnel_state so /extension/tunnel/status is correct immediately
+    after startup without waiting for the next tunnel update.
+    """
     try:
-        DISCOVERY_DIR.mkdir(parents=True, exist_ok=True)
-        payload: dict = {
-            "port": port,
-            "host": "127.0.0.1",
-            "url": f"http://127.0.0.1:{port}",
-            "ws": f"ws://127.0.0.1:{port}/ws",
-            "pid": os.getpid(),
-            "version": _APP_VERSION,
-        }
-        if tunnel_url:
-            payload["tunnel_url"] = tunnel_url
-            payload["tunnel_ws"] = tunnel_url.replace("https://", "wss://") + "/ws"
-        DISCOVERY_FILE.write_text(json.dumps(payload, indent=2))
+        from app.preflight import write_discovery_file as _pf_write
+        _pf_write(
+            engine_port=port,
+            pid=os.getpid(),
+            version=_APP_VERSION,
+            tunnel_url=tunnel_url,
+        )
         logger.info("Discovery file written: %s", DISCOVERY_FILE)
 
-        # Keep the runtime singleton in sync so `/extension/tunnel/status`
-        # reports the correct local + tunnel state immediately after
-        # startup, without waiting for the next tunnel update.
         try:
             from app.api.tunnel_state import set_local_url, set_tunnel_url
             set_local_url(port)
@@ -441,16 +221,17 @@ def update_discovery_tunnel(tunnel_url: str | None) -> None:
     runtime introspection by authenticated clients) must agree.
     """
     try:
-        if not DISCOVERY_FILE.exists():
-            return
-        data = json.loads(DISCOVERY_FILE.read_text())
+        from app.preflight import update_discovery_service
         if tunnel_url:
-            data["tunnel_url"] = tunnel_url
-            data["tunnel_ws"] = tunnel_url.replace("https://", "wss://") + "/ws"
+            update_discovery_service(
+                "tunnel",
+                {
+                    "url": tunnel_url,
+                    "ws": tunnel_url.replace("https://", "wss://") + "/ws",
+                },
+            )
         else:
-            data.pop("tunnel_url", None)
-            data.pop("tunnel_ws", None)
-        DISCOVERY_FILE.write_text(json.dumps(data, indent=2))
+            update_discovery_service("tunnel", None)
     except Exception:
         logger.debug("Failed to update tunnel in discovery file", exc_info=True)
 
@@ -762,8 +543,39 @@ def main() -> None:
     if _is_tauri_sidecar():
         _start_parent_watchdog()
 
+    # ── Preflight ────────────────────────────────────────────────────────────
+    # Sweep every managed service (engine sidecars from prior installs, stray
+    # cloudflared tunnel processes, orphaned llama-server) BEFORE we touch a
+    # port. The full registry of "what we manage" lives in app/preflight.py;
+    # adding a new service is a one-line edit there. Ancestor PIDs (the Tauri
+    # shell when we run as a sidecar) are protected automatically.
+    print("[phase:preflight] Cleaning orphaned managed services...", flush=True)
+    try:
+        from app.preflight import clean_orphans, assign_engine_port
+        clean_orphans()
+    except Exception:
+        # Preflight must never block startup. Fall back to direct port bind
+        # and rely on the port scan below if the orphan sweep failed.
+        logger.exception("Preflight clean_orphans failed — continuing anyway")
+
+        def assign_engine_port() -> int:  # type: ignore[no-redef]
+            import socket as _s
+            env = os.environ.get("MATRX_PORT")
+            if env:
+                return int(env)
+            for offset in range(MAX_PORT_SCAN):
+                p = DEFAULT_PORT + offset
+                with _s.socket(_s.AF_INET, _s.SOCK_STREAM) as sk:
+                    sk.setsockopt(_s.SOL_SOCKET, _s.SO_REUSEADDR, 1)
+                    try:
+                        sk.bind(("127.0.0.1", p))
+                        return p
+                    except OSError:
+                        continue
+            raise SystemExit("No free port in scan range")
+
     print("[phase:port] Finding available port...", flush=True)
-    port = find_available_port()
+    port = assign_engine_port()
     logger.info("Starting Matrx Local on port %d", port)
     print(f"[phase:port] Engine will bind to port {port}", flush=True)
 

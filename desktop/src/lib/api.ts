@@ -866,13 +866,52 @@ class EngineAPI {
     });
   }
 
+  /** Whether the engine WebSocket is currently in OPEN state. */
+  isWsConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * Wait briefly for the engine WebSocket to reach OPEN state.
+   *
+   * The engine flips ``engineStatus`` to ``"connected"`` as soon as REST
+   * is reachable, but ``connectWebSocket()`` runs slightly later in the
+   * init sequence (it waits for the Supabase session token). Any page
+   * that fires a ``invokeToolWs`` call inside an ``engineStatus ===
+   * "connected"`` ``useEffect`` race would otherwise see a synchronous
+   * "WebSocket not connected" throw on the first render. Waiting up to
+   * a short window collapses the race without changing call sites.
+   *
+   * Resolves to ``true`` if the socket comes up in time, ``false``
+   * otherwise. Callers can then decide to show a friendly "connecting…"
+   * state instead of a raw error toast.
+   */
+  async waitForWs(timeoutMs: number = 3000): Promise<boolean> {
+    if (this.isWsConnected()) return true;
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (this.isWsConnected()) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return this.isWsConnected();
+  }
+
   /** Invoke a tool via WebSocket (stateful, supports concurrent ops). */
   async invokeToolWs(
     tool: string,
     input: Record<string, unknown>,
   ): Promise<ToolResult> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("WebSocket not connected");
+    // Brief grace window — see ``waitForWs`` docstring. Without this,
+    // a page that mounts before the WS upgrade completes throws
+    // immediately and shows the user an error UI for what is really a
+    // sub-second ordering race during startup.
+    if (!this.isWsConnected()) {
+      const ready = await this.waitForWs(3000);
+      if (!ready) {
+        throw new Error(
+          "WebSocket not connected (engine is still finishing startup — please retry in a moment)",
+        );
+      }
     }
 
     const id = `req-${++this.requestIdCounter}`;
@@ -2038,13 +2077,30 @@ class EngineAPI {
 
   // ---- Device & Permission API ----
 
-  /** Get all device/OS permission statuses. */
-  async getDevicePermissions(): Promise<DevicePermissionsResponse> {
+  /**
+   * Get all device/OS permission statuses.
+   *
+   * The engine caches the response for 30 s, so the typical hit is
+   * sub-millisecond. A cold call (every 30 s, plus the very first one)
+   * triggers ``check_all_permissions`` which probes 15 OS surfaces —
+   * macOS ``system_profiler`` invocations alone can take 15–25 s on a
+   * cold daemon, so the timeout is generous enough to cover the worst
+   * case without aborting in production.
+   *
+   * @param forceRefresh - bypass the engine's TTL cache and re-probe.
+   *   Use this from "Refresh" affordances; default to ``false`` for
+   *   automatic page mounts so they hit the cache.
+   */
+  async getDevicePermissions(
+    forceRefresh: boolean = false,
+  ): Promise<DevicePermissionsResponse> {
     if (!this.baseUrl) throw new Error("Engine not discovered");
     const headers = await this.authHeaders();
-    const resp = await fetch(`${this.baseUrl}/devices/permissions`, {
+    const url = new URL(`${this.baseUrl}/devices/permissions`);
+    if (forceRefresh) url.searchParams.set("force_refresh", "true");
+    const resp = await fetch(url.toString(), {
       headers,
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(35000),
     });
     if (!resp.ok) throw new Error(`Permissions check failed: ${resp.status}`);
     return resp.json();
@@ -2725,9 +2781,7 @@ class EngineAPI {
     let socket: WebSocket | null = null;
 
     const connect = async () => {
-      const token = this._getAccessToken
-        ? await this._getAccessToken()
-        : null;
+      const token = this._getAccessToken ? await this._getAccessToken() : null;
       if (closed) return;
       const url = token
         ? `${this.wsUrl!.replace(/\/ws$/, "")}/extension/bridge-events?token=${encodeURIComponent(token)}`
@@ -3222,8 +3276,8 @@ export interface ExtensionRpcResponse {
 
 export interface ExtensionSessionInfo {
   session_id: string;
-  connected_at: number;       // seconds since epoch
-  last_seen_at: number;       // seconds since epoch
+  connected_at: number; // seconds since epoch
+  last_seen_at: number; // seconds since epoch
   pending_calls: number;
 }
 
@@ -3271,8 +3325,8 @@ export interface ExtensionTunnelStatus {
 }
 
 export interface BridgeEvent {
-  timestamp: number;          // ms since epoch
-  kind: string;               // "rpc.in", "ws.open", "invoke.send", etc.
+  timestamp: number; // ms since epoch
+  kind: string; // "rpc.in", "ws.open", "invoke.send", etc.
   direction: "in" | "out" | "internal";
   payload: Record<string, unknown>;
 }
@@ -3280,8 +3334,8 @@ export interface BridgeEvent {
 export interface ExtensionCommandMetrics {
   count: number;
   error_count: number;
-  last_n_latencies_ms: number[];   // ring buffer, capped at 100
-  last_called_at: number;          // unix ms; 0 if never
+  last_n_latencies_ms: number[]; // ring buffer, capped at 100
+  last_called_at: number; // unix ms; 0 if never
   last_error: string | null;
 }
 
@@ -3294,9 +3348,9 @@ export type ExtensionMetricsSnapshot = Record<string, ExtensionCommandMetrics>;
 
 /** One row of the boot-time self-check, as returned by the engine. */
 export interface ExtensionBootCheckResult {
-  name: string;                    // e.g. "routes_registered"
+  name: string; // e.g. "routes_registered"
   status: "ok" | "warn" | "fail";
-  message: string;                 // short human-readable detail
+  message: string; // short human-readable detail
   duration_ms: number;
 }
 
@@ -3312,10 +3366,10 @@ export interface ExtensionBootCheckResult {
 export interface ExtensionBootCheckSummary {
   ok: boolean;
   checks: ExtensionBootCheckResult[];
-  started_at: number;     // unix seconds
-  finished_at: number;    // unix seconds
+  started_at: number; // unix seconds
+  finished_at: number; // unix seconds
   duration_ms: number;
-  message?: string;       // present only when checks is empty
+  message?: string; // present only when checks is empty
 }
 
 // Singleton instance

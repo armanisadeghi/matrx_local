@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { engine } from "@/lib/api";
 import type { EngineStatus } from "@/hooks/use-engine";
+import { logWarn } from "@/lib/error-reporting";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,9 +90,28 @@ const PORT_CATEGORIES: PortCategory[] = [
     label: "Dev Servers",
     color: "text-green-400 border-green-400/40 bg-green-400/10",
     match: (p) => {
-      const devPorts = [3000, 3001, 3002, 3003, 4000, 5000, 5173, 5174, 4200, 8080, 8000, 8888, 9000];
-      const devNames = ["node", "npm", "pnpm", "yarn", "vite", "webpack", "parcel", "next", "nuxt", "remix", "astro", "bun"];
-      return devPorts.includes(p.port) || devNames.some((n) => p.name.toLowerCase().includes(n));
+      const devPorts = [
+        3000, 3001, 3002, 3003, 4000, 5000, 5173, 5174, 4200, 8080, 8000, 8888,
+        9000,
+      ];
+      const devNames = [
+        "node",
+        "npm",
+        "pnpm",
+        "yarn",
+        "vite",
+        "webpack",
+        "parcel",
+        "next",
+        "nuxt",
+        "remix",
+        "astro",
+        "bun",
+      ];
+      return (
+        devPorts.includes(p.port) ||
+        devNames.some((n) => p.name.toLowerCase().includes(n))
+      );
     },
   },
   {
@@ -99,8 +119,18 @@ const PORT_CATEGORIES: PortCategory[] = [
     label: "Python",
     color: "text-blue-400 border-blue-400/40 bg-blue-400/10",
     match: (p) => {
-      const pyPorts = [8000, 8001, 8002, 8888, 8889, 5000, 5001, 22140, 22141, 22142];
-      return pyPorts.includes(p.port) || p.name.toLowerCase().includes("python") || p.name.toLowerCase().includes("uvicorn") || p.name.toLowerCase().includes("gunicorn") || p.name.toLowerCase().includes("fastapi") || p.name.toLowerCase().includes("flask") || p.name.toLowerCase().includes("django");
+      const pyPorts = [
+        8000, 8001, 8002, 8888, 8889, 5000, 5001, 22140, 22141, 22142,
+      ];
+      return (
+        pyPorts.includes(p.port) ||
+        p.name.toLowerCase().includes("python") ||
+        p.name.toLowerCase().includes("uvicorn") ||
+        p.name.toLowerCase().includes("gunicorn") ||
+        p.name.toLowerCase().includes("fastapi") ||
+        p.name.toLowerCase().includes("flask") ||
+        p.name.toLowerCase().includes("django")
+      );
     },
   },
   {
@@ -108,16 +138,36 @@ const PORT_CATEGORIES: PortCategory[] = [
     label: "Databases",
     color: "text-orange-400 border-orange-400/40 bg-orange-400/10",
     match: (p) => {
-      const dbPorts = [5432, 5433, 3306, 3307, 27017, 27018, 6379, 6380, 9200, 9300, 1433, 1521, 5984, 8086, 7474, 7687];
-      const dbNames = ["postgres", "mysql", "mongo", "redis", "elastic", "cassandra", "influx", "neo4j", "sqlite", "cockroach"];
-      return dbPorts.includes(p.port) || dbNames.some((n) => p.name.toLowerCase().includes(n));
+      const dbPorts = [
+        5432, 5433, 3306, 3307, 27017, 27018, 6379, 6380, 9200, 9300, 1433,
+        1521, 5984, 8086, 7474, 7687,
+      ];
+      const dbNames = [
+        "postgres",
+        "mysql",
+        "mongo",
+        "redis",
+        "elastic",
+        "cassandra",
+        "influx",
+        "neo4j",
+        "sqlite",
+        "cockroach",
+      ];
+      return (
+        dbPorts.includes(p.port) ||
+        dbNames.some((n) => p.name.toLowerCase().includes(n))
+      );
     },
   },
   {
     id: "docker",
     label: "Docker",
     color: "text-sky-400 border-sky-400/40 bg-sky-400/10",
-    match: (p) => p.name.toLowerCase().includes("docker") || p.name.toLowerCase().includes("containerd") || p.name.toLowerCase().includes("dockerd"),
+    match: (p) =>
+      p.name.toLowerCase().includes("docker") ||
+      p.name.toLowerCase().includes("containerd") ||
+      p.name.toLowerCase().includes("dockerd"),
   },
   {
     id: "local",
@@ -137,8 +187,24 @@ const PORT_CATEGORIES: PortCategory[] = [
     color: "text-fuchsia-400 border-fuchsia-400/40 bg-fuchsia-400/10",
     match: (p) => {
       const aiPorts = [11434, 8080, 5000, 7860, 7861, 7862, 3001, 1234, 4891];
-      const aiNames = ["ollama", "llama", "lmstudio", "localai", "gradio", "diffus", "stable", "comfy", "text-generation", "tgi", "vllm", "llamacpp"];
-      return aiPorts.includes(p.port) || aiNames.some((n) => p.name.toLowerCase().includes(n));
+      const aiNames = [
+        "ollama",
+        "llama",
+        "lmstudio",
+        "localai",
+        "gradio",
+        "diffus",
+        "stable",
+        "comfy",
+        "text-generation",
+        "tgi",
+        "vllm",
+        "llamacpp",
+      ];
+      return (
+        aiPorts.includes(p.port) ||
+        aiNames.some((n) => p.name.toLowerCase().includes(n))
+      );
     },
   },
 ];
@@ -157,7 +223,10 @@ const TERM_CATEGORIES: TermCategory[] = [
     id: "shells",
     label: "Active Shells",
     color: "text-emerald-400 border-emerald-400/40 bg-emerald-400/10",
-    match: (t) => ["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh"].some((s) => t.name.toLowerCase() === s),
+    match: (t) =>
+      ["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh"].some(
+        (s) => t.name.toLowerCase() === s,
+      ),
   },
   {
     id: "running",
@@ -170,8 +239,32 @@ const TERM_CATEGORIES: TermCategory[] = [
     label: "Dev / Code",
     color: "text-blue-400 border-blue-400/40 bg-blue-400/10",
     match: (t) => {
-      const names = ["node", "python", "python3", "uvicorn", "npm", "pnpm", "yarn", "bun", "deno", "cargo", "go", "ruby", "php", "java", "gradle", "mvn", "sbt", "mix", "elixir"];
-      return names.some((n) => t.name.toLowerCase().includes(n) || t.cmdline.toLowerCase().includes(n));
+      const names = [
+        "node",
+        "python",
+        "python3",
+        "uvicorn",
+        "npm",
+        "pnpm",
+        "yarn",
+        "bun",
+        "deno",
+        "cargo",
+        "go",
+        "ruby",
+        "php",
+        "java",
+        "gradle",
+        "mvn",
+        "sbt",
+        "mix",
+        "elixir",
+      ];
+      return names.some(
+        (n) =>
+          t.name.toLowerCase().includes(n) ||
+          t.cmdline.toLowerCase().includes(n),
+      );
     },
   },
   {
@@ -179,15 +272,37 @@ const TERM_CATEGORIES: TermCategory[] = [
     label: "Editors / IDEs",
     color: "text-yellow-400 border-yellow-400/40 bg-yellow-400/10",
     match: (t) => {
-      const editors = ["cursor", "code", "vim", "nvim", "neovim", "nano", "emacs", "helix", "zed", "sublime", "atom", "intellij", "pycharm", "webstorm", "goland"];
-      return editors.some((e) => t.name.toLowerCase().includes(e) || t.cmdline.toLowerCase().includes(e));
+      const editors = [
+        "cursor",
+        "code",
+        "vim",
+        "nvim",
+        "neovim",
+        "nano",
+        "emacs",
+        "helix",
+        "zed",
+        "sublime",
+        "atom",
+        "intellij",
+        "pycharm",
+        "webstorm",
+        "goland",
+      ];
+      return editors.some(
+        (e) =>
+          t.name.toLowerCase().includes(e) ||
+          t.cmdline.toLowerCase().includes(e),
+      );
     },
   },
   {
     id: "git",
     label: "Git",
     color: "text-orange-400 border-orange-400/40 bg-orange-400/10",
-    match: (t) => t.cmdline.toLowerCase().includes("git") || t.name.toLowerCase().includes("git"),
+    match: (t) =>
+      t.cmdline.toLowerCase().includes("git") ||
+      t.name.toLowerCase().includes("git"),
   },
   {
     id: "recent",
@@ -207,27 +322,45 @@ const TERM_CATEGORIES: TermCategory[] = [
     color: "text-pink-400 border-pink-400/40 bg-pink-400/10",
     match: (t) => {
       const cwd = t.cwd.toLowerCase();
-      return cwd.includes("/code/") || cwd.includes("/projects/") || cwd.includes("/dev/") || cwd.includes("/workspace/") || cwd.includes("/src/");
+      return (
+        cwd.includes("/code/") ||
+        cwd.includes("/projects/") ||
+        cwd.includes("/dev/") ||
+        cwd.includes("/workspace/") ||
+        cwd.includes("/src/")
+      );
     },
   },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function sortPorts(ports: PortProcess[], col: PortSortCol, dir: SortDir): PortProcess[] {
+function sortPorts(
+  ports: PortProcess[],
+  col: PortSortCol,
+  dir: SortDir,
+): PortProcess[] {
   return [...ports].sort((a, b) => {
-    const aVal = col === "port" || col === "pid" ? a[col] : a[col].toLowerCase();
-    const bVal = col === "port" || col === "pid" ? b[col] : b[col].toLowerCase();
+    const aVal =
+      col === "port" || col === "pid" ? a[col] : a[col].toLowerCase();
+    const bVal =
+      col === "port" || col === "pid" ? b[col] : b[col].toLowerCase();
     if (aVal < bVal) return dir === "asc" ? -1 : 1;
     if (aVal > bVal) return dir === "asc" ? 1 : -1;
     return 0;
   });
 }
 
-function sortTerminals(terms: TerminalProcess[], col: TermSortCol, dir: SortDir): TerminalProcess[] {
+function sortTerminals(
+  terms: TerminalProcess[],
+  col: TermSortCol,
+  dir: SortDir,
+): TerminalProcess[] {
   return [...terms].sort((a, b) => {
-    const aVal = col === "pid" || col === "elapsed_s" ? a[col] : a[col].toLowerCase();
-    const bVal = col === "pid" || col === "elapsed_s" ? b[col] : b[col].toLowerCase();
+    const aVal =
+      col === "pid" || col === "elapsed_s" ? a[col] : a[col].toLowerCase();
+    const bVal =
+      col === "pid" || col === "elapsed_s" ? b[col] : b[col].toLowerCase();
     if (aVal < bVal) return dir === "asc" ? -1 : 1;
     if (aVal > bVal) return dir === "asc" ? 1 : -1;
     return 0;
@@ -311,6 +444,13 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
 
   const fetchPorts = useCallback(async () => {
     if (engineStatus !== "connected") return;
+    // ``invokeToolWs`` now waits up to 3s for the WS upgrade to complete
+    // (engine status flips to "connected" the moment REST is reachable,
+    // but the WebSocket connects a beat later). If we're still not ready
+    // after the wait, skip this tick — the next interval call will pick
+    // it up. Without this we'd log spurious "WebSocket not connected"
+    // warnings on every page mount during startup.
+    if (!engine.isWsConnected() && !(await engine.waitForWs(3000))) return;
     setLoading(true);
     try {
       const result = await engine.invokeToolWs("ListPorts", { limit: 500 });
@@ -318,7 +458,7 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
         setPorts(result.metadata.ports as PortProcess[]);
       }
     } catch (error) {
-      console.error("Failed to fetch ports:", error);
+      logWarn("ports", "fetch ports", error);
     } finally {
       setLoading(false);
     }
@@ -326,6 +466,7 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
 
   const fetchTerminals = useCallback(async () => {
     if (engineStatus !== "connected") return;
+    if (!engine.isWsConnected() && !(await engine.waitForWs(3000))) return;
     setTerminalsLoading(true);
     try {
       const result = await engine.invokeToolWs("ListTerminals", {});
@@ -333,7 +474,7 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
         setTerminals(result.metadata.terminals as TerminalProcess[]);
       }
     } catch (error) {
-      console.error("Failed to fetch terminals:", error);
+      logWarn("ports", "fetch terminals", error);
     } finally {
       setTerminalsLoading(false);
     }
@@ -357,7 +498,10 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
     if (!processToKill) return;
     setIsKilling(true);
     try {
-      await engine.invokeToolWs("KillProcess", { pid: processToKill.pid, force });
+      await engine.invokeToolWs("KillProcess", {
+        pid: processToKill.pid,
+        force,
+      });
       fetchPorts();
       setKillDialogOpen(false);
     } catch (error) {
@@ -380,9 +524,26 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
   };
 
   const isUserItem = (p: PortProcess) => {
-    const commonPorts = [3000, 3001, 8000, 8080, 5000, 5173, 4200, 8888, 5432, 6379, 27017, 3306, 9200];
-    const commonNames = ["node", "python", "docker", "java", "ruby", "php", "go", "npm", "pnpm", "yarn"];
-    return commonPorts.includes(p.port) || commonNames.some((n) => p.name.toLowerCase().includes(n));
+    const commonPorts = [
+      3000, 3001, 8000, 8080, 5000, 5173, 4200, 8888, 5432, 6379, 27017, 3306,
+      9200,
+    ];
+    const commonNames = [
+      "node",
+      "python",
+      "docker",
+      "java",
+      "ruby",
+      "php",
+      "go",
+      "npm",
+      "pnpm",
+      "yarn",
+    ];
+    return (
+      commonPorts.includes(p.port) ||
+      commonNames.some((n) => p.name.toLowerCase().includes(n))
+    );
   };
 
   // ── Derived port lists ───────────────────────────────────────────────────
@@ -403,20 +564,27 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
     : null;
 
   const filteredPorts = sortPorts(
-    categoryFilter ? searchFilteredPorts.filter(categoryFilter.match) : searchFilteredPorts,
+    categoryFilter
+      ? searchFilteredPorts.filter(categoryFilter.match)
+      : searchFilteredPorts,
     portSortCol,
     portSortDir,
   );
 
   const userItems = sortPorts(
-    searchFilteredPorts.filter(isUserItem).filter((p) => (categoryFilter ? categoryFilter.match(p) : true)),
+    searchFilteredPorts
+      .filter(isUserItem)
+      .filter((p) => (categoryFilter ? categoryFilter.match(p) : true)),
     portSortCol,
     portSortDir,
   );
 
   // Category counts computed against search-filtered set (ignoring current category)
   const portCategoryCounts = Object.fromEntries(
-    PORT_CATEGORIES.map((cat) => [cat.id, searchFilteredPorts.filter(cat.match).length]),
+    PORT_CATEGORIES.map((cat) => [
+      cat.id,
+      searchFilteredPorts.filter(cat.match).length,
+    ]),
   );
 
   // ── Derived terminal lists ───────────────────────────────────────────────
@@ -437,13 +605,18 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
     : null;
 
   const filteredTerminals = sortTerminals(
-    termCategoryFilter ? searchFilteredTerminals.filter(termCategoryFilter.match) : searchFilteredTerminals,
+    termCategoryFilter
+      ? searchFilteredTerminals.filter(termCategoryFilter.match)
+      : searchFilteredTerminals,
     termSortCol,
     termSortDir,
   );
 
   const termCategoryCounts = Object.fromEntries(
-    TERM_CATEGORIES.map((cat) => [cat.id, searchFilteredTerminals.filter(cat.match).length]),
+    TERM_CATEGORIES.map((cat) => [
+      cat.id,
+      searchFilteredTerminals.filter(cat.match).length,
+    ]),
   );
 
   const isRefreshing = activeTab === "terminals" ? terminalsLoading : loading;
@@ -454,20 +627,31 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
   };
 
   const handlePortSort = (col: PortSortCol) => {
-    if (portSortCol === col) setPortSortDir(portSortDir === "asc" ? "desc" : "asc");
-    else { setPortSortCol(col); setPortSortDir("asc"); }
+    if (portSortCol === col)
+      setPortSortDir(portSortDir === "asc" ? "desc" : "asc");
+    else {
+      setPortSortCol(col);
+      setPortSortDir("asc");
+    }
   };
 
   const handleTermSort = (col: TermSortCol) => {
-    if (termSortCol === col) setTermSortDir(termSortDir === "asc" ? "desc" : "asc");
-    else { setTermSortCol(col); setTermSortDir("asc"); }
+    if (termSortCol === col)
+      setTermSortDir(termSortDir === "asc" ? "desc" : "asc");
+    else {
+      setTermSortCol(col);
+      setTermSortDir("asc");
+    }
   };
 
   const getProcessIcon = (name: string) => {
     const n = name.toLowerCase();
-    if (n.includes("node") || n.includes("npm")) return <TerminalSquare className="h-4 w-4 text-green-500" />;
-    if (n.includes("python") || n.includes("uvicorn")) return <TerminalSquare className="h-4 w-4 text-blue-500" />;
-    if (n.includes("docker")) return <Server className="h-4 w-4 text-blue-400" />;
+    if (n.includes("node") || n.includes("npm"))
+      return <TerminalSquare className="h-4 w-4 text-green-500" />;
+    if (n.includes("python") || n.includes("uvicorn"))
+      return <TerminalSquare className="h-4 w-4 text-blue-500" />;
+    if (n.includes("docker"))
+      return <Server className="h-4 w-4 text-blue-400" />;
     if (n.includes("java")) return <Cpu className="h-4 w-4 text-orange-500" />;
     return <Activity className="h-4 w-4 text-muted-foreground" />;
   };
@@ -483,7 +667,11 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="text"
-              placeholder={activeTab === "terminals" ? "Filter terminals…" : "Filter ports…"}
+              placeholder={
+                activeTab === "terminals"
+                  ? "Filter terminals…"
+                  : "Filter ports…"
+              }
               className="h-9 w-64 bg-background/50 pl-9"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -501,7 +689,8 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
             variant="outline"
             size="icon"
             onClick={() => {
-              const data = activeTab === "terminals" ? filteredTerminals : filteredPorts;
+              const data =
+                activeTab === "terminals" ? filteredTerminals : filteredPorts;
               navigator.clipboard.writeText(JSON.stringify(data, null, 2));
             }}
             title="Copy Filtered Data (JSON)"
@@ -516,7 +705,9 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
             disabled={isRefreshing}
             className="h-9 w-9 bg-background/50 backdrop-blur-md"
           >
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+            />
           </Button>
         </div>
       </PageHeader>
@@ -525,33 +716,56 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
         <Tabs
           defaultValue="user"
           className="flex-1 flex flex-col min-h-0"
-          onValueChange={(v) => { setActiveTab(v); setSearch(""); }}
+          onValueChange={(v) => {
+            setActiveTab(v);
+            setSearch("");
+          }}
         >
           <TabsList className="w-full max-w-[620px] grid grid-cols-3 bg-background/40 backdrop-blur-xl border border-border shadow-sm shrink-0 mt-6 mb-4">
-            <TabsTrigger value="user" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
+            <TabsTrigger
+              value="user"
+              className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary"
+            >
               <Server className="h-4 w-4 mr-2" />
               Dev Services
-              <Badge variant="secondary" className="ml-2 bg-background/50">{userItems.length}</Badge>
+              <Badge variant="secondary" className="ml-2 bg-background/50">
+                {userItems.length}
+              </Badge>
             </TabsTrigger>
-            <TabsTrigger value="all" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
+            <TabsTrigger
+              value="all"
+              className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary"
+            >
               <Network className="h-4 w-4 mr-2" />
               All Ports
-              <Badge variant="secondary" className="ml-2 bg-background/50">{filteredPorts.length}</Badge>
+              <Badge variant="secondary" className="ml-2 bg-background/50">
+                {filteredPorts.length}
+              </Badge>
             </TabsTrigger>
-            <TabsTrigger value="terminals" className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary">
+            <TabsTrigger
+              value="terminals"
+              className="data-[state=active]:bg-primary/20 data-[state=active]:text-primary"
+            >
               <MonitorDot className="h-4 w-4 mr-2" />
               Terminals
-              <Badge variant="secondary" className="ml-2 bg-background/50">{filteredTerminals.length}</Badge>
+              <Badge variant="secondary" className="ml-2 bg-background/50">
+                {filteredTerminals.length}
+              </Badge>
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="user" className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col">
+          <TabsContent
+            value="user"
+            className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col"
+          >
             <div className="flex flex-col flex-1 min-h-0 rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
               <CategoryPills
                 categories={PORT_CATEGORIES}
                 active={portCategory}
                 counts={portCategoryCounts}
-                onToggle={(id) => setPortCategory(portCategory === id ? null : id)}
+                onToggle={(id) =>
+                  setPortCategory(portCategory === id ? null : id)
+                }
               />
               <PortTable
                 ports={userItems}
@@ -559,19 +773,27 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
                 sortDir={portSortDir}
                 onSort={handlePortSort}
                 getProcessIcon={getProcessIcon}
-                onKill={(p) => { setProcessToKill(p); setKillDialogOpen(true); }}
+                onKill={(p) => {
+                  setProcessToKill(p);
+                  setKillDialogOpen(true);
+                }}
                 onForceKill={handleForceKillDirect}
               />
             </div>
           </TabsContent>
 
-          <TabsContent value="all" className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col">
+          <TabsContent
+            value="all"
+            className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col"
+          >
             <div className="flex flex-col flex-1 min-h-0 rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
               <CategoryPills
                 categories={PORT_CATEGORIES}
                 active={portCategory}
                 counts={portCategoryCounts}
-                onToggle={(id) => setPortCategory(portCategory === id ? null : id)}
+                onToggle={(id) =>
+                  setPortCategory(portCategory === id ? null : id)
+                }
               />
               <PortTable
                 ports={filteredPorts}
@@ -579,19 +801,27 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
                 sortDir={portSortDir}
                 onSort={handlePortSort}
                 getProcessIcon={getProcessIcon}
-                onKill={(p) => { setProcessToKill(p); setKillDialogOpen(true); }}
+                onKill={(p) => {
+                  setProcessToKill(p);
+                  setKillDialogOpen(true);
+                }}
                 onForceKill={handleForceKillDirect}
               />
             </div>
           </TabsContent>
 
-          <TabsContent value="terminals" className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col">
+          <TabsContent
+            value="terminals"
+            className="flex-1 min-h-0 data-[state=inactive]:hidden data-[state=active]:flex flex-col"
+          >
             <div className="flex flex-col flex-1 min-h-0 rounded-xl border border-border bg-card/40 backdrop-blur-xl overflow-hidden shadow-sm">
               <CategoryPills
                 categories={TERM_CATEGORIES}
                 active={termCategory}
                 counts={termCategoryCounts}
-                onToggle={(id) => setTermCategory(termCategory === id ? null : id)}
+                onToggle={(id) =>
+                  setTermCategory(termCategory === id ? null : id)
+                }
               />
               <TerminalTable
                 terminals={filteredTerminals}
@@ -618,13 +848,16 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
             <DialogDescription asChild>
               <p>
                 Are you sure you want to terminate{" "}
-                <strong>{processToKill?.name}</strong> (PID: {processToKill?.pid}) listening on port{" "}
+                <strong>{processToKill?.name}</strong> (PID:{" "}
+                {processToKill?.pid}) listening on port{" "}
                 <strong>{processToKill?.port}</strong>?
               </p>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex gap-2 sm:justify-start">
-            <Button variant="ghost" onClick={() => setKillDialogOpen(false)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setKillDialogOpen(false)}>
+              Cancel
+            </Button>
             <div className="flex-1" />
             <Button
               variant="outline"
@@ -634,7 +867,11 @@ export function Ports({ engineStatus, engineUrl: _engineUrl }: PortsProps) {
             >
               Graceful Kill
             </Button>
-            <Button variant="destructive" onClick={() => handleKill(true)} disabled={isKilling}>
+            <Button
+              variant="destructive"
+              onClick={() => handleKill(true)}
+              disabled={isKilling}
+            >
               Force Kill
             </Button>
           </DialogFooter>
@@ -655,10 +892,13 @@ function SortIcon<T extends string>({
   sortCol: T;
   sortDir: SortDir;
 }) {
-  if (col !== sortCol) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-20" />;
-  return sortDir === "asc"
-    ? <ArrowUp className="w-3 h-3 ml-1" />
-    : <ArrowDown className="w-3 h-3 ml-1" />;
+  if (col !== sortCol)
+    return <ArrowUpDown className="w-3 h-3 ml-1 opacity-20" />;
+  return sortDir === "asc" ? (
+    <ArrowUp className="w-3 h-3 ml-1" />
+  ) : (
+    <ArrowDown className="w-3 h-3 ml-1" />
+  );
 }
 
 // ─── Port table (no outer wrapper — parent wraps in the card) ─────────────────
@@ -722,13 +962,17 @@ function PortTable({
                   onClick={() => setExpandedKey(isExpanded ? null : rowKey)}
                 >
                   <div className="col-span-2">
-                    <span className="font-mono text-foreground/90 font-semibold text-sm">{port.port}</span>
+                    <span className="font-mono text-foreground/90 font-semibold text-sm">
+                      {port.port}
+                    </span>
                   </div>
                   <div className="col-span-3 flex items-center gap-3 min-w-0">
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted border border-border shadow-sm">
                       {getProcessIcon(port.name)}
                     </div>
-                    <span className="font-medium text-foreground/90 truncate text-sm">{port.name}</span>
+                    <span className="font-medium text-foreground/90 truncate text-sm">
+                      {port.name}
+                    </span>
                   </div>
                   <div className="col-span-3 flex items-center">
                     <span className="text-sm font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded border border-border truncate">
@@ -739,7 +983,10 @@ function PortTable({
                     {port.pid > 0 ? port.pid : "—"}
                   </div>
                   <div className="col-span-1">
-                    <Badge variant="outline" className="text-[10px] bg-muted border-border text-muted-foreground font-medium">
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] bg-muted border-border text-muted-foreground font-medium"
+                    >
                       {port.protocol}
                     </Badge>
                   </div>
@@ -756,25 +1003,39 @@ function PortTable({
                       </pre>
                       <div className="flex flex-col gap-2 min-w-[140px] shrink-0">
                         <Button
-                          variant="secondary" size="sm"
+                          variant="secondary"
+                          size="sm"
                           className="w-full justify-start text-xs h-8"
-                          onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(JSON.stringify(port, null, 2)); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(
+                              JSON.stringify(port, null, 2),
+                            );
+                          }}
                         >
                           <Copy className="h-3 w-3 mr-2" /> Copy JSON
                         </Button>
                         <Button
-                          variant="outline" size="sm"
+                          variant="outline"
+                          size="sm"
                           className="w-full justify-start text-xs h-8 border-destructive/30 text-destructive hover:bg-destructive/10"
                           disabled={port.pid === 0}
-                          onClick={(e) => { e.stopPropagation(); onKill(port); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onKill(port);
+                          }}
                         >
                           <ShieldAlert className="h-3 w-3 mr-2" /> Grace Kill
                         </Button>
                         <Button
-                          variant="destructive" size="sm"
+                          variant="destructive"
+                          size="sm"
                           className="w-full justify-start text-xs h-8 hover:bg-red-600"
                           disabled={port.pid === 0}
-                          onClick={(e) => { e.stopPropagation(); onForceKill(port); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onForceKill(port);
+                          }}
                         >
                           Force Kill
                         </Button>
@@ -810,7 +1071,9 @@ function TerminalTable({
   onRefresh: () => void;
 }) {
   const [expandedPid, setExpandedPid] = useState<number | null>(null);
-  const [tailData, setTailData] = useState<Record<number, TailResult | null>>({});
+  const [tailData, setTailData] = useState<Record<number, TailResult | null>>(
+    {},
+  );
   const [tailLoading, setTailLoading] = useState<Record<number, boolean>>({});
   const tailScrollRef = useRef<HTMLDivElement>(null);
 
@@ -829,20 +1092,27 @@ function TerminalTable({
             output: result.output ?? "",
             source: (result.metadata?.source as string) ?? "unknown",
             open_files: result.metadata?.open_files as TailResult["open_files"],
-            connections: result.metadata?.connections as TailResult["connections"],
+            connections: result.metadata
+              ?.connections as TailResult["connections"],
             note: result.metadata?.note as string | undefined,
           },
         }));
       } else {
         setTailData((prev) => ({
           ...prev,
-          [t.pid]: { output: result.output ?? "Error fetching output.", source: "error" },
+          [t.pid]: {
+            output: result.output ?? "Error fetching output.",
+            source: "error",
+          },
         }));
       }
     } catch {
       setTailData((prev) => ({
         ...prev,
-        [t.pid]: { output: "Failed to fetch terminal output.", source: "error" },
+        [t.pid]: {
+          output: "Failed to fetch terminal output.",
+          source: "error",
+        },
       }));
     } finally {
       setTailLoading((prev) => ({ ...prev, [t.pid]: false }));
@@ -871,7 +1141,9 @@ function TerminalTable({
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-3">
         <MonitorDot className="h-10 w-10 opacity-20" />
-        <p className="text-sm">No terminal processes match the current filters.</p>
+        <p className="text-sm">
+          No terminal processes match the current filters.
+        </p>
         <Button variant="outline" size="sm" onClick={onRefresh}>
           <RefreshCw className="h-4 w-4 mr-2" /> Refresh
         </Button>
@@ -879,7 +1151,12 @@ function TerminalTable({
     );
   }
 
-  const col = (id: TermSortCol, label: string, span: string, extra?: string) => (
+  const col = (
+    id: TermSortCol,
+    label: string,
+    span: string,
+    extra?: string,
+  ) => (
     <div
       className={`${span} flex items-center cursor-pointer hover:text-foreground transition-colors ${extra ?? ""}`}
       onClick={() => onSort(id)}
@@ -894,8 +1171,12 @@ function TerminalTable({
         {col("name", "Process", "col-span-3")}
         {col("tty", "TTY", "col-span-2")}
         {col("cwd", "Working Directory", "col-span-4")}
-        <div className="col-span-1 flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors" onClick={() => onSort("elapsed_s")}>
-          <Clock className="h-3 w-3" /> Age <SortIcon col="elapsed_s" sortCol={sortCol} sortDir={sortDir} />
+        <div
+          className="col-span-1 flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors"
+          onClick={() => onSort("elapsed_s")}
+        >
+          <Clock className="h-3 w-3" /> Age{" "}
+          <SortIcon col="elapsed_s" sortCol={sortCol} sortDir={sortDir} />
         </div>
         {col("pid", "PID", "col-span-1")}
         <div className="col-span-1 text-right">Output</div>
@@ -920,9 +1201,13 @@ function TerminalTable({
                       <TerminalSquare className="h-4 w-4 text-emerald-400" />
                     </div>
                     <div className="flex flex-col min-w-0">
-                      <span className="font-medium text-foreground/90 truncate text-sm">{t.name}</span>
+                      <span className="font-medium text-foreground/90 truncate text-sm">
+                        {t.name}
+                      </span>
                       <span className="text-[11px] text-muted-foreground truncate font-mono">
-                        {t.cmdline.length > 40 ? t.cmdline.slice(0, 40) + "…" : t.cmdline}
+                        {t.cmdline.length > 40
+                          ? t.cmdline.slice(0, 40) + "…"
+                          : t.cmdline}
                       </span>
                     </div>
                   </div>
@@ -937,7 +1222,10 @@ function TerminalTable({
                   {/* CWD */}
                   <div className="col-span-4 flex items-center gap-1.5 min-w-0">
                     <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <span className="text-xs font-mono text-muted-foreground truncate" title={t.cwd}>
+                    <span
+                      className="text-xs font-mono text-muted-foreground truncate"
+                      title={t.cwd}
+                    >
                       {t.cwd ? t.cwd.replace(/^\/Users\/[^/]+/, "~") : "—"}
                     </span>
                   </div>
@@ -948,7 +1236,9 @@ function TerminalTable({
                   </div>
 
                   {/* PID */}
-                  <div className="col-span-1 text-xs text-muted-foreground font-mono">{t.pid}</div>
+                  <div className="col-span-1 text-xs text-muted-foreground font-mono">
+                    {t.pid}
+                  </div>
 
                   {/* Expand */}
                   <div className="col-span-1 flex justify-end opacity-50 group-hover:opacity-100 transition-opacity">
@@ -964,17 +1254,29 @@ function TerminalTable({
                       </span>
                       <div className="flex gap-2">
                         <Button
-                          variant="ghost" size="sm" className="h-6 text-xs px-2"
-                          onClick={(e) => { e.stopPropagation(); fetchTail(t); }}
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-xs px-2"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            fetchTail(t);
+                          }}
                           disabled={isTailLoading}
                         >
-                          <RefreshCw className={`h-3 w-3 mr-1 ${isTailLoading ? "animate-spin" : ""}`} />
+                          <RefreshCw
+                            className={`h-3 w-3 mr-1 ${isTailLoading ? "animate-spin" : ""}`}
+                          />
                           Refresh
                         </Button>
                         {tail?.output && (
                           <Button
-                            variant="ghost" size="sm" className="h-6 text-xs px-2"
-                            onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(tail.output); }}
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs px-2"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(tail.output);
+                            }}
                           >
                             <Copy className="h-3 w-3 mr-1" /> Copy
                           </Button>
@@ -984,7 +1286,8 @@ function TerminalTable({
 
                     {isTailLoading && !tail && (
                       <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm">
-                        <RefreshCw className="h-4 w-4 animate-spin" /> Reading terminal output…
+                        <RefreshCw className="h-4 w-4 animate-spin" /> Reading
+                        terminal output…
                       </div>
                     )}
 
@@ -1015,8 +1318,12 @@ function TerminalTable({
                                   key={`${f.fd}-${f.path}`}
                                   className="flex items-center gap-2 px-2 py-1 rounded text-xs font-mono bg-muted/30 hover:bg-muted/50"
                                 >
-                                  <span className="text-muted-foreground w-8 shrink-0">fd{f.fd}</span>
-                                  <span className="text-foreground/70 truncate">{f.path}</span>
+                                  <span className="text-muted-foreground w-8 shrink-0">
+                                    fd{f.fd}
+                                  </span>
+                                  <span className="text-foreground/70 truncate">
+                                    {f.path}
+                                  </span>
                                 </div>
                               ))}
                             </div>
@@ -1030,10 +1337,19 @@ function TerminalTable({
                             </p>
                             <div className="grid grid-cols-1 gap-0.5 max-h-32 overflow-y-auto">
                               {tail.connections.map((c, i) => (
-                                <div key={i} className="flex items-center gap-3 px-2 py-1 rounded text-xs font-mono bg-muted/30">
-                                  <Badge variant="outline" className="text-[10px] shrink-0">{c.status}</Badge>
+                                <div
+                                  key={i}
+                                  className="flex items-center gap-3 px-2 py-1 rounded text-xs font-mono bg-muted/30"
+                                >
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] shrink-0"
+                                  >
+                                    {c.status}
+                                  </Badge>
                                   <span className="text-muted-foreground">
-                                    {c.laddr}{c.raddr ? ` → ${c.raddr}` : ""}
+                                    {c.laddr}
+                                    {c.raddr ? ` → ${c.raddr}` : ""}
                                   </span>
                                 </div>
                               ))}
