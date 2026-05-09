@@ -243,6 +243,11 @@ class FoundProcess:
     name: str
     cmdline: str
     service: ManagedService
+    # TCP ports this process is currently listening on. Populated lazily by
+    # `_resolve_listening_ports` after the cmdline-pattern scan, because
+    # psutil.Process.connections() is significantly slower than the cmdline
+    # iter and we only want to pay that cost for matched processes.
+    listening_ports: list[int] = field(default_factory=list)
 
 
 def _compile_patterns(svc: ManagedService) -> list[re.Pattern[str]]:
@@ -332,6 +337,44 @@ def _scan_processes(
             break
 
     return found
+
+
+def _resolve_listening_ports(found: list[FoundProcess]) -> None:
+    """Populate `listening_ports` on each FoundProcess by querying psutil.
+
+    Best-effort: any process where we can't read connections (zombie, gone,
+    permission denied) keeps an empty list, which surfaces in the log as
+    `port=-` rather than failing the whole sweep. We only look up TCP listeners
+    because that's the contract our managed services hold (HTTP and WebSocket
+    on the engine; cloudflared has no local listener; llama-server has its own
+    HTTP port). UDP and outbound TCP are intentionally ignored.
+
+    Called once per `clean_orphans()` run, AFTER the cmdline-pattern scan, so
+    we only pay the connections() cost for processes we actually plan to kill.
+    """
+    for fp in found:
+        try:
+            proc = psutil.Process(fp.pid)
+        except psutil.NoSuchProcess:
+            continue
+        try:
+            conns = proc.connections(kind="tcp")
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+        except Exception:
+            # psutil's connections() can raise OSError on some macOS versions
+            # when the process exited mid-query. Treat any unexpected error
+            # the same as AccessDenied — the kill path doesn't need port info.
+            continue
+
+        ports: set[int] = set()
+        for c in conns:
+            try:
+                if c.status == psutil.CONN_LISTEN and c.laddr:
+                    ports.add(c.laddr.port)
+            except (AttributeError, TypeError):
+                pass
+        fp.listening_ports = sorted(ports)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -442,6 +485,18 @@ def clean_orphans(*, services: Iterable[ManagedService] | None = None) -> CleanR
     by managed services should be free and no stale instances are left to
     interfere with our launch.
 
+    The output is structured as three phases that always emit, in order:
+
+        1. Scan announcement     — one line: "Scanning ... services: A, B, C"
+        2. Per-service result    — one line per service whether it's clean or
+                                   has lingerers; lingerers list pid + held
+                                   ports + truncated cmdline.
+        3. Action log            — only emitted when there's something to kill;
+                                   "Terminating N processes..." then per-PID
+                                   SIGTERM result (with SIGKILL escalation log
+                                   inside `_terminate_pid` if SIGTERM is
+                                   ignored).
+
     Returns a CleanReport. Errors are reported via _warn/_err and recorded in
     the report; the function never raises so it can't take down a startup.
     """
@@ -449,7 +504,11 @@ def clean_orphans(*, services: Iterable[ManagedService] | None = None) -> CleanR
     protected = _self_pid_chain()
     user = _current_user()
 
-    _say(f"Cleaning orphans (services: {', '.join(s.name for s in services)})")
+    # ── Phase 1: scan announcement ──────────────────────────────────────────
+    _say(
+        "Scanning for lingering processes from previous session "
+        f"(services: {', '.join(s.name for s in services)})"
+    )
     if user:
         _say(f"  user={user!r}  protected_pids={sorted(protected)}")
 
@@ -460,35 +519,71 @@ def clean_orphans(*, services: Iterable[ManagedService] | None = None) -> CleanR
     )
     report.orphans_found = len(found)
 
-    if not found:
-        for svc in services:
-            _ok(svc.name, "no orphans")
-            report.by_service[svc.name] = 0
-    else:
-        # First pass: SIGTERM everything in parallel by issuing the calls
-        # back-to-back, then wait once for the drain.
+    # Resolve TCP listening ports for matched processes BEFORE we report.
+    # See `_resolve_listening_ports` — best-effort, never fails the sweep.
+    _resolve_listening_ports(found)
+
+    # Group by service so every managed service gets exactly one summary line,
+    # even when it's clean. Without this the user can't tell whether a service
+    # was checked and clean, or never checked at all.
+    by_service: dict[str, list[FoundProcess]] = {s.name: [] for s in services}
+    for fp in found:
+        by_service.setdefault(fp.service.name, []).append(fp)
+
+    # ── Phase 2: per-service result (always emitted, every service) ─────────
+    held_ports: set[int] = set()
+    for svc in services:
+        procs = by_service.get(svc.name, [])
+        report.by_service[svc.name] = len(procs)
+        if not procs:
+            _ok(svc.name, "clean (no lingering processes)")
+            continue
+        plural = "es" if len(procs) != 1 else ""
+        _warn(svc.name, f"FOUND {len(procs)} lingering process{plural} from previous session")
+        for fp in procs:
+            short_cmd = fp.cmdline if len(fp.cmdline) <= 80 else fp.cmdline[:77] + "..."
+            ports_str = (
+                "ports=" + ",".join(str(p) for p in fp.listening_ports)
+                if fp.listening_ports
+                else "ports=-"
+            )
+            _say(f"      pid={fp.pid:<6} {ports_str:<18} {short_cmd}")
+            held_ports.update(fp.listening_ports)
+
+    if held_ports:
+        # Single line so the user can grep for "Held ports" on bad startups.
+        _warn(
+            "ports",
+            f"Held by lingering processes: {', '.join(str(p) for p in sorted(held_ports))} "
+            f"— will be released by SIGTERM/SIGKILL below",
+        )
+
+    # ── Phase 3: action log (only when there's actually something to kill) ──
+    if found:
+        plural = "es" if len(found) != 1 else ""
+        _say(f"Terminating {len(found)} lingering process{plural}...")
         for fp in found:
             label = fp.service.name
-            short_cmd = fp.cmdline if len(fp.cmdline) <= 80 else fp.cmdline[:77] + "..."
-            _say(f"  {label:<14}: orphan pid={fp.pid} → terminating  ({short_cmd})")
+            ports_str = (
+                "ports=" + ",".join(str(p) for p in fp.listening_ports)
+                if fp.listening_ports
+                else "ports=-"
+            )
+            _say(f"  {label:<14}: → SIGTERM pid={fp.pid} {ports_str}")
 
-        # Issue terminate() calls in tight loop, then wait/kill in second pass.
-        # _terminate_pid does the wait-for-exit + escalate, so the per-process
-        # cost is GRACE_SECONDS in the worst case. For 1-3 orphans that's fine
-        # (≤15s); for more, future work could parallelize via threads.
-        for fp in found:
-            killed = _terminate_pid(fp.pid, label=fp.service.name)
+            # _terminate_pid waits up to GRACE_SECONDS, then escalates to
+            # SIGKILL (with its own _warn line so the escalation is visible).
+            killed = _terminate_pid(fp.pid, label=label)
             if killed:
                 report.orphans_killed += 1
-                _ok(fp.service.name, f"pid {fp.pid} terminated")
+                _ok(label, f"pid {fp.pid} terminated")
             else:
                 report.orphans_survived += 1
-                _err(fp.service.name, f"pid {fp.pid} could NOT be terminated")
-            report.by_service[fp.service.name] = (
-                report.by_service.get(fp.service.name, 0) + 1
-            )
+                _err(label, f"pid {fp.pid} could NOT be terminated")
 
-        # Brief drain so subsequent port binds see the released port.
+        # Brief drain so subsequent port binds see the released port. Without
+        # this, _is_port_free() in assign_engine_port() can race ahead of the
+        # kernel's TCP socket close and report the port as still busy.
         time.sleep(DRAIN_SECONDS)
 
     # Discovery file cleanup — only remove it if its recorded PID is dead.
@@ -496,7 +591,7 @@ def clean_orphans(*, services: Iterable[ManagedService] | None = None) -> CleanR
     # engine wrote the file.
     report.discovery_file_removed = _maybe_remove_stale_discovery_file()
 
-    _say(f"Clean done: {report}")
+    _say(f"Done: {report}")
     return report
 
 

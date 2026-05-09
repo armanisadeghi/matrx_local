@@ -549,7 +549,15 @@ def main() -> None:
     # port. The full registry of "what we manage" lives in app/preflight.py;
     # adding a new service is a one-line edit there. Ancestor PIDs (the Tauri
     # shell when we run as a sidecar) are protected automatically.
-    print("[phase:preflight] Cleaning orphaned managed services...", flush=True)
+    #
+    # The structured `[preflight]` lines emitted from clean_orphans() are the
+    # source of truth for what was found and what we did about it. Do not
+    # add a parallel "summary" log here — duplicating those lines would drift
+    # out of sync with the actual cleanup behavior.
+    print(
+        "[phase:preflight] Checking for lingering processes from previous session...",
+        flush=True,
+    )
     try:
         from app.preflight import clean_orphans, assign_engine_port
         clean_orphans()
