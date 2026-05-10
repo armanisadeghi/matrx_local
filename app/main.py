@@ -220,20 +220,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info("[app/main.py] CORS allowed origins: %s", ALLOWED_ORIGINS)
 
-    # ── Config validation (developer-only) ───────────────────────────────────
-    # SUPABASE_JWT_SECRET is an optional server-side signing key for JWT
-    # cryptographic verification. The local engine does NOT require it —
-    # presence of a Bearer token is sufficient for the local trust boundary
-    # (the engine only listens on 127.0.0.1). Remote services (scraper server)
-    # validate tokens via the JWKS endpoint. Only log this in dev mode.
-    import os as _os
-    if not _os.getenv("SUPABASE_JWT_SECRET", "").strip():
-        is_frozen = getattr(sys, "frozen", False)
-        if not is_frozen:
-            logger.debug(
-                "[app/main.py] SUPABASE_JWT_SECRET not set — JWT signature validation "
-                "is disabled (fine for the local engine; remote services use JWKS)."
-            )
+    # NOTE: There is intentionally no SUPABASE_JWT_SECRET / HS256 path here.
+    # The engine runs on the user's own machine — it has no secure place
+    # to store a server-side JWT signing secret. The /extension/* surface
+    # uses JWKS for asymmetric tokens (when SUPABASE_URL is set) and
+    # falls back to presence-only on loopback for HS256 tokens. See
+    # app/api/extension_auth.py for the full posture.
 
     # Phase 0a: Open local SQLite database (offline-first data store).
     # This MUST be the first phase — all data reads come from SQLite.

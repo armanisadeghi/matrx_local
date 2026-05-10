@@ -600,6 +600,35 @@ Supabase acts as **OAuth 2.1 Server**:
 2. **User JWT** — Authenticates with both local engine and remote scraper
 3. **No embedded API keys** — `SCRAPER_API_KEY` is dev-only; production uses JWT via JWKS
 
+### `/extension/*` JWT Validation Posture (Local Engine)
+
+The Python engine runs **on the user's own machine** — there is no secure
+place to store a server-side JWT signing secret. `SUPABASE_JWT_SECRET` is
+**deliberately not used anywhere** in the engine, and the codebase must
+not reintroduce a check for it.
+
+Validation logic for `/extension/*` requests (`app/api/extension_auth.py`):
+
+1. **Asymmetric tokens (RS256/ES256)** — when `SUPABASE_URL` is set, the
+   engine fetches the project's JWKS (`/.well-known/jwks.json`) and
+   validates signature + issuer + expiry cryptographically. This is the
+   posture for any Supabase project on asymmetric signing keys.
+2. **HS256 tokens / unconfigured JWKS** — fall back to **bearer-presence
+   verification over loopback**. The engine accepts any well-formed bearer
+   token because the only network surface is `127.0.0.1` and the only
+   callers are matrx-extend running on the same machine. Cryptographic
+   validation is not feasible (HS256 requires the project's signing
+   secret), but presence-only is acceptable here because:
+   - The trust boundary is the OS user, not the network.
+   - No remote actor can reach `127.0.0.1` without already running code
+     on the user's machine.
+   - The same posture is used by every "local agent / desktop helper"
+     class of app on the platform.
+
+The engine logs the active posture once at boot via `[extension_auth]`.
+For deeper context and the migration rationale, see
+`docs/MATRX_EXTEND_CONNECTION.md`.
+
 ---
 
 ## Desktop App (Tauri)
@@ -689,20 +718,38 @@ Tauri Rust process            (owned by: the OS)
    function in `lib.rs` only targets engine binaries — see the comment
    header there for the explicit list of what it does and does not touch.
 
-2. **Rust never pkills llama-server from outside `LlmServer`.** Llama-server
-   is owned by the Rust `LlmServer` struct. Drop the `LlmServer` and its
-   own destructors handle the subprocess. Step 1 of `graceful_shutdown_sync`
-   does the right thing; do not add additional kills.
+2. **Rust owns llama-server end-to-end. The Python engine never touches it.**
+   Llama-server is a Rust-spawned subprocess under the `LlmServer` struct.
+   Every llama-server lifecycle event flows through Rust:
+
+   - **Spawn**: `lib.rs` setup() auto-start (logs `[llm-autostart]`) and
+     the `start_llm_server` Tauri command (logs `[llm-cmd]`). These are
+     the only two places anything ever spawns a llama-server.
+   - **Reclaim on boot**: Rust's `kill_orphaned_llama_server()` in
+     `lib.rs` clears any stale llama-server left by a previous crash —
+     this is Rust reclaiming its own previous-life child.
+   - **Stop**: drop the `LlmServer` (or call `LlmServer::stop_blocking`
+     from `graceful_shutdown_sync` step 1).
+
+   The Python engine has **no llama-server entry in `app/preflight.py`
+   SERVICES**, no `pkill llama-server`, and no signal handling for it.
+   This is enforced by code comments at the registry definition (see
+   `app/preflight.py` and the comment header of `kill_orphaned_llama_server`
+   in `lib.rs`). Re-introducing llama-server to preflight produces the
+   exact bug we just fixed: preflight runs ~7s after Tauri's setup() has
+   already started llama-server, so preflight kills the llama-server Rust
+   just spawned. Two orchestrators stepping on each other.
 
 3. **The engine never expects Rust to clean up its children.** When Rust
    sends shutdown (POST `/admin/shutdown` or SIGTERM), the engine cascades
    to every child it owns in reverse-startup order, with per-child timeouts.
    See the lifespan teardown in `app/main.py`.
 
-4. **The engine's `app/preflight.py` reclaims the engine's children on
+4. **The engine's `app/preflight.py` reclaims ONLY the engine's children on
    startup.** When the engine boots, it sweeps any cloudflared, scraper, or
    other engine-spawned process left behind by a previous crashed engine.
-   That is the engine reclaiming its own previous-life children, not Rust
+   It does **not** include llama-server (Rust owns that — see rule 2). That
+   is the engine reclaiming its own previous-life children, not Rust
    reaching across.
 
 5. **Every state transition flows through `app/launcher.py`.** Every service
@@ -792,7 +839,9 @@ User launches app
   │
   ▼
 [Engine] app/preflight.py clean_orphans()    ← reclaims engine's previous-life children
-  │  · scan psutil for engine, llama_server, cloudflared
+  │  · scan psutil for engine + cloudflared
+  │  · NOT llama-server (Rust owns it; Rust's setup() auto-start runs in parallel
+  │    and would race with preflight if listed here)
   │  · skip any process whose ancestor is the current Tauri shell
   │  · SIGTERM matched orphans → wait 5s → SIGKILL survivors
   │

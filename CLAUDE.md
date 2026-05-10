@@ -43,9 +43,24 @@ cd desktop && pnpm tauri:dev
      its own children during its lifespan teardown. Adding a `pkill` to
      `lib.rs` for an engine-owned process re-introduces the race that
      produces "ended unexpectedly" crash reports.
+   - **The Python engine never touches llama-server.** llama-server is a
+     Rust-owned child (`desktop/src-tauri/src/lib.rs` setup() auto-start +
+     `kill_orphaned_llama_server` + `LlmServer::start/stop`). It is
+     INTENTIONALLY OMITTED from `app/preflight.py` SERVICES — the Tauri
+     setup auto-starts llama-server within ~1s of boot, and if preflight
+     listed it, the engine would kill the llama-server Rust just spawned
+     ~7s later. That was a real bug; do not re-introduce it. If a Python
+     code path needs to reason about llama-server status, talk to it via
+     `/connect-local-llm` (or `app/services/ai/local_llm_registry.py`) —
+     never via process scanning or signals.
    - **The engine never expects Rust to clean up its children.** When the
      engine receives a shutdown signal, it stops every child it owns — and
      reports done only after the last one is stopped.
+   - **llama-server spawns are observable.** Every llama-server spawn —
+     auto-start in `lib.rs setup()` AND every `start_llm_server` Tauri
+     command invocation — emits `[llm-autostart]` / `[llm-cmd]` log lines
+     to the unified log. If you ever see llama-server running and don't
+     know who started it, grep those prefixes.
    - **Every state change goes through `app/launcher.py`.** Call
      `registry.starting/ready/degraded/failed/stopping/stopped`. The
      `[launcher] <service> → <state>` lines are the source of truth — do
@@ -83,7 +98,7 @@ cd desktop && pnpm tauri:dev
 
 Three separate concerns — do not confuse them:
 
-1. **Supabase Auth** — Instance `txzxabzwovsujtloxrus`. Uses **publishable key** (not anon key). All ops use user JWT. Never use service role key.
+1. **Supabase Auth** — Instance `txzxabzwovsujtloxrus`. Uses **publishable key** (not anon key). All ops use user JWT. Never use service role key. **Never reference `SUPABASE_JWT_SECRET`** — this is a desktop app running on the user's machine; there is no secure place to keep a server-side JWT signing secret. The `/extension/*` surface validates incoming tokens via JWKS for asymmetric algorithms (RS256/ES256) when `SUPABASE_URL` is set, and falls back to bearer-presence verification over loopback for HS256 tokens. See `app/api/extension_auth.py` for the full posture and `docs/MATRX_EXTEND_CONNECTION.md` for the rationale.
 2. **Remote Scraper Server** — `scraper.app.matrxserver.com`. REST API with Bearer token (API key or Supabase JWT). Its PostgreSQL is internal-only — no direct DB access.
 3. **Local Scraper Cache** — Optional local PostgreSQL via `DATABASE_URL` for persistent scrape cache. Defaults to in-memory TTLCache. This is NOT the remote server's DB.
 

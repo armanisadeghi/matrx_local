@@ -47,7 +47,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from app.api.extension_auth import _supabase_jwks_url, _validation_enabled
+from app.api.extension_auth import _supabase_jwks_url
 from app.api.extension_metrics import reset_metrics
 from app.api.tunnel_state import get_tunnel_snapshot
 from app.common.system_logger import get_logger
@@ -230,97 +230,57 @@ async def _check_routes_registered(app: Any) -> CheckResult:
 
 
 async def _check_jwt_validation_posture() -> CheckResult:
-    """Probe the current JWT validation mode.
+    """Probe the current /extension/* auth posture.
 
-    Three outcomes:
+    The engine is a desktop sidecar — it cannot have a server-side JWT
+    signing secret (HS256). Two valid postures:
 
-      * ``ok``    — at least one verification path (JWKS or HS256) is
-        configured AND a known-bad token is rejected by it.
-      * ``warn``  — neither path is configured (degraded permissive mode).
-        Engine still works on loopback but does not cryptographically
-        verify Bearer tokens. Logged loudly.
-      * ``fail``  — verification path is configured but the smoke-test
-        crashes unexpectedly (corrupt secret, JWKS endpoint unreachable
-        in a way that raises rather than returns "invalid"). Surfaces a
-        real configuration bug.
+      * ``ok``   — JWKS configured (asymmetric tokens RS256/ES256 are
+        cryptographically verified). HS256 tokens still pass through
+        with presence-only on loopback.
+      * ``ok``   — no JWKS (presence-only on loopback). This is the
+        normal mode for desktop installs; the security boundary is the
+        loopback socket, not the JWT signature.
+
+    There is no ``warn`` or ``fail`` for missing JWKS — that's the
+    expected mode. The check confirms PyJWT is importable so the JWKS
+    path can run if it's needed.
     """
     t0 = time.perf_counter()
 
-    if not _validation_enabled():
-        duration_ms = (time.perf_counter() - t0) * 1000.0
-        return CheckResult(
-            name="jwt_validation",
-            status="warn",
-            message=(
-                "SUPABASE_JWT_SECRET unset and SUPABASE_URL empty — "
-                "running in permissive Bearer-presence mode"
-            ),
-            duration_ms=duration_ms,
-        )
-
-    # Verification is configured. Confirm a known-bad token actually gets
-    # rejected. We deliberately do NOT hit the network / JWKS endpoint —
-    # an HS256 path with a configured secret is sufficient to prove the
-    # PyJWT library is wired up. The full JWKS round-trip happens
-    # naturally on the first authenticated /extension/* request.
-    secret = os.getenv("SUPABASE_JWT_SECRET", "").strip()
     jwks_configured = _supabase_jwks_url() is not None
 
-    smoke_outcome = "configured"
-    if secret:
-        try:
-            import jwt as _jwt  # local import — keep PyJWT optional
-
-            try:
-                _jwt.decode(
-                    "not.a.real.token",
-                    secret,
-                    algorithms=["HS256"],
-                    options={"verify_aud": False},
-                )
-                # If we reach here without a raise the library accepted
-                # an obviously invalid token; that's a hard fail.
-                duration_ms = (time.perf_counter() - t0) * 1000.0
-                return CheckResult(
-                    name="jwt_validation",
-                    status="fail",
-                    message=(
-                        "PyJWT accepted a malformed token — verification "
-                        "is broken"
-                    ),
-                    duration_ms=duration_ms,
-                )
-            except _jwt.PyJWTError:
-                smoke_outcome = "verified (HS256 rejects bad tokens)"
-        except ImportError:
+    # Confirm PyJWT is importable so the JWKS verification path will
+    # actually run if/when an asymmetric token arrives. We don't hit
+    # the network here — the first authenticated /extension/* request
+    # exercises that.
+    try:
+        import jwt as _jwt  # noqa: F401
+    except ImportError:
+        if jwks_configured:
             duration_ms = (time.perf_counter() - t0) * 1000.0
             return CheckResult(
                 name="jwt_validation",
                 status="fail",
-                message="PyJWT not installed but SUPABASE_JWT_SECRET is set",
+                message=(
+                    "PyJWT not installed but SUPABASE_URL is set — "
+                    "JWKS verification path cannot run"
+                ),
                 duration_ms=duration_ms,
             )
-        except Exception as exc:
-            duration_ms = (time.perf_counter() - t0) * 1000.0
-            return CheckResult(
-                name="jwt_validation",
-                status="fail",
-                message=f"JWT smoke-test crashed: {type(exc).__name__}: {exc}",
-                duration_ms=duration_ms,
-            )
-
-    parts: List[str] = []
-    if jwks_configured:
-        parts.append("JWKS")
-    if secret:
-        parts.append("HS256")
-    posture = " + ".join(parts) or "unknown"
 
     duration_ms = (time.perf_counter() - t0) * 1000.0
+    if jwks_configured:
+        return CheckResult(
+            name="jwt_validation",
+            status="ok",
+            message="posture=JWKS (asymmetric tokens verified, HS256 pass-through on loopback)",
+            duration_ms=duration_ms,
+        )
     return CheckResult(
         name="jwt_validation",
         status="ok",
-        message=f"posture={posture} ({smoke_outcome})",
+        message="posture=loopback-presence (no JWKS configured; expected for desktop installs)",
         duration_ms=duration_ms,
     )
 
@@ -505,7 +465,7 @@ def _emit_summary_log(summary: BootCheckSummary) -> None:
 
         [boot] Extension bridge self-check
         [boot]   routes_registered  : ok    (11 routes present ...)
-        [boot]   jwt_validation     : warn  (SUPABASE_JWT_SECRET unset ...)
+        [boot]   jwt_validation     : ok    (posture=loopback-presence ...)
         ...
         [boot] Self-check completed in 12ms — overall ok=True
     """

@@ -1,15 +1,29 @@
 """app/preflight.py — Service registry, orphan cleanup, port assignment.
 
-The single source of truth for "what subprocesses Matrx Local manages and how
-to ensure clean state before startup." Replaces the kill logic that was
-previously scattered across:
+The single source of truth for "what subprocesses the ENGINE manages and how
+to ensure clean state before engine startup." Replaces the engine-owned kill
+logic that was previously scattered across:
 
-    desktop/src-tauri/src/lib.rs   (kill_orphaned_sidecars, kill_orphaned_llama_server)
     run.py                         (_kill_stale_instances, _kill_stale_owner)
     scripts/launch.sh              (check_and_handle_engine, check_and_handle_desktop)
-    scripts/stop.sh                (9-step forensic killer)
+    scripts/stop.sh                (engine + cloudflared portions of the forensic killer)
 
 Adding a managed service now means editing one list (SERVICES) in this file.
+
+⚠ OWNERSHIP BOUNDARY ⚠
+
+This module manages ONLY services owned by the Python engine (the engine
+itself + its child cloudflared tunnel). It does NOT manage llama-server
+or any other Rust-owned subprocess.
+
+llama-server is owned by the Rust desktop shell:
+    • spawned by desktop/src-tauri/src/lib.rs setup() (Auto-start LLM block)
+    • torn down by graceful_shutdown_sync() and kill_orphaned_llama_server()
+
+If preflight tried to "clean up" llama-server, it would race against Rust's
+own auto-start path that runs ~1s before this module executes — the engine
+would kill the llama-server Rust just spawned. That is the EXACT failure
+mode this ownership boundary exists to prevent.
 
 Three call paths:
 
@@ -150,15 +164,24 @@ SERVICES: tuple[ManagedService, ...] = (
         # "matrx" keyword in cmdline / exe path / cwd to confirm it is ours.
         safety_keyword="matrx",
     ),
-    ManagedService(
-        name="llama_server",
-        cmdline_patterns=(r"llama-server",),
-        windows_images=("llama-server.exe",),
-        port=None,
-        port_scan_count=0,
-        discovery_key="llama",
-        spawned_by="rust",
-    ),
+    # NOTE: llama-server is INTENTIONALLY OMITTED from this registry.
+    #
+    # Per the lifecycle ownership contract (see ARCHITECTURE.md → "Lifecycle &
+    # Ownership"), each component manages only its own children. llama-server
+    # is owned by the Rust desktop shell — it is auto-started by Tauri's
+    # setup() hook (desktop/src-tauri/src/lib.rs, "Auto-start LLM server")
+    # and torn down by Rust's graceful_shutdown_sync() / kill_orphaned_llama_server().
+    #
+    # The Python engine MUST NOT include llama-server in this registry. If it
+    # did, preflight.clean_orphans() (which runs ~1s after the engine sidecar
+    # spawns, so AFTER Rust has already auto-started llama-server) would
+    # immediately kill the llama-server Rust just spawned. Two orchestrators
+    # stepping on each other → the exact bug this whole architecture exists
+    # to prevent.
+    #
+    # If you find yourself adding llama_server back here because something
+    # else feels broken: stop. The bug is somewhere else. Fix the broken
+    # thing in its own ownership scope.
     ManagedService(
         name="cloudflared",
         cmdline_patterns=(r"cloudflared\s+tunnel",),

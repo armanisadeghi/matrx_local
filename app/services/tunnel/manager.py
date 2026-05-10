@@ -276,15 +276,20 @@ class TunnelManager:
         return self._last_exit_code
 
     async def start(self, port: int) -> Optional[str]:
-        """Start the tunnel subprocess. Returns the public URL when ready."""
+        """Start the tunnel subprocess. Returns the public URL when ready.
+
+        Retries once on transient trycloudflare.com server flakes (the 1101 /
+        "Error unmarshaling QuickTunnel response" failure where Cloudflare's
+        edge returns a 500 with an HTML body instead of JSON). The retry
+        applies only to that specific signature; every other failure mode
+        (DNS, port-already-in-use, binary missing, network down) returns
+        immediately so the operator sees the real cause.
+        """
         if self.running:
             logger.warning("TunnelManager.start() called while already running")
             return self._url
 
         self._port = port
-        self._url = None
-        self._ws_url = None
-        self._url_ready.clear()
 
         try:
             bin_path = await asyncio.get_event_loop().run_in_executor(
@@ -295,8 +300,71 @@ class TunnelManager:
             logger.error("Failed to acquire cloudflared binary: %s", exc)
             return None
 
+        # First attempt.
+        url = await self._spawn_and_wait_for_url(bin_path, port, attempt=1)
+        if url:
+            return url
+
+        # Retry only for the specific transient signature: cloudflared
+        # exited with code 1 and its tail mentions either "error code: 1101"
+        # (Cloudflare Worker exception) or "Error unmarshaling QuickTunnel
+        # response" (HTML 500 returned where JSON was expected). Every
+        # other failure returns immediately with the existing error log.
+        if self._last_exit_code == 1 and self._is_transient_quicktunnel_flake():
+            logger.warning(
+                "cloudflared hit the trycloudflare.com QuickTunnel 1101 flake; "
+                "retrying once after 3s backoff (this is a Cloudflare-side "
+                "intermittent — not a local config issue)"
+            )
+            await asyncio.sleep(3.0)
+            url = await self._spawn_and_wait_for_url(bin_path, port, attempt=2)
+
+        if self._url:
+            logger.info("Tunnel active: %s", self._url)
+        return self._url
+
+    def _is_transient_quicktunnel_flake(self) -> bool:
+        """True iff the recent cloudflared output matches the known QuickTunnel
+        500/1101 transient. Used to gate the one-shot retry."""
+        markers = (
+            "error code: 1101",
+            "error unmarshaling quicktunnel",
+            "500 internal server error",
+        )
+        for line in self._recent_output:
+            ll = line.lower()
+            if any(m in ll for m in markers):
+                return True
+        return False
+
+    async def _spawn_and_wait_for_url(
+        self, bin_path: Path, port: int, *, attempt: int
+    ) -> Optional[str]:
+        """Single spawn + 30s URL-wait cycle. Returns the public URL on
+        success or None on any failure (timeout, early exit, exception).
+        Resets per-attempt state so the retry path doesn't carry stale
+        readers, output, or url events from the first attempt."""
+        # Reset per-attempt state so a retry starts clean.
+        self._url = None
+        self._ws_url = None
+        self._url_ready.clear()
+        self._recent_output.clear()
+        self._last_exit_code = None
+        self._process = None
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+            try:
+                await self._reader_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._reader_task = None
+
         cmd = self._build_command(bin_path, port)
-        logger.info("Starting cloudflared: %s", " ".join(str(c) for c in cmd))
+        logger.info(
+            "Starting cloudflared (attempt %d): %s",
+            attempt,
+            " ".join(str(c) for c in cmd),
+        )
 
         kwargs: dict = dict(
             stdout=asyncio.subprocess.PIPE,
@@ -317,7 +385,6 @@ class TunnelManager:
         self._started_at = time.time()
         self._reader_task = asyncio.create_task(self._read_output())
 
-        # Wait up to 30s for the URL, but bail early if cloudflared exits
         try:
             exit_task = asyncio.create_task(self._process.wait())
             url_task = asyncio.create_task(self._url_ready.wait())
@@ -330,31 +397,30 @@ class TunnelManager:
                 t.cancel()
 
             if url_task in done:
-                pass  # URL captured
-            elif exit_task in done:
+                return self._url  # URL captured
+            if exit_task in done:
                 rc = exit_task.result()
                 self._last_exit_code = rc
-                # Dump the last lines of cloudflared output so the operator
-                # can see the actual reason (DNS, auth, port, etc.) instead
-                # of "exit code 1" with no context.
                 tail = list(self._recent_output)[-30:]
                 logger.error(
-                    "cloudflared exited with code %s before emitting a tunnel URL — last %d lines:\n%s",
+                    "cloudflared (attempt %d) exited with code %s before "
+                    "emitting a tunnel URL — last %d lines:\n%s",
+                    attempt,
                     rc,
                     len(tail),
                     "\n".join(f"  | {line}" for line in tail) or "  | <no output captured>",
                 )
-            else:
-                logger.warning(
-                    "cloudflared did not emit a tunnel URL within 30s — last 10 lines:\n%s",
-                    "\n".join(f"  | {line}" for line in list(self._recent_output)[-10:]) or "  | <no output captured>",
-                )
+                return None
+            logger.warning(
+                "cloudflared (attempt %d) did not emit a tunnel URL within "
+                "30s — last 10 lines:\n%s",
+                attempt,
+                "\n".join(f"  | {line}" for line in list(self._recent_output)[-10:]) or "  | <no output captured>",
+            )
+            return None
         except Exception as exc:
-            logger.error("Error waiting for cloudflared URL: %s", exc)
-
-        if self._url:
-            logger.info("Tunnel active: %s", self._url)
-        return self._url
+            logger.error("Error waiting for cloudflared URL (attempt %d): %s", attempt, exc)
+            return None
 
     async def stop(self) -> None:
         """Stop the tunnel subprocess."""

@@ -36,6 +36,17 @@ pub struct LlmDownloadCancelState(pub Arc<AtomicBool>);
 // ── Server Lifecycle ──────────────────────────────────────────────────────
 
 /// Start or restart llama-server with the selected model.
+///
+/// OWNERSHIP: Rust owns the llama-server lifecycle. This command is the
+/// canonical entry point for any caller (frontend `useLlm.startServer`,
+/// the auto-start path in `lib.rs setup()`, etc.) — every llama-server
+/// spawn in production funnels through here. The Python engine MUST NOT
+/// invoke this command, scan for llama-server processes, or kill them
+/// (see `app/preflight.py` for the registry-level enforcement).
+///
+/// Every invocation logs `[llm-cmd] start_llm_server` with the model and
+/// stop reason so the operator can grep the unified log to confirm who
+/// triggered the spawn — UI button, auto-start, modal auto-open, etc.
 #[tauri::command]
 pub async fn start_llm_server(
     app: AppHandle,
@@ -45,6 +56,11 @@ pub async fn start_llm_server(
     context_length: Option<u32>,
     mmproj_filename: Option<String>,
 ) -> Result<LlmServerStatus, String> {
+    println!(
+        "[llm-cmd] start_llm_server invoked: model={} gpu_layers={} ctx={:?}",
+        model_filename, gpu_layers, context_length
+    );
+
     let model_path = resolve_model_path(&app, &model_filename)?;
 
     if !std::path::Path::new(&model_path).exists() {

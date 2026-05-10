@@ -1501,12 +1501,26 @@ pub fn run() {
             }
 
             // ── Auto-start LLM server on startup ───────────────────────────
+            // OWNERSHIP: Rust owns llama-server. The Python engine MUST NOT
+            // touch it (preflight excludes it from its SERVICES list, see
+            // `app/preflight.py`). Spawning here is legitimate — Rust is
+            // managing its own child.
+            //
             // If a model was previously set up and its file exists on disk,
-            // spawn llama-server in the background so the Confidential Chat page
-            // is ready without user intervention. This runs after Whisper init
-            // and is fully fire-and-forget — failures are logged but do not
-            // affect app startup. The frontend hook handles `llm-server-ready`
-            // and `get_llm_setup_status` to reflect the running state.
+            // spawn llama-server in the background so the Confidential Chat
+            // page is ready without user intervention. This runs after
+            // Whisper init and is fully fire-and-forget — failures are
+            // logged but do not affect app startup. The frontend hook
+            // handles `llm-server-ready` and `get_llm_setup_status` to
+            // reflect the running state.
+            //
+            // EVERY no-op exit path here logs WHY it skipped, with a
+            // `[llm-autostart]` prefix so the operator can grep the unified
+            // log to confirm whether this path ran or not. Without these
+            // logs we have no way to distinguish "Rust auto-started it" from
+            // "the user clicked Start" from "something else spawned it" —
+            // which is the exact debugging hole that masked the engine vs.
+            // Rust ownership conflict for so long.
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -1515,19 +1529,38 @@ pub fn run() {
                     use llm::model_selector::compute_gpu_layers_for_hw;
                     use llm::server::find_free_port;
 
+                    println!("[llm-autostart] entry");
+
                     let config_dir = match handle.path().app_data_dir() {
                         Ok(d) => d,
-                        Err(_) => return,
+                        Err(e) => {
+                            println!("[llm-autostart] skip: app_data_dir unavailable: {}", e);
+                            return;
+                        }
                     };
                     let config = LlmConfig::load(&config_dir);
                     if !config.setup_complete {
+                        println!(
+                            "[llm-autostart] skip: setup_complete=false — \
+                             user has not finished LLM setup yet"
+                        );
                         return;
                     }
-                    let Some(filename) = config.selected_model else {
+                    let Some(filename) = config.selected_model.clone() else {
+                        println!(
+                            "[llm-autostart] skip: setup_complete=true but \
+                             selected_model is None"
+                        );
                         return;
                     };
                     let model_path = config_dir.join("models").join(&filename);
                     if !model_path.exists() {
+                        println!(
+                            "[llm-autostart] skip: selected_model={} but file \
+                             not found at {}",
+                            filename,
+                            model_path.display()
+                        );
                         return;
                     }
 
@@ -1535,9 +1568,18 @@ pub fn run() {
                     {
                         let server = llm_state.lock().await;
                         if server.status.running {
-                            return; // already running, nothing to do
+                            println!(
+                                "[llm-autostart] skip: server already running on port {}",
+                                server.status.port
+                            );
+                            return;
                         }
                     }
+
+                    println!(
+                        "[llm-autostart] proceeding: model={} setup_complete=true file_exists=true running=false",
+                        filename
+                    );
 
                     // Detect hardware to pick the right gpu_layers value
                     let hw = HardwareProfile::detect();
@@ -1548,10 +1590,15 @@ pub fn run() {
                     let port = match find_free_port(11434) {
                         Ok(p) => p,
                         Err(e) => {
-                            eprintln!("[llm] Auto-start: could not find free port: {}", e);
+                            eprintln!("[llm-autostart] FAIL: could not find free port: {}", e);
                             return;
                         }
                     };
+
+                    println!(
+                        "[llm-autostart] spawning llama-server: model={} port={} gpu_layers={} ctx={}",
+                        filename, port, gpu_layers, ctx
+                    );
 
                     let _ = handle.emit(
                         "llm-server-starting",
@@ -1584,9 +1631,12 @@ pub fn run() {
                             updated.last_port = Some(port);
                             let _ = updated.save(&config_dir);
                             let _ = handle.emit("llm-server-ready", &server.status);
-                            println!("[llm] Auto-started model: {}", filename);
+                            println!(
+                                "[llm-autostart] SUCCESS: llama-server ready on port {} (model={})",
+                                port, filename
+                            );
                         }
-                        Err(e) => eprintln!("[llm] Auto-start failed: {}", e),
+                        Err(e) => eprintln!("[llm-autostart] FAIL: server.start() returned: {}", e),
                     }
                 });
             }

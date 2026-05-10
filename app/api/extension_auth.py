@@ -1,4 +1,4 @@
-"""Production-grade Supabase JWT validation for the /extension/* surface.
+"""Supabase JWT validation for the /extension/* surface.
 
 Background
 ----------
@@ -6,41 +6,36 @@ The engine's existing ``AuthMiddleware`` (``app/api/auth.py``) only checks
 that *some* Bearer token is present on protected requests — it does not
 verify the signature. That posture is acceptable for the loopback-only
 boundary the engine binds to today (``127.0.0.1`` + Tauri/extension as the
-only callers), but it does not scale: as soon as the engine is reachable
-over a Cloudflare tunnel, a corp-network bridge, or any future remote-access
-substrate, an unsigned-but-non-empty Bearer is no defence at all.
+only callers): the trust boundary is "if you can reach this socket on
+loopback, you're already inside the user's machine."
 
-This module adds a second, production-grade layer specifically for the
+This module adds an OPTIONAL second layer specifically for the
 ``/extension/*`` routes — the surface the Chrome extension calls into.
-Other engine routes (``/ws``, ``/tools/*``, etc.) are unchanged: they keep
-the permissive Bearer check, since the user trusts their own desktop UI
-and CLI clients.
+Other engine routes (``/ws``, ``/tools/*``, etc.) keep the permissive
+Bearer check; the user trusts their own desktop UI and CLI clients.
 
-Verification strategy (in priority order)
------------------------------------------
-1. **JWKS / asymmetric (preferred).** Supabase publishes its signing keys
-   at ``<SUPABASE_URL>/auth/v1/.well-known/jwks.json``. We use
-   ``jwt.PyJWKClient`` to fetch + cache them and verify with the
-   advertised algorithm (typically ``ES256`` / ``RS256``). No secret on the
-   engine. This matches the pattern already used by ``scraper-service``
-   (see ``scraper-service/app/api/auth.py``) and is the recommended modern
-   approach for Supabase. Whenever ``SUPABASE_URL`` is set we attempt this
-   path first.
-2. **HS256 / shared secret (fallback).** If ``SUPABASE_JWT_SECRET`` is
-   configured (Supabase dashboard → Settings → API → "JWT Secret"), we
-   verify the signature with that secret. This is useful when the engine
-   cannot reach the JWKS endpoint (offline / locked-down network) but
-   still needs to validate user tokens.
-3. **Loopback fallback (graceful degradation).** If neither path is
-   available — no ``SUPABASE_URL``, no ``SUPABASE_JWT_SECRET`` — we
-   preserve the engine's existing permissive-Bearer behaviour, but log a
-   loud ``WARNING`` once at module import so the operator knows JWT
-   validation is disabled. This keeps the loopback-only happy path
-   working unchanged for users who haven't configured the secret yet.
+Verification posture
+--------------------
+The engine runs on the user's own machine. It cannot have a server-side
+JWT signing secret (HS256/``SUPABASE_JWT_SECRET``) — there is no secure
+place to put one and no point in trying. We support exactly two modes:
 
-The fallback is *only* about signature verification. Token presence is
-always required; missing-token requests are rejected with ``401`` /
-WebSocket close ``1008`` regardless of configuration.
+1. **JWKS / asymmetric (only crypto path).** When ``SUPABASE_URL`` is set
+   AND the project issues asymmetric tokens (RS256/ES256), we fetch the
+   public signing keys from
+   ``<SUPABASE_URL>/auth/v1/.well-known/jwks.json`` via ``jwt.PyJWKClient``
+   (with a 1-hour key cache) and verify the signature locally. No secret
+   needed on the engine. Tokens signed with HS256 are still common in
+   Supabase projects — they are NOT verifiable here and will fall through
+   to mode 2.
+2. **Loopback presence-only (the desktop default).** When the token is
+   HS256 (cannot be verified by JWKS) OR ``SUPABASE_URL`` is unset, we
+   accept any non-empty Bearer. This is correct for a process that only
+   listens on ``127.0.0.1``: the security boundary is the loopback
+   socket, not the JWT signature.
+
+Token presence is always required; missing-token requests are rejected
+with ``401`` / WebSocket close ``1008`` regardless of configuration.
 
 Public API
 ----------
@@ -72,16 +67,6 @@ logger = get_logger()
 # ---------------------------------------------------------------------------
 
 
-def _env_jwt_secret() -> str:
-    """Read SUPABASE_JWT_SECRET fresh on every call.
-
-    Read at call-time (not import-time) so a ``.env`` reload or an in-process
-    setting flip via the engine's settings UI takes effect immediately
-    without a restart.
-    """
-    return os.getenv("SUPABASE_JWT_SECRET", "").strip()
-
-
 def _supabase_jwks_url() -> Optional[str]:
     """Derive the well-known JWKS URL from ``SUPABASE_URL``.
 
@@ -94,71 +79,44 @@ def _supabase_jwks_url() -> Optional[str]:
     return f"{base}/auth/v1/.well-known/jwks.json"
 
 
-def _validation_enabled() -> bool:
-    """Whether *any* signature-verification path is currently available.
+# One-time startup notice. The engine is a desktop sidecar — its security
+# boundary is the loopback socket, not the JWT signature. We log the posture
+# once at first use so operators understand what mode they're in, but at
+# INFO (not WARNING) — this is the EXPECTED mode for desktop installs.
+_STARTUP_NOTICE_LOGGED = False
 
-    When this returns ``False`` we fall back to permissive Bearer-presence
-    checking. We log a loud one-time WARNING in that case so operators
-    notice the degraded posture.
+
+def _log_startup_notice_once(reason: str) -> None:
+    """Emit a single INFO line describing the auth posture.
+
+    Reasons:
+      * ``"presence_only"`` — no JWKS configured (no SUPABASE_URL).
+        Engine accepts any non-empty Bearer on loopback. This is the
+        normal mode for desktop installs.
+      * ``"hs256_token_passthrough"`` — JWKS is configured but the
+        incoming token is HS256-signed (cannot be verified by JWKS).
+        Engine accepts on presence. Migrate the Supabase project to
+        RS256/ES256 if you want crypto verification of these tokens.
     """
-    return bool(_env_jwt_secret()) or bool(_supabase_jwks_url())
-
-
-# Each reason fires its WARNING at most once per process, regardless of how
-# many requests trigger it. The set is keyed by a short stable identifier so
-# the same condition doesn't relog on every /extension/sessions poll.
-_DEGRADED_WARNINGS_LOGGED: set[str] = set()
-
-
-def _log_degraded_mode_once(reason: str) -> None:
-    """Emit a single loud WARNING describing the actual degraded state.
-
-    ``reason`` selects the exact failure mode the request fell into so the
-    log is accurate. We deliberately do NOT log at startup — at startup we
-    only know what's *configured*, not what tokens will actually arrive,
-    and a JWKS-only setup can still validate tokens fine if the issuer
-    starts emitting RS256/ES256. The first request that exercises a
-    degraded path is the right moment to surface it.
-
-    Recognised reasons (each fires at most once per process):
-      * ``"no_paths"``       — neither SUPABASE_URL nor SUPABASE_JWT_SECRET
-        is configured. This is the loopback-only happy path.
-      * ``"hs256_no_secret"`` — incoming token is HS256-signed but only
-        JWKS is configured. The HS256 key needed to verify it is not
-        available to the engine. Common when a Supabase project has been
-        partially migrated to asymmetric keys but auth still issues
-        symmetric tokens.
-    """
-    if reason in _DEGRADED_WARNINGS_LOGGED:
+    global _STARTUP_NOTICE_LOGGED
+    if _STARTUP_NOTICE_LOGGED:
         return
-    _DEGRADED_WARNINGS_LOGGED.add(reason)
+    _STARTUP_NOTICE_LOGGED = True
 
-    if reason == "no_paths":
-        logger.warning(
-            "[extension_auth] JWT signature validation DISABLED — "
-            "neither SUPABASE_JWT_SECRET nor SUPABASE_URL is configured. "
-            "Falling back to permissive Bearer-presence check on "
-            "/extension/* routes. This is fine for loopback-only "
-            "deployments; set SUPABASE_JWT_SECRET in .env to enable "
-            "cryptographic validation."
+    if reason == "presence_only":
+        logger.info(
+            "[extension_auth] /extension/* auth: presence-only mode "
+            "(no JWKS configured). Accepts any non-empty Bearer over "
+            "loopback. This is the expected mode for desktop installs."
         )
-    elif reason == "hs256_no_secret":
-        logger.warning(
-            "[extension_auth] Incoming token is HS256-signed but the "
-            "engine has no SUPABASE_JWT_SECRET configured (only JWKS is "
-            "set up — JWKS cannot verify HS256 tokens). Falling back to "
-            "permissive Bearer-presence check on /extension/* routes for "
-            "this and similar tokens. Set SUPABASE_JWT_SECRET in .env to "
-            "enable cryptographic validation, or migrate the Supabase "
-            "project to asymmetric (RS256/ES256) JWT signing so the JWKS "
-            "path applies."
-        )
-    else:  # defensive — keep the log informative if a new reason ships
-        logger.warning(
-            "[extension_auth] JWT signature validation degraded "
-            "(reason=%s) — falling back to permissive Bearer-presence "
-            "check on /extension/* routes.",
-            reason,
+    elif reason == "hs256_token_passthrough":
+        logger.info(
+            "[extension_auth] /extension/* auth: JWKS is configured but "
+            "incoming tokens are HS256-signed (Supabase project still on "
+            "symmetric signing). HS256 tokens cannot be verified by JWKS, "
+            "so they are accepted on presence over loopback. Migrate the "
+            "Supabase project to RS256/ES256 if you want crypto "
+            "verification of these tokens."
         )
 
 
@@ -384,23 +342,6 @@ def _decode_with_jwks_sync(token: str, jwks_url: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# HS256 path (fallback shared-secret)
-# ---------------------------------------------------------------------------
-
-
-def _decode_with_secret_sync(token: str, secret: str) -> dict[str, Any]:
-    """Verify ``token`` with the project's HS256 ``SUPABASE_JWT_SECRET``."""
-    import jwt as _jwt
-
-    return _jwt.decode(
-        token,
-        secret,
-        algorithms=["HS256"],
-        options={"verify_aud": False},
-    )
-
-
-# ---------------------------------------------------------------------------
 # Token extraction
 # ---------------------------------------------------------------------------
 
@@ -445,23 +386,26 @@ def _extract_bearer_ws(websocket: WebSocket) -> Optional[str]:
 async def _verify_token(token: str) -> ExtensionPrincipal:
     """Verify ``token`` and return a populated principal.
 
-    Tries JWKS first (if applicable), then HS256 secret. Raises a generic exception on
-    every failure path; callers translate to HTTP 401 / WS 1008.
-    """
-    last_error: Optional[Exception] = None
+    Tries JWKS for asymmetric (RS256/ES256) tokens. HS256 tokens cannot
+    be verified by JWKS and the engine has no signing secret (it runs on
+    the user's machine — there's no place to put one); these fall through
+    to a presence-only principal accepted on loopback.
 
-    # Peek at the token header to optimize the validation path
+    Raises only if the token is malformed or — for asymmetric tokens — its
+    signature is invalid. Callers translate to HTTP 401 / WS 1008.
+    """
+    # Peek at the token header to choose the validation path.
     try:
         import jwt as _jwt
-        header = _jwt.get_unverified_header(token)
-        alg = header.get("alg")
+
+        alg = _jwt.get_unverified_header(token).get("alg")
     except Exception as exc:
-        header = {}
-        alg = None
-        last_error = exc
+        # Malformed token. Fail closed.
+        raise exc
 
     jwks_url = _supabase_jwks_url()
-    # Only attempt JWKS if the token is NOT symmetrically signed. JWKS cannot verify HS256.
+
+    # JWKS path: only meaningful for asymmetric tokens with a configured URL.
     if jwks_url and alg != "HS256":
         try:
             payload = await asyncio.to_thread(
@@ -469,35 +413,23 @@ async def _verify_token(token: str) -> ExtensionPrincipal:
             )
             return _principal_from_payload(payload, token)
         except Exception as exc:
-            last_error = exc
+            # JWKS path was applicable but rejected the token (bad sig,
+            # expired, unreachable issuer, etc.). Fail closed — do NOT
+            # silently downgrade to presence-only for an asymmetric token
+            # that failed crypto verification.
             _debug_log_jwks_failure(token, exc)
+            raise exc
 
-    secret = _env_jwt_secret()
-    if secret and alg == "HS256":
-        try:
-            payload = await asyncio.to_thread(
-                _decode_with_secret_sync, token, secret
-            )
-            return _principal_from_payload(payload, token)
-        except Exception as exc:
-            last_error = exc
-            logger.debug("[extension_auth] HS256 validation failed: %s", exc)
-
-    # Both paths failed (or weren't available).
-    # If the token is HS256 but we don't have the shared secret, JWKS is
-    # bypassed by design (line 294 above). The engine cannot verify the
-    # signature, but the token is presumably still a real Supabase token —
-    # just one whose key hasn't been provisioned to this binary. Fall back
-    # gracefully and emit a single descriptive WARNING (not the generic
-    # "no paths configured" one — that's misleading when SUPABASE_URL is
-    # set).
-    if alg == "HS256" and not secret:
-        _log_degraded_mode_once("hs256_no_secret")
-        return _degraded_principal(token)
-
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("No JWT verification path is configured or token is invalid")
+    # HS256 token (or no JWKS configured) → presence-only over loopback.
+    # The engine cannot cryptographically verify these tokens by design.
+    # The trust boundary is the loopback socket, not the signature.
+    if alg == "HS256":
+        _log_startup_notice_once(
+            "hs256_token_passthrough" if jwks_url else "presence_only"
+        )
+    else:
+        _log_startup_notice_once("presence_only")
+    return _degraded_principal(token)
 
 
 def _principal_from_payload(
@@ -572,16 +504,6 @@ async def validate_extension_principal(request: Request) -> ExtensionPrincipal:
             detail="Authorization Bearer token required",
         )
 
-    if not _validation_enabled():
-        _log_degraded_mode_once("no_paths")
-        principal = _degraded_principal(token)
-        # Stash on request.state for symmetry with the verified path —
-        # downstream code can read ``request.state.principal`` regardless
-        # of mode. The existing ``request.state.user_token`` field set by
-        # the upstream AuthMiddleware is left intact.
-        request.state.principal = principal
-        return principal
-
     try:
         principal = await _verify_token(token)
     except Exception as exc:
@@ -641,10 +563,6 @@ async def validate_extension_principal_ws(
             reason="Missing auth token",
         )
         return None
-
-    if not _validation_enabled():
-        _log_degraded_mode_once("no_paths")
-        return _degraded_principal(token)
 
     try:
         return await _verify_token(token)

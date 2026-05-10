@@ -418,7 +418,6 @@ async def ai_provider_status() -> dict[str, Any]:
         else:
             missing.append(provider)
 
-    jwt_secret_set = bool(os.getenv("SUPABASE_JWT_SECRET", "").strip())
     ai_initialized = False
     client_mode = False
     try:
@@ -446,13 +445,9 @@ async def ai_provider_status() -> dict[str, Any]:
             "missing": missing,
             "any_available": len(available) > 0,
         },
-        "jwt_validation": {
-            "configured": jwt_secret_set,
-            "warning": None if jwt_secret_set else (
-                "SUPABASE_JWT_SECRET is not set — user JWTs cannot be validated. "
-                "Set it in .env to enable authenticated AI calls."
-            ),
-        },
+        # NOTE: no jwt_validation block. The engine runs on the user's
+        # own machine and has no server-side JWT signing secret. Auth
+        # posture for /extension/* is reported via /extension/boot-check.
         "engine": {
             "initialized": ai_initialized,
             "client_mode": client_mode,

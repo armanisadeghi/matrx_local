@@ -2734,9 +2734,8 @@ class EngineAPI {
    *
    * Replaces the cached summary returned by ``extensionBootCheckGet()``.
    * Intended for the desktop "Re-run self-check" button so users can
-   * refresh the picture after toggling tunnel state, flipping
-   * ``MATRX_PREFER_TUNNEL``, or rotating ``SUPABASE_JWT_SECRET`` without
-   * having to restart the engine.
+   * refresh the picture after toggling tunnel state or flipping
+   * ``MATRX_PREFER_TUNNEL`` without having to restart the engine.
    */
   async extensionBootCheckRun(): Promise<ExtensionBootCheckSummary> {
     return this.post(

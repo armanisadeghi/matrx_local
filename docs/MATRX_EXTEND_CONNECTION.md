@@ -166,31 +166,29 @@ The substrates within those URLs:
   written into `~/.matrx/local.json`). The extension prefers the Supabase
   JWT so user identity flows end-to-end; the local API key is the offline
   fallback.
-- **JWT validation on `/extension/*` (production-grade).** Every request
-  to `/extension/*` (HTTP and WebSocket) goes through
-  `app/api/extension_auth.py::validate_extension_principal`, which
-  cryptographically verifies the Supabase JWT and rejects expired tokens.
-  Two verification paths are tried in order:
-    1. **JWKS / asymmetric (preferred).** Whenever `SUPABASE_URL` is set,
+- **JWT validation on `/extension/*`.** Every request to `/extension/*`
+  (HTTP and WebSocket) goes through
+  `app/api/extension_auth.py::validate_extension_principal`. The engine
+  is a desktop sidecar — it runs on the user's own machine and therefore
+  CANNOT have a server-side JWT signing secret (no `SUPABASE_JWT_SECRET`
+  or any equivalent). Two posture options:
+    1. **JWKS / asymmetric (only crypto path).** Whenever `SUPABASE_URL`
+       is set AND the project issues asymmetric tokens (RS256/ES256),
        the engine fetches `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`
-       and verifies with the advertised algorithm (Supabase uses ES256
-       today). Same pattern the remote scraper-service uses. Keys are
-       cached for one hour by `jwt.PyJWKClient`.
-    2. **HS256 / shared secret (fallback).** When `SUPABASE_JWT_SECRET`
-       is set (Supabase dashboard → Settings → API → "JWT Secret"), the
-       engine verifies the signature with that secret. Useful when the
-       JWKS endpoint is unreachable (offline, locked-down network).
-  Failures (missing token, invalid signature, expired token) return HTTP
-  401 / WS close 1008. The validated principal (`user_id`, `email`,
-  `is_anon`, `verified`) is stashed on `request.state.principal`.
-- **Graceful degradation.** When neither `SUPABASE_URL` nor
-  `SUPABASE_JWT_SECRET` is configured, the engine logs a loud one-time
-  WARNING and falls back to the existing permissive Bearer-presence
-  check. The loopback-only happy path keeps working unchanged for users
-  who haven't configured the secret yet — the warning is the signal to
-  upgrade once the engine is exposed beyond loopback. Set
-  `SUPABASE_JWT_SECRET` in `.env` (or rely on the default `SUPABASE_URL`
-  in `app/config.py`) to enable cryptographic validation.
+       and verifies with the advertised algorithm. Same pattern the
+       remote scraper-service uses. Keys are cached for one hour by
+       `jwt.PyJWKClient`. JWKS-verified tokens fail closed on bad
+       signature or expired.
+    2. **Loopback presence-only (the desktop default).** HS256 tokens
+       cannot be verified by JWKS (and the engine has nowhere to store
+       a shared secret), so they pass through with presence-only
+       checking on loopback. The trust boundary on a desktop install is
+       the loopback socket itself, not the JWT signature.
+  Missing-token requests always return HTTP 401 / WS close 1008
+  regardless of mode. The principal (`user_id`, `email`, `is_anon`,
+  `verified`) is stashed on `request.state.principal`; `verified=True`
+  means the token went through the JWKS crypto path,
+  `verified=False` means it was accepted on presence over loopback.
 - **Other engine routes are unchanged.** `/ws`, `/tools/*`, `/chat/*`,
   etc. continue to use the upstream `AuthMiddleware` (Bearer presence
   only). The user trusts their own desktop UI / CLI on those surfaces;
