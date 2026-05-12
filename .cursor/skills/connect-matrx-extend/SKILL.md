@@ -121,6 +121,15 @@ without scrolling logs.
   proxy port). Real RPC port lives in `~/.matrx/local.json` after engine
   startup. If RPC works in curl but extension reports failure, the
   extension's port-discovery path is the suspect, not this repo.
+- **Recurring `[auth] rejected POST /extension/rpc — missing bearer
+  token` warnings every ~30 s.** The extension's port-discovery probe
+  in `src/lib/desktop/discovery.ts` is hitting `/extension/rpc`
+  (auth-walled) instead of `/health` (public). Each cache-miss fans
+  out 20 parallel probes; only the one that lands on the engine port
+  reaches the auth middleware and logs. Fix lives in the extension
+  repo (`connect-local` skill) — do NOT loosen the engine's
+  `_PUBLIC_PATHS` to suppress the warning, the probe should never have
+  been authenticated.
 - **WebSocket reverse-channel timeout**: `invoke_extension_tool` rejects
   with `TimeoutError` after 30 s (default). Either the extension is
   disconnected or the browser tool is genuinely slow. Treat as a soft

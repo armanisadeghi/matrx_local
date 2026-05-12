@@ -205,8 +205,15 @@ The substrates within those URLs:
   public internet directly — the public URL is reachable only through
   the cloudflared subprocess that proxies inbound traffic to loopback.
 - Port discovery: the engine writes the actual chosen port to
-  `~/.matrx/local.json` after startup. The extension reads that file (via
-  the desktop bridge it already maintains) instead of hardcoding a port.
+  `~/.matrx/local.json` after startup. The Chrome extension's SW cannot
+  read that file, so it probes `GET /health` across the documented scan
+  range (22140–22159) in parallel and caches the winner in
+  `chrome.storage.local` for 30 minutes. The probe **must** stay on
+  `GET /health` (which is in `_PUBLIC_PATHS`); probing `/extension/rpc`
+  without a bearer trips the upstream `AuthMiddleware` and produces
+  one "missing bearer token" warning per cache-miss alarm tick. See
+  `src/lib/desktop/discovery.ts` in matrx-extend and the `connect-local`
+  skill there.
 
 ## Adding a command inbound (extension → matrx-local)
 
