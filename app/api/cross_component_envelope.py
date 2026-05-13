@@ -35,6 +35,18 @@ class InstanceRef(BaseModel):
     instanceId: str
 
 
+class PartialInstanceRef(BaseModel):
+    """Like `InstanceRef`, but with `instanceId` optional.
+
+    Used for `toInstance` so a publisher can target a component class
+    ("any matrx-local instance") without naming a specific instance —
+    matches the TS schema's `InstanceRefSchema.partial({ instanceId: true })`.
+    """
+
+    component: str
+    instanceId: Optional[str] = None
+
+
 class CrossComponentEnvelope(BaseModel):
     """The v2 cross-component envelope.
 
@@ -53,7 +65,7 @@ class CrossComponentEnvelope(BaseModel):
     fromInstance: InstanceRef = Field(
         default_factory=lambda: InstanceRef(component="unknown", instanceId="unknown")
     )
-    toInstance: Optional[InstanceRef] = None
+    toInstance: Optional[PartialInstanceRef] = None
 
 
 def parse_envelope(raw: dict) -> CrossComponentEnvelope:
