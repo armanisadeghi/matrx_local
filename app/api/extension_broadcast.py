@@ -132,11 +132,22 @@ async def connect_broadcast(user_id: str) -> None:
             channel = client.channel(_channel_name(user_id))
 
             def _on_broadcast(payload: Dict[str, Any]) -> None:
-                # Phase 2: log-only. Phase 3 swaps this for a router.
-                logger.info(
-                    "[extension_broadcast] received from extension via cross-machine: %s",
-                    payload,
-                )
+                # Phase 2: the log-only stub is replaced by the cross-component
+                # router. See app/api/cross_component_router.py for the routing
+                # logic; envelope parsing + back-compat lives in
+                # app/api/cross_component_envelope.py.
+                from app.api.cross_component_router import route_envelope
+                # supabase-py wraps the user-supplied event payload in
+                # {"type": "broadcast", "event": "<event-name>", "payload": {...}}
+                # — unwrap if needed, otherwise pass through.
+                inner = payload.get("payload", payload) if isinstance(payload, dict) else payload
+                if isinstance(inner, dict):
+                    route_envelope(inner)
+                else:
+                    logger.warning(
+                        "[cross-component] non-dict broadcast payload dropped: type=%s",
+                        type(inner).__name__,
+                    )
 
             channel.on_broadcast(event="message", callback=_on_broadcast)
             await channel.subscribe()
