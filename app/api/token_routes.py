@@ -13,6 +13,7 @@ one it can validate beforehand.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any, Optional
 
@@ -25,6 +26,20 @@ from app.services.ai.engine import clear_jwt_cache, set_jwt_cache
 
 logger = get_logger()
 router = APIRouter(prefix="/auth", tags=["auth-token"])
+
+
+def _broadcast_enabled() -> bool:
+    """Env-flag gate for the cross-component broadcast plumb.
+
+    Mirrors the check used in app/main.py Phase 7 startup. Kept here as a
+    module-level helper so the login/logout hooks below don't drift from
+    the startup gate.
+    """
+    return os.environ.get("MATRX_BRIDGE_BROADCAST_ENABLED", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 class TokenRequest(BaseModel):
@@ -71,6 +86,41 @@ async def save_token(req: TokenRequest) -> dict[str, Any]:
         req.user_id,
         expires_at,
     )
+
+    # Cross-component broadcast subscribe — Case B of the lifecycle wiring.
+    # Phase 7 startup in app/main.py handles the resume-from-persisted-session
+    # path; this branch handles fresh sign-ins arriving after the engine
+    # is already running. Idempotent for the same user_id (the helper
+    # short-circuits when the user is already connected). For account
+    # switches the old subscription is dropped explicitly so a stale
+    # channel for a previous user_id never lingers. Gated on
+    # MATRX_BRIDGE_BROADCAST_ENABLED so the plumb stays opt-in.
+    if _broadcast_enabled():
+        try:
+            from app.api.extension_broadcast import (
+                connect_broadcast,
+                disconnect_broadcast,
+                _channels,
+            )
+
+            # Drop any subscription bound to a different user_id (account switch).
+            for prev_user_id in list(_channels.keys()):
+                if prev_user_id != req.user_id:
+                    try:
+                        await disconnect_broadcast(prev_user_id)
+                    except Exception:
+                        logger.debug(
+                            "[token_routes] stale broadcast disconnect failed user_id=%s",
+                            prev_user_id,
+                            exc_info=True,
+                        )
+
+            await connect_broadcast(req.user_id)
+        except Exception as exc:
+            logger.warning(
+                "[token_routes] cross-component broadcast subscribe failed (non-fatal): %s",
+                exc,
+            )
 
     # Trigger an immediate background sync of user-specific data (agents/prompts).
     # The startup sync_all() runs before the JWT is available, so user prompts are
@@ -122,7 +172,34 @@ async def get_token() -> dict[str, Any]:
 async def clear_token() -> dict[str, Any]:
     """Clear the stored JWT on logout."""
     repo = TokenRepo()
+
+    # Capture the outgoing user_id BEFORE we wipe the row so we can tear
+    # down the matching cross-component broadcast subscription. Best-effort:
+    # missing row / read failure must not block logout.
+    outgoing_user_id: Optional[str] = None
+    try:
+        row = await repo.get()
+        if row:
+            outgoing_user_id = row.get("user_id")
+    except Exception:
+        logger.debug("[token_routes] could not read outgoing user_id on logout", exc_info=True)
+
     await repo.clear()
     clear_jwt_cache()
-    logger.info("[token_routes] JWT cleared (logout)")
+    logger.info("[token_routes] JWT cleared (logout) user_id=%s", outgoing_user_id)
+
+    # Cross-component broadcast disconnect — Case B of the lifecycle wiring.
+    # Mirrors the connect in POST /auth/token. Gated on
+    # MATRX_BRIDGE_BROADCAST_ENABLED to match the startup wiring.
+    if _broadcast_enabled() and outgoing_user_id:
+        try:
+            from app.api.extension_broadcast import disconnect_broadcast
+
+            await disconnect_broadcast(outgoing_user_id)
+        except Exception as exc:
+            logger.warning(
+                "[token_routes] cross-component broadcast disconnect failed (non-fatal): %s",
+                exc,
+            )
+
     return {"status": "ok"}

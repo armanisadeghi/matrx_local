@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 import sys
 from contextlib import asynccontextmanager
@@ -589,6 +590,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             exc_info=True,
         )
 
+    # Phase 7: Cross-component broadcast subscription.
+    # Activates the inbound router (app/api/cross_component_router.py) so
+    # wake hints from aidream and RPC envelopes from other components can
+    # reach this engine. Gated by MATRX_BRIDGE_BROADCAST_ENABLED so the
+    # plumb stays opt-in until Phase 3 of the cross-component plan lands.
+    #
+    # Mixed-reality wiring: at startup we look up the persisted user_id
+    # from the auth_tokens SQLite row. If a session is already present
+    # (user previously signed in), we subscribe immediately. If not,
+    # POST /auth/token / DELETE /auth/token (token_routes.py) handle the
+    # login/logout path and call connect_broadcast / disconnect_broadcast
+    # so the subscription tracks the live signed-in identity. The user
+    # id latched here is stashed on app.state.broadcast_user_id so the
+    # shutdown teardown can match the subscribe that started it.
+    app.state.broadcast_user_id = None
+    if os.environ.get("MATRX_BRIDGE_BROADCAST_ENABLED", "").lower() in ("1", "true", "yes"):
+        try:
+            from app.api.extension_broadcast import connect_broadcast
+            from app.services.local_db.repositories import TokenRepo
+
+            row = await TokenRepo().get()
+            user_id = (row or {}).get("user_id")
+            if user_id:
+                await connect_broadcast(user_id)
+                app.state.broadcast_user_id = user_id
+                logger.info(
+                    "[app/main.py] Phase 7: cross-component broadcast subscribed for user_id=%s",
+                    user_id,
+                )
+            else:
+                logger.info(
+                    "[app/main.py] Phase 7: cross-component broadcast skipped — no signed-in user "
+                    "(will subscribe on next POST /auth/token)"
+                )
+        except Exception as exc:
+            logger.warning(
+                "[app/main.py] Phase 7: cross-component broadcast failed to start (non-fatal): %s",
+                exc,
+                exc_info=True,
+            )
+    else:
+        logger.debug(
+            "[app/main.py] Phase 7: cross-component broadcast disabled "
+            "(MATRX_BRIDGE_BROADCAST_ENABLED not set)"
+        )
+
     elapsed = _startup_time.monotonic() - _t0
     logger.info(
         "[app/main.py] ── Startup complete in %.1fs — scraper=%s, proxy=%s ──────────────",
@@ -609,6 +656,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # children behind our back; doing so races with these stops and produces
     # the "ended unexpectedly" crash reports we're trying to eliminate.
     # See app/launcher.py for the full ownership rules.
+
+    # ── Phase S0: Tear down cross-component broadcast subscription ────────
+    # Mirrors Phase 7 startup. The disconnect is best-effort + hard-timeouted
+    # so a wedged Supabase realtime socket can never block engine shutdown.
+    _broadcast_user_id = getattr(app.state, "broadcast_user_id", None)
+    if _broadcast_user_id:
+        try:
+            from app.api.extension_broadcast import disconnect_broadcast
+
+            await asyncio.wait_for(disconnect_broadcast(_broadcast_user_id), timeout=3.0)
+            logger.info(
+                "[app/main.py] Phase S0: cross-component broadcast disconnected for user_id=%s",
+                _broadcast_user_id,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[app/main.py] Phase S0: cross-component broadcast disconnect timed out after 3s"
+            )
+        except Exception:
+            logger.debug(
+                "[app/main.py] Phase S0: cross-component broadcast disconnect failed (non-fatal)",
+                exc_info=True,
+            )
 
     # ── Phase S1: Cancel background asyncio tasks (fast, non-blocking) ────
     _registry.stopping("sync_engine")
