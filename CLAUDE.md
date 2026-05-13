@@ -204,3 +204,5 @@ The matrx-extend Chrome extension is a primary client of this engine. Integratio
 - Skill for working on this connection: `.cursor/skills/connect-matrx-extend/SKILL.md`
 - Master cross-repo doc (in matrx-extend): `/Users/armanisadeghi/code/matrx-extend/.claude/worktrees/exciting-moser-4b984f/docs/CROSS_REPO_INTEGRATION.md`
 - Task pipeline for cross-repo work: `.matrx/` (TASKS_FROM_USER → AGENT_TASKS → AGENT_INSTRUCTIONS). Note: legacy root `AGENT_TASKS.md` retained as read-only history; new tasks go in `.matrx/`.
+
+**Channel B status (matrx-extend ↔ matrx-local):** The `/extension/rpc` registry has four handlers (`health`, `version`, `capabilities`, `tool`) and the `/extension/ws` reverse channel is in place. End-to-end browser-side verification beyond `health` is still pending. Phase 2 of the cross-component plan will activate the inbound broadcast router (turning the current Phase-2 log-only handler into a real dispatcher) and run the first verified browser→engine round-trips beyond `health`.
