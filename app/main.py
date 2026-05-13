@@ -636,6 +636,100 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "(MATRX_BRIDGE_BROADCAST_ENABLED not set)"
         )
 
+    # Phase 8: matrx-scheduler host (surface='desktop').
+    #
+    # The desktop sidecar participates in the cross-component scheduling
+    # spine — matrx-scheduler subscribes to sch_task rows tagged with
+    # surfaces[] containing 'desktop' or 'any', claims them atomically,
+    # runs them, and reports back. Mirrors aidream's surface='server'
+    # wiring (aidream/aidream/api/app.py around 'AIDREAM_SCHEDULER').
+    #
+    # Independent of Phase 7's broadcast subscription — both can coexist
+    # cleanly. Phase 7 uses Realtime Broadcast for live RPC envelopes;
+    # Phase 8 uses Postgres polling against the sch_* tables.
+    #
+    # Activation is gated by MATRX_LOCAL_SCHEDULER_ENABLED (default off).
+    # The Supabase client carries the user's JWT when one is persisted
+    # in auth_tokens — RLS filters sch_* rows to that user only. When no
+    # user is signed in, the scanner polls but sees zero rows.
+    #
+    # See app/services/scheduler_host.py for the full host posture.
+    app.state.scheduler_host_started = False
+    try:
+        from app.services.scheduler_host import (
+            configure_scheduler_host,
+            is_scheduler_enabled,
+            start_scheduler_host,
+        )
+
+        if is_scheduler_enabled():
+            from supabase import create_async_client  # type: ignore[import-not-found]
+            from app.config import SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL
+            from app.services.local_db.repositories import TokenRepo
+
+            if not (SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY):
+                logger.warning(
+                    "[app/main.py] Phase 8: matrx-scheduler host disabled — "
+                    "SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY missing"
+                )
+            else:
+                _scheduler_supabase = await create_async_client(
+                    SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY
+                )
+                # Attach the persisted JWT so PostgREST queries from the
+                # scanner carry the user's identity and RLS scopes the
+                # sch_task / sch_run rows to that user. If no JWT is
+                # persisted yet (user not signed in), the scanner still
+                # polls but RLS returns zero rows — the next POST
+                # /auth/token (when the desktop UI delivers a session)
+                # is the natural place to re-attach the new token;
+                # follow-up work, not blocking for the host plumb.
+                try:
+                    _tok_row = await TokenRepo().get()
+                    _access_token = (_tok_row or {}).get("access_token")
+                    if _access_token:
+                        try:
+                            _scheduler_supabase.postgrest.auth(_access_token)
+                            logger.info(
+                                "[app/main.py] Phase 8: scheduler Supabase client "
+                                "attached persisted user JWT (RLS-scoped)"
+                            )
+                        except Exception:
+                            logger.debug(
+                                "[app/main.py] Phase 8: postgrest.auth() failed (non-fatal)",
+                                exc_info=True,
+                            )
+                except Exception:
+                    logger.debug(
+                        "[app/main.py] Phase 8: TokenRepo read failed (non-fatal)",
+                        exc_info=True,
+                    )
+
+                _configured = await configure_scheduler_host(_scheduler_supabase)
+                if _configured:
+                    _started = await start_scheduler_host()
+                    if _started:
+                        app.state.scheduler_host_started = True
+                        logger.info(
+                            "[app/main.py] Phase 8: matrx-scheduler host started ✓"
+                        )
+                    else:
+                        logger.warning(
+                            "[app/main.py] Phase 8: scheduler configure succeeded "
+                            "but start did not run (flag check changed?)"
+                        )
+        else:
+            logger.debug(
+                "[app/main.py] Phase 8: matrx-scheduler host disabled "
+                "(MATRX_LOCAL_SCHEDULER_ENABLED not set)"
+            )
+    except Exception as exc:
+        logger.warning(
+            "[app/main.py] Phase 8: matrx-scheduler host failed to start (non-fatal): %s",
+            exc,
+            exc_info=True,
+        )
+
     elapsed = _startup_time.monotonic() - _t0
     logger.info(
         "[app/main.py] ── Startup complete in %.1fs — scraper=%s, proxy=%s ──────────────",
@@ -656,6 +750,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # children behind our back; doing so races with these stops and produces
     # the "ended unexpectedly" crash reports we're trying to eliminate.
     # See app/launcher.py for the full ownership rules.
+
+    # ── Phase S00: Stop matrx-scheduler host (mirrors Phase 8) ────────────
+    # Stop the scanner BEFORE tearing down the broadcast / Supabase clients
+    # so an in-flight tick doesn't try to write to a closed connection.
+    # Best-effort + hard-timeouted: a wedged scanner can never block engine
+    # shutdown.
+    if getattr(app.state, "scheduler_host_started", False):
+        try:
+            from app.services.scheduler_host import stop_scheduler_host
+
+            await asyncio.wait_for(stop_scheduler_host(), timeout=5.0)
+            logger.info(
+                "[app/main.py] Phase S00: matrx-scheduler host stopped ✓"
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[app/main.py] Phase S00: scheduler stop timed out after 5s — "
+                "forcing teardown"
+            )
+        except Exception:
+            logger.debug(
+                "[app/main.py] Phase S00: scheduler stop failed (non-fatal)",
+                exc_info=True,
+            )
 
     # ── Phase S0: Tear down cross-component broadcast subscription ────────
     # Mirrors Phase 7 startup. The disconnect is best-effort + hard-timeouted

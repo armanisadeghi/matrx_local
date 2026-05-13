@@ -56,6 +56,13 @@ dependencies = [
     "matrx-utils>=1.0.19",
     "matrx-orm>=3.0.32",
     "matrx-ai>=0.1.26",
+    # matrx-scheduler — the desktop sidecar participates in the cross-component
+    # scheduling spine as surface='desktop'. Sourced from the sibling aidream
+    # repo via the [tool.uv.sources] path entry below — it is not yet
+    # published to PyPI. Activation is gated by MATRX_LOCAL_SCHEDULER_ENABLED;
+    # the dep is always installed so the package is importable for the host
+    # configurator.
+    "matrx-scheduler",
     # Supabase Python client — powers the engine↔extension Broadcast plumb
     # in `app/api/extension_broadcast.py` (C2.d substrate). Already pulled in
     # transitively via matrx-ai/matrx-utils, but we declare it explicitly so
@@ -117,6 +124,25 @@ dev = [
     "pytest-timeout",
     "ruff",
 ]
+
+[tool.uv.sources]
+# matrx-scheduler is developed in the sibling aidream repo's uv workspace
+# (aidream/packages/matrx-scheduler) and not yet published to PyPI. We
+# pin it as a path dependency so the matrx-local sidecar can import the
+# host configurator (matrx_scheduler.configure / start_scanner / etc.).
+# When matrx-scheduler is published, swap this for a normal version
+# constraint and drop the [tool.uv.sources] entry.
+#
+# NOTE: this path dep also causes uv to resolve matrx-utils transitively
+# from aidream's workspace (../aidream/packages/matrx-utils, currently
+# at 1.0.20 — same version, not yet on PyPI). That's a side-effect of
+# uv's workspace propagation through editable installs; the contents
+# are equivalent to the published 1.0.19 + an upcoming 1.0.20 release.
+# Working on matrx-local therefore requires the sibling aidream repo
+# cloned at the relative path above. Anyone building matrx-local
+# already needs aidream cloned for matrx-scheduler itself, so there's
+# no additional barrier.
+matrx-scheduler = { path = "../aidream/packages/matrx-scheduler", editable = true }
 
 [tool.uv]
 python-preference = "only-managed"
