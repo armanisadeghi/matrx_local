@@ -52,10 +52,22 @@ dependencies = [
     "tabulate>=0.9.0",
     "PyMuPDF>=1.27.1",
     "pytesseract>=0.3.13",
-    # Matrx
+    # Matrx — all sourced via path/editable from the sibling aidream
+    # workspace (see [tool.uv.sources] below). Pulling from aidream lets
+    # matrx-local consume in-flight changes (Phase 3a/3b generic-openai
+    # registry + vision translator in matrx-ai, Phase 2 matrx-rag, Phase 6
+    # matrx-connect JWKS, etc.) BEFORE they ship to PyPI. PyPI publishes
+    # happen via tag-push to ``matrx-<pkg>/v<x.y.z>`` (see
+    # aidream/.github/workflows/publish-package.yml). The PyPI version
+    # constraints below are floors — uv resolves to the editable path when
+    # one is configured, otherwise to PyPI.
     "matrx-utils>=1.0.19",
     "matrx-orm>=3.0.32",
+    # matrx-ai>=0.1.26 — pinned to PyPI (see [tool.uv.sources] note
+    # below for why we are NOT using the path dep for matrx-ai yet).
     "matrx-ai>=0.1.26",
+    "matrx-connect>=0.1.1",
+    "matrx-rag>=0.1.0",
     # matrx-scheduler — the desktop sidecar participates in the cross-component
     # scheduling spine as surface='desktop'. Sourced from the sibling aidream
     # repo via the [tool.uv.sources] path entry below — it is not yet
@@ -126,22 +138,46 @@ dev = [
 ]
 
 [tool.uv.sources]
-# matrx-scheduler is developed in the sibling aidream repo's uv workspace
-# (aidream/packages/matrx-scheduler) and not yet published to PyPI. We
-# pin it as a path dependency so the matrx-local sidecar can import the
-# host configurator (matrx_scheduler.configure / start_scanner / etc.).
-# When matrx-scheduler is published, swap this for a normal version
-# constraint and drop the [tool.uv.sources] entry.
+# Every matrx-* dep is sourced via editable path from the sibling
+# aidream repo's uv workspace. This lets matrx-local consume in-flight
+# changes (Phase 3a/3b in matrx-ai, Phase 2 matrx-rag, Phase 6
+# matrx-connect JWKS, etc.) BEFORE they ship to PyPI. When a package is
+# published, the PyPI version constraint in [project].dependencies stays
+# in place as a floor; drop the corresponding line below to switch to
+# PyPI resolution.
 #
-# NOTE: this path dep also causes uv to resolve matrx-utils transitively
-# from aidream's workspace (../aidream/packages/matrx-utils, currently
-# at 1.0.20 — same version, not yet on PyPI). That's a side-effect of
-# uv's workspace propagation through editable installs; the contents
-# are equivalent to the published 1.0.19 + an upcoming 1.0.20 release.
-# Working on matrx-local therefore requires the sibling aidream repo
-# cloned at the relative path above. Anyone building matrx-local
-# already needs aidream cloned for matrx-scheduler itself, so there's
-# no additional barrier.
+# Anyone building matrx-local must have the sibling aidream repo cloned
+# at the relative path above. This is already required today (the
+# original matrx-scheduler path dep — which has been here since Phase 1
+# — added the same constraint), so there is no additional barrier.
+#
+# Publish-readiness check: see aidream/.github/workflows/publish-package.yml
+# for the OIDC-trusted publish workflow. Pushing a tag like
+# ``matrx-ai/v0.2.0`` triggers a PyPI release of that package.
+matrx-utils = { path = "../aidream/packages/matrx-utils", editable = true }
+matrx-orm = { path = "../aidream/packages/matrx-orm", editable = true }
+# matrx-ai is intentionally NOT path-pinned. The aidream-workspace
+# matrx-ai 0.2.0 currently has an import-graph coupling to the CX
+# (conversation exchange) DB models — importing the providers layer
+# eagerly resolves bases like CxAgentMemoryBase via
+# ``matrx_ai.db._registry.get_base(...)`` at class-definition time.
+# Aidream pre-configures these via ``aidream.package_integration``
+# before any matrx-ai import; matrx-local has no equivalent and
+# doesn't need the CX tables (no conversation persistence). Until
+# matrx-ai's import graph is restructured to allow non-DB hosts to
+# import the provider layer without configure_db(), matrx-local pins
+# matrx-ai to its PyPI release.
+#
+# This means Phase 3a (register_generic_openai_instance /
+# unregister_generic_openai_instance / get_generic_openai_instance)
+# and Phase 3b (vision content in GenericOpenAITranslator) — both
+# shipped in aidream commits 4569faa7 and fc149bc9 — are NOT active
+# in matrx-local yet. The ``local_llm_registry.py`` try/except guards
+# continue to short-circuit. Activation path: cut + push tag
+# ``matrx-ai/v0.2.x`` from aidream (the publish workflow at
+# .github/workflows/publish-package.yml fires automatically).
+matrx-connect = { path = "../aidream/packages/matrx-connect", editable = true }
+matrx-rag = { path = "../aidream/packages/matrx-rag", editable = true }
 matrx-scheduler = { path = "../aidream/packages/matrx-scheduler", editable = true }
 
 [tool.uv]
