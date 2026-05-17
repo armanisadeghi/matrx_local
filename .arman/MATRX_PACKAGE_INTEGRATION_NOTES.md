@@ -1,24 +1,119 @@
-# Matrx package integration — state when Arman stepped away
+# Matrx package integration — state as of 2026-05-17
 
-**Date:** 2026-05-13
-**Context:** Agent autonomous session. Goal: install the updated matrx-* packages from aidream into matrx-local after shipping Phase 2–6 work.
+**Context:** Integration of the aidream-side matrx-* package work into matrx-local. First CI build attempt revealed path-dep approach doesn't work on GitHub Actions runners; this doc reflects the corrected plan.
 
-## What's in place
+## What CI sees right now
 
-### matrx-local consumes 5 packages via editable path from `../aidream/packages/`
+After commit `c1b0adda` (release v1.3.86) which still had the broken path sources, CI fails on `uv sync`:
 
-Edited `pyproject.toml` (committed): `matrx-utils`, `matrx-orm`, `matrx-connect`, `matrx-rag`, `matrx-scheduler` all sourced via `[tool.uv.sources]` from the sibling aidream workspace. Pattern extends the existing matrx-scheduler path-dep convention.
+```
+error: Distribution not found at: file:///Users/runner/work/matrx-local/aidream/packages/matrx-utils
+```
 
-Verified:
-- `PYTHONPATH=. uv run python -c "import app.main"` succeeds — matrx-local boots cleanly.
-- `matrx_rag.api.include_routers` is reachable.
-- `matrx_connect.middleware.auth.AuthMiddleware` exposes the new `jwks_url` + `jwt_algorithms` kwargs from Phase 6.
+`uv` tries to follow the `[tool.uv.sources]` path dep to `../aidream/packages/`, which doesn't exist on the runner. CI only checks out matrx-local, not aidream.
 
-Files touched in matrx-local:
-- `pyproject.toml` — added matrx-connect + matrx-rag deps, switched matrx-utils/matrx-orm to path source.
-- `uv.lock` — regenerated.
+**The fix (this commit):** revert path sources for matrx-utils / matrx-orm / matrx-connect / matrx-rag; drop matrx-connect + matrx-rag from deps (not imported by matrx-local code yet); leave the matrx-scheduler path source in place with a loud CI-WARNING comment because matrx-local DOES import matrx-scheduler — and it has been path-only since `53f96eb3` (pre-existing CI break, predates this session).
 
-### Aidream-side work shipped during the session
+The PROPER fix for matrx-scheduler is a PyPI publish, which is gated on a one-time PyPI Trusted Publisher configuration. See "Publishing checklist" below.
+
+## PyPI publish status (verified 2026-05-17)
+
+| Package | aidream pyproject | PyPI latest | Trusted Publisher | Workflow tag pattern |
+|---------|-------------------|-------------|--------------------|----------------------|
+| matrx-utils | 1.1.0 | 1.0.19 ✓ | ✓ (existing) | ✓ `matrx-utils/v*.*.*` |
+| matrx-orm | 3.0.33 | 3.0.32 ✓ | ✓ (existing) | ✓ `matrx-orm/v*.*.*` |
+| matrx-ai | 0.2.0 | 0.1.26 ✓ | ✓ (existing) | ✓ `matrx-ai/v*.*.*` ⚠ |
+| matrx-connect | 0.1.1 | **not published** | **NEEDS SETUP** | ✓ `matrx-connect/v*.*.*` |
+| matrx-rag | 0.1.0 | **not published** | **NEEDS SETUP** | ✓ `matrx-rag/v*.*.*` |
+| matrx-scheduler | 0.3.0 | **not published** | **NEEDS SETUP** | ✓ `matrx-scheduler/v*.*.*` (added 2026-05-17) |
+| matrx-scraper | 0.1.0 | **not published** | **NEEDS SETUP** | ✓ `matrx-scraper/v*.*.*` |
+
+⚠ **matrx-ai 0.2.0 caveat:** publishing 0.2.0 to PyPI is technically possible but would break any fresh consumer because of an import-graph DB coupling (eager `get_base` / `get_model` lookups in `matrx_ai.db.cx_managers` + `matrx_ai.instructions.matrx_fetcher` require a host to call `matrx_ai.configure_db(...)` before importing). Aidream pre-configures this; matrx-local does not. Recommend NOT publishing 0.2.0 until the import graph is lazified.
+
+## What MUST happen before matrx-local CI builds successfully
+
+Exactly one thing: **publish matrx-scheduler 0.3.0 to PyPI**, then drop the path source from matrx-local pyproject.toml.
+
+### Step-by-step
+
+**1. Configure PyPI Trusted Publisher for matrx-scheduler (one-time, manual)**
+
+Go to https://pypi.org/manage/account/publishing/ (signed in as a project owner) and add a "Pending Publisher":
+
+- PyPI Project Name: `matrx-scheduler`
+- Owner: `AI-Matrix-Engine`
+- Repository name: `aidream`
+- Workflow name: `publish-package.yml`
+- Environment name: (leave empty, unless your workflow declares one)
+
+This must be done BEFORE the first tag push. PyPI provides a checklist confirmation page.
+
+**2. Push the tag from aidream**
+
+```bash
+cd /Users/armanisadeghi/code/aidream
+git fetch origin
+git checkout main && git pull
+# matrx-scheduler's pyproject.toml already says version = "0.3.0"
+git tag matrx-scheduler/v0.3.0
+git push origin matrx-scheduler/v0.3.0
+```
+
+The publish-package.yml workflow at `aidream/.github/workflows/publish-package.yml` will:
+- Parse the tag → package name + version
+- Verify `packages/matrx-scheduler/pyproject.toml` version matches
+- `uv build` the package
+- `pypa/gh-action-pypi-publish` uploads via OIDC
+
+Watch the run at: `https://github.com/AI-Matrix-Engine/aidream/actions/workflows/publish-package.yml`.
+
+**3. Update matrx-local pyproject.toml**
+
+Once the publish succeeds and `pip install matrx-scheduler==0.3.0` works from PyPI:
+
+```toml
+# In matrx-local/pyproject.toml [project.dependencies], change:
+"matrx-scheduler",
+# To:
+"matrx-scheduler>=0.3.0",
+
+# And DELETE the entire [tool.uv.sources] block (or just the
+# matrx-scheduler line if you want to keep the comment).
+```
+
+Then `uv sync && git commit -m "deps: pin matrx-scheduler to PyPI v0.3.0" && git push`.
+
+CI builds will now succeed.
+
+## Optional follow-ups (when you're ready)
+
+### Publish matrx-rag 0.1.0 + matrx-connect 0.1.1
+
+Same Trusted Publisher dance, then:
+
+```bash
+git tag matrx-rag/v0.1.0 && git push origin matrx-rag/v0.1.0
+git tag matrx-connect/v0.1.1 && git push origin matrx-connect/v0.1.1
+```
+
+These don't unblock matrx-local CI today (the deps were removed from matrx-local), but you'll want them on PyPI before matrx-local starts mounting matrx-rag's router or consolidating onto matrx-connect's AuthMiddleware.
+
+### Bump matrx-utils / matrx-orm to ship existing aidream gains
+
+aidream-workspace matrx-utils is at 1.1.0 (vs PyPI 1.0.19); matrx-orm at 3.0.33 (vs 3.0.32). Both publishable with no caveats:
+
+```bash
+git tag matrx-utils/v1.1.0 && git push origin matrx-utils/v1.1.0
+git tag matrx-orm/v3.0.33 && git push origin matrx-orm/v3.0.33
+```
+
+After publish, matrx-local's `>=1.0.19` / `>=3.0.32` floors will resolve to the new versions automatically on the next `uv sync`.
+
+### Skip publishing matrx-ai 0.2.0 for now
+
+See the caveat above — the import graph needs a lazy refactor first. Phase 3a/3b features (`register_generic_openai_instance` + vision content) stay in aidream-only mode until that's done. matrx-local's `local_llm_registry.py` continues to no-op via its try/except (no regression).
+
+## Aidream-side work from this multi-day session
 
 All commits pushed to `origin/main`:
 
@@ -31,126 +126,12 @@ All commits pushed to `origin/main`:
 | `4569faa7` | 3a | matrx-ai `register_generic_openai_instance` + dispatch |
 | `fc149bc9` | 3b | matrx-ai vision content in GenericOpenAITranslator |
 | `28a32bd1` | ci | Added matrx-rag to publish workflow tag-trigger list |
+| (this session) | ci | Added matrx-scheduler to publish workflow tag-trigger list |
 
-aidream test totals (post-session): matrx-rag 102/102, matrx-connect 18/19 (1 pre-existing failure on a stderr-capture mismatch), matrx-ai new tests 23/23, aidream RAG-area regression 27/27.
-
-## What's intentionally NOT in place (and why)
-
-### 1. matrx-ai is still pinned to PyPI 0.1.26, not the path dep
-
-The aidream-workspace matrx-ai 0.2.0 has an import-graph coupling to the CX (conversation exchange) DB models. Importing the providers layer eagerly resolves bases like `CxAgentMemoryBase` via `matrx_ai.db._registry.get_base(...)` at class-definition time inside `matrx_ai.db.cx_managers`, and also eagerly resolves `ContentBlocks = get_model("ContentBlocks")` at module load time inside `matrx_ai.instructions.matrx_fetcher`.
-
-Aidream pre-configures these via `aidream.package_integration` before any matrx-ai import. matrx-local has no equivalent — and doesn't need the CX tables (no conversation persistence on the local sidecar).
-
-**Implication for matrx-local:**
-- Phase 3a (`register_generic_openai_instance`) and Phase 3b (vision content in `GenericOpenAITranslator`) are NOT active in matrx-local yet.
-- `app/services/ai/local_llm_registry.py` keeps using its try/except fallback (which short-circuits as before — no regression).
-
-**Activation path** (single tag-push from aidream):
-```bash
-cd /Users/armanisadeghi/code/aidream
-git tag matrx-ai/v0.2.0
-git push origin matrx-ai/v0.2.0
-# Wait for the publish-package.yml workflow to complete (~3 minutes).
-# Then in matrx-local:
-cd /Users/armanisadeghi/code/matrx-local
-# bump the floor in pyproject.toml: "matrx-ai>=0.2.0"
-uv sync
-```
-
-That activates Phase 3a/3b end-to-end without touching the aidream-side import-graph issue.
-
-**Alternative** (longer-term): fix the matrx-ai import graph so the providers layer is importable without a configured DB. This is a coordinated refactor — eager class-base lookups in `cx_managers.py` need lazy proxies, and the `ContentBlocks` reference in `matrx_fetcher.py` needs to move to a PEP-562 lazy attribute or function-local import. Several attempts during this session each surfaced a new chain (providers → tools → tools.logger → db.cxm; providers → orchestrator → executor → db; config → message_config → db._registry triggers cx_managers via `db/__init__.py`'s eager imports). Each fix was partial. Recommend doing this as its own focused PR with full test coverage rather than under time pressure.
-
-### 2. No matrx-rag mount in matrx-local yet
-
-matrx-local has no RAG code today. `matrx_rag.api.include_routers(app, prefix="/rag")` is ready to mount, but doing so meaningfully also requires:
-- Calling `matrx_rag.configure(...)` with appropriate `EmbeddingProvider`, `LLMProvider`, `VectorStore` implementations for local mode (fastembed/sentence-transformers + llama-server + sqlite-vss/DuckDB, or stay on Postgres+pgvector if a local Postgres is provisioned).
-- Deciding on a local PostgreSQL vs sqlite-backed vector store (open question in the master plan).
-
-Both are non-trivial product decisions that should be made deliberately rather than autonomously.
-
-### 3. No matrx-connect AuthMiddleware adoption
-
-matrx-local has its own auth shape in `app/api/auth.py` and its own JWKS implementation in `app/api/extension_auth.py`. Phase 6's contribution was making matrx-connect's `AuthMiddleware` JWKS-capable so OTHER hosts can adopt it. matrx-local consolidating onto matrx-connect's middleware is a Phase 7-ish refactor — possible but not urgent.
-
-### 4. No matrx-utils file router factory mount
-
-matrx-local has its own file handling. The matrx-utils factories (`build_file_router`, `build_asset_router`, `build_share_router`) are available but mounting them would replace working code. Not urgent.
-
-## Outstanding tag-pushes that would update PyPI
-
-If you want to publish the work from this session (purely additive, fully backwards-compatible):
-
-```bash
-cd /Users/armanisadeghi/code/aidream
-
-# Required for Phase 3a/3b activation in matrx-local:
-git tag matrx-ai/v0.2.0
-git push origin matrx-ai/v0.2.0
-
-# Optional — releases the new matrx-rag package:
-git tag matrx-rag/v0.1.0
-git push origin matrx-rag/v0.1.0
-
-# Optional — releases Phase 6 JWKS support:
-# (matrx-connect's pyproject is still at 0.1.1 — bump to 0.2.0 first if you want
-# a clean semver signal for the JWKS feature.)
-git tag matrx-connect/v0.1.1
-git push origin matrx-connect/v0.1.1
-
-# Optional — bumps already-published packages:
-git tag matrx-utils/v1.1.0
-git push origin matrx-utils/v1.1.0
-git tag matrx-orm/v3.0.33
-git push origin matrx-orm/v3.0.33
-```
-
-Each tag triggers `.github/workflows/publish-package.yml` (OIDC trusted publishing — no credentials needed).
-
-After matrx-ai/v0.2.0 publishes:
-- Drop the comment block + path source for matrx-ai from matrx-local's `pyproject.toml` if you want, OR leave the editable path in place and just bump the version floor to `>=0.2.0`.
-
-## Test commands when you come back
-
-```bash
-# matrx-local boot smoke test
-cd /Users/armanisadeghi/code/matrx-local
-PYTHONPATH=. uv run python -c "import app.main; print('OK')"
-
-# Verify Phase 6 JWKS surface is reachable
-PYTHONPATH=. uv run python -c "
-from matrx_connect.middleware.auth import AuthMiddleware
-import inspect
-print('jwks_url kwarg present:', 'jwks_url' in inspect.signature(AuthMiddleware.__init__).parameters)
-"
-
-# Verify matrx-rag is mountable
-PYTHONPATH=. uv run python -c "
-from matrx_rag.api import include_routers
-print('matrx-rag include_routers:', include_routers)
-"
-
-# Confirm Phase 3a is NOT yet active (expected to show ImportError or fail)
-PYTHONPATH=. uv run python -c "
-try:
-    from matrx_ai.providers.unified_client import register_generic_openai_instance
-    print('Phase 3a ACTIVE')
-except Exception as e:
-    print('Phase 3a not yet active:', type(e).__name__, e)
-"
-
-# Run aidream package tests to confirm everything is green there
-cd /Users/armanisadeghi/code/aidream
-uv run pytest packages/matrx-rag/tests/ -q
-uv run pytest packages/matrx-connect/tests/test_auth_middleware.py -q
-uv run pytest packages/matrx-ai/tests/test_generic_openai_registry.py packages/matrx-ai/tests/test_generic_openai_translator.py -q
-```
+Test totals (post-session): matrx-rag 102/102, matrx-connect 18/19 (1 pre-existing failure on stderr/stdout capture mismatch — not related to this work), matrx-ai new tests 23/23, aidream RAG-area regression 27/27.
 
 ## Summary
 
-- 5 packages now sourced from aidream workspace via editable path. matrx-local boots cleanly.
-- 1 package (matrx-ai) pinned to PyPI 0.1.26 due to its import-graph DB coupling. Activation requires either an aidream-side import-graph refactor or a PyPI publish of matrx-ai 0.2.0.
-- All Phase 2–6 work is shipped, tested, and ready to consume — gated only on the matrx-ai version flip described above.
-
-The cleanest next move when you're back: push `matrx-ai/v0.2.0` to trigger the publish, bump matrx-local's floor to `>=0.2.0`, and verify `register_generic_openai_instance` is reachable. That makes Phase 3a/3b live.
+- **CI breakage is fixed in this commit** by reverting the path sources. matrx-local boots locally and CI will get further than before (the matrx-scheduler path source is still there, with a loud CI-WARNING comment — that's the pre-existing issue from `53f96eb3` that this session can't unilaterally fix without your PyPI Trusted Publisher setup action).
+- **To make matrx-local CI fully green:** configure PyPI Trusted Publisher for matrx-scheduler (link above), push tag `matrx-scheduler/v0.3.0`, drop the path source.
+- **Phase 3a/3b activation in matrx-local:** still gated on a clean way to consume matrx-ai 0.2.0 (either fix the import graph or skip the version). Not urgent — current matrx-local `local_llm_registry.py` no-ops gracefully.
