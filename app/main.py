@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.admin_routes import router as admin_router
 from app.api.routes import router as api_router
 from app.api.tool_routes import router as tool_router
+from app.api.sandbox_routes import router as sandbox_router
 from app.api.remote_scraper_routes import router as remote_scraper_router
 from app.api.settings_routes import router as settings_router
 from app.api.document_routes import router as document_router  # notes — local-first
@@ -985,6 +986,11 @@ app.include_router(token_router)  # Token sync — React pushes JWT to Python
 app.include_router(admin_router)
 app.include_router(api_router)
 app.include_router(tool_router, prefix="/tools", tags=["tools"])
+# Orchestrator-shape sandbox dispatch — invoked by aidream's local-proxy
+# reverse-proxy on behalf of agents that bind to this PC as a compute target.
+# Auth happens per-route via validate_extension_principal (Supabase JWT from
+# the user, validated via JWKS when configured / presence-only on loopback).
+app.include_router(sandbox_router, prefix="/sandbox", tags=["sandbox"])
 app.include_router(remote_scraper_router)
 app.include_router(settings_router)
 app.include_router(document_router, prefix="/notes")
