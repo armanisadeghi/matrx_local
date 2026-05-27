@@ -134,6 +134,78 @@ export interface AIDreamAllPromptsResponse {
   total_count: number;
 }
 
+// ── Compute targets ────────────────────────────────────────────────────────
+
+export type ComputeTargetKind = "ec2" | "hosted" | "local-pc";
+
+export interface ComputeTarget {
+  id: string;
+  kind: ComputeTargetKind;
+  name: string;
+  status: string;
+  is_online: boolean;
+  is_this_device: boolean;
+  sandbox_id: string | null;
+  tier: "ec2" | "hosted" | null;
+  template: string | null;
+  expires_at: string | null;
+  instance_id: string | null;
+  tunnel_url: string | null;
+  platform: string | null;
+  last_seen: string | null;
+}
+
+export interface ComputeTargetListResponse {
+  targets: ComputeTarget[];
+  max_sandboxes: number;
+  sandbox_count: number;
+}
+
+/** GET /api/compute-targets/ — unified list of bindable targets. */
+export async function fetchComputeTargets(
+  options: RequestOptions = {},
+): Promise<ComputeTargetListResponse> {
+  return aidreamGet<ComputeTargetListResponse>("/compute-targets/", options);
+}
+
+export interface ComputeTargetRef {
+  kind: ComputeTargetKind;
+  id: string;
+}
+
+export interface SandboxBindingPayload {
+  sandbox_id: string;
+  base_url: string;
+  access_token: string;
+  root_path: string;
+}
+
+/** POST /api/compute-targets/resolve — turn a ref into the full sandbox binding
+ * payload aidream's agent loop already consumes. Best-effort: returns null on
+ * any failure so the caller can fall through to an unbound run. */
+export async function resolveComputeTarget(
+  ref: ComputeTargetRef,
+  options: RequestOptions = {},
+): Promise<SandboxBindingPayload | null> {
+  if (!AIDREAM_SERVER_URL) return null;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (options.jwt) headers["Authorization"] = `Bearer ${options.jwt}`;
+  try {
+    const resp = await fetch(`${AIDREAM_SERVER_URL}/api/compute-targets/resolve`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(ref),
+      signal: options.signal,
+    });
+    if (!resp.ok) return null;
+    return (await resp.json()) as SandboxBindingPayload;
+  } catch {
+    return null;
+  }
+}
+
 export interface AIDreamTool {
   id: string;
   name: string;

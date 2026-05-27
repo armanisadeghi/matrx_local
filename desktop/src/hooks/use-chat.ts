@@ -611,6 +611,23 @@ export function useChat({ engineUrl }: UseChatOptions) {
           allMessages,
         );
 
+        // Attach the user's bound compute target (sandbox or local PC) so
+        // matrx-ai's fs/shell tools dispatch into that target. Best-effort:
+        // unresolvable target → agent runs unbound for this turn.
+        const boundTarget = (
+          await import("@/state/compute-target-store")
+        ).useComputeTargetStore.getState().bound;
+        if (boundTarget) {
+          const { resolveComputeTarget } = await import("@/lib/aidream-client");
+          const binding = await resolveComputeTarget(
+            { kind: boundTarget.kind, id: boundTarget.rowId },
+            { jwt: token || null, signal: abort.signal },
+          );
+          if (binding) {
+            (body as Record<string, unknown>).sandbox = binding;
+          }
+        }
+
         const resp = await fetch(url, {
           method: "POST",
           headers: {

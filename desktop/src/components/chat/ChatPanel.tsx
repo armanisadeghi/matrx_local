@@ -9,6 +9,8 @@ import { ChatMessages } from "@/components/chat/ChatMessages";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatWelcome } from "@/components/chat/ChatWelcome";
 import { GuidedVariableInputs } from "@/components/chat/GuidedVariableInputs";
+import { SandboxPicker } from "@/features/compute/SandboxPicker";
+import { useServiceStatus } from "@/hooks/use-service-status";
 import { cn } from "@/lib/utils";
 import { engine as engineAPI } from "@/lib/api";
 import { loadSettings } from "@/lib/settings";
@@ -43,6 +45,11 @@ export function ChatPanel({
   const navigate = useNavigate();
   const [aiWarning, setAiWarning] = useState<AiStatusWarning | null>(null);
   const [aiWarningDismissed, setAiWarningDismissed] = useState(false);
+  // Read this engine's own instance_id (the matrx-local app_instances row this
+  // desktop registered as) so the SandboxPicker can label the matching target
+  // as "This computer".
+  const [serviceState] = useServiceStatus(engineStatus);
+  const thisDeviceInstanceId = serviceState.cloudDebug?.instance_id ?? null;
 
   useEffect(() => {
     if (compact || forceLocalModel) return;
@@ -214,6 +221,7 @@ export function ChatPanel({
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            <SandboxPicker thisDeviceInstanceId={thisDeviceInstanceId} />
             <div className="flex items-center gap-1.5">
               <div
                 className={`h-2 w-2 rounded-full ${
